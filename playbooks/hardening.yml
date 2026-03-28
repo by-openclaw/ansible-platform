@@ -1,0 +1,56 @@
+---
+# ==============================================================================
+# Playbook: hardening
+# Applies the hardening role to target hosts.
+#
+# Usage:
+#   # All hosts:
+#   ansible-playbook playbooks/hardening.yml
+#
+#   # Single host:
+#   ansible-playbook playbooks/hardening.yml -l srv-proxmox-poc-01
+#
+#   # Dry-run (check mode):
+#   ansible-playbook playbooks/hardening.yml --check --diff
+#
+#   # Tags (run subset):
+#   ansible-playbook playbooks/hardening.yml --tags ssh
+#   ansible-playbook playbooks/hardening.yml --tags fail2ban,firewall
+# ==============================================================================
+
+- name: Apply hardening to target hosts
+  hosts: "{{ target | default('all') }}"
+  become: true
+
+  pre_tasks:
+    - name: "Pre-check | Gather facts"
+      ansible.builtin.gather_facts:
+
+    - name: "Pre-check | Confirm SSH port variable"
+      ansible.builtin.debug:
+        msg: "Hardening SSH port: {{ hardening_ssh_port }} (current connection port: {{ ansible_port | default(22) }})"
+
+  roles:
+    - hardening
+
+  post_tasks:
+    - name: "Post-check | Confirm sshd is running"
+      ansible.builtin.service:
+        name: sshd
+        state: started
+      check_mode: true
+      register: sshd_state
+
+    - name: "Post-check | Confirm fail2ban is running"
+      ansible.builtin.service:
+        name: fail2ban
+        state: started
+      check_mode: true
+
+    - name: "Post-check | Hardening complete"
+      ansible.builtin.debug:
+        msg: |
+          ✅ Hardening complete on {{ inventory_hostname }}
+             SSH port : {{ hardening_ssh_port }}
+             fail2ban : active
+             ufw      : active

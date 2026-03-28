@@ -1,0 +1,55 @@
+---
+# ==============================================================================
+# Task: postfix as satellite/relay
+# Only runs when hardening_email_relay_enabled: true
+# ==============================================================================
+
+- name: "postfix | Install"
+  ansible.builtin.package:
+    name:
+      - postfix
+      - mailutils
+      - libsasl2-modules
+    state: present
+
+- name: "postfix | Deploy main.cf from template"
+  ansible.builtin.template:
+    src: postfix-main.cf.j2
+    dest: /etc/postfix/main.cf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart postfix
+
+- name: "postfix | Deploy SASL credentials"
+  ansible.builtin.copy:
+    dest: /etc/postfix/sasl_passwd
+    owner: root
+    group: root
+    mode: "0600"
+    content: "[{{ hardening_email_relay_host }}]:{{ hardening_email_relay_port }} {{ hardening_email_relay_user }}:{{ hardening_email_relay_password }}\n"
+  when: hardening_email_relay_user != ""
+  notify:
+    - postmap sasl_passwd
+    - restart postfix
+  no_log: true
+
+- name: "postfix | Ensure service enabled"
+  ansible.builtin.service:
+    name: postfix
+    state: started
+    enabled: true
+
+- name: "postfix | Send test email"
+  ansible.builtin.shell: |
+    echo "Postfix relay test from {{ inventory_hostname }} at $(date)" | \
+    mail -s "[BY-SYSTEMS] Postfix relay test - {{ inventory_hostname }}" \
+    -r "{{ hardening_email_from }}" \
+    "{{ hardening_email_alert_dest }}"
+  changed_when: false
+  ignore_errors: true
+  register: mail_test
+
+- name: "postfix | Report test result"
+  ansible.builtin.debug:
+    msg: "Test email sent to {{ hardening_email_alert_dest }} — check inbox. (exit: {{ mail_test.rc }})"

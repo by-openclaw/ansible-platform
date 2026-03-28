@@ -1,0 +1,34 @@
+---
+# ==============================================================================
+# Handlers — triggered by notify, run once at end of play (or after flush)
+# ==============================================================================
+
+- name: validate and restart sshd
+  block:
+    - name: "sshd | Validate config syntax"
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+
+    - name: "sshd | Restart service"
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
+  listen: validate and restart sshd
+
+- name: restart fail2ban
+  ansible.builtin.service:
+    name: fail2ban
+    state: restarted
+
+- name: reload ufw
+  community.general.ufw:
+    state: reloaded
+
+- name: restart postfix
+  ansible.builtin.service:
+    name: postfix
+    state: restarted
+
+- name: postmap sasl_passwd
+  ansible.builtin.command: postmap /etc/postfix/sasl_passwd
+  changed_when: true

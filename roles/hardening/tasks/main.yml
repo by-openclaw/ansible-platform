@@ -1,0 +1,21 @@
+---
+# ==============================================================================
+# Role: hardening — main task dispatcher
+# ==============================================================================
+
+- name: Apply SSH hardening
+  ansible.builtin.import_tasks: sshd.yml
+  tags: [hardening, ssh]
+
+- name: Apply fail2ban
+  ansible.builtin.import_tasks: fail2ban.yml
+  tags: [hardening, fail2ban]
+
+- name: Apply firewall (ufw)
+  ansible.builtin.import_tasks: firewall.yml
+  tags: [hardening, firewall, ufw]
+
+- name: Apply email relay (postfix)
+  ansible.builtin.import_tasks: email-relay.yml
+  when: hardening_email_relay_enabled | bool
+  tags: [hardening, email, postfix]

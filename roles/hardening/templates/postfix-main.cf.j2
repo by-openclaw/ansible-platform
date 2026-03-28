@@ -1,0 +1,30 @@
+# ==============================================================================
+# /etc/postfix/main.cf — managed by Ansible (role: hardening)
+# Mode: satellite (relay only — no local delivery except root)
+# ==============================================================================
+
+# ---- Identity ----
+myhostname = {{ hardening_email_hostname }}.by-systems.be
+myorigin   = $myhostname
+
+# ---- Relay ----
+relayhost = [{{ hardening_email_relay_host }}]:{{ hardening_email_relay_port }}
+
+# ---- SASL auth to relay ----
+smtp_sasl_auth_enable          = yes
+smtp_sasl_password_maps        = hash:/etc/postfix/sasl_passwd
+smtp_sasl_security_options     = noanonymous
+smtp_tls_security_level        = encrypt
+smtp_tls_CAfile                = /etc/ssl/certs/ca-certificates.crt
+
+# ---- Local delivery: root only ----
+mydestination =
+local_recipient_maps =
+local_transport = error:local delivery disabled
+
+# ---- Sender rewrite ----
+sender_canonical_maps = static:{{ hardening_email_from }}
+
+# ---- Restrictions ----
+inet_interfaces = loopback-only
+inet_protocols  = all

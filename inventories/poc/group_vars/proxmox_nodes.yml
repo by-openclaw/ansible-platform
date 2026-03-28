@@ -1,0 +1,14 @@
+---
+# Proxmox node specific vars
+hardening_ufw_allowed_ports:
+  - { port: "22222", proto: "tcp", from: "10.6.224.0/20", comment: "SSH from OOB" }
+  - { port: "8006",  proto: "tcp", from: "10.6.224.0/20", comment: "Proxmox WebUI from OOB" }
+  - { port: "3128",  proto: "tcp", from: "10.6.224.0/20", comment: "SPICE proxy from OOB" }
+
+# fail2ban: also protect Proxmox web API
+hardening_fail2ban_extra_jails:
+  - name: proxmox
+    port: 8006
+    filter: proxmox
+    maxretry: 5
+    bantime: 3600

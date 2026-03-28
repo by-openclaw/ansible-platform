@@ -1,0 +1,63 @@
+---
+# ==============================================================================
+# Role: hardening — default variables
+# Override per group_vars / host_vars as needed
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# SSH
+# ------------------------------------------------------------------------------
+hardening_ssh_port: 22222
+hardening_ssh_password_auth: "no"
+hardening_ssh_permit_root_login: "no"
+hardening_ssh_pubkey_auth: "yes"
+hardening_ssh_challenge_response: "no"
+hardening_ssh_x11_forwarding: "no"
+hardening_ssh_max_auth_tries: 3
+hardening_ssh_login_grace_time: 30
+hardening_ssh_client_alive_interval: 300
+hardening_ssh_client_alive_count_max: 2
+
+# Groups allowed to SSH in (key-based)
+hardening_ssh_allow_groups:
+  - by-systems
+  - rune
+
+# Break-glass: password auth allowed ONLY for this group AND from these networks
+# These are OOB and MGMT networks — never internet-facing
+hardening_ssh_break_glass_group: "break-glass"
+hardening_ssh_break_glass_networks:
+  - "10.6.224.0/20"   # OOB production management
+  - "10.6.240.0/20"   # MGMT VLAN
+
+# ------------------------------------------------------------------------------
+# fail2ban
+# ------------------------------------------------------------------------------
+hardening_fail2ban_ssh_port: "{{ hardening_ssh_port }}"
+hardening_fail2ban_ssh_maxretry: 5
+hardening_fail2ban_ssh_bantime: 3600
+hardening_fail2ban_ssh_findtime: 600
+hardening_fail2ban_ssh_ignoreip: "127.0.0.1/8 10.6.224.0/20 10.6.240.0/20"
+
+# Additional jails (list of dicts: name, port, filter, maxretry, bantime)
+hardening_fail2ban_extra_jails: []
+
+# ------------------------------------------------------------------------------
+# Firewall (ufw)
+# ------------------------------------------------------------------------------
+# Default policy: deny all incoming, allow all outgoing
+# Rules are additive — specify what to open, everything else is blocked
+hardening_ufw_allowed_ports:
+  - { port: "{{ hardening_ssh_port }}", proto: "tcp", from: "10.6.224.0/20", comment: "SSH from OOB" }
+
+# ------------------------------------------------------------------------------
+# Email relay (postfix satellite)
+# ------------------------------------------------------------------------------
+hardening_email_relay_enabled: false
+hardening_email_relay_host: ""
+hardening_email_relay_port: 587
+hardening_email_relay_user: ""
+hardening_email_relay_password: ""
+hardening_email_from: "alerts@by-systems.be"
+hardening_email_alert_dest: "ops@by-systems.be"
+hardening_email_hostname: "{{ inventory_hostname }}"
