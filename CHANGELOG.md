@@ -18,3 +18,5 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Inventory: `poc` — srv-proxmox-poc-01, vm-debian-bootstrap-test-01
 - Playbook: `hardening.yml`, `site.yml`
 - CLAUDE.md, AGENTS.md, README.md
+
+[0.1.0]: https://github.com/by-openclaw/ansible-platform/releases/tag/v0.1.0
