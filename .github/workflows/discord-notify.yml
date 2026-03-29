@@ -1,6 +1,8 @@
 name: Discord Notify
 
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
 
@@ -8,15 +10,54 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: Notify Discord on release
+      - name: Notify Discord on push
+        if: github.event_name == 'push'
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_RELEASES }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          COMMITS=$(echo '${{ toJson(github.event.commits) }}' | python3 -c "
+          import sys, json
+          commits = json.load(sys.stdin)
+          lines = []
+          for c in commits[:5]:
+              msg = c['message'].split('\n')[0][:80]
+              sha = c['id'][:7]
+              url = c['url']
+              author = c.get('author', {}).get('name', 'unknown')
+              lines.append(f'[\`{sha}\`]({url}) {msg} — {author}')
+          print('\n'.join(lines))
+          ")
+          BRANCH="${{ github.ref_name }}"
+          REPO="${{ github.repository }}"
+          PUSHER="${{ github.actor }}"
+          COMPARE="${{ github.event.compare }}"
+          PAYLOAD=$(python3 -c "
+          import json
+          payload = {
+            'embeds': [{
+              'title': '📦 New push to $BRANCH',
+              'url': '$COMPARE',
+              'description': '''$COMMITS''',
+              'color': 3447003,
+              'footer': {'text': '$REPO • pushed by $PUSHER'}
+            }]
+          }
+          print(json.dumps(payload))
+          ")
+          curl -s -X POST "$DISCORD_WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
+
+      - name: Notify Discord on release
+        if: github.event_name == 'release'
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           TAG="${{ github.event.release.tag_name }}"
           NAME="${{ github.event.release.name }}"
           URL="${{ github.event.release.html_url }}"
-          REPO="${{ github.repository }}"
           BODY=$(echo '${{ github.event.release.body }}' | head -c 800)
+          REPO="${{ github.repository }}"
           curl -s -X POST "$DISCORD_WEBHOOK" \
             -H "Content-Type: application/json" \
             -d "{
