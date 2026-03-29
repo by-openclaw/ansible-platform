@@ -42,7 +42,40 @@ cz bump --yes --changelog ${INCREMENT:+--increment $INCREMENT}
 NEW_TAG=$(git describe --tags --abbrev=0)
 echo "✅ Bumped to $NEW_TAG"
 
-echo "📤 Pushing commits + tags..."
+echo "📊 Updating project stats in AGENTS.md..."
+if command -v python3 &>/dev/null && [ -f "$REPO_ROOT/AGENTS.md" ]; then
+  python3 - "$REPO_ROOT" << 'PYEOF'
+import subprocess, sys, re
+from pathlib import Path
+from datetime import date
+
+repo_path = Path(sys.argv[1])
+def run(cmd): return subprocess.check_output(cmd, shell=True, cwd=repo_path, text=True).strip()
+
+version = run("git describe --tags --abbrev=0 2>/dev/null || echo untagged")
+stats = {
+  "Version": version, "Tagged releases": run("git tag --list | wc -l"),
+  "Total commits": run("git rev-list --count HEAD"),
+  "Total files": run("find . -not -path './.git/*' -not -path './.venv/*' -type f | wc -l"),
+  "Python source files": run("find . -name '*.py' -not -path './.git/*' -not -path './.venv/*' | wc -l"),
+  "Test files": run("find tests/ -type f 2>/dev/null | wc -l || echo 0"),
+  "Terraform files": run("find . -name '*.tf' -not -path './.git/*' | wc -l"),
+  "YAML/Ansible files": run("find . -name '*.yml' -not -path './.git/*' -not -path './.venv/*' | wc -l"),
+  "ADR decisions": run("ls docs/adr/*.md 2>/dev/null | wc -l || echo 0"),
+  "CI workflows": run("ls .github/workflows/*.yml 2>/dev/null | wc -l || echo 0"),
+}
+rows = "\n".join(f"| {k} | {v} |" for k, v in stats.items())
+block = f"\n## Project Stats\n\n> Auto-updated on every release. Last updated: {date.today().isoformat()}\n\n| Metric | Value |\n|---|---|\n{rows}\n"
+p = repo_path / "AGENTS.md"
+content = re.sub(r'\n## Project Stats.*?(?=\n## |\Z)', '', p.read_text(), flags=re.DOTALL)
+p.write_text(content.rstrip() + "\n" + block)
+print(f"  stats updated → {version}")
+PYEOF
+fi
+
+echo "📤 Committing doc update + pushing..."
+git add AGENTS.md 2>/dev/null
+git diff --cached --quiet || git commit -m "docs: update project docs to ${NEW_TAG}"
 git push && git push --tags
 
 # GitHub Release (optional — requires gh CLI)
