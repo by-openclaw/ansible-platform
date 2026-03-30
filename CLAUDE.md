@@ -50,8 +50,9 @@ The template replaces sshd_config entirely — .d/ fragments are insufficient.
 
 ## Constraints
 
+> Commit conventions, agent permissions, and operational guardrails → see [`AGENTS.md`](AGENTS.md).
+
 - Never hardcode IPs in tasks — use inventory or vars
-- Never commit vault passwords, relay credentials, or API tokens
 - All tasks must be idempotent (safe to run twice)
 - `ansible-lint` clean before merge
 - Check mode must work: `--check --diff`
@@ -70,3 +71,8 @@ See ADR-0006 §9. Source → `assets/diagrams/`, render → `assets/exports/`, c
 - Platform charter: `doc-platform-core/docs/adr/0006-platform-charter.md`
 - Terraform: `by-openclaw/infra-terraform-proxmox` (provisions VMs — Ansible configures them)
 - RAID: open issues on `by-openclaw/platform-setup`
+
+## GitHub → Discord Release Webhook
+This repo has a GitHub webhook configured for `release` events → Discord `#releases` channel (by-openclaw standard).
+No discord-notify.yml workflow. No DISCORD_WEBHOOK secret. Discord-native parsing.
+See `workspace/docs/stack.md` for the full standard and command to replicate on new repos.

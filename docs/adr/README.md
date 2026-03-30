@@ -21,4 +21,8 @@ NNNN-short-title.md
 ```
 
 ## Records
-_None yet — add as decisions are made._
+
+| ADR | Title | Status |
+|-----|-------|--------|
+| [0001](0001-ssh-port-22222.md) | SSH Port 22222 | Accepted |
+| [0002](0002-sshd-full-replacement.md) | Full Replacement of sshd_config | Accepted |
