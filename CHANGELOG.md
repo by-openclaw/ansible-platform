@@ -6,6 +6,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [0.1.1](https://github.com/by-openclaw/ansible-platform/compare/v0.1.0...v0.1.1) (2026-03-30)
+
+
+### Bug Fixes
+
+* correct pull_request trigger in project-board-sync workflow ([bde2dca](https://github.com/by-openclaw/ansible-platform/commit/bde2dcae2bb2e163389155a66f6d893761637c7e))
+
 ## [0.1.0] — 2026-03-28
 
 ### Added
