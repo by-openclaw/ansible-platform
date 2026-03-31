@@ -52,6 +52,7 @@ The template replaces sshd_config entirely — .d/ fragments are insufficient.
 
 > Commit conventions, agent permissions, and operational guardrails → see [`AGENTS.md`](AGENTS.md).
 
+- Every `group_vars/all.yml` MUST declare `env:` with the explicit tier (ADR-0012). No label = non-compliant.
 - Never hardcode IPs in tasks — use inventory or vars
 - All tasks must be idempotent (safe to run twice)
 - `ansible-lint` clean before merge
