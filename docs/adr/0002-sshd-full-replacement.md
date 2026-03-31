@@ -25,3 +25,11 @@ The hardening role **fully replaces** `sshd_config` from a managed template. No 
 - A break-glass pattern is required: password auth is enabled for the break-glass group from OOB/MGMT networks only.
 - Validation with `sshd -t` is mandatory before restarting the service to prevent lockouts.
 - Any host-specific SSH customization must be modeled in the template variables, not applied out-of-band.
+
+## Compliance
+
+| Framework | Control | Relevance |
+|---|---|---|
+| ISO 27001 | A.13.1.1 | Network controls — full sshd config replacement ensures no undocumented access paths |
+| ISO 27001 | A.12.6.1 | Management of technical vulnerabilities — template-driven config prevents configuration drift |
+| NIS2 | Art.21(2)(c) | Physical and network security — enforced sshd policy across all managed hosts |
