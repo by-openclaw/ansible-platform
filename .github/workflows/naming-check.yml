@@ -1,0 +1,52 @@
+name: ADR-0010 Naming Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'inventories/**/group_vars/**'
+      - 'inventories/**/host_vars/**'
+      - '**/vars/**'
+  pull_request:
+    paths:
+      - 'inventories/**/group_vars/**'
+      - 'inventories/**/host_vars/**'
+      - '**/vars/**'
+
+jobs:
+  naming-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "ADR-0010: Check env tier is explicit and valid"
+        run: |
+          EXIT_CODE=0
+
+          # Check that group_vars/all.yml files declare env:
+          for f in $(find inventories -path '*/group_vars/all.yml' 2>/dev/null); do
+            if ! grep -q '^env:' "$f"; then
+              echo "::error file=$f::Missing 'env:' declaration (ADR-0012 requires explicit tier)"
+              EXIT_CODE=1
+            fi
+          done
+
+          # Check for env: prod in non-prod tier contexts
+          for f in $(find inventories -path '*/group_vars/*.yml' -o -path '*/host_vars/*.yml' 2>/dev/null); do
+            TIER_DIR=$(echo "$f" | grep -oP 'inventories/\K[^/]+')
+            if [ "$TIER_DIR" != "prod" ] && [ "$TIER_DIR" != "acc" ]; then
+              if grep -qE '^\s*env:\s*prod\s*$' "$f"; then
+                echo "::error file=$f::env: prod in non-prod inventory ($TIER_DIR) — ADR-0010 violation"
+                EXIT_CODE=1
+              fi
+            fi
+          done
+
+          # Check service account names follow svc-{function}-{env} pattern
+          for f in $(find inventories -path '*/group_vars/*.yml' -o -path '*/host_vars/*.yml' -o -path '*/vars/*.yml' 2>/dev/null); do
+            if grep -nP 'svc-\w+(?!-(?:poc|dev|test|staging|acc|prod))(@|\s|$)' "$f" | grep -vP 'svc-\w+-(?:poc|dev|test|staging|acc|prod)'; then
+              echo "::warning file=$f::Service account name may be missing env tier (ADR-0010: svc-{function}-{env})"
+            fi
+          done
+
+          exit $EXIT_CODE
