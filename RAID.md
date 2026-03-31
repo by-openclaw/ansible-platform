@@ -13,6 +13,9 @@
 | R-001 | sshd full replacement — misconfiguration locks out all SSH | CRITICAL | LOW | Validate with `sshd -t` before restart. Break-glass group on OOB/MGMT. | OPEN |
 | R-002 | fail2ban aggressive bans on legitimate users | MEDIUM | LOW | Bantime 3600s (not permanent). Whitelist OOB/MGMT subnets. | OPEN |
 
+| R-003 | No explicit `env` variable in group_vars per ADR-0010 — downstream tooling (Vault paths, NetBox tags) needs programmatic env label | MEDIUM | MEDIUM | Add `env: poc` to `inventories/poc/group_vars/all.yml` | OPEN |
+| R-004 | CLAUDE.md/AGENTS.md did not reference ADR-0010/ADR-0012 | LOW | HIGH | Fixed in sprint Block 3 | IN PROGRESS |
+
 ## Issues
 
 | ID | Issue | Priority | Status | GitHub |

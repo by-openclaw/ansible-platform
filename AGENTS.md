@@ -44,18 +44,17 @@ This ensures any AI agent (or human) picking up the project always has accurate,
 
 ## Project Stats
 
-> Auto-updated on every release. Last updated: 2026-03-29
+> Auto-updated on every release. Last updated: 2026-03-31
 
 | Metric | Value |
 |---|---|
-| Version | v0.1.0 |
-| Tagged releases | 1 |
-| Total commits | 5 |
-| Total files | 29 |
+| Version | v0.1.1 |
+| Tagged releases | 2 |
+| Total files | 43 |
 | Python source files | 0 |
 | Test files | 0 |
 | Terraform files | 0 |
-| YAML/Ansible files | 15 |
-| ADR decisions | 0 |
+| YAML/Ansible files | 14 |
+| ADR decisions | 2 |
 | CI workflows | 1 |
 
