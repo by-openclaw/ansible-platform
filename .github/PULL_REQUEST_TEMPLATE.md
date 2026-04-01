@@ -1,16 +1,44 @@
-## Description
+## Summary
 
-What does this PR change and why?
+<!-- What changed and why. One sentence. -->
 
-## Related Issue
+Closes #___
 
-Closes #
+## Type
 
-## Checklist
+- [ ] Feature
+- [ ] Bug fix
+- [ ] Documentation
+- [ ] Chore / refactor
+- [ ] Security
 
-- [ ] `ansible-lint` passes without errors
-- [ ] Ran with `--check --diff` against a test host
-- [ ] Tasks are idempotent (running twice produces no changes)
-- [ ] New or changed variables are documented in `defaults/main.yml` and README
-- [ ] Handlers are used where appropriate for service restarts
-- [ ] Tested on target OS versions listed in the role metadata
+## Verification
+
+<!-- Check what applies to THIS change. Not all boxes apply to every PR. -->
+
+### Code quality (if code changed)
+- [ ] Linting clean (ruff / ansible-lint / terraform fmt)
+- [ ] Type checking clean (mypy — if applicable)
+- [ ] Unit tests pass
+- [ ] Integration tests pass (if touching live infra/NAS)
+- [ ] Coverage maintained (no drop)
+
+### Security (always)
+- [ ] No secrets, tokens, or passwords in committed files
+- [ ] No `<REDACTED>` values in code (only in docs)
+- [ ] ADR compliance section present (if new ADR)
+
+### Documentation (if applicable)
+- [ ] CHANGELOG entry added
+- [ ] CLAUDE.md updated (if state changed)
+- [ ] RAID.md updated (if new risk/issue found)
+
+### Idempotency (if automation/lib code)
+- [ ] ensure() returns EnsureResult with correct action
+- [ ] dry_run=True tested
+- [ ] Running twice produces same result
+
+## Review
+
+- [ ] @by-opus review requested (label: `review:opus`)
+
