@@ -1,17 +1,31 @@
 name: Task
-description: Sprint task — approved work item
+description: Approved work item from NEEDS.md or sprint plan
 labels: ["task"]
 body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      options:
+        - feat — new feature
+        - fix — bug fix
+        - docs — documentation
+        - chore — maintenance / refactor
+        - security — hardening
+    validations:
+      required: true
+
   - type: input
     id: needs-ref
     attributes:
-      label: NEEDS.md reference
-      description: Which NEEDS.md item does this implement?
-      placeholder: "H11, M5, C1, etc."
+      label: NEEDS.md / sprint reference
+      description: Which item does this implement?
+      placeholder: "H11, M5, sprint-2026-04-02, etc."
     validations:
       required: true
+
   - type: dropdown
-    id: assigned-agent
+    id: assigned
     attributes:
       label: Assigned to
       options:
@@ -20,18 +34,42 @@ body:
         - "@yboujraf"
     validations:
       required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - critical — blocks deployment
+        - high — needed this sprint
+        - medium — needed this phase
+        - low — backlog
+    validations:
+      required: true
+
   - type: textarea
     id: scope
     attributes:
       label: Scope of work
-      description: What exactly needs to be done? Clear, no ambiguity.
-    validations:
-      required: true
-  - type: textarea
-    id: done-criteria
-    attributes:
-      label: Definition of Done
-      description: How do we know this is complete?
+      description: What exactly needs to be done? Be specific.
     validations:
       required: true
 
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of Done
+      description: How do we know this is complete? Testable criteria.
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Files / repos affected
+      description: List the files or repos this task touches.
+      placeholder: |
+        - platform-setup/tools/vault/docs/setup.md
+        - infra-terraform-proxmox/environments/poc/main.tf
+    validations:
+      required: false

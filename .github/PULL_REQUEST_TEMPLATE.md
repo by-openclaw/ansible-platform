@@ -1,44 +1,53 @@
 ## Summary
 
-<!-- What changed and why. One sentence. -->
+<!-- One sentence: what changed and why. -->
 
-Closes #___
+## Issue
+
+<!-- REQUIRED: Link the issue this PR addresses. -->
+Closes #
 
 ## Type
 
-- [ ] Feature
-- [ ] Bug fix
-- [ ] Documentation
-- [ ] Chore / refactor
-- [ ] Security
+<!-- Select ONE. -->
+- [ ] feat — new feature
+- [ ] fix — bug fix
+- [ ] docs — documentation only
+- [ ] chore — maintenance, refactor, CI
+- [ ] security — security fix or hardening
 
-## Verification
+## Changes
 
-<!-- Check what applies to THIS change. Not all boxes apply to every PR. -->
+<!-- Bullet list of what was done. Keep it short. -->
+-
+-
 
-### Code quality (if code changed)
-- [ ] Linting clean (ruff / ansible-lint / terraform fmt)
-- [ ] Type checking clean (mypy — if applicable)
-- [ ] Unit tests pass
-- [ ] Integration tests pass (if touching live infra/NAS)
-- [ ] Coverage maintained (no drop)
+## Checklist
 
-### Security (always)
+<!-- Check what applies. Not all boxes apply to every PR. -->
+
+### Quality
+- [ ] Lint clean (`ruff` / `ansible-lint` / `terraform fmt`)
+- [ ] Tests pass (`pytest` / `terraform plan`)
+- [ ] No coverage drop
+
+### Security
 - [ ] No secrets, tokens, or passwords in committed files
-- [ ] No `<REDACTED>` values in code (only in docs)
-- [ ] ADR compliance section present (if new ADR)
+- [ ] No `<REDACTED>` in code (docs only)
 
-### Documentation (if applicable)
-- [ ] CHANGELOG entry added
-- [ ] CLAUDE.md updated (if state changed)
-- [ ] RAID.md updated (if new risk/issue found)
-
-### Idempotency (if automation/lib code)
-- [ ] ensure() returns EnsureResult with correct action
-- [ ] dry_run=True tested
-- [ ] Running twice produces same result
+### Docs
+- [ ] CHANGELOG entry added (if user-facing change)
+- [ ] CLAUDE.md updated (if repo state changed)
 
 ## Review
 
-- [ ] @by-opus review requested (label: `review:opus`)
+- [ ] Label `review:opus` added
+- [ ] Opus reviewed and approved (label: `opus:approved`)
+- [ ] @yboujraf approved
 
+<!--
+Merge rules (ADR-0019):
+- Agents open PRs, never merge
+- @yboujraf is sole merge authority
+- No force-push to main — ever
+-->
