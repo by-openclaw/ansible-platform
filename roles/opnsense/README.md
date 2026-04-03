@@ -32,7 +32,7 @@ Key variables:
 |---|---|---|
 | `opnsense_host` | `10.1.1.1` | OPNsense MGMT IP |
 | `opnsense_verify_ssl` | `false` | SSL verify (intentional — ADR-0014) |
-| `opnsense_hostname` | `vm-opnsense-poc-01` | System hostname |
+| `opnsense_hostname` | `vm-opnsense-01` | System hostname (non-prod carries env — set in defaults/main.yml per deployment) |
 | `opnsense_domain` | `by-research.be` | System domain |
 | `opnsense_wireguard_peers` | see defaults | List of WireGuard peer devices |
 
