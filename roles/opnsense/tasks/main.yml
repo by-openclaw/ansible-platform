@@ -1,0 +1,38 @@
+---
+# OPNsense role — entry point
+# All tasks use community.opnsense (puzzle.opnsense) modules.
+# No shell/command tasks. Every task is idempotent (state: present/absent).
+# API credentials come from vault via group_vars/opnsense.yml.
+
+- name: Include system tasks
+  ansible.builtin.import_tasks: system.yml
+  tags: [system, always]
+
+- name: Include interface tasks
+  ansible.builtin.import_tasks: interfaces.yml
+  tags: [interfaces, network]
+
+- name: Include DNS (Unbound) tasks
+  ansible.builtin.import_tasks: dns.yml
+  tags: [dns, unbound]
+
+- name: Include DHCP tasks
+  ansible.builtin.import_tasks: dhcp.yml
+  tags: [dhcp]
+
+- name: Include NTP tasks
+  ansible.builtin.import_tasks: ntp.yml
+  tags: [ntp]
+
+- name: Include firewall alias tasks
+  ansible.builtin.import_tasks: aliases.yml
+  tags: [firewall, aliases]
+
+- name: Include firewall rule tasks
+  ansible.builtin.import_tasks: rules.yml
+  tags: [firewall, rules]
+
+- name: Include WireGuard tasks
+  ansible.builtin.import_tasks: wireguard.yml
+  tags: [wireguard, vpn]
+  when: opnsense_wireguard_enabled | bool

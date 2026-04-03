@@ -1,0 +1,26 @@
+---
+# Interfaces: WAN static IP + VLAN sub-interfaces on vtnet1
+
+- name: Ensure WAN interface configured (static)
+  puzzle.opnsense.interfaces_assignments:
+    identifier: "wan"
+    device: "{{ opnsense_wan_interface }}"
+    description: "WAN"
+    api_host: "{{ opnsense_host }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: "{{ not opnsense_verify_ssl }}"
+
+- name: Ensure VLAN sub-interfaces exist on trunk
+  puzzle.opnsense.vlans:
+    vlanif: "{{ opnsense_wan_interface | replace('vtnet0', 'vtnet1') }}"
+    tag: "{{ item.id }}"
+    descr: "{{ item.name | upper }}"
+    api_host: "{{ opnsense_host }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: "{{ not opnsense_verify_ssl }}"
+    state: present
+  loop: "{{ opnsense_vlans }}"
+  loop_control:
+    label: "VLAN {{ item.id }} ({{ item.name }})"

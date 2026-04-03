@@ -1,0 +1,74 @@
+---
+# OPNsense connection (override in group_vars or vault)
+opnsense_host: "10.1.1.1"
+opnsense_port: 443
+opnsense_verify_ssl: false   # intentional — no cert infra yet (ADR-0014 / decided 2026-03-30)
+opnsense_timeout: 60
+
+# System
+opnsense_hostname: "vm-opnsense-poc-01"
+opnsense_domain: "by-research.be"
+opnsense_timezone: "Europe/Brussels"
+
+# WAN
+opnsense_wan_interface: "vtnet0"
+opnsense_wan_ip: "10.6.224.106"
+opnsense_wan_prefix: "20"
+opnsense_wan_gateway: "10.6.224.1"
+
+# VLAN interfaces on vtnet1 (trunk)
+opnsense_vlans:
+  - id: 310
+    name: "mgmt"
+    parent: "vtnet1"
+    ip: "10.1.1.1"
+    prefix: "24"
+  - id: 320
+    name: "dmz"
+    parent: "vtnet1"
+    ip: "10.1.2.1"
+    prefix: "24"
+  - id: 330
+    name: "svc"
+    parent: "vtnet1"
+    ip: "10.1.3.1"
+    prefix: "24"
+
+# DHCP (MGMT only)
+opnsense_dhcp_mgmt_enabled: true
+opnsense_dhcp_mgmt_range_start: "10.1.1.100"
+opnsense_dhcp_mgmt_range_end: "10.1.1.199"
+
+# DNS — Unbound
+opnsense_unbound_enabled: true
+opnsense_unbound_dot_servers:
+  - host: "1.1.1.1"
+    port: 853
+    verify: "cloudflare-dns.com"
+  - host: "9.9.9.9"
+    port: 853
+    verify: "dns.quad9.net"
+
+# NTP
+opnsense_ntp_servers:
+  - "0.pool.ntp.org"
+  - "1.pool.ntp.org"
+
+# WireGuard
+opnsense_wireguard_enabled: true
+opnsense_wireguard_port: 51820
+opnsense_wireguard_tunnel_network: "10.100.0.0/24"
+opnsense_wireguard_server_ip: "10.100.0.1"
+# Server private key — set in vault (never in plaintext)
+opnsense_wireguard_private_key: "{{ vault_opnsense_wireguard_private_key }}"
+
+opnsense_wireguard_peers:
+  - name: "peer-yboujraf-win11"
+    tunnel_ip: "10.100.0.2/32"
+    public_key: "{{ vault_wg_peer_yboujraf_win11_pubkey }}"
+  - name: "peer-yboujraf-mobile"
+    tunnel_ip: "10.100.0.3/32"
+    public_key: "{{ vault_wg_peer_yboujraf_mobile_pubkey }}"
+  - name: "peer-rune-vm"
+    tunnel_ip: "10.100.0.4/32"
+    public_key: "{{ vault_wg_peer_rune_vm_pubkey }}"

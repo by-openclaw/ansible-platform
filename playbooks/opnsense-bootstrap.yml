@@ -1,0 +1,100 @@
+---
+# OPNsense Bootstrap Playbook
+#
+# One-shot. Run once after fresh OPNsense install.
+# Sets hostname + WAN static IP via OPNsense REST API (uri module).
+# After this, all further config is handled by opnsense.yml (idempotent role).
+#
+# Prerequisites:
+#   - OPNsense installed and accessible on its default LAN IP (192.168.1.1)
+#     OR on vmbrWAN3 (10.6.224.x) via console-assigned IP
+#   - svc-rune API key created in OPNsense UI (System → Access → Users)
+#   - vault.yml contains opnsense_api_key + opnsense_api_secret
+#
+# Run: ansible-playbook playbooks/opnsense-bootstrap.yml
+# Dry run: ansible-playbook playbooks/opnsense-bootstrap.yml --check
+
+- name: OPNsense bootstrap — hostname + WAN static IP
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../infra/secrets/vault.yml"
+  vars:
+    # Bootstrap host — OPNsense default LAN or initial console-assigned IP
+    bootstrap_host: "192.168.1.1"
+    bootstrap_api_key: "{{ opnsense_api_key }}"
+    bootstrap_api_secret: "{{ opnsense_api_secret }}"
+    api_base: "https://{{ bootstrap_host }}/api"
+
+  tasks:
+    - name: Set OPNsense hostname and domain
+      ansible.builtin.uri:
+        url: "{{ api_base }}/core/firmware/status"
+        method: GET
+        user: "{{ bootstrap_api_key }}"
+        password: "{{ bootstrap_api_secret }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: 200
+      register: api_check
+      changed_when: false
+
+    - name: Confirm API reachable
+      ansible.builtin.debug:
+        msg: "OPNsense API reachable at {{ bootstrap_host }}"
+
+    - name: Set system hostname + domain
+      ansible.builtin.uri:
+        url: "{{ api_base }}/core/system/general"
+        method: POST
+        user: "{{ bootstrap_api_key }}"
+        password: "{{ bootstrap_api_secret }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body:
+          general:
+            hostname: "vm-opnsense-poc-01"
+            domain: "by-research.be"
+            timezone: "Europe/Brussels"
+        status_code: [200, 201]
+      register: hostname_result
+      changed_when: "'saved' in (hostname_result.json | string)"
+
+    - name: Set WAN interface to static IP
+      ansible.builtin.uri:
+        url: "{{ api_base }}/interfaces/overview/setInterfaceConfig/wan"
+        method: POST
+        user: "{{ bootstrap_api_key }}"
+        password: "{{ bootstrap_api_secret }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body:
+          type: "staticv4"
+          ipaddr: "10.6.224.106"
+          subnet: "20"
+          gateway: "wan_gw"
+        status_code: [200, 201]
+      register: wan_result
+      changed_when: "'saved' in (wan_result.json | string)"
+
+    - name: Reconfigure interfaces to apply changes
+      ansible.builtin.uri:
+        url: "{{ api_base }}/interfaces/overview/reconfigure"
+        method: POST
+        user: "{{ bootstrap_api_key }}"
+        password: "{{ bootstrap_api_secret }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body: {}
+        status_code: [200, 201]
+      changed_when: true
+
+    - name: Bootstrap complete
+      ansible.builtin.debug:
+        msg: >
+          Bootstrap done. OPNsense now has hostname vm-opnsense-poc-01.by-research.be
+          and WAN IP 10.6.224.106/20. Wait 30s for network to settle,
+          then run: ansible-playbook playbooks/opnsense.yml

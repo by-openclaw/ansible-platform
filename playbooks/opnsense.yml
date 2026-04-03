@@ -1,0 +1,23 @@
+---
+# OPNsense Configuration Playbook
+#
+# Idempotent. Safe to run repeatedly.
+# Configures: interfaces, DNS (Unbound+DoT), DHCP, NTP, firewall aliases+rules, WireGuard.
+# All tasks via puzzle.opnsense collection — no shell/command tasks.
+#
+# Prerequisites:
+#   - Bootstrap completed (opnsense-bootstrap.yml)
+#   - OPNsense reachable on 10.1.1.1 (MGMT)
+#   - vault.yml contains API key + WireGuard secrets
+#
+# Run:        ansible-playbook playbooks/opnsense.yml
+# Dry run:    ansible-playbook playbooks/opnsense.yml --check --diff
+# Tag subset: ansible-playbook playbooks/opnsense.yml --tags wireguard
+
+- name: Configure OPNsense
+  hosts: opnsense
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../infra/secrets/vault.yml"
+  roles:
+    - role: opnsense

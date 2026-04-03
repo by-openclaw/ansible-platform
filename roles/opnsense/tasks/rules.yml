@@ -1,0 +1,63 @@
+---
+# Firewall rules — all reference named aliases (ADR-0015)
+# Default policy: deny all. Rules below are explicit allows.
+
+- name: Ensure outbound NAT rules (MGMT/DMZ/SVC → WAN)
+  puzzle.opnsense.outbound_nat:
+    interface: "wan"
+    source: "{{ item }}"
+    target: "interface"
+    description: "Outbound NAT {{ item }}"
+    api_host: "{{ opnsense_host }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: "{{ not opnsense_verify_ssl }}"
+    state: present
+  loop:
+    - "alias_net_mgmt"
+    - "alias_net_dmz"
+    - "alias_net_svc"
+  loop_control:
+    label: "NAT {{ item }}"
+
+- name: Ensure WireGuard allowed on WAN (UDP 51820)
+  puzzle.opnsense.firewall_rules:
+    interface: "wan"
+    direction: "in"
+    protocol: "udp"
+    destination_port: "alias_port_wireguard"
+    action: "pass"
+    description: "WireGuard VPN inbound"
+    api_host: "{{ opnsense_host }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: "{{ not opnsense_verify_ssl }}"
+    state: present
+
+- name: Ensure VPN peers can reach MGMT zone
+  puzzle.opnsense.firewall_rules:
+    interface: "wireguard"
+    direction: "in"
+    source: "alias_net_vpn"
+    destination: "alias_net_mgmt"
+    action: "pass"
+    description: "VPN → MGMT"
+    api_host: "{{ opnsense_host }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: "{{ not opnsense_verify_ssl }}"
+    state: present
+
+- name: Ensure VPN peers can reach SVC zone
+  puzzle.opnsense.firewall_rules:
+    interface: "wireguard"
+    direction: "in"
+    source: "alias_net_vpn"
+    destination: "alias_net_svc"
+    action: "pass"
+    description: "VPN → SVC"
+    api_host: "{{ opnsense_host }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: "{{ not opnsense_verify_ssl }}"
+    state: present
