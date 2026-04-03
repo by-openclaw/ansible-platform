@@ -4,6 +4,11 @@
 # No shell/command tasks. Every task is idempotent (state: present/absent).
 # API credentials come from vault via group_vars/opnsense.yml.
 
+- name: Install and enable QEMU guest agent
+  ansible.builtin.import_tasks: qemu-agent.yml
+  tags: [bootstrap, qemu-agent]
+  when: opnsense_install_qemu_agent | default(true) | bool
+
 - name: Include system tasks
   ansible.builtin.import_tasks: system.yml
   tags: [system, always]

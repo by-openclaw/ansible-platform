@@ -1,0 +1,45 @@
+---
+# QEMU guest agent bootstrap
+#
+# os-qemu-guest-agent is NOT installed by default on OPNsense.
+# This task installs and enables it so Proxmox can:
+#   - report VM IP addresses in the Proxmox UI
+#   - perform filesystem-consistent snapshots
+#   - use qm guest exec hooks
+#
+# Provisioning sequence (see Terraform module comment):
+#   This task is step 4. Run AFTER OPNsense console install + API is reachable.
+#   After this task succeeds, flip agent { enabled = true } in Terraform + re-apply.
+#
+# Access method: OPNsense SSH (not API — pkg is a FreeBSD shell command).
+# Requires: ssh access to OPNsense root or admin with sudo.
+
+- name: Install os-qemu-guest-agent via pkg
+  ansible.builtin.raw: pkg install -y os-qemu-guest-agent
+  register: pkg_result
+  changed_when: "'installed' in pkg_result.stdout"
+  failed_when:
+    - pkg_result.rc != 0
+    - "'already installed' not in pkg_result.stdout"
+
+- name: Enable qemu-guest-agent service on boot
+  ansible.builtin.raw: sysrc qemu_guest_agent_enable="YES"
+  changed_when: true
+
+- name: Start qemu-guest-agent service
+  ansible.builtin.raw: service qemu-guest-agent start
+  register: svc_start
+  failed_when:
+    - svc_start.rc != 0
+    - "'already running' not in svc_start.stderr | default('')"
+  changed_when: "'Starting' in svc_start.stdout | default('')"
+
+- name: Verify qemu-guest-agent is running
+  ansible.builtin.raw: service qemu-guest-agent status
+  register: svc_status
+  changed_when: false
+  failed_when: "'is running' not in svc_status.stdout"
+
+- name: Print agent status
+  ansible.builtin.debug:
+    msg: "qemu-guest-agent is running. Next: set agent { enabled = true } in Terraform and re-apply."
