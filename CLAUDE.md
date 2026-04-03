@@ -75,7 +75,7 @@ See ADR-0006 §9. Source → `assets/diagrams/`, render → `assets/exports/`, c
 ## Cross-repo References
 
 - Naming convention: see `doc-platform-core/docs/adr/0010-naming-and-identity-convention.md`
-- Environment tiers: poc/dev/test/staging/acc/prod — always explicit. See `doc-platform-core/docs/adr/0012-environment-tier-standard.md`
+- Environment tiers: dev/test/staging/acc/prod — always explicit per host. See `doc-platform-core/docs/adr/0012-environment-tier-standard.md`
 
 ---
 
