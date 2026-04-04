@@ -1,11 +1,19 @@
 ---
-# OPNsense group vars — API connection
-# Secrets loaded from vault.yml (ansible-vault encrypted)
+# OPNsense group vars — API + SSH connection config
+# Secrets are in vault.yml (ansible-vault encrypted)
 # Never put plaintext credentials here.
 
-opnsense_host: "10.1.1.1"
+# API connection (ansibleguy.opnsense collection)
+# API host = LAN IP (accessible from MGMT VLAN)
+# During bootstrap phase: use WAN IP until MGMT VLAN is configured
+opnsense_host: "10.6.224.106"   # WAN — temporary until MGMT VLAN up; change to 10.1.1.1 after
 opnsense_port: 443
-opnsense_verify_ssl: false   # intentional — no cert infra yet (ADR-0014)
+opnsense_verify_ssl: false      # intentional — no cert infra yet (ADR-0014)
 
 opnsense_api_key: "{{ vault_opnsense_api_key }}"
 opnsense_api_secret: "{{ vault_opnsense_api_secret }}"
+
+# svc-rune account (created manually in OPNsense UI)
+# Group: admin — full API access
+# SSH key: rune@by-systems-automation (added to root, svc-rune is API-only)
+# Password: in vault (vault_opnsense_svc_rune_password)
