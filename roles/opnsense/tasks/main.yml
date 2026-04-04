@@ -1,43 +1,44 @@
 ---
 # OPNsense role — entry point
-# All tasks use community.opnsense (puzzle.opnsense) modules.
+# Collection: ansibleguy.opnsense (v1.2.16)
 # No shell/command tasks. Every task is idempotent (state: present/absent).
 # API credentials come from vault via group_vars/opnsense.yml.
+# NOTE: include_tasks (not import_tasks) — allows tag-filtered partial runs
 
 - name: Install and enable QEMU guest agent
-  ansible.builtin.import_tasks: qemu-agent.yml
+  ansible.builtin.include_tasks: qemu-agent.yml
   tags: [bootstrap, qemu-agent]
   when: opnsense_install_qemu_agent | default(true) | bool
 
 - name: Include system tasks
-  ansible.builtin.import_tasks: system.yml
-  tags: [system, always]
+  ansible.builtin.include_tasks: system.yml
+  tags: [system]
 
 - name: Include interface tasks
-  ansible.builtin.import_tasks: interfaces.yml
+  ansible.builtin.include_tasks: interfaces.yml
   tags: [interfaces, network]
 
 - name: Include DNS (Unbound) tasks
-  ansible.builtin.import_tasks: dns.yml
+  ansible.builtin.include_tasks: dns.yml
   tags: [dns, unbound]
 
 - name: Include DHCP tasks
-  ansible.builtin.import_tasks: dhcp.yml
+  ansible.builtin.include_tasks: dhcp.yml
   tags: [dhcp]
 
 - name: Include NTP tasks
-  ansible.builtin.import_tasks: ntp.yml
+  ansible.builtin.include_tasks: ntp.yml
   tags: [ntp]
 
 - name: Include firewall alias tasks
-  ansible.builtin.import_tasks: aliases.yml
+  ansible.builtin.include_tasks: aliases.yml
   tags: [firewall, aliases]
 
 - name: Include firewall rule tasks
-  ansible.builtin.import_tasks: rules.yml
+  ansible.builtin.include_tasks: rules.yml
   tags: [firewall, rules]
 
 - name: Include WireGuard tasks
-  ansible.builtin.import_tasks: wireguard.yml
+  ansible.builtin.include_tasks: wireguard.yml
   tags: [wireguard, vpn]
-  when: opnsense_wireguard_enabled | bool
+  when: opnsense_wireguard_enabled | default(true) | bool
