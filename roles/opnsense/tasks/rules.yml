@@ -1,8 +1,12 @@
 ---
-# Firewall rules — idempotent via OPNsense REST API
+# Firewall rules — idempotent via OPNsense REST API (uri module)
+# NOTE: ansibleguy.opnsense.rule has a known OPNsense 25.1 compat bug (icmp_type
+#       field translation failure). Using uri module until collection is patched.
+# Track: https://github.com/ansibleguy/collection_opnsense/issues
+#
 # Default policy: deny all. Rules below are explicit allows.
 # All rules reference named aliases (ADR-0015) — never hardcoded IPs/ports.
-# Routing note: all tasks delegate_to: localhost, use opnsense_api_url (SSH tunnel via Proxmox)
+# Routing: Rune VM → Proxmox SSH tunnel → localhost:8443 → OPNsense API
 
 - name: Rules | Fetch existing firewall rules
   ansible.builtin.uri:

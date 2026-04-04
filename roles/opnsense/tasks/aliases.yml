@@ -1,71 +1,24 @@
 ---
-# Firewall aliases — idempotent via OPNsense REST API
+# Firewall aliases — idempotent via ansibleguy.opnsense collection
 # All rules reference named aliases — never hardcoded IPs/ports (ADR-0015)
-# Routing note: Rune VM can't reach OPNsense directly — all tasks delegate_to: localhost
-#               and use opnsense_api_url (SSH tunnel via Proxmox, set in playbook pre_tasks)
+# Routing: Rune VM → Proxmox SSH tunnel → OPNsense API
+# Collection: ansibleguy.opnsense v1.2.16 | connection: local | no become
 
-- name: Aliases | Fetch existing aliases
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/firewall/alias/searchItem"
-    method: GET
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    status_code: 200
-  register: opnsense_existing_aliases
-  delegate_to: localhost
-  become: false
-  tags: [firewall, aliases]
-
-- name: Aliases | Build existing alias name map
-  ansible.builtin.set_fact:
-    opnsense_alias_map: >-
-      {{ opnsense_existing_aliases.json.rows
-         | selectattr('uuid', 'match', '^[0-9a-f-]{36}$')
-         | items2dict(key_name='name', value_name='uuid') }}
-  delegate_to: localhost
-  become: false
-  tags: [firewall, aliases]
-
-- name: Aliases | Create missing aliases
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/firewall/alias/addItem"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body:
-      alias:
-        enabled: "1"
-        name: "{{ item.name }}"
-        type: "{{ item.type }}"
-        content: "{{ item.content }}"
-        description: "{{ item.description }}"
-    status_code: 200
+- name: Aliases | Ensure firewall aliases exist
+  ansibleguy.opnsense.alias:
+    firewall: "{{ opnsense_firewall }}"
+    api_port: "{{ opnsense_api_port }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: false
+    name: "{{ item.name }}"
+    type: "{{ item.type }}"
+    content: "{{ item.content }}"
+    description: "{{ item.description }}"
+    state: present
   loop: "{{ opnsense_aliases }}"
   loop_control:
     label: "{{ item.name }}"
-  when: item.name not in opnsense_alias_map
-  register: opnsense_aliases_created
-  delegate_to: localhost
-  become: false
-  tags: [firewall, aliases]
-
-- name: Aliases | Apply alias changes
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/firewall/alias/reconfigure"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: 200
-  when: opnsense_aliases_created.changed | default(false)
   delegate_to: localhost
   become: false
   tags: [firewall, aliases]

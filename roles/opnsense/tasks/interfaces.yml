@@ -1,26 +1,184 @@
 ---
-# Interfaces: WAN static IP + VLAN sub-interfaces on vtnet1
+# Interfaces — idempotent via OPNsense REST API
+# Creates VLAN sub-interfaces on vtnet1 (trunk) and assigns them as opt interfaces.
+# All tasks delegate_to: localhost — tunnel via Proxmox (opnsense_api_url set in playbook).
+#
+# Sequence:
+#   1. Fetch existing VLANs → build tag map
+#   2. Create missing VLANs on vtnet1
+#   3. Reconfigure (apply VLAN changes to kernel)
+#   4. Fetch interface assignments → build device map
+#   5. Assign new VLAN devices as OPT interfaces
+#   6. Reconfigure interfaces
 
-- name: Ensure WAN interface configured (static)
-  puzzle.opnsense.interfaces_assignments:
-    identifier: "wan"
-    device: "{{ opnsense_wan_interface }}"
-    description: "WAN"
-    api_host: "{{ opnsense_host }}"
-    api_key: "{{ opnsense_api_key }}"
-    api_secret: "{{ opnsense_api_secret }}"
-    ssl_verify: "{{ not opnsense_verify_ssl }}"
+# ── Step 1: Existing VLANs ────────────────────────────────────────────────────
 
-- name: Ensure VLAN sub-interfaces exist on trunk
-  puzzle.opnsense.vlans:
-    vlanif: "{{ opnsense_wan_interface | replace('vtnet0', 'vtnet1') }}"
-    tag: "{{ item.id }}"
-    descr: "{{ item.name | upper }}"
-    api_host: "{{ opnsense_host }}"
-    api_key: "{{ opnsense_api_key }}"
-    api_secret: "{{ opnsense_api_secret }}"
-    ssl_verify: "{{ not opnsense_verify_ssl }}"
-    state: present
+- name: Interfaces | Fetch existing VLANs
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/interfaces/vlan_settings/searchItem"
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_existing_vlans
+  delegate_to: localhost
+  become: false
+  tags: [interfaces, network]
+
+- name: Interfaces | Build existing VLAN tag map (vtnet1)
+  ansible.builtin.set_fact:
+    opnsense_vlan_tag_map: >-
+      {{ opnsense_existing_vlans.json.rows
+         | selectattr('if', 'equalto', 'vtnet1')
+         | items2dict(key_name='tag', value_name='uuid') }}
+  delegate_to: localhost
+  become: false
+  tags: [interfaces, network]
+
+# ── Step 2: Create missing VLANs ─────────────────────────────────────────────
+
+- name: Interfaces | Create missing VLAN sub-interfaces on vtnet1
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/interfaces/vlan_settings/addItem"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      vlan:
+        if: "vtnet1"
+        tag: "{{ item.id | string }}"
+        descr: "{{ item.name | upper }}"
+        pcp: "0"
+    status_code: 200
   loop: "{{ opnsense_vlans }}"
   loop_control:
     label: "VLAN {{ item.id }} ({{ item.name }})"
+  when: item.id | string not in opnsense_vlan_tag_map
+  register: opnsense_vlans_created
+  delegate_to: localhost
+  become: false
+  tags: [interfaces, network]
+
+# ── Step 3: Apply VLAN changes ────────────────────────────────────────────────
+
+- name: Interfaces | Apply VLAN configuration
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/interfaces/vlan_settings/reconfigure"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: 200
+  when: opnsense_vlans_created.changed | default(false)
+  delegate_to: localhost
+  become: false
+  tags: [interfaces, network]
+
+# ── Step 4: Fetch assignments (after VLAN creation, devices now exist) ────────
+
+- name: Interfaces | Fetch current interface overview (post-VLAN)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/interfaces/overview/interfacesInfo"
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_iface_overview
+  delegate_to: localhost
+  become: false
+  tags: [interfaces, network]
+
+- name: Interfaces | Build assigned device set
+  ansible.builtin.set_fact:
+    opnsense_assigned_devices: >-
+      {{ opnsense_iface_overview.json
+         | dict2items
+         | selectattr('value.identifier', 'defined')
+         | selectattr('value.identifier', 'ne', '')
+         | map(attribute='value.device')
+         | list }}
+  delegate_to: localhost
+  become: false
+  tags: [interfaces, network]
+
+# ── Step 5: Assign VLAN devices as OPT interfaces ─────────────────────────────
+# OPNsense /api/interfaces/assignments only supports GET (no addItem).
+# Assignment is done via /api/interfaces/overview/setInterfaceConfig
+# which mirrors what the GUI does when you click Save on Assignments page.
+
+- name: Interfaces | Assign VLAN interfaces (vtnet1.VLAN → optX)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/interfaces/settings/addInterface"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      device: "vtnet1.{{ item.id }}"
+      description: "{{ item.name | upper }}"
+    status_code: [200, 400]
+  loop: "{{ opnsense_vlans }}"
+  loop_control:
+    label: "vtnet1.{{ item.id }} ({{ item.name }})"
+  when: "'vtnet1.' ~ item.id | string not in opnsense_assigned_devices"
+  register: opnsense_iface_assigned
+  delegate_to: localhost
+  become: false
+  tags: [interfaces, network]
+
+# ── Step 6: Configure each VLAN interface with its IP ────────────────────────
+
+- name: Interfaces | Configure VLAN interface IP addresses
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/interfaces/settings/setInterface/{{ item.name | lower }}"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      interface:
+        enable: "1"
+        ipaddr: "{{ item.ip }}"
+        subnet: "{{ item.prefix }}"
+        blockpriv: "0"
+        blockbogons: "0"
+    status_code: [200, 400]
+  loop: "{{ opnsense_vlans }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.ip }}/{{ item.prefix }})"
+  register: opnsense_iface_configured
+  delegate_to: localhost
+  become: false
+  tags: [interfaces, network]
+
+# ── Step 7: Apply interface changes ───────────────────────────────────────────
+
+- name: Interfaces | Reconfigure interfaces
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/interfaces/settings/reconfigure"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: [200, 400]
+  when: opnsense_iface_assigned.changed | default(false) or opnsense_iface_configured.changed | default(false)
+  delegate_to: localhost
+  become: false
+  tags: [interfaces, network]
