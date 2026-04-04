@@ -69,36 +69,37 @@ opnsense_ntp_servers:
 
 # Firewall aliases — source of truth for all firewall rules (ADR-0015)
 # content MUST be a list — ansibleguy.opnsense collection iterates it
+# Names are explicit by context (firewall alias) — no alias_ prefix needed
 opnsense_aliases:
-  - name: "alias_net_mgmt"
+  - name: "net_mgmt"
     type: "network"
     content: ["10.1.1.0/24"]
     description: "MGMT zone — VLAN 310"
-  - name: "alias_net_dmz"
+  - name: "net_dmz"
     type: "network"
     content: ["10.1.2.0/24"]
     description: "DMZ zone — VLAN 320"
-  - name: "alias_net_svc"
+  - name: "net_svc"
     type: "network"
     content: ["10.1.3.0/24"]
     description: "SVC zone — VLAN 330"
-  - name: "alias_net_vpn"
+  - name: "net_vpn"
     type: "network"
     content: ["10.99.0.0/24"]
     description: "WireGuard VPN tunnel peers"
-  - name: "alias_port_wireguard"
+  - name: "port_wireguard"
     type: "port"
     content: ["51820"]
     description: "WireGuard UDP"
-  - name: "alias_port_https"
+  - name: "port_https"
     type: "port"
     content: ["443"]
     description: "HTTPS"
-  - name: "alias_port_http"
+  - name: "port_http"
     type: "port"
     content: ["80"]
     description: "HTTP"
-  - name: "alias_port_ssh"
+  - name: "port_ssh"
     type: "port"
     content: ["22"]
     description: "SSH"
@@ -112,7 +113,7 @@ opnsense_firewall_rules:
     action: "pass"
     interface: "opt1"
     direction: "in"
-    source: "alias_net_mgmt"
+    source: "net_mgmt"
     destination: "any"
     protocol: "any"
 
@@ -121,17 +122,17 @@ opnsense_firewall_rules:
     action: "pass"
     interface: "opt2"
     direction: "in"
-    source: "alias_net_dmz"
+    source: "net_dmz"
     destination: "any"
-    destination_port: "alias_port_http"
+    destination_port: "port_http"
     protocol: "TCP"
   - description: "DMZ outbound — HTTPS"
     action: "pass"
     interface: "opt2"
     direction: "in"
-    source: "alias_net_dmz"
+    source: "net_dmz"
     destination: "any"
-    destination_port: "alias_port_https"
+    destination_port: "port_https"
     protocol: "TCP"
 
   # SVC zone — outbound HTTP/HTTPS only
@@ -139,17 +140,17 @@ opnsense_firewall_rules:
     action: "pass"
     interface: "opt3"
     direction: "in"
-    source: "alias_net_svc"
+    source: "net_svc"
     destination: "any"
-    destination_port: "alias_port_http"
+    destination_port: "port_http"
     protocol: "TCP"
   - description: "SVC outbound — HTTPS"
     action: "pass"
     interface: "opt3"
     direction: "in"
-    source: "alias_net_svc"
+    source: "net_svc"
     destination: "any"
-    destination_port: "alias_port_https"
+    destination_port: "port_https"
     protocol: "TCP"
 
   # WAN — WireGuard inbound
@@ -158,7 +159,7 @@ opnsense_firewall_rules:
     interface: "wan"
     direction: "in"
     protocol: "UDP"
-    destination_port: "alias_port_wireguard"
+    destination_port: "port_wireguard"
 
 # WireGuard — tunnel wg-byresearch-01 (issue #88)
 opnsense_wireguard_enabled: true
