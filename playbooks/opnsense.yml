@@ -2,22 +2,31 @@
 # OPNsense Configuration Playbook
 #
 # Idempotent. Safe to run repeatedly.
-# Configures: interfaces, DNS (Unbound+DoT), DHCP, NTP, firewall aliases+rules, WireGuard.
-# All tasks via puzzle.opnsense collection — no shell/command tasks.
+# Configures: system, interfaces, DNS (Unbound+DoT), DHCP, NTP, firewall aliases+rules, WireGuard.
+# All API tasks run on localhost via SSH tunnel through Proxmox (routing workaround — see ansible-platform#5).
 #
 # Prerequisites:
-#   - Bootstrap completed (opnsense-bootstrap.yml)
-#   - OPNsense reachable on 10.1.1.1 (MGMT)
-#   - vault.yml contains API key + WireGuard secrets
+#   - OPNsense bootstrapped (opnsense-bootstrap.yml)
+#   - SSH key id_ed25519_rune_automation authorised on root@srv-proxmox-poc-01:22222
+#   - vault.yml contains API key + secrets
 #
 # Run:        ansible-playbook playbooks/opnsense.yml
 # Dry run:    ansible-playbook playbooks/opnsense.yml --check --diff
-# Tag subset: ansible-playbook playbooks/opnsense.yml --tags wireguard
+# Tag subset: ansible-playbook playbooks/opnsense.yml --tags firewall
+#             ansible-playbook playbooks/opnsense.yml --tags wireguard
+
+# SSH tunnel is opened by scripts/run-opnsense.sh before this playbook runs.
+# Do not run this playbook directly — use: ./scripts/run-opnsense.sh [args]
+# Tunnel: localhost:8443 → 10.6.224.106:443 via Proxmox (root@10.6.224.105:22222)
 
 - name: Configure OPNsense
   hosts: opnsense
   gather_facts: false
   connection: local
   become: false
+  vars:
+    opnsense_api_url: "https://127.0.0.1:8443"
   roles:
     - role: opnsense
+
+# Tunnel is closed automatically by scripts/run-opnsense.sh on exit.

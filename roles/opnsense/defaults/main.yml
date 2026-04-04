@@ -5,6 +5,11 @@ opnsense_port: 443
 opnsense_verify_ssl: false   # intentional — no cert infra yet (ADR-0014 / decided 2026-03-30)
 opnsense_timeout: 60
 
+# API URL — used by all uri-based tasks
+# During bootstrap: set to https://127.0.0.1:8443 via SSH tunnel through Proxmox (see playbooks/opnsense.yml)
+# Post-MGMT-VLAN: set to https://10.1.1.1:443
+opnsense_api_url: "https://{{ opnsense_host }}:{{ opnsense_port }}"
+
 # System
 opnsense_hostname: "vm-opnsense-01"
 opnsense_domain: "by-research.be"
@@ -53,6 +58,98 @@ opnsense_unbound_dot_servers:
 opnsense_ntp_servers:
   - "0.pool.ntp.org"
   - "1.pool.ntp.org"
+
+# Firewall aliases — source of truth for all firewall rules (ADR-0015)
+opnsense_aliases:
+  - name: "alias_net_mgmt"
+    type: "network"
+    content: "10.1.1.0/24"
+    description: "MGMT zone — VLAN 310"
+  - name: "alias_net_dmz"
+    type: "network"
+    content: "10.1.2.0/24"
+    description: "DMZ zone — VLAN 320"
+  - name: "alias_net_svc"
+    type: "network"
+    content: "10.1.3.0/24"
+    description: "SVC zone — VLAN 330"
+  - name: "alias_net_vpn"
+    type: "network"
+    content: "10.99.0.0/24"
+    description: "WireGuard VPN tunnel peers"
+  - name: "alias_port_wireguard"
+    type: "port"
+    content: "51820"
+    description: "WireGuard UDP"
+  - name: "alias_port_https"
+    type: "port"
+    content: "443"
+    description: "HTTPS"
+  - name: "alias_port_http"
+    type: "port"
+    content: "80"
+    description: "HTTP"
+  - name: "alias_port_ssh"
+    type: "port"
+    content: "22"
+    description: "SSH"
+
+# Firewall rules — evaluated in order, first match wins
+# interface values: wan, lan, opt1 (mgmt), opt2 (dmz), opt3 (svc)
+# Use OPNsense interface IDs — check Interfaces > Assignments for actual names
+opnsense_firewall_rules:
+  # MGMT zone — full outbound (internet access for management)
+  - description: "MGMT outbound — any"
+    action: "pass"
+    interface: "opt1"
+    direction: "in"
+    source: "alias_net_mgmt"
+    destination: "any"
+    protocol: "any"
+
+  # DMZ zone — outbound HTTP/HTTPS only
+  - description: "DMZ outbound — HTTP"
+    action: "pass"
+    interface: "opt2"
+    direction: "in"
+    source: "alias_net_dmz"
+    destination: "any"
+    destination_port: "alias_port_http"
+    protocol: "TCP"
+  - description: "DMZ outbound — HTTPS"
+    action: "pass"
+    interface: "opt2"
+    direction: "in"
+    source: "alias_net_dmz"
+    destination: "any"
+    destination_port: "alias_port_https"
+    protocol: "TCP"
+
+  # SVC zone — outbound HTTP/HTTPS only
+  - description: "SVC outbound — HTTP"
+    action: "pass"
+    interface: "opt3"
+    direction: "in"
+    source: "alias_net_svc"
+    destination: "any"
+    destination_port: "alias_port_http"
+    protocol: "TCP"
+  - description: "SVC outbound — HTTPS"
+    action: "pass"
+    interface: "opt3"
+    direction: "in"
+    source: "alias_net_svc"
+    destination: "any"
+    destination_port: "alias_port_https"
+    protocol: "TCP"
+
+  # WAN — WireGuard inbound
+  - description: "WireGuard VPN inbound (wg-byresearch-01)"
+    action: "pass"
+    interface: "wan"
+    direction: "in"
+    protocol: "UDP"
+    destination_port: "alias_port_wireguard"
 
 # WireGuard — tunnel wg-byresearch-01 (issue #88)
 opnsense_wireguard_enabled: true
