@@ -54,21 +54,23 @@ opnsense_ntp_servers:
   - "0.pool.ntp.org"
   - "1.pool.ntp.org"
 
-# WireGuard
+# WireGuard — tunnel wg-byresearch-01 (issue #88)
 opnsense_wireguard_enabled: true
+opnsense_wireguard_instance_name: "wg-byresearch-01"
 opnsense_wireguard_port: 51820
 opnsense_wireguard_tunnel_network: "10.100.0.0/24"
 opnsense_wireguard_server_ip: "10.100.0.1"
-# Server private key — set in vault (never in plaintext)
-opnsense_wireguard_private_key: "{{ vault_opnsense_wireguard_private_key }}"
+# Server keys — set in vault (never in plaintext)
+opnsense_wireguard_private_key: "{{ vault_opnsense_wg_byresearch01_server_privkey }}"
+opnsense_wireguard_public_key: "{{ vault_opnsense_wg_byresearch01_server_pubkey }}"
 
 opnsense_wireguard_peers:
-  - name: "peer-yboujraf-win11"
+  - name: "peer-yboujraf-desk03"
     tunnel_ip: "10.100.0.2/32"
-    public_key: "{{ vault_wg_peer_yboujraf_win11_pubkey }}"
+    public_key: "{{ vault_opnsense_wg_peer_desk03_pubkey }}"
   - name: "peer-yboujraf-mobile"
     tunnel_ip: "10.100.0.3/32"
-    public_key: "{{ vault_wg_peer_yboujraf_mobile_pubkey }}"
+    public_key: "{{ vault_opnsense_wg_peer_mobile_pubkey }}"
   - name: "peer-rune-vm"
     tunnel_ip: "10.100.0.4/32"
-    public_key: "{{ vault_wg_peer_rune_vm_pubkey }}"
+    public_key: "{{ vault_opnsense_wg_peer_rune_pubkey }}"
