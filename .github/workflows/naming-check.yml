@@ -43,8 +43,10 @@ jobs:
           done
 
           # Check service account names follow svc-{function}-{env} pattern
+          # Exception: platform-wide accounts (svc-rune, svc-opus) are env-less by design (ADR-0010 §3)
+          PLATFORM_ACCOUNTS="svc-rune|svc-opus"
           for f in $(find inventories -path '*/group_vars/*.yml' -o -path '*/host_vars/*.yml' -o -path '*/vars/*.yml' 2>/dev/null); do
-            if grep -nP 'svc-\w+(?!-(?:poc|dev|test|staging|acc|prod))(@|\s|$)' "$f" | grep -vP 'svc-\w+-(?:poc|dev|test|staging|acc|prod)'; then
+            if grep -nP 'svc-\w+(?!-(?:poc|dev|test|staging|acc|prod))(@|\s|$)' "$f" | grep -vP 'svc-\w+-(?:poc|dev|test|staging|acc|prod)' | grep -vP "$PLATFORM_ACCOUNTS"; then
               echo "::warning file=$f::Service account name may be missing env tier (ADR-0010: svc-{function}-{env})"
             fi
           done
