@@ -1,6 +1,6 @@
 # AGENTS.md -- ansible-platform
 
-> **Rules:** OPERATING-STANDARD.md (workspace) is mandatory for all agents, all sessions.
+> **Rules:** [OPERATING-STANDARD.md](https://github.com/by-openclaw/doc-platform-core/blob/main/OPERATING-STANDARD.md) is mandatory for all agents, all sessions. [SOUL.md](https://github.com/by-openclaw/doc-platform-core/blob/main/SOUL.md) · [USER.md](https://github.com/by-openclaw/doc-platform-core/blob/main/USER.md)
 
 Ansible playbooks and roles for BY-SYSTEMS platform -- OS hardening, service deployment, user provisioning.
 
