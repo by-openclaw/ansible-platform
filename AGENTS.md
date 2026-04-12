@@ -1,8 +1,12 @@
-# AGENTS.md — ansible-platform
+# AGENTS.md -- ansible-platform
+
+> **Rules:** See [OPERATING-STANDARD.md](~/.openclaw/workspace/OPERATING-STANDARD.md) for all platform rules.
+
+Ansible playbooks and roles for BY-SYSTEMS platform -- OS hardening, service deployment, user provisioning.
 
 ## Sub-agent rules
 
-- Long Ansible runs (>30s) → use background pattern from ADR-0006 §7
+- Long Ansible runs (>30s) -- use background pattern from ADR-0006 S7
 - Write progress to `workspace/state/ansible-{play}-{host}.json`
 - Never run `ansible-playbook` without `--check` first unless explicitly instructed
 - Never modify inventory hosts without human approval
@@ -23,22 +27,11 @@
 - Changing SSH port or authentication config
 - Any change that could lock out SSH access
 
-## Commit convention
+## Coding & Commit Standards
 
-`feat|fix|docs|chore|refactor(scope): subject`
-
-Scope = role name or component: `hardening`, `users`, `vault`, `inventory`
-
-## Doc Maintenance — After Every Successful Build
-
-After each successful CI build (all jobs green), update these files to reflect current state:
-- **AGENTS.md** — Update "Project Stats", version, checklist, roadmap progress
-- **CLAUDE.md** — Update build commands, file table, current state if anything changed
-- **README.md** — Update badges, feature lists, version numbers
-
-Commit separately: `docs: update project docs to v{version}`
-
-This ensures any AI agent (or human) picking up the project always has accurate, current documentation.
+- **Scope** = role name or component: `hardening`, `users`, `vault`, `inventory`
+- **Linting:** `ansible-lint` -- must be clean before commit
+- **Branch naming:** `feat/{issue-id}-{description}` or `fix/{issue-id}-{description}`
 
 ---
 
@@ -57,4 +50,3 @@ This ensures any AI agent (or human) picking up the project always has accurate,
 | YAML/Ansible files | 14 |
 | ADR decisions | 2 |
 | CI workflows | 1 |
-
