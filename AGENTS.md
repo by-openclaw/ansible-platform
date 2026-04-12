@@ -1,5 +1,6 @@
 # AGENTS.md -- ansible-platform
 
+> **Rules:** OPERATING-STANDARD.md (workspace) is mandatory for all agents, all sessions.
 
 Ansible playbooks and roles for BY-SYSTEMS platform -- OS hardening, service deployment, user provisioning.
 
