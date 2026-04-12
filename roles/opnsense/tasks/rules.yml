@@ -1,0 +1,82 @@
+---
+# Firewall rules — idempotent via OPNsense REST API (uri module)
+# NOTE: ansibleguy.opnsense.rule has a known OPNsense 25.1 compat bug (icmp_type
+#       field translation failure). Using uri module until collection is patched.
+# Track: https://github.com/ansibleguy/collection_opnsense/issues
+#
+# Default policy: deny all. Rules below are explicit allows.
+# All rules reference named aliases (ADR-0015) — never hardcoded IPs/ports.
+# Routing: Rune VM → Proxmox SSH tunnel → localhost:8443 → OPNsense API
+
+- name: Rules | Fetch existing firewall rules
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/firewall/filter/searchRule"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: 200
+  register: opnsense_existing_rules
+  delegate_to: localhost
+  become: false
+  tags: [firewall, rules]
+
+- name: Rules | Build existing rule description map
+  ansible.builtin.set_fact:
+    opnsense_rule_map: >-
+      {{ opnsense_existing_rules.json.rows
+         | items2dict(key_name='description', value_name='uuid') }}
+  delegate_to: localhost
+  become: false
+  tags: [firewall, rules]
+
+- name: Rules | Create missing firewall rules
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/firewall/filter/addRule"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      rule:
+        enabled: "{{ item.enabled | default('1') }}"
+        action: "{{ item.action }}"
+        interface: "{{ item.interface }}"
+        direction: "{{ item.direction | default('in') }}"
+        ipprotocol: "{{ item.ipprotocol | default('inet') }}"
+        protocol: "{{ item.protocol | default('any') }}"
+        source_net: "{{ item.source | default('any') }}"
+        destination_net: "{{ item.destination | default('any') }}"
+        destination_port: "{{ item.destination_port | default('') }}"
+        description: "{{ item.description }}"
+        log: "{{ item.log | default('0') }}"
+    status_code: 200
+  loop: "{{ opnsense_firewall_rules }}"
+  loop_control:
+    label: "{{ item.description }}"
+  when: item.description not in opnsense_rule_map
+  register: opnsense_rules_created
+  delegate_to: localhost
+  become: false
+  tags: [firewall, rules]
+
+- name: Rules | Apply firewall rule changes
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/firewall/filter/apply"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: 200
+  when: opnsense_rules_created.changed | default(false)
+  delegate_to: localhost
+  become: false
+  tags: [firewall, rules]

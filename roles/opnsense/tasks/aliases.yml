@@ -1,0 +1,24 @@
+---
+# Firewall aliases — idempotent via ansibleguy.opnsense collection
+# All rules reference named aliases — never hardcoded IPs/ports (ADR-0015)
+# Routing: Rune VM → Proxmox SSH tunnel → OPNsense API
+# Collection: ansibleguy.opnsense v1.2.16 | connection: local | no become
+
+- name: Aliases | Ensure firewall aliases exist
+  ansibleguy.opnsense.alias:
+    firewall: "{{ opnsense_firewall }}"
+    api_port: "{{ opnsense_api_port }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: false
+    name: "{{ item.name }}"
+    type: "{{ item.type }}"
+    content: "{{ item.content }}"
+    description: "{{ item.description }}"
+    state: present
+  loop: "{{ opnsense_aliases }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  become: false
+  tags: [firewall, aliases]

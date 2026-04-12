@@ -6,6 +6,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [Unreleased]
+
+### Added
+- `roles/opnsense/tasks/wireguard.yml` — WireGuard server + 3 peers via `puzzle.opnsense` collection (issue #88)
+- `roles/opnsense/templates/wireguard-client.conf.j2` — client config generator for all peers
+- `files/client-configs/` — output directory for generated client configs (gitignored)
+
+### Changed
+- `roles/opnsense/defaults/main.yml` — WireGuard vars updated: instance name `wg-byresearch-01`, vault key names aligned to convention (`vault_opnsense_wg_byresearch01_*`, `vault_opnsense_wg_peer_*`)
+- `roles/opnsense/tasks/wireguard.yml` — full rewrite: firewall rule, reconfigure call, client config generation added
+
+---
+
 ## [0.1.1](https://github.com/by-openclaw/ansible-platform/compare/v0.1.0...v0.1.1) (2026-03-30)
 
 

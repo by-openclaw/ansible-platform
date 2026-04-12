@@ -1,0 +1,159 @@
+---
+# WireGuard — server + peers (issue #88)
+# Instance: wg-byresearch-01 | Subnet: 10.99.0.0/24 | Port: 51820
+# Collection: ansibleguy.opnsense (server), uri module (peers — collection bug with OPNsense 25.1 keepalive field)
+
+- name: WireGuard | Ensure server instance configured ({{ opnsense_wireguard_instance_name }})
+  ansibleguy.opnsense.wireguard_server:
+    firewall: "{{ opnsense_host }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: false
+    name: "{{ opnsense_wireguard_instance_name }}"
+    private_key: "{{ opnsense_wireguard_private_key }}"
+    public_key: "{{ opnsense_wireguard_public_key }}"
+    allowed_ips:
+      - "{{ opnsense_wireguard_server_ip }}/24"
+    port: "{{ opnsense_wireguard_port }}"
+    enabled: true
+    state: present
+  delegate_to: localhost
+  become: false
+  tags: [wireguard, wireguard-server]
+
+# Peers via direct API — ansibleguy.opnsense.wireguard_peer has a keepalive
+# field parsing bug with OPNsense 25.1 (empty string vs int mismatch)
+- name: WireGuard | Fetch existing peers
+  ansible.builtin.uri:
+    url: "https://{{ opnsense_host }}/api/wireguard/client/searchClient"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: 200
+  register: wg_existing_peers
+  delegate_to: localhost
+  become: false
+  tags: [wireguard, wireguard-peers]
+
+- name: WireGuard | Build existing peer name map
+  ansible.builtin.set_fact:
+    wg_peer_name_map: "{{ wg_existing_peers.json.rows | items2dict(key_name='name', value_name='uuid') }}"
+  delegate_to: localhost
+  become: false
+  tags: [wireguard, wireguard-peers]
+
+- name: WireGuard | Create missing peers
+  ansible.builtin.uri:
+    url: "https://{{ opnsense_host }}/api/wireguard/client/addClient"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      client:
+        enabled: "1"
+        name: "{{ item.name }}"
+        pubkey: "{{ item.public_key }}"
+        tunneladdress: "{{ item.tunnel_ip }}"
+        keepalive: "25"
+    status_code: 200
+  loop: "{{ opnsense_wireguard_peers }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in wg_peer_name_map
+  delegate_to: localhost
+  become: false
+  register: wg_peers_created
+  tags: [wireguard, wireguard-peers]
+
+- name: WireGuard | Apply WireGuard configuration
+  ansible.builtin.uri:
+    url: "https://{{ opnsense_host }}/api/wireguard/service/reconfigure"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: 200
+  when: wg_peers_created.changed | default(false)
+  delegate_to: localhost
+  become: false
+  tags: [wireguard, wireguard-apply]
+
+- name: WireGuard | Fetch existing WAN rules
+  ansible.builtin.uri:
+    url: "https://{{ opnsense_host }}/api/firewall/filter/searchRule"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {"searchPhrase": "WireGuard VPN inbound"}
+    status_code: 200
+  register: wg_fw_rules
+  delegate_to: localhost
+  become: false
+  tags: [wireguard, wireguard-firewall]
+
+- name: WireGuard | Add WAN firewall rule for UDP {{ opnsense_wireguard_port }}
+  ansible.builtin.uri:
+    url: "https://{{ opnsense_host }}/api/firewall/filter/addRule"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      rule:
+        enabled: "1"
+        action: "pass"
+        interface: "wan"
+        direction: "in"
+        ipprotocol: "inet"
+        protocol: "UDP"
+        destination_port: "{{ opnsense_wireguard_port }}"
+        description: "WireGuard VPN inbound ({{ opnsense_wireguard_instance_name }})"
+    status_code: 200
+  when: wg_fw_rules.json.total | int == 0
+  delegate_to: localhost
+  become: false
+  register: wg_fw_rule_created
+  tags: [wireguard, wireguard-firewall]
+
+- name: WireGuard | Apply firewall rules
+  ansible.builtin.uri:
+    url: "https://{{ opnsense_host }}/api/firewall/filter/apply"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: 200
+  when: wg_fw_rule_created.changed | default(false)
+  delegate_to: localhost
+  become: false
+  tags: [wireguard, wireguard-firewall]
+
+- name: WireGuard | Generate client configs from template
+  ansible.builtin.template:
+    src: wireguard-client.conf.j2
+    dest: "{{ playbook_dir }}/files/client-configs/{{ opnsense_wireguard_instance_name }}-{{ item.name }}.conf"
+    mode: "0600"
+  loop: "{{ opnsense_wireguard_peers }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  become: false
+  tags: [wireguard, wireguard-client-configs]

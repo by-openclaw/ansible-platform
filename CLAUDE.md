@@ -26,7 +26,7 @@ Config management: OS hardening, service deployment, user provisioning.
 | File | Why |
 |---|---|
 | `ansible.cfg` | Default inventory, key, become settings |
-| `inventories/poc/hosts.yml` | All PoC hosts |
+| `inventories/poc/hosts.yml` | All hosts on srv-proxmox-poc-01 node (folder = node, not env) |
 | `inventories/poc/group_vars/all.yml` | Global vars |
 | `roles/hardening/defaults/main.yml` | All hardening defaults — check before overriding |
 | `roles/hardening/templates/sshd_config.j2` | Full sshd_config — port 22222 ONLY |
@@ -46,7 +46,7 @@ The template replaces sshd_config entirely — .d/ fragments are insufficient.
 | Component | Status |
 |---|---|
 | Role: hardening (sshd, fail2ban, ufw, postfix) | ✅ implemented |
-| Inventory: poc | ✅ hosts defined |
+| Inventory: poc (= node srv-proxmox-poc-01, not env tier) | ✅ hosts defined — all VMs here are env=prod |
 | Role: users | ⏸ planned (Layer 3 — post-Vault) |
 | Role: vault-agent | ⏸ planned (Layer 2) |
 
@@ -56,7 +56,8 @@ The template replaces sshd_config entirely — .d/ fragments are insufficient.
 
 > Commit conventions, agent permissions, and operational guardrails → see [`AGENTS.md`](AGENTS.md).
 
-- Every `group_vars/all.yml` MUST declare `env:` with the explicit tier (ADR-0012). No label = non-compliant.
+- Every host/group MUST declare `env:` with the explicit tier per VM (ADR-0012). `env` is per-VM, not per-inventory. No label = non-compliant.
+- `inventories/poc/` = hosts on node `srv-proxmox-poc-01`. Folder name is node-based. All current hosts = `env: prod`.
 - Never hardcode IPs in tasks — use inventory or vars
 - All tasks must be idempotent (safe to run twice)
 - `ansible-lint` clean before merge
@@ -74,7 +75,7 @@ See ADR-0006 §9. Source → `assets/diagrams/`, render → `assets/exports/`, c
 ## Cross-repo References
 
 - Naming convention: see `doc-platform-core/docs/adr/0010-naming-and-identity-convention.md`
-- Environment tiers: poc/dev/test/staging/acc/prod — always explicit. See `doc-platform-core/docs/adr/0012-environment-tier-standard.md`
+- Environment tiers: dev/test/staging/acc/prod — always explicit per host. See `doc-platform-core/docs/adr/0012-environment-tier-standard.md`
 
 ---
 

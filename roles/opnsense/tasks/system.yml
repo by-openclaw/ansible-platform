@@ -1,0 +1,20 @@
+---
+# System: hostname, domain, timezone
+# NOTE: hostname/domain cannot be set via community.opnsense module.
+# These are set via the bootstrap playbook (uri module, one-shot).
+# This task file ensures idempotent verification only.
+
+- name: Verify system hostname matches expected
+  puzzle.opnsense.system_settings_general:
+    hostname: "{{ opnsense_hostname }}"
+    domain: "{{ opnsense_domain }}"
+    timezone: "{{ opnsense_timezone }}"
+    api_host: "{{ opnsense_host }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: "{{ not opnsense_verify_ssl }}"
+  register: system_result
+
+- name: Apply system settings if changed
+  ansible.builtin.debug:
+    msg: "System settings applied: {{ system_result.changed }}"

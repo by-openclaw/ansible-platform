@@ -1,0 +1,27 @@
+---
+# DNS: Unbound resolver with DoT upstream
+
+- name: Ensure Unbound is enabled
+  puzzle.opnsense.unbound_general:
+    enabled: true
+    dnssec: true
+    api_host: "{{ opnsense_host }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: "{{ not opnsense_verify_ssl }}"
+
+- name: Ensure DoT upstream forwarders configured
+  puzzle.opnsense.unbound_forward:
+    enabled: true
+    type: "dot"
+    server: "{{ item.host }}"
+    port: "{{ item.port }}"
+    verify: "{{ item.verify }}"
+    api_host: "{{ opnsense_host }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: "{{ not opnsense_verify_ssl }}"
+    state: present
+  loop: "{{ opnsense_unbound_dot_servers }}"
+  loop_control:
+    label: "DoT {{ item.host }}"
