@@ -1,6 +1,5 @@
 # AGENTS.md -- ansible-platform
 
-> **Rules:** See [OPERATING-STANDARD.md](~/.openclaw/workspace/OPERATING-STANDARD.md) for all platform rules.
 
 Ansible playbooks and roles for BY-SYSTEMS platform -- OS hardening, service deployment, user provisioning.
 
