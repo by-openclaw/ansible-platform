@@ -1,0 +1,1938 @@
+opn_host: 10.6.239.195
+opn_port: 443
+opn_verify_ssl: false
+opn_key: '{{ vault_opn_key }}'
+opn_secret: '{{ vault_opn_secret }}'
+opnsense_host: '{{ opn_host }}'
+opnsense_port: '{{ opn_port }}'
+opnsense_verify_ssl: '{{ opn_verify_ssl }}'
+opnsense_api_key: '{{ opn_key }}'
+opnsense_api_secret: '{{ opn_secret }}'
+opn_interface_map:
+  mgmt: opt2
+  dmz: opt3
+  svc: opt4
+  vpn: opt5
+  iot: opt6
+  voip: opt7
+  storage: opt8
+  media: opt9
+  gaming: opt10
+  cctv: opt11
+  wan: opt12
+  lan: lan
+opn_ids:
+  enabled: true
+  mode: alert
+  interfaces:
+  - wan
+  rulesets:
+    et_open: true
+    abuse_ch_ssl: true
+    pt_research: false
+  home_net_alias: grp_net4_internal
+  log_to_loki: true
+  ref:
+    adr: services/0006#§1-suricata-ids
+opn_mdns:
+  enabled: true
+  interfaces:
+  - mgmt
+  - media
+  - gaming
+  ref:
+    adr: infra/0004#§1-zone-taxonomy-mdns-exception
+opn_aliases:
+- name: net4_mgmt
+  type: network
+  content: 10.11.201.0/24
+  description: MGMT zone — platform admin, monitoring, Ansible/Terraform clients
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2010
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net4_dmz
+  type: network
+  content: 10.11.202.0/24
+  description: DMZ zone — public-facing services
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2020
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net4_svc
+  type: network
+  content: 10.11.203.0/24
+  description: SVC zone — internal platform services
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2030
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net4_vpn
+  type: network
+  content: 10.11.204.0/24
+  description: VPN zone — WireGuard / OpenVPN / IPsec peers
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2040
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net4_iot
+  type: network
+  content: 10.11.210.0/24
+  description: IoT zone — sensors, printers, smart devices (untrusted)
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2100
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net4_voip
+  type: network
+  content: 10.11.211.0/24
+  description: VoIP zone — SIP/RTP phones
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2110
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net4_storage
+  type: network
+  content: 10.11.220.0/24
+  description: Storage zone — Ceph, NAS, backup; no internet egress
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2200
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net4_media
+  type: network
+  content: 10.11.230.0/24
+  description: Media zone — TV, IPTV, OTT streaming (untrusted, internet OK)
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2300
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net4_gaming
+  type: network
+  content: 10.11.232.0/24
+  description: GAMING zone — game consoles + voice chat (untrusted, internet OK, HQ QoS)
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2320
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net4_cctv
+  type: network
+  content: 10.11.240.0/24
+  description: CCTV zone — cameras + NVR (isolated, no internet, no internal)
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2400
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net4_oob
+  type: network
+  content: 10.6.224.0/20
+  description: OOB management network — iLO/iDRAC/switch console (never via FW data path)
+  state: present
+  ref:
+    adr: infra/0004#§1-row-OOB
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: grp_net4_internal
+  type: networkgroup
+  content:
+  - net4_mgmt
+  - net4_dmz
+  - net4_svc
+  - net4_vpn
+  - net4_iot
+  - net4_voip
+  - net4_storage
+  - net4_media
+  - net4_gaming
+  - net4_cctv
+  description: 'All internal zones — semantic group: ''internal trust boundary'' (Suricata HOME_NET; inter-VLAN deny baseline)'
+  state: present
+  ref:
+    adr: naming/0003#§2-group-aliases
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: port_ssh
+  type: port
+  content: '22'
+  description: SSH
+  state: present
+  ref:
+    adr: naming/0003#§1-atomic-ports
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: port_https
+  type: port
+  content: '443'
+  description: HTTPS
+  state: present
+  ref:
+    adr: naming/0003#§1-atomic-ports
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: port_http
+  type: port
+  content: '80'
+  description: HTTP
+  state: present
+  ref:
+    adr: naming/0003#§1-atomic-ports
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: port_dns
+  type: port
+  content: '53'
+  description: DNS (TCP+UDP)
+  state: present
+  ref:
+    adr: naming/0003#§1-atomic-ports
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: port_ntp
+  type: port
+  content: '123'
+  description: NTP
+  state: present
+  ref:
+    adr: naming/0003#§1-atomic-ports
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: port_mdns
+  type: port
+  content: '5353'
+  description: Multicast DNS (Bonjour/Avahi)
+  state: present
+  ref:
+    adr: infra/0004#§1-mdns-exception
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: port_wg
+  type: port
+  content: '51820'
+  description: WireGuard
+  state: present
+  ref:
+    adr: infra/0004#§8-wireguard-endpoint
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: port_sip
+  type: port
+  content: '5060'
+  description: SIP signalling
+  state: present
+  ref:
+    adr: infra/0004#§1-voip
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: port_rtp_range
+  type: port
+  content: 10000:20000
+  description: RTP media range (VoIP)
+  state: present
+  ref:
+    adr: infra/0004#§1-voip
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host_internet_request
+  type: host
+  content: ''
+  description: Internet-by-Request — dynamic membership managed by IBR TTL service; entries TTL'd, audited to Loki+RAID
+  state: present
+  ref:
+    adr: services/0006#§3-ibr-alias
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host4_probe_mgmt
+  type: host
+  content: 10.11.201.100
+  description: Test probe LXC on MGMT VLAN (2010) — IPv4
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host4_probe_dmz
+  type: host
+  content: 10.11.202.100
+  description: Test probe LXC on DMZ VLAN (2020) — IPv4
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host4_probe_svc
+  type: host
+  content: 10.11.203.100
+  description: Test probe LXC on SVC VLAN (2030) — IPv4
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host4_probe_vpn
+  type: host
+  content: 10.11.204.100
+  description: Test probe LXC on VPN VLAN (2040) — IPv4
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host4_probe_iot
+  type: host
+  content: 10.11.210.100
+  description: Test probe LXC on IOT VLAN (2100) — IPv4
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host4_probe_voip
+  type: host
+  content: 10.11.211.100
+  description: Test probe LXC on VOIP VLAN (2110) — IPv4
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host4_probe_storage
+  type: host
+  content: 10.11.220.100
+  description: Test probe LXC on STORAGE VLAN (2200) — IPv4
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host4_probe_media
+  type: host
+  content: 10.11.230.100
+  description: Test probe LXC on MEDIA VLAN (2300) — IPv4
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host4_probe_gaming
+  type: host
+  content: 10.11.232.100
+  description: Test probe LXC on GAMING VLAN (2320) — IPv4
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host4_probe_cctv
+  type: host
+  content: 10.11.240.100
+  description: Test probe LXC on CCTV VLAN (2400) — IPv4
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host6_probe_mgmt
+  type: host
+  content: fd11:201::100
+  description: Test probe LXC on MGMT VLAN (2010) — IPv6
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host6_probe_dmz
+  type: host
+  content: fd11:202::100
+  description: Test probe LXC on DMZ VLAN (2020) — IPv6
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host6_probe_svc
+  type: host
+  content: fd11:203::100
+  description: Test probe LXC on SVC VLAN (2030) — IPv6
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host6_probe_vpn
+  type: host
+  content: fd11:204::100
+  description: Test probe LXC on VPN VLAN (2040) — IPv6
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host6_probe_iot
+  type: host
+  content: fd11:210::100
+  description: Test probe LXC on IOT VLAN (2100) — IPv6
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host6_probe_voip
+  type: host
+  content: fd11:211::100
+  description: Test probe LXC on VOIP VLAN (2110) — IPv6
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host6_probe_storage
+  type: host
+  content: fd11:220::100
+  description: Test probe LXC on STORAGE VLAN (2200) — IPv6
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host6_probe_media
+  type: host
+  content: fd11:230::100
+  description: Test probe LXC on MEDIA VLAN (2300) — IPv6
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host6_probe_gaming
+  type: host
+  content: fd11:232::100
+  description: Test probe LXC on GAMING VLAN (2320) — IPv6
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: host6_probe_cctv
+  type: host
+  content: fd11:240::100
+  description: Test probe LXC on CCTV VLAN (2400) — IPv6
+  state: present
+  ref:
+    adr: services/0006#§probe-fleet-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net6_mgmt
+  type: network
+  content: fd11:201::/64
+  description: MGMT zone — IPv6 ULA
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2010-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net6_dmz
+  type: network
+  content: fd11:202::/64
+  description: DMZ zone — IPv6 ULA
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2020-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net6_svc
+  type: network
+  content: fd11:203::/64
+  description: SVC zone — IPv6 ULA
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2030-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net6_vpn
+  type: network
+  content: fd11:204::/64
+  description: VPN zone — IPv6 ULA
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2040-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net6_iot
+  type: network
+  content: fd11:210::/64
+  description: IOT zone — IPv6 ULA
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2100-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net6_voip
+  type: network
+  content: fd11:211::/64
+  description: VOIP zone — IPv6 ULA
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2110-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net6_storage
+  type: network
+  content: fd11:220::/64
+  description: STORAGE zone — IPv6 ULA
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2200-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net6_media
+  type: network
+  content: fd11:230::/64
+  description: MEDIA zone — IPv6 ULA
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2300-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net6_gaming
+  type: network
+  content: fd11:232::/64
+  description: GAMING zone — IPv6 ULA
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2320-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: net6_cctv
+  type: network
+  content: fd11:240::/64
+  description: CCTV zone — IPv6 ULA
+  state: present
+  ref:
+    adr: infra/0004#§4-row-2400-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: grp_net6_internal
+  type: networkgroup
+  content:
+  - net6_mgmt
+  - net6_dmz
+  - net6_svc
+  - net6_vpn
+  - net6_iot
+  - net6_voip
+  - net6_storage
+  - net6_media
+  - net6_gaming
+  - net6_cctv
+  description: 'All internal zones IPv6 — semantic group: ''internal trust boundary v6'''
+  state: present
+  ref:
+    adr: naming/0003#§2-group-aliases-v6
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+opn_filter_rules:
+- description: PASS MGMT→FW UI
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet
+  protocol: tcp
+  source_net: net4_mgmt
+  destination_net: (self)
+  destination_port: port_https
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-mgmt-fw-ui
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→FW SSH
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet
+  protocol: tcp
+  source_net: net4_mgmt
+  destination_net: (self)
+  destination_port: port_ssh
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-mgmt-fw-ssh
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→Media mDNS
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet
+  protocol: udp
+  source_net: net4_mgmt
+  destination_net: net4_media
+  destination_port: port_mdns
+  state: present
+  ref:
+    adr: infra/0004#§1-mdns-exception-media
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→GAMING mDNS
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet
+  protocol: udp
+  source_net: net4_mgmt
+  destination_net: net4_gaming
+  destination_port: port_mdns
+  state: present
+  ref:
+    adr: infra/0004#§1-mdns-exception-gaming
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→SVC default
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_mgmt
+  destination_net: net4_svc
+  state: present
+  ref:
+    adr: infra/0004#§1-row-mgmt-inter-vlan
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→DMZ default
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_mgmt
+  destination_net: net4_dmz
+  state: present
+  ref:
+    adr: infra/0004#§1-row-mgmt-inter-vlan
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→FW any
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_mgmt
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK MGMT→internal default
+  action: block
+  interface: mgmt
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_mgmt
+  destination_net: grp_net4_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-mgmt-no-iot-storage-cctv
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→any default
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_mgmt
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-mgmt-internet
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS DMZ→FW any
+  action: pass
+  interface: dmz
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_dmz
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK DMZ→internal default
+  action: block
+  interface: dmz
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_dmz
+  destination_net: grp_net4_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-dmz-no-internal
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS DMZ→WAN default
+  action: pass
+  interface: dmz
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_dmz
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-dmz-internet
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS SVC→DMZ default
+  action: pass
+  interface: svc
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_svc
+  destination_net: net4_dmz
+  state: present
+  ref:
+    adr: infra/0004#§1-row-svc-dmz
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS SVC→FW any
+  action: pass
+  interface: svc
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_svc
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK SVC→internal default
+  action: block
+  interface: svc
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_svc
+  destination_net: grp_net4_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-svc-no-other
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS SVC→WAN default
+  action: pass
+  interface: svc
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_svc
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-svc-internet
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VPN→MGMT SSH
+  action: pass
+  interface: vpn
+  direction: in
+  ipprotocol: inet
+  protocol: tcp
+  source_net: net4_vpn
+  destination_net: net4_mgmt
+  destination_port: port_ssh
+  state: present
+  ref:
+    adr: infra/0004#§8-vpn-mgmt-ssh
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VPN→SVC default
+  action: pass
+  interface: vpn
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_vpn
+  destination_net: net4_svc
+  state: present
+  ref:
+    adr: infra/0004#§8-vpn-svc-default
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VPN→FW UI
+  action: pass
+  interface: vpn
+  direction: in
+  ipprotocol: inet
+  protocol: tcp
+  source_net: net4_vpn
+  destination_net: (self)
+  destination_port: port_https
+  state: present
+  ref:
+    adr: infra/0004#§8-vpn-fw-ui
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VPN→FW any
+  action: pass
+  interface: vpn
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_vpn
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK VPN→internal default
+  action: block
+  interface: vpn
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_vpn
+  destination_net: grp_net4_internal
+  state: present
+  ref:
+    adr: infra/0004#§8-vpn-deny-other
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS IoT→FW any
+  action: pass
+  interface: iot
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_iot
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK IoT→internal default
+  action: block
+  interface: iot
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_iot
+  destination_net: grp_net4_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-iot-no-mgmt-svc
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS IoT→WAN HTTPS
+  action: pass
+  interface: iot
+  direction: in
+  ipprotocol: inet
+  protocol: tcp
+  source_net: net4_iot
+  destination_net: any
+  destination_port: port_https
+  state: present
+  ref:
+    adr: infra/0004#§1-row-iot-internet-restricted
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS IoT→WAN DNS
+  action: pass
+  interface: iot
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_iot
+  destination_net: any
+  destination_port: port_dns
+  state: present
+  ref:
+    adr: infra/0004#§1-row-iot-internet-restricted
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS IoT→WAN NTP
+  action: pass
+  interface: iot
+  direction: in
+  ipprotocol: inet
+  protocol: udp
+  source_net: net4_iot
+  destination_net: any
+  destination_port: port_ntp
+  state: present
+  ref:
+    adr: infra/0004#§1-row-iot-internet-restricted
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VoIP→FW any
+  action: pass
+  interface: voip
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_voip
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK VoIP→internal default
+  action: block
+  interface: voip
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_voip
+  destination_net: grp_net4_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-voip-no-internal
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VoIP→WAN SIP
+  action: pass
+  interface: voip
+  direction: in
+  ipprotocol: inet
+  protocol: udp
+  source_net: net4_voip
+  destination_net: any
+  destination_port: port_sip
+  state: present
+  ref:
+    adr: infra/0004#§1-row-voip-sip-trunk
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VoIP→WAN RTP
+  action: pass
+  interface: voip
+  direction: in
+  ipprotocol: inet
+  protocol: udp
+  source_net: net4_voip
+  destination_net: any
+  destination_port: port_rtp_range
+  state: present
+  ref:
+    adr: infra/0004#§1-row-voip-rtp
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VoIP→WAN DNS
+  action: pass
+  interface: voip
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_voip
+  destination_net: any
+  destination_port: port_dns
+  state: present
+  ref:
+    adr: infra/0004#§1-row-voip-dns
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS Storage→SVC default
+  action: pass
+  interface: storage
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_storage
+  destination_net: net4_svc
+  state: present
+  ref:
+    adr: infra/0004#§1-row-storage-svc
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK Storage→any default
+  action: block
+  interface: storage
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_storage
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-storage-no-internet
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS Media→MGMT mDNS
+  action: pass
+  interface: media
+  direction: in
+  ipprotocol: inet
+  protocol: udp
+  source_net: net4_media
+  destination_net: net4_mgmt
+  destination_port: port_mdns
+  state: present
+  ref:
+    adr: infra/0004#§1-mdns-exception-media-return
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS Media→FW any
+  action: pass
+  interface: media
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_media
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK Media→internal default
+  action: block
+  interface: media
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_media
+  destination_net: grp_net4_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-media-no-internal
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS Media→WAN default
+  action: pass
+  interface: media
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_media
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-media-internet
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS GAMING→MGMT mDNS
+  action: pass
+  interface: gaming
+  direction: in
+  ipprotocol: inet
+  protocol: udp
+  source_net: net4_gaming
+  destination_net: net4_mgmt
+  destination_port: port_mdns
+  state: present
+  ref:
+    adr: infra/0004#§1-mdns-exception-gaming-return
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS GAMING→FW any
+  action: pass
+  interface: gaming
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_gaming
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK GAMING→internal default
+  action: block
+  interface: gaming
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_gaming
+  destination_net: grp_net4_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-gaming-no-internal
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS GAMING→WAN default
+  action: pass
+  interface: gaming
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_gaming
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-gaming-internet
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK CCTV→any default
+  action: block
+  interface: cctv
+  direction: in
+  ipprotocol: inet
+  protocol: any
+  source_net: net4_cctv
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-cctv-air-gapped
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→FW UI (v6)
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet6
+  protocol: tcp
+  source_net: net6_mgmt
+  destination_net: (self)
+  destination_port: port_https
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-mgmt-fw-ui-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→FW SSH (v6)
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet6
+  protocol: tcp
+  source_net: net6_mgmt
+  destination_net: (self)
+  destination_port: port_ssh
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-mgmt-fw-ssh-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→Media mDNS (v6)
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet6
+  protocol: udp
+  source_net: net6_mgmt
+  destination_net: net6_media
+  destination_port: port_mdns
+  state: present
+  ref:
+    adr: infra/0004#§1-mdns-exception-media-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→GAMING mDNS (v6)
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet6
+  protocol: udp
+  source_net: net6_mgmt
+  destination_net: net6_gaming
+  destination_port: port_mdns
+  state: present
+  ref:
+    adr: infra/0004#§1-mdns-exception-gaming-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→SVC default (v6)
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_mgmt
+  destination_net: net6_svc
+  state: present
+  ref:
+    adr: infra/0004#§1-row-mgmt-inter-vlan-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→DMZ default (v6)
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_mgmt
+  destination_net: net6_dmz
+  state: present
+  ref:
+    adr: infra/0004#§1-row-mgmt-inter-vlan-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→FW any (v6)
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_mgmt
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK MGMT→internal default (v6)
+  action: block
+  interface: mgmt
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_mgmt
+  destination_net: grp_net6_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-mgmt-no-iot-storage-cctv-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS MGMT→any default (v6)
+  action: pass
+  interface: mgmt
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_mgmt
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-mgmt-internet-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS DMZ→FW any (v6)
+  action: pass
+  interface: dmz
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_dmz
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK DMZ→internal default (v6)
+  action: block
+  interface: dmz
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_dmz
+  destination_net: grp_net6_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-dmz-no-internal-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS DMZ→WAN default (v6)
+  action: pass
+  interface: dmz
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_dmz
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-dmz-internet-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS SVC→DMZ default (v6)
+  action: pass
+  interface: svc
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_svc
+  destination_net: net6_dmz
+  state: present
+  ref:
+    adr: infra/0004#§1-row-svc-dmz-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS SVC→FW any (v6)
+  action: pass
+  interface: svc
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_svc
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK SVC→internal default (v6)
+  action: block
+  interface: svc
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_svc
+  destination_net: grp_net6_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-svc-no-other-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS SVC→WAN default (v6)
+  action: pass
+  interface: svc
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_svc
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-svc-internet-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VPN→MGMT SSH (v6)
+  action: pass
+  interface: vpn
+  direction: in
+  ipprotocol: inet6
+  protocol: tcp
+  source_net: net6_vpn
+  destination_net: net6_mgmt
+  destination_port: port_ssh
+  state: present
+  ref:
+    adr: infra/0004#§8-vpn-mgmt-ssh-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VPN→SVC default (v6)
+  action: pass
+  interface: vpn
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_vpn
+  destination_net: net6_svc
+  state: present
+  ref:
+    adr: infra/0004#§8-vpn-svc-default-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VPN→FW UI (v6)
+  action: pass
+  interface: vpn
+  direction: in
+  ipprotocol: inet6
+  protocol: tcp
+  source_net: net6_vpn
+  destination_net: (self)
+  destination_port: port_https
+  state: present
+  ref:
+    adr: infra/0004#§8-vpn-fw-ui-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VPN→FW any (v6)
+  action: pass
+  interface: vpn
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_vpn
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK VPN→internal default (v6)
+  action: block
+  interface: vpn
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_vpn
+  destination_net: grp_net6_internal
+  state: present
+  ref:
+    adr: infra/0004#§8-vpn-deny-other-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS IoT→FW any (v6)
+  action: pass
+  interface: iot
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_iot
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK IoT→internal default (v6)
+  action: block
+  interface: iot
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_iot
+  destination_net: grp_net6_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-iot-no-mgmt-svc-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS IoT→WAN HTTPS (v6)
+  action: pass
+  interface: iot
+  direction: in
+  ipprotocol: inet6
+  protocol: tcp
+  source_net: net6_iot
+  destination_net: any
+  destination_port: port_https
+  state: present
+  ref:
+    adr: infra/0004#§1-row-iot-internet-restricted-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS IoT→WAN DNS (v6)
+  action: pass
+  interface: iot
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_iot
+  destination_net: any
+  destination_port: port_dns
+  state: present
+  ref:
+    adr: infra/0004#§1-row-iot-internet-restricted-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS IoT→WAN NTP (v6)
+  action: pass
+  interface: iot
+  direction: in
+  ipprotocol: inet6
+  protocol: udp
+  source_net: net6_iot
+  destination_net: any
+  destination_port: port_ntp
+  state: present
+  ref:
+    adr: infra/0004#§1-row-iot-internet-restricted-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VoIP→FW any (v6)
+  action: pass
+  interface: voip
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_voip
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK VoIP→internal default (v6)
+  action: block
+  interface: voip
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_voip
+  destination_net: grp_net6_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-voip-no-internal-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VoIP→WAN SIP (v6)
+  action: pass
+  interface: voip
+  direction: in
+  ipprotocol: inet6
+  protocol: udp
+  source_net: net6_voip
+  destination_net: any
+  destination_port: port_sip
+  state: present
+  ref:
+    adr: infra/0004#§1-row-voip-sip-trunk-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VoIP→WAN RTP (v6)
+  action: pass
+  interface: voip
+  direction: in
+  ipprotocol: inet6
+  protocol: udp
+  source_net: net6_voip
+  destination_net: any
+  destination_port: port_rtp_range
+  state: present
+  ref:
+    adr: infra/0004#§1-row-voip-rtp-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS VoIP→WAN DNS (v6)
+  action: pass
+  interface: voip
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_voip
+  destination_net: any
+  destination_port: port_dns
+  state: present
+  ref:
+    adr: infra/0004#§1-row-voip-dns-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS Storage→SVC default (v6)
+  action: pass
+  interface: storage
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_storage
+  destination_net: net6_svc
+  state: present
+  ref:
+    adr: infra/0004#§1-row-storage-svc-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK Storage→any default (v6)
+  action: block
+  interface: storage
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_storage
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-storage-no-internet-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS Media→MGMT mDNS (v6)
+  action: pass
+  interface: media
+  direction: in
+  ipprotocol: inet6
+  protocol: udp
+  source_net: net6_media
+  destination_net: net6_mgmt
+  destination_port: port_mdns
+  state: present
+  ref:
+    adr: infra/0004#§1-mdns-exception-media-return-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS Media→FW any (v6)
+  action: pass
+  interface: media
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_media
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK Media→internal default (v6)
+  action: block
+  interface: media
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_media
+  destination_net: grp_net6_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-media-no-internal-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS Media→WAN default (v6)
+  action: pass
+  interface: media
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_media
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-media-internet-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS GAMING→MGMT mDNS (v6)
+  action: pass
+  interface: gaming
+  direction: in
+  ipprotocol: inet6
+  protocol: udp
+  source_net: net6_gaming
+  destination_net: net6_mgmt
+  destination_port: port_mdns
+  state: present
+  ref:
+    adr: infra/0004#§1-mdns-exception-gaming-return-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS GAMING→FW any (v6)
+  action: pass
+  interface: gaming
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_gaming
+  destination_net: (self)
+  state: present
+  ref:
+    adr: naming/0003#§4-rule-zone-fw-any
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK GAMING→internal default (v6)
+  action: block
+  interface: gaming
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_gaming
+  destination_net: grp_net6_internal
+  state: present
+  ref:
+    adr: infra/0004#§1-row-gaming-no-internal-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS GAMING→WAN default (v6)
+  action: pass
+  interface: gaming
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_gaming
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-gaming-internet-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: BLOCK CCTV→any default (v6)
+  action: block
+  interface: cctv
+  direction: in
+  ipprotocol: inet6
+  protocol: any
+  source_net: net6_cctv
+  destination_net: any
+  state: present
+  ref:
+    adr: infra/0004#§1-row-cctv-air-gapped-v6
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+opn_snat_rules: []
+opn_dnat_rules: []
+opn_unbound:
+  enabled: true
+  domain: test.by-research.be
+  listen_acl_networks:
+  - grp_net4_internal
+  - grp_net6_internal
+  host_overrides:
+  - hostname: lxc-mgmt-deb13-test-01
+    domain: test.by-research.be
+    rr: A
+    server: 10.11.201.100
+  - hostname: lxc-mgmt-deb13-test-01
+    domain: test.by-research.be
+    rr: AAAA
+    server: fd11:201::100
+  - hostname: lxc-dmz-deb13-test-01
+    domain: test.by-research.be
+    rr: A
+    server: 10.11.202.100
+  - hostname: lxc-dmz-deb13-test-01
+    domain: test.by-research.be
+    rr: AAAA
+    server: fd11:202::100
+  - hostname: lxc-svc-deb13-test-01
+    domain: test.by-research.be
+    rr: A
+    server: 10.11.203.100
+  - hostname: lxc-svc-deb13-test-01
+    domain: test.by-research.be
+    rr: AAAA
+    server: fd11:203::100
+  - hostname: lxc-vpn-deb13-test-01
+    domain: test.by-research.be
+    rr: A
+    server: 10.11.204.100
+  - hostname: lxc-vpn-deb13-test-01
+    domain: test.by-research.be
+    rr: AAAA
+    server: fd11:204::100
+  - hostname: lxc-iot-ubu2404-test-01
+    domain: test.by-research.be
+    rr: A
+    server: 10.11.210.100
+  - hostname: lxc-iot-ubu2404-test-01
+    domain: test.by-research.be
+    rr: AAAA
+    server: fd11:210::100
+  - hostname: lxc-voip-ubu2404-test-01
+    domain: test.by-research.be
+    rr: A
+    server: 10.11.211.100
+  - hostname: lxc-voip-ubu2404-test-01
+    domain: test.by-research.be
+    rr: AAAA
+    server: fd11:211::100
+  - hostname: lxc-storage-ubu2404-test-01
+    domain: test.by-research.be
+    rr: A
+    server: 10.11.220.100
+  - hostname: lxc-storage-ubu2404-test-01
+    domain: test.by-research.be
+    rr: AAAA
+    server: fd11:220::100
+  - hostname: lxc-media-rocky9-test-01
+    domain: test.by-research.be
+    rr: A
+    server: 10.11.230.100
+  - hostname: lxc-media-rocky9-test-01
+    domain: test.by-research.be
+    rr: AAAA
+    server: fd11:230::100
+  - hostname: lxc-gaming-rocky9-test-01
+    domain: test.by-research.be
+    rr: A
+    server: 10.11.232.100
+  - hostname: lxc-gaming-rocky9-test-01
+    domain: test.by-research.be
+    rr: AAAA
+    server: fd11:232::100
+  - hostname: lxc-cctv-rocky9-test-01
+    domain: test.by-research.be
+    rr: A
+    server: 10.11.240.100
+  - hostname: lxc-cctv-rocky9-test-01
+    domain: test.by-research.be
+    rr: AAAA
+    server: fd11:240::100
+
+# ---------------------------------------------------------------------------
+# Kea DHCP4 — service + per-VLAN subnets
+# ---------------------------------------------------------------------------
+# Pool .50–.99 per zone. LXCs are static at .100 → no clash.
+# fwrules='0' — we manage all firewall rules in opn_filter_rules.
+opn_kea_dhcp4:
+  enabled: true
+  general:
+    enabled: '1'
+    fwrules: '0'
+    valid_lifetime: '4000'
+    interfaces:        # friendly names → slots via opn_interface_map
+      - mgmt
+      - dmz
+      - svc
+      - vpn
+      - iot
+      - voip
+      - storage
+      - media
+      - gaming
+      - cctv
+  subnets:
+    - subnet: 10.11.201.0/24
+      pools: 10.11.201.50-10.11.201.99
+      description: mgmt DHCPv4 pool
+      option_data:
+        routers: 10.11.201.1
+        domain_name_servers: 10.11.201.1
+        domain_name: test.by-research.be
+      ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
+    - subnet: 10.11.202.0/24
+      pools: 10.11.202.50-10.11.202.99
+      description: dmz DHCPv4 pool
+      option_data:
+        routers: 10.11.202.1
+        domain_name_servers: 10.11.202.1
+        domain_name: test.by-research.be
+      ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
+    - subnet: 10.11.203.0/24
+      pools: 10.11.203.50-10.11.203.99
+      description: svc DHCPv4 pool
+      option_data:
+        routers: 10.11.203.1
+        domain_name_servers: 10.11.203.1
+        domain_name: test.by-research.be
+      ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
+    - subnet: 10.11.204.0/24
+      pools: 10.11.204.50-10.11.204.99
+      description: vpn DHCPv4 pool
+      option_data:
+        routers: 10.11.204.1
+        domain_name_servers: 10.11.204.1
+        domain_name: test.by-research.be
+      ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
+    - subnet: 10.11.210.0/24
+      pools: 10.11.210.50-10.11.210.99
+      description: iot DHCPv4 pool
+      option_data:
+        routers: 10.11.210.1
+        domain_name_servers: 10.11.210.1
+        domain_name: test.by-research.be
+      ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
+    - subnet: 10.11.211.0/24
+      pools: 10.11.211.50-10.11.211.99
+      description: voip DHCPv4 pool
+      option_data:
+        routers: 10.11.211.1
+        domain_name_servers: 10.11.211.1
+        domain_name: test.by-research.be
+      ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
+    - subnet: 10.11.220.0/24
+      pools: 10.11.220.50-10.11.220.99
+      description: storage DHCPv4 pool
+      option_data:
+        routers: 10.11.220.1
+        domain_name_servers: 10.11.220.1
+        domain_name: test.by-research.be
+      ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
+    - subnet: 10.11.230.0/24
+      pools: 10.11.230.50-10.11.230.99
+      description: media DHCPv4 pool
+      option_data:
+        routers: 10.11.230.1
+        domain_name_servers: 10.11.230.1
+        domain_name: test.by-research.be
+      ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
+    - subnet: 10.11.232.0/24
+      pools: 10.11.232.50-10.11.232.99
+      description: gaming DHCPv4 pool
+      option_data:
+        routers: 10.11.232.1
+        domain_name_servers: 10.11.232.1
+        domain_name: test.by-research.be
+      ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
+    - subnet: 10.11.240.0/24
+      pools: 10.11.240.50-10.11.240.99
+      description: cctv DHCPv4 pool
+      option_data:
+        routers: 10.11.240.1
+        domain_name_servers: 10.11.240.1
+        domain_name: test.by-research.be
+      ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
+
+# ---------------------------------------------------------------------------
+# Kea DHCP6 — service + per-VLAN subnet declarations (SLAAC handles assignment)
+# ---------------------------------------------------------------------------
+# subnet+interface only. No stateful pool (LXCs static at ::100; SLAAC for the rest).
+opn_kea_dhcp6:
+  enabled: true
+  general:
+    enabled: '1'
+    fwrules: '0'
+    valid_lifetime: '4000'
+    interfaces:
+      - mgmt
+      - dmz
+      - svc
+      - vpn
+      - iot
+      - voip
+      - storage
+      - media
+      - gaming
+      - cctv
+  subnets:
+    - {subnet: "fd11:201::/64", interface: mgmt,    description: "mgmt IPv6 subnet (SLAAC)",    ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:202::/64", interface: dmz,     description: "dmz IPv6 subnet (SLAAC)",     ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:203::/64", interface: svc,     description: "svc IPv6 subnet (SLAAC)",     ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:204::/64", interface: vpn,     description: "vpn IPv6 subnet (SLAAC)",     ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:210::/64", interface: iot,     description: "iot IPv6 subnet (SLAAC)",     ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:211::/64", interface: voip,    description: "voip IPv6 subnet (SLAAC)",    ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:220::/64", interface: storage, description: "storage IPv6 subnet (SLAAC)", ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:230::/64", interface: media,   description: "media IPv6 subnet (SLAAC)",   ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:232::/64", interface: gaming,  description: "gaming IPv6 subnet (SLAAC)",  ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:240::/64", interface: cctv,    description: "cctv IPv6 subnet (SLAAC)",    ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+
+# ---------------------------------------------------------------------------
+# Dnsmasq — OPNsense 26.1 default DNS/DHCP/RA daemon
+# ---------------------------------------------------------------------------
+# Currently STOPPED on the test FW (one-off via raw API earlier this session
+# to unblock Kea v6 socket bind). This block re-introduces it under proper
+# lib-opnsense managers (epic #65) but keeps enabled: false until we cut
+# over from Kea on a deliberate change-window. See PR comment for the
+# cutover playbook.
+opn_dnsmasq:
+  enabled: false              # flip to true after cutover review
+  settings:
+    enable: '0'               # service master switch — flip with cutover
+    port: '53053'             # leave 53 to Unbound
+    dns_port: '53053'
+    strictbind: '1'            # CRITICAL: bind only to listed interfaces
+    interface: [lan]           # OOB only until cutover
+    dhcp: []
+  hosts: []
+  ranges: []
+  domains: []
+  options: []
+  boots: []
+  tags: []
+  # service_state: stopped     # uncomment to enforce stopped (current state)
+
+# ---------------------------------------------------------------------------
+# radvd — IPv6 Router Advertisements per zone
+# ---------------------------------------------------------------------------
+# Required for dynamic IPv6 clients to learn the FW as default gateway and
+# get a SLAAC prefix. Kea v6 does NOT emit RAs (per
+# docs.opnsense.org/manual/kea.html), so this fills the gap.
+#
+# All entries are enabled: '0' until validated — the radvd daemon will not
+# broadcast for disabled entries. Flip per-zone when ready.
+opn_radvd:
+  enabled: false              # flip to true after cutover review
+  entries:
+    - {interface: mgmt,    Base6Interface: mgmt,    mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: dmz,     Base6Interface: dmz,     mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: svc,     Base6Interface: svc,     mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: vpn,     Base6Interface: vpn,     mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: iot,     Base6Interface: iot,     mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: voip,    Base6Interface: voip,    mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: storage, Base6Interface: storage, mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: media,   Base6Interface: media,   mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: gaming,  Base6Interface: gaming,  mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: cctv,    Base6Interface: cctv,    mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+  # service_state: stopped     # uncomment to start the daemon
