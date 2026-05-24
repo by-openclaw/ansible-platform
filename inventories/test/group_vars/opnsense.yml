@@ -1923,16 +1923,20 @@ opn_dnsmasq:
 # All entries are enabled: '0' until validated — the radvd daemon will not
 # broadcast for disabled entries. Flip per-zone when ready.
 opn_radvd:
-  enabled: false              # flip to true after cutover review
+  enabled: true               # cutover step 1: enable radvd entries (Kea v6 does NOT emit RAs)
+  service_state: running      # start the radvd daemon after ensuring entries
+  # Base6Interface: empty for static prefix on this interface (stateless mode).
+  # Only set Base6Interface to a different slot when tracking a prefix delegated
+  # from upstream (e.g. WAN); OPNsense rejects Base6Interface == interface.
   entries:
-    - {interface: mgmt,    Base6Interface: mgmt,    mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: dmz,     Base6Interface: dmz,     mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: svc,     Base6Interface: svc,     mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: vpn,     Base6Interface: vpn,     mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: iot,     Base6Interface: iot,     mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: voip,    Base6Interface: voip,    mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: storage, Base6Interface: storage, mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: media,   Base6Interface: media,   mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: gaming,  Base6Interface: gaming,  mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: cctv,    Base6Interface: cctv,    mode: stateless, enabled: '0', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: mgmt,    Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: dmz,     Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: svc,     Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: vpn,     Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: iot,     Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: voip,    Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: storage, Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: media,   Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: gaming,  Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: cctv,    Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
   # service_state: stopped     # uncomment to start the daemon

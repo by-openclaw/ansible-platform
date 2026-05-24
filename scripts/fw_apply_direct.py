@@ -162,6 +162,24 @@ def normalize_kea_subnet(payload: dict[str, Any], iface_map: dict[str, str]) -> 
     return out
 
 
+def normalize_radvd(payload: dict[str, Any], iface_map: dict[str, str]) -> dict[str, Any]:
+    """radvd entry `interface` + `Base6Interface` are friendly names in the catalog
+    (mgmt/dmz/...) — translate to OPNsense slot ids (opt2/opt3/...).
+
+    OPNsense rejects `Base6Interface` equal to `interface` ("Constructor cannot be
+    the same as interface"). For stateless mode with a static IPv6 prefix on the
+    LAN/OPT, `Base6Interface` should be empty; only set it when tracking a prefix
+    delegated from a different upstream interface.
+    """
+    out = dict(payload)
+    if "interface" in out and out["interface"] in iface_map:
+        out["interface"] = iface_map[out["interface"]]
+    if out.get("Base6Interface"):
+        if out["Base6Interface"] in iface_map:
+            out["Base6Interface"] = iface_map[out["Base6Interface"]]
+    return out
+
+
 async def apply_kea_general(
     client: OpnsenseClient,
     endpoint: str,
@@ -253,6 +271,8 @@ async def apply_section(
                 payload = normalize_snat(payload, iface_map)
             elif label in ("KEA4", "KEA6"):
                 payload = normalize_kea_subnet(payload, iface_map)
+            elif label == "RADVD":
+                payload = normalize_radvd(payload, iface_map)
         ident = payload.get("name") or payload.get("description") or "<unnamed>"
         start = time.monotonic()
         try:
