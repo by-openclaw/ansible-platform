@@ -1828,7 +1828,20 @@ opn_dnsmasq:
     - {interface: opt9,  subnet_mask: '255.255.255.0', start_addr: '10.11.230.50', end_addr: '10.11.230.99', lease_time: '7200',   description: 'media DHCPv4 pool',   ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
     - {interface: opt10, subnet_mask: '255.255.255.0', start_addr: '10.11.232.50', end_addr: '10.11.232.99', lease_time: '7200',  description: 'gaming DHCPv4 pool',  ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
     - {interface: opt11, subnet_mask: '255.255.255.0', start_addr: '10.11.240.50', end_addr: '10.11.240.99', lease_time: '7200',    description: 'cctv DHCPv4 pool',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
-  # 20 DHCPv4 options — per-VLAN routers (opt 3) + dns-servers (opt 6) pointing at FW gw .1
+    # 10 DHCPv6 stateful pools — small range above the SLAAC static .100 so dynamic v6 clients also work.
+    # `constructor` = interface providing the IPv6 prefix (same opt as the range's interface, since we use static GUA per VLAN).
+    # Static LXCs at fdXX:XXX::100 are outside this pool — no conflict.
+    - {interface: opt2,  constructor: opt2,  prefix_len: '64', start_addr: '::250', end_addr: '::299', lease_time: '7200', description: 'mgmt DHCPv6 pool',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt3,  constructor: opt3,  prefix_len: '64', start_addr: '::250', end_addr: '::299', lease_time: '7200', description: 'dmz DHCPv6 pool',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt4,  constructor: opt4,  prefix_len: '64', start_addr: '::250', end_addr: '::299', lease_time: '7200', description: 'svc DHCPv6 pool',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt5,  constructor: opt5,  prefix_len: '64', start_addr: '::250', end_addr: '::299', lease_time: '7200', description: 'vpn DHCPv6 pool',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt6,  constructor: opt6,  prefix_len: '64', start_addr: '::250', end_addr: '::299', lease_time: '7200', description: 'iot DHCPv6 pool',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt7,  constructor: opt7,  prefix_len: '64', start_addr: '::250', end_addr: '::299', lease_time: '7200', description: 'voip DHCPv6 pool',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt8,  constructor: opt8,  prefix_len: '64', start_addr: '::250', end_addr: '::299', lease_time: '7200', description: 'storage DHCPv6 pool', ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt9,  constructor: opt9,  prefix_len: '64', start_addr: '::250', end_addr: '::299', lease_time: '7200', description: 'media DHCPv6 pool',   ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt10, constructor: opt10, prefix_len: '64', start_addr: '::250', end_addr: '::299', lease_time: '7200', description: 'gaming DHCPv6 pool',  ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt11, constructor: opt11, prefix_len: '64', start_addr: '::250', end_addr: '::299', lease_time: '7200', description: 'cctv DHCPv6 pool',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+  # 20 DHCPv4 options + 10 DHCPv6 options (DNS-server only — clients use the FW's IPv6 GUA as DNS)
   options:
     - {interface: opt2,  option: '3', value: '10.11.201.1', description: 'mgmt gateway',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
     - {interface: opt2,  option: '6', value: '10.11.201.1', description: 'mgmt DNS',        ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
@@ -1850,6 +1863,17 @@ opn_dnsmasq:
     - {interface: opt10, option: '6', value: '10.11.232.1', description: 'gaming DNS',      ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
     - {interface: opt11, option: '3', value: '10.11.240.1', description: 'cctv gateway',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
     - {interface: opt11, option: '6', value: '10.11.240.1', description: 'cctv DNS',        ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    # DHCPv6 DNS-server option (option6 23) — value is the FW's IPv6 GUA per VLAN.
+    - {interface: opt2,  option6: '23', value: '[fd11:201::1]', description: 'mgmt v6 DNS',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt3,  option6: '23', value: '[fd11:202::1]', description: 'dmz v6 DNS',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt4,  option6: '23', value: '[fd11:203::1]', description: 'svc v6 DNS',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt5,  option6: '23', value: '[fd11:204::1]', description: 'vpn v6 DNS',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt6,  option6: '23', value: '[fd11:210::1]', description: 'iot v6 DNS',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt7,  option6: '23', value: '[fd11:211::1]', description: 'voip v6 DNS',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt8,  option6: '23', value: '[fd11:220::1]', description: 'storage v6 DNS', ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt9,  option6: '23', value: '[fd11:230::1]', description: 'media v6 DNS',   ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt10, option6: '23', value: '[fd11:232::1]', description: 'gaming v6 DNS',  ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt11, option6: '23', value: '[fd11:240::1]', description: 'cctv v6 DNS',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
   hosts: []
   domains: []
   boots: []
@@ -1872,14 +1896,14 @@ opn_radvd:
   # Only set Base6Interface to a different slot when tracking a prefix delegated
   # from upstream (e.g. WAN); OPNsense rejects Base6Interface == interface.
   entries:
-    - {interface: mgmt,    Base6Interface: '', mode: unmanaged, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: dmz,     Base6Interface: '', mode: unmanaged, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: svc,     Base6Interface: '', mode: unmanaged, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: vpn,     Base6Interface: '', mode: unmanaged, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: iot,     Base6Interface: '', mode: unmanaged, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: voip,    Base6Interface: '', mode: unmanaged, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: storage, Base6Interface: '', mode: unmanaged, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: media,   Base6Interface: '', mode: unmanaged, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: gaming,  Base6Interface: '', mode: unmanaged, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
-    - {interface: cctv,    Base6Interface: '', mode: unmanaged, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: mgmt,    Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: dmz,     Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: svc,     Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: vpn,     Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: iot,     Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: voip,    Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: storage, Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: media,   Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: gaming,  Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
+    - {interface: cctv,    Base6Interface: '', mode: stateless, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
   # service_state: stopped     # uncomment to start the daemon
