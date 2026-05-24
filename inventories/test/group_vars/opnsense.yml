@@ -1757,9 +1757,9 @@ opn_unbound:
 # Pool .50–.99 per zone. LXCs are static at .100 → no clash.
 # fwrules='0' — we manage all firewall rules in opn_filter_rules.
 opn_kea_dhcp4:
-  enabled: true
+  enabled: true               # keep dispatching so Kea v4 gets disabled deterministically
   general:
-    enabled: '1'
+    enabled: '0'              # cutover step 2: Kea v4 DISABLED, Dnsmasq takes over DHCPv4
     fwrules: '0'
     valid_lifetime: '4000'
     interfaces:        # friendly names → slots via opn_interface_map
@@ -1860,9 +1860,9 @@ opn_kea_dhcp4:
 # ---------------------------------------------------------------------------
 # subnet+interface only. No stateful pool (LXCs static at ::100; SLAAC for the rest).
 opn_kea_dhcp6:
-  enabled: true
+  enabled: true               # keep dispatching so Kea v6 gets disabled deterministically
   general:
-    enabled: '1'
+    enabled: '0'              # cutover step 2: Kea v6 DISABLED, radvd + SLAAC handle v6
     fwrules: '0'
     valid_lifetime: '4000'
     interfaces:
@@ -1897,21 +1897,54 @@ opn_kea_dhcp6:
 # over from Kea on a deliberate change-window. See PR comment for the
 # cutover playbook.
 opn_dnsmasq:
-  enabled: false              # flip to true after cutover review
+  enabled: true                # cutover step 2: Dnsmasq replaces Kea as DHCPv4 provider
   settings:
-    enable: '0'               # service master switch — flip with cutover
-    port: '53053'             # leave 53 to Unbound
+    enable: '1'                # service master switch
+    port: '53053'              # leave 53 to Unbound
     dns_port: '53053'
     strictbind: '1'            # CRITICAL: bind only to listed interfaces
-    interface: [lan]           # OOB only until cutover
-    dhcp: []
+    # Bind on the 10 test VLANs (slot ids, not friendly names — settings/set is not iface-mapped).
+    # Do NOT include `lan` here; Unbound owns port 53 on LAN/OOB.
+    interface: [opt2, opt3, opt4, opt5, opt6, opt7, opt8, opt9, opt10, opt11]
+  # 10 DHCPv4 pools (mirror of Kea v4 .50-.99 per VLAN). interface uses slot ids.
+  ranges:
+    - {interface: opt2,  subnet_mask: '255.255.255.0', start_addr: '10.11.201.50', end_addr: '10.11.201.99', lease_time: '7200',    description: 'mgmt DHCPv4 pool',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt3,  subnet_mask: '255.255.255.0', start_addr: '10.11.202.50', end_addr: '10.11.202.99', lease_time: '7200',     description: 'dmz DHCPv4 pool',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt4,  subnet_mask: '255.255.255.0', start_addr: '10.11.203.50', end_addr: '10.11.203.99', lease_time: '7200',     description: 'svc DHCPv4 pool',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt5,  subnet_mask: '255.255.255.0', start_addr: '10.11.204.50', end_addr: '10.11.204.99', lease_time: '7200',     description: 'vpn DHCPv4 pool',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt6,  subnet_mask: '255.255.255.0', start_addr: '10.11.210.50', end_addr: '10.11.210.99', lease_time: '7200',     description: 'iot DHCPv4 pool',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt7,  subnet_mask: '255.255.255.0', start_addr: '10.11.211.50', end_addr: '10.11.211.99', lease_time: '7200',    description: 'voip DHCPv4 pool',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt8,  subnet_mask: '255.255.255.0', start_addr: '10.11.220.50', end_addr: '10.11.220.99', lease_time: '7200', description: 'storage DHCPv4 pool', ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt9,  subnet_mask: '255.255.255.0', start_addr: '10.11.230.50', end_addr: '10.11.230.99', lease_time: '7200',   description: 'media DHCPv4 pool',   ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt10, subnet_mask: '255.255.255.0', start_addr: '10.11.232.50', end_addr: '10.11.232.99', lease_time: '7200',  description: 'gaming DHCPv4 pool',  ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+    - {interface: opt11, subnet_mask: '255.255.255.0', start_addr: '10.11.240.50', end_addr: '10.11.240.99', lease_time: '7200',    description: 'cctv DHCPv4 pool',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqRangeManager', ansible_module: 'opn_dnsmasq_range'}}
+  # 20 DHCPv4 options — per-VLAN routers (opt 3) + dns-servers (opt 6) pointing at FW gw .1
+  options:
+    - {interface: opt2,  option: '3', value: '10.11.201.1', description: 'mgmt gateway',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt2,  option: '6', value: '10.11.201.1', description: 'mgmt DNS',        ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt3,  option: '3', value: '10.11.202.1', description: 'dmz gateway',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt3,  option: '6', value: '10.11.202.1', description: 'dmz DNS',         ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt4,  option: '3', value: '10.11.203.1', description: 'svc gateway',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt4,  option: '6', value: '10.11.203.1', description: 'svc DNS',         ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt5,  option: '3', value: '10.11.204.1', description: 'vpn gateway',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt5,  option: '6', value: '10.11.204.1', description: 'vpn DNS',         ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt6,  option: '3', value: '10.11.210.1', description: 'iot gateway',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt6,  option: '6', value: '10.11.210.1', description: 'iot DNS',         ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt7,  option: '3', value: '10.11.211.1', description: 'voip gateway',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt7,  option: '6', value: '10.11.211.1', description: 'voip DNS',        ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt8,  option: '3', value: '10.11.220.1', description: 'storage gateway', ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt8,  option: '6', value: '10.11.220.1', description: 'storage DNS',     ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt9,  option: '3', value: '10.11.230.1', description: 'media gateway',   ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt9,  option: '6', value: '10.11.230.1', description: 'media DNS',       ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt10, option: '3', value: '10.11.232.1', description: 'gaming gateway',  ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt10, option: '6', value: '10.11.232.1', description: 'gaming DNS',      ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt11, option: '3', value: '10.11.240.1', description: 'cctv gateway',    ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
+    - {interface: opt11, option: '6', value: '10.11.240.1', description: 'cctv DNS',        ref: {adr: 'infra/0004', lib_manager: 'DnsmasqOptionManager', ansible_module: 'opn_dnsmasq_option'}}
   hosts: []
-  ranges: []
   domains: []
-  options: []
   boots: []
   tags: []
-  # service_state: stopped     # uncomment to enforce stopped (current state)
+  service_state: running        # bring Dnsmasq up after settings+ranges+options are in place
 
 # ---------------------------------------------------------------------------
 # radvd — IPv6 Router Advertisements per zone
