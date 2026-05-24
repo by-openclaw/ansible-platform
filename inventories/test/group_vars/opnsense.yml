@@ -550,6 +550,49 @@ opn_aliases:
     adr: naming/0003#§2-group-aliases-v6
     lib_manager: FwAliasManager
     ansible_module: by_systems.opnsense.opnsense_fw_alias
+# ---------------------------------------------------------------------------
+# FW gateway IP aliases — every internal VLAN's .1 host (v4) and ::1 (v6).
+# Used as the ALLOW destination + INVERTED block destination for DNS-enforcement
+# rules (force every client to use the FW's Unbound, which forwards via DoT).
+# ---------------------------------------------------------------------------
+- name: host4_fw_gateways
+  type: host
+  content:
+  - 10.11.201.1
+  - 10.11.202.1
+  - 10.11.203.1
+  - 10.11.204.1
+  - 10.11.210.1
+  - 10.11.211.1
+  - 10.11.220.1
+  - 10.11.230.1
+  - 10.11.232.1
+  - 10.11.240.1
+  description: 'FW IPv4 gateway IPs on the 10 internal VLANs'
+  state: present
+  ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}
+- name: host6_fw_gateways
+  type: host
+  content:
+  - 'fd11:201::1'
+  - 'fd11:202::1'
+  - 'fd11:203::1'
+  - 'fd11:204::1'
+  - 'fd11:210::1'
+  - 'fd11:211::1'
+  - 'fd11:220::1'
+  - 'fd11:230::1'
+  - 'fd11:232::1'
+  - 'fd11:240::1'
+  description: 'FW IPv6 gateway IPs on the 10 internal VLANs'
+  state: present
+  ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}
+- name: port_dot
+  type: port
+  content: '853'
+  description: 'DoT port (TLS DNS)'
+  state: present
+  ref: {adr: 'naming/0003#§2-port-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}
 opn_filter_rules:
 - description: PASS MGMT→FW UI
   action: pass
@@ -1671,6 +1714,73 @@ opn_filter_rules:
     adr: infra/0004#§1-row-cctv-air-gapped-v6
     lib_manager: FwFilterRuleManager
     ansible_module: by_systems.opnsense.opnsense_fw_filter
+# ---------------------------------------------------------------------------
+# DNS enforcement — force all clients through FW Unbound (which DoT-forwards
+# to Cloudflare + Quad9). Block any direct DNS (53) or DoT (853) leak from
+# internal VLANs to non-FW destinations.
+#
+# Implementation: 4 floating-style rules (CSV interface list of all 10 zones)
+# with `destination_not: '1'` so they fire when dst is NOT the FW gateway.
+# `quick: 1` ensures these block-first matches stop further evaluation.
+# disabled-by-default per `feedback_disabled_rules_for_testing` — flip via
+# `firewall/filter/toggleRule/{uuid}` per zone (or all at once) after dry-run.
+# ---------------------------------------------------------------------------
+- description: 'BLOCK internal→non-FW port 53 (force plain DNS through Unbound) v4'
+  action: block
+  interface: 'opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11'
+  direction: in
+  ipprotocol: inet
+  protocol: TCP/UDP
+  source_net: grp_net4_internal
+  destination_net: host4_fw_gateways
+  destination_not: '1'
+  destination_port: port_dns
+  quick: '1'
+  enabled: '1'
+  state: present
+  ref: {adr: 'security/0001#dns-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
+- description: 'BLOCK internal→non-FW port 53 (force plain DNS through Unbound) v6'
+  action: block
+  interface: 'opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11'
+  direction: in
+  ipprotocol: inet6
+  protocol: TCP/UDP
+  source_net: grp_net6_internal
+  destination_net: host6_fw_gateways
+  destination_not: '1'
+  destination_port: port_dns
+  quick: '1'
+  enabled: '1'
+  state: present
+  ref: {adr: 'security/0001#dns-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
+- description: 'BLOCK internal→non-FW port 853 (force DoT through Unbound) v4'
+  action: block
+  interface: 'opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11'
+  direction: in
+  ipprotocol: inet
+  protocol: TCP/UDP
+  source_net: grp_net4_internal
+  destination_net: host4_fw_gateways
+  destination_not: '1'
+  destination_port: port_dot
+  quick: '1'
+  enabled: '1'
+  state: present
+  ref: {adr: 'security/0001#dns-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
+- description: 'BLOCK internal→non-FW port 853 (force DoT through Unbound) v6'
+  action: block
+  interface: 'opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11'
+  direction: in
+  ipprotocol: inet6
+  protocol: TCP/UDP
+  source_net: grp_net6_internal
+  destination_net: host6_fw_gateways
+  destination_not: '1'
+  destination_port: port_dot
+  quick: '1'
+  enabled: '1'
+  state: present
+  ref: {adr: 'security/0001#dns-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
 opn_snat_rules: []
 opn_dnat_rules: []
 opn_unbound:
