@@ -31,12 +31,18 @@ jobs:
             fi
           done
 
-          # Check for env: prod in non-prod tier contexts
+          # Check for env: prod in non-prod tier contexts.
+          # Node-named dirs (folder = node, not tier — per ansible-platform CLAUDE.md) are exempt:
+          # their `env:` value reflects the workload tier of the hosts on that node, which may be prod.
+          NODE_DIRS="poc"
           for f in $(find inventories -path '*/group_vars/*.yml' -o -path '*/host_vars/*.yml' 2>/dev/null); do
-            TIER_DIR=$(echo "$f" | grep -oP 'inventories/\K[^/]+')
-            if [ "$TIER_DIR" != "prod" ] && [ "$TIER_DIR" != "acc" ]; then
+            DIR=$(echo "$f" | grep -oP 'inventories/\K[^/]+')
+            if echo " $NODE_DIRS " | grep -q " $DIR "; then
+              continue
+            fi
+            if [ "$DIR" != "prod" ] && [ "$DIR" != "acc" ]; then
               if grep -qE '^\s*env:\s*prod\s*$' "$f"; then
-                echo "::error file=$f::env: prod in non-prod inventory ($TIER_DIR) — ADR-0010 violation"
+                echo "::error file=$f::env: prod in non-prod inventory ($DIR) — ADR-0010 violation"
                 EXIT_CODE=1
               fi
             fi
