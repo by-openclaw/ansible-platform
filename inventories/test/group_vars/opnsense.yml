@@ -1669,6 +1669,23 @@ opn_unbound:
   listen_acl_networks:
   - grp_net4_internal
   - grp_net6_internal
+  # DNS-over-TLS upstreams — encrypted resolution only.
+  # Cloudflare (1.1.1.1) + Quad9 (9.9.9.9), each with v4 + v6, all on port 853.
+  # `verify` is the TLS hostname presented in the server's certificate (SNI / SubjectCN).
+  # Pairing two providers gives RTBF redundancy + avoids single-provider tracking.
+  # NOTE: forcing Unbound into "forward-only" mode (so it NEVER recurses directly,
+  # only via these DoT servers) requires the UbSettingsManager which is currently
+  # ABSENT — tracked in lib-opnsense#75. Set manually via Unbound advanced settings
+  # until the manager ships, OR live with hybrid resolution for now.
+  dot_servers:
+    - {server: '1.1.1.1',                port: '853', type: 'dot', verify: 'cloudflare-dns.com', enabled: '1', description: 'Cloudflare DoT v4 primary',   ref: {adr: 'security/0004', lib_manager: 'UbDotManager', ansible_module: 'opn_unbound_dot'}}
+    - {server: '1.0.0.1',                port: '853', type: 'dot', verify: 'cloudflare-dns.com', enabled: '1', description: 'Cloudflare DoT v4 secondary', ref: {adr: 'security/0004', lib_manager: 'UbDotManager', ansible_module: 'opn_unbound_dot'}}
+    - {server: '2606:4700:4700::1111',   port: '853', type: 'dot', verify: 'cloudflare-dns.com', enabled: '1', description: 'Cloudflare DoT v6 primary',   ref: {adr: 'security/0004', lib_manager: 'UbDotManager', ansible_module: 'opn_unbound_dot'}}
+    - {server: '2606:4700:4700::1001',   port: '853', type: 'dot', verify: 'cloudflare-dns.com', enabled: '1', description: 'Cloudflare DoT v6 secondary', ref: {adr: 'security/0004', lib_manager: 'UbDotManager', ansible_module: 'opn_unbound_dot'}}
+    - {server: '9.9.9.9',                port: '853', type: 'dot', verify: 'dns.quad9.net',      enabled: '1', description: 'Quad9 DoT v4 primary',        ref: {adr: 'security/0004', lib_manager: 'UbDotManager', ansible_module: 'opn_unbound_dot'}}
+    - {server: '149.112.112.112',        port: '853', type: 'dot', verify: 'dns.quad9.net',      enabled: '1', description: 'Quad9 DoT v4 secondary',      ref: {adr: 'security/0004', lib_manager: 'UbDotManager', ansible_module: 'opn_unbound_dot'}}
+    - {server: '2620:fe::fe',            port: '853', type: 'dot', verify: 'dns.quad9.net',      enabled: '1', description: 'Quad9 DoT v6 primary',        ref: {adr: 'security/0004', lib_manager: 'UbDotManager', ansible_module: 'opn_unbound_dot'}}
+    - {server: '2620:fe::9',             port: '853', type: 'dot', verify: 'dns.quad9.net',      enabled: '1', description: 'Quad9 DoT v6 secondary',      ref: {adr: 'security/0004', lib_manager: 'UbDotManager', ansible_module: 'opn_unbound_dot'}}
   host_overrides:
   - hostname: lxc-mgmt-deb13-test-01
     domain: test.by-research.be

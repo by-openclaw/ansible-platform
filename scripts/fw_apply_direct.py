@@ -41,6 +41,7 @@ from opnsense.managers.firewall.filter import FwFilterManager
 from opnsense.managers.firewall.source_nat import FwSourceNatManager
 from opnsense.managers.dns.ub_host_override import UbHostOverrideManager
 from opnsense.managers.dns.ub_forward import UbForwardManager
+from opnsense.managers.dns.ub_dot import UbDotManager
 from opnsense.managers.dhcp.kea4_subnet import Kea4SubnetManager
 from opnsense.managers.dhcp.kea6_subnet import Kea6SubnetManager
 from opnsense.managers.services.dnsmasq_boot import DnsmasqBootManager
@@ -368,8 +369,10 @@ async def main_async(args: argparse.Namespace) -> int:
         if unbound.get("enabled"):
             host_overrides = [{"state": "present", **{k: v for k, v in h.items() if k != "ref"}} for h in unbound.get("host_overrides", [])]
             forwarders     = [{"state": "present", **{k: v for k, v in f.items() if k != "ref"}} for f in unbound.get("forwarders", [])]
-            await apply_section(UbHostOverrideManager, client, host_overrides, "DNS_HO", args.check, results)
-            await apply_section(UbForwardManager,      client, forwarders,     "DNS_FW", args.check, results)
+            dot_servers    = [{"state": "present", **{k: v for k, v in d.items() if k != "ref"}} for d in unbound.get("dot_servers", [])]
+            await apply_section(UbHostOverrideManager, client, host_overrides, "DNS_HO",  args.check, results)
+            await apply_section(UbForwardManager,      client, forwarders,     "DNS_FW",  args.check, results)
+            await apply_section(UbDotManager,          client, dot_servers,    "DNS_DOT", args.check, results)
 
         # Kea DHCPv4 — general settings (enable + interfaces) then subnets
         kea4 = catalog.get("opn_kea_dhcp4", {})
