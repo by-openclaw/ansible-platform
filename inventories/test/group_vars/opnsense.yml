@@ -1870,6 +1870,18 @@ opn_unbound:
     domain: test.by-research.be
     rr: AAAA
     server: fd11:40::100
+  # Query Forwarding — chain step: Unbound → dnscrypt-proxy on loopback.
+  # Empty domain = catch-all (root zone). Matches recipe:
+  # https://forums.serverbuilds.net/t/guide-adguard-home-unbound-dnscrypt-under-opnsense-part-2/13271
+  # Pair with general.forwarding.enabled='1' (applied via fw_chain_phase1_apply.py
+  # until UbSettingsManager lands — see lib-opnsense#75).
+  forwarders:
+    - {domain: '', server: '127.0.0.1', port: '53531', type: forward, enabled: '1',
+       description: 'Unbound → dnscrypt-proxy loopback v4',
+       ref: {adr: "infra/0004", lib_manager: "UbForwardManager", ansible_module: "opn_ub_forward"}}
+    - {domain: '', server: '::1',       port: '53531', type: forward, enabled: '1',
+       description: 'Unbound → dnscrypt-proxy loopback v6',
+       ref: {adr: "infra/0004", lib_manager: "UbForwardManager", ansible_module: "opn_ub_forward"}}
 
 # ---------------------------------------------------------------------------
 # Kea DHCP4 — service + per-VLAN subnets
@@ -2060,3 +2072,60 @@ opn_radvd:
     - {interface: gaming,  Base6Interface: '', mode: unmanaged, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
     - {interface: cctv,    Base6Interface: '', mode: unmanaged, enabled: '1', ref: {adr: "infra/0004", lib_manager: "RadvdEntryManager", ansible_module: "opn_radvd_entry"}}
   # service_state: stopped     # uncomment to start the daemon
+
+# ---------------------------------------------------------------------------
+# dnscrypt-proxy — encrypted upstream for the DNS chain
+# ---------------------------------------------------------------------------
+# Recipe: https://forums.serverbuilds.net/t/guide-adguard-home-unbound-dnscrypt-under-opnsense-part-2/13271
+# Chain (target):  clients → AdGuard:53 → Unbound:53530 → dnscrypt-proxy:53531 → upstream (DoH/DoQ/DNSCrypt)
+# Phase 1 (this PR): only Unbound:53 → dnscrypt-proxy:53531. AdGuard LXC is Phase 2.
+#
+# LIB GAP: No DnscryptProxyManager exists yet — see lib-opnsense#NN (to be filed
+# alongside this PR). Until that lands, settings are applied via the one-off
+# scripts/fw_chain_phase1_apply.py which POSTs to /api/dnscryptproxy/general/set
+# and /api/dnscryptproxy/service/reconfigure directly. This catalog section is
+# the **target shape** for the future manager — when it exists, fw_apply_direct.py
+# dispatches this block and the one-off script can be deleted.
+opn_dnscrypt_proxy:
+  enabled: true
+  service_state: running
+  general:
+    enabled: '1'
+    listen_addresses:                        # loopback only (Unbound forwards here)
+      - '127.0.0.1:53531'
+      - '[::1]:53531'
+    ipv4_servers: '1'
+    ipv6_servers: '1'                        # was '0' default; we want dual-stack
+    dnscrypt_servers: '1'
+    doh_servers: '1'
+    odoh_servers: '0'                        # ODoH adds latency; off until we need it
+    require_dnssec: '1'                      # compliance: only DNSSEC-validating resolvers
+    require_nolog: '1'
+    require_nofilter: '0'                    # allow Quad9-with-filter (malware blocking)
+    force_tcp: '0'
+    cache: '1'                               # local resolver cache (separate from Unbound)
+    cache_size: '4096'
+    cache_min_ttl: '600'
+    cache_max_ttl: '86400'
+    cache_neg_min_ttl: '60'
+    cache_neg_max_ttl: '600'
+    fallback_resolver: '9.9.9.9:53'          # only used to bootstrap cert fetch
+    timeout: '2500'
+    keepalive: '30'
+    cert_refresh_delay: '240'
+    query_logs: '1'                          # NIS2/ISO27001 audit
+    block_ipv6: '0'
+  # Server names from the public-resolvers list (Cloudflare + Quad9 only — matches
+  # the DoT entries we removed in Phase 1; Quad9 picks include both DoH and DNSCrypt
+  # variants, filter-pri = malware blocking, primary).
+  serverlist:
+    - cloudflare
+    - cloudflare-ipv6
+    - quad9-doh-ip4-port443-filter-pri
+    - quad9-doh-ip6-port443-filter-pri
+    - quad9-dnscrypt-ip4-filter-pri
+    - quad9-dnscrypt-ip6-filter-pri
+  ref:
+    adr: "infra/0004#dns-chain"
+    lib_manager: "DnscryptProxyManager (TODO — lib-opnsense#NN)"
+    ansible_module: "opn_dnscrypt_proxy_settings"
