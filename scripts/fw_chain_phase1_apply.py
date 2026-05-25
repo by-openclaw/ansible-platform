@@ -176,18 +176,23 @@ def step3_dnscrypt_start_verify(s, apply):
 
 
 def step4_unbound_forwarding_enable(s, apply):
-    header("Step 4 — set unbound.forwarding.enabled=1")
+    header("Step 4 — ensure unbound.forwarding.enabled=0 (counter-intuitive but correct)")
+    # WHY 0: On OPNsense, `forwarding.enabled=1` makes Unbound generate a
+    # forward-zone that points at `<system><dnsserver>` (the WAN gateway plain DNS),
+    # and IGNORES the catalog's forward entries. With `enabled=0`, catch-all
+    # forward entries (domain='') become a forward-zone "." — which is what we want.
+    # Verified on vm-opns-test-01 2026-05-25 via `dumpInfra`. See memory:
+    # lib-opnsense/reference_unbound_forwarding_toggle.
     r = fw_get(s, "/unbound/settings/get").json()["unbound"]
     cur = r.get("forwarding", {}).get("enabled")
     print(f"  current: forwarding.enabled = {cur!r}")
-    print(f"  target:  forwarding.enabled = '1'")
-    if cur == "1":
-        print("  [NOOP] already enabled")
+    print(f"  target:  forwarding.enabled = '0' (chain works via catch-all forward-zone, not generic forwarding)")
+    if cur == "0":
+        print("  [NOOP] already disabled")
         return
-    if not gate("POST /unbound/settings/set with forwarding.enabled=1", apply):
+    if not gate("POST /unbound/settings/set with forwarding.enabled=0", apply):
         return
-    # Per OPNsense generic settings model: POST the full forwarding subtree
-    body = {"unbound": {"forwarding": {"enabled": "1"}}}
+    body = {"unbound": {"forwarding": {"enabled": "0"}}}
     r2 = fw_post(s, "/unbound/settings/set", body)
     print(f"  set → HTTP {r2.status_code}: {r2.text[:300]}")
 

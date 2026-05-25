@@ -1871,10 +1871,14 @@ opn_unbound:
     rr: AAAA
     server: fd11:40::100
   # Query Forwarding — chain step: Unbound → dnscrypt-proxy on loopback.
-  # Empty domain = catch-all (root zone). Matches recipe:
-  # https://forums.serverbuilds.net/t/guide-adguard-home-unbound-dnscrypt-under-opnsense-part-2/13271
-  # Pair with general.forwarding.enabled='1' (applied via fw_chain_phase1_apply.py
-  # until UbSettingsManager lands — see lib-opnsense#75).
+  # Empty domain = catch-all → Unbound creates a `forward-zone "."` from these entries.
+  #
+  # CRITICAL: keep `unbound.forwarding.enabled=0`. Counter-intuitive but verified on
+  # vm-opns-test-01 2026-05-25: with `enabled=1` OPNsense generates a forward-zone
+  # that points at `<system><dnsserver>` (10.6.224.1 plain) and IGNORES these
+  # entries — caught via `dumpInfra` showing 10.6.224.1@53 not 127.0.0.1@53531.
+  # See memory: lib-opnsense/reference_unbound_forwarding_toggle.
+  # The serverbuilds.net recipe's "enable Query Forwarding" is misleading for OPNsense.
   forwarders:
     - {domain: '', server: '127.0.0.1', port: '53531', type: forward, enabled: '1',
        description: 'Unbound → dnscrypt-proxy loopback v4',
