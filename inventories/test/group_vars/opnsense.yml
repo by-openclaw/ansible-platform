@@ -8,6 +8,16 @@ opnsense_port: '{{ opn_port }}'
 opnsense_verify_ssl: '{{ opn_verify_ssl }}'
 opnsense_api_key: '{{ opn_key }}'
 opnsense_api_secret: '{{ opn_secret }}'
+# Interface → OPNsense opt-slot map. MUST match the live FW assignment produced
+# by recreate-and-seed.py + the complete-config seed (config.xml from the
+# pre-reseed live state, addressing-rewritten to ADR). That layout is opt2–opt12
+# for the 10 internal VLANs, opt1 for the LAN_TRUNK, lan for OOB_MGMT, wan for
+# pppoe0. Verified live via /api/interfaces/overview/interfacesInfo on
+# vm-opns-test-01 (vmid 199) on 2026-05-31.
+#
+# NOTE: the bare build-seed.py path (interfaces-only baseline.xml) produces
+# opt4–opt13 instead because it numbers VLANs after lan/trunk/wan/wan2.
+# If you ever reseed from that bare baseline, this map must be shifted -2.
 opn_interface_map:
   mgmt: opt2
   dmz: opt3
@@ -19,7 +29,7 @@ opn_interface_map:
   media: opt9
   gaming: opt10
   cctv: opt11
-  wan: opt12
+  wan: wan
   lan: lan
 opn_ids:
   enabled: true
@@ -45,7 +55,7 @@ opn_mdns:
 opn_aliases:
 - name: net4_mgmt
   type: network
-  content: 10.11.201.0/24
+  content: 10.11.1.0/24
   description: MGMT zone — platform admin, monitoring, Ansible/Terraform clients
   state: present
   ref:
@@ -54,7 +64,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net4_dmz
   type: network
-  content: 10.11.202.0/24
+  content: 10.11.2.0/24
   description: DMZ zone — public-facing services
   state: present
   ref:
@@ -63,7 +73,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net4_svc
   type: network
-  content: 10.11.203.0/24
+  content: 10.11.3.0/24
   description: SVC zone — internal platform services
   state: present
   ref:
@@ -72,7 +82,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net4_vpn
   type: network
-  content: 10.11.204.0/24
+  content: 10.11.4.0/24
   description: VPN zone — WireGuard / OpenVPN / IPsec peers
   state: present
   ref:
@@ -81,7 +91,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net4_iot
   type: network
-  content: 10.11.210.0/24
+  content: 10.11.10.0/24
   description: IoT zone — sensors, printers, smart devices (untrusted)
   state: present
   ref:
@@ -90,7 +100,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net4_voip
   type: network
-  content: 10.11.211.0/24
+  content: 10.11.11.0/24
   description: VoIP zone — SIP/RTP phones
   state: present
   ref:
@@ -99,7 +109,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net4_storage
   type: network
-  content: 10.11.220.0/24
+  content: 10.11.20.0/24
   description: Storage zone — Ceph, NAS, backup; no internet egress
   state: present
   ref:
@@ -108,7 +118,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net4_media
   type: network
-  content: 10.11.230.0/24
+  content: 10.11.30.0/24
   description: Media zone — TV, IPTV, OTT streaming (untrusted, internet OK)
   state: present
   ref:
@@ -117,7 +127,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net4_gaming
   type: network
-  content: 10.11.232.0/24
+  content: 10.11.32.0/24
   description: GAMING zone — game consoles + voice chat (untrusted, internet OK, HQ QoS)
   state: present
   ref:
@@ -126,7 +136,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net4_cctv
   type: network
-  content: 10.11.240.0/24
+  content: 10.11.40.0/24
   description: CCTV zone — cameras + NVR (isolated, no internet, no internal)
   state: present
   ref:
@@ -253,7 +263,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host4_probe_mgmt
   type: host
-  content: 10.11.201.100
+  content: 10.11.1.100
   description: Test probe LXC on MGMT VLAN (2010) — IPv4
   state: present
   ref:
@@ -262,7 +272,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host4_probe_dmz
   type: host
-  content: 10.11.202.100
+  content: 10.11.2.100
   description: Test probe LXC on DMZ VLAN (2020) — IPv4
   state: present
   ref:
@@ -271,7 +281,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host4_probe_svc
   type: host
-  content: 10.11.203.100
+  content: 10.11.3.100
   description: Test probe LXC on SVC VLAN (2030) — IPv4
   state: present
   ref:
@@ -280,7 +290,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host4_probe_vpn
   type: host
-  content: 10.11.204.100
+  content: 10.11.4.100
   description: Test probe LXC on VPN VLAN (2040) — IPv4
   state: present
   ref:
@@ -289,7 +299,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host4_probe_iot
   type: host
-  content: 10.11.210.100
+  content: 10.11.10.100
   description: Test probe LXC on IOT VLAN (2100) — IPv4
   state: present
   ref:
@@ -298,7 +308,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host4_probe_voip
   type: host
-  content: 10.11.211.100
+  content: 10.11.11.100
   description: Test probe LXC on VOIP VLAN (2110) — IPv4
   state: present
   ref:
@@ -307,7 +317,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host4_probe_storage
   type: host
-  content: 10.11.220.100
+  content: 10.11.20.100
   description: Test probe LXC on STORAGE VLAN (2200) — IPv4
   state: present
   ref:
@@ -316,7 +326,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host4_probe_media
   type: host
-  content: 10.11.230.100
+  content: 10.11.30.100
   description: Test probe LXC on MEDIA VLAN (2300) — IPv4
   state: present
   ref:
@@ -325,7 +335,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host4_probe_gaming
   type: host
-  content: 10.11.232.100
+  content: 10.11.32.100
   description: Test probe LXC on GAMING VLAN (2320) — IPv4
   state: present
   ref:
@@ -334,7 +344,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host4_probe_cctv
   type: host
-  content: 10.11.240.100
+  content: 10.11.40.100
   description: Test probe LXC on CCTV VLAN (2400) — IPv4
   state: present
   ref:
@@ -343,7 +353,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host6_probe_mgmt
   type: host
-  content: fd11:201::100
+  content: fd11:1::100
   description: Test probe LXC on MGMT VLAN (2010) — IPv6
   state: present
   ref:
@@ -352,7 +362,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host6_probe_dmz
   type: host
-  content: fd11:202::100
+  content: fd11:2::100
   description: Test probe LXC on DMZ VLAN (2020) — IPv6
   state: present
   ref:
@@ -361,7 +371,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host6_probe_svc
   type: host
-  content: fd11:203::100
+  content: fd11:3::100
   description: Test probe LXC on SVC VLAN (2030) — IPv6
   state: present
   ref:
@@ -370,7 +380,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host6_probe_vpn
   type: host
-  content: fd11:204::100
+  content: fd11:4::100
   description: Test probe LXC on VPN VLAN (2040) — IPv6
   state: present
   ref:
@@ -379,7 +389,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host6_probe_iot
   type: host
-  content: fd11:210::100
+  content: fd11:10::100
   description: Test probe LXC on IOT VLAN (2100) — IPv6
   state: present
   ref:
@@ -388,7 +398,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host6_probe_voip
   type: host
-  content: fd11:211::100
+  content: fd11:11::100
   description: Test probe LXC on VOIP VLAN (2110) — IPv6
   state: present
   ref:
@@ -397,7 +407,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host6_probe_storage
   type: host
-  content: fd11:220::100
+  content: fd11:20::100
   description: Test probe LXC on STORAGE VLAN (2200) — IPv6
   state: present
   ref:
@@ -406,7 +416,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host6_probe_media
   type: host
-  content: fd11:230::100
+  content: fd11:30::100
   description: Test probe LXC on MEDIA VLAN (2300) — IPv6
   state: present
   ref:
@@ -415,7 +425,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host6_probe_gaming
   type: host
-  content: fd11:232::100
+  content: fd11:32::100
   description: Test probe LXC on GAMING VLAN (2320) — IPv6
   state: present
   ref:
@@ -424,7 +434,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: host6_probe_cctv
   type: host
-  content: fd11:240::100
+  content: fd11:40::100
   description: Test probe LXC on CCTV VLAN (2400) — IPv6
   state: present
   ref:
@@ -433,7 +443,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net6_mgmt
   type: network
-  content: fd11:201::/64
+  content: fd11:1::/64
   description: MGMT zone — IPv6 ULA
   state: present
   ref:
@@ -442,7 +452,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net6_dmz
   type: network
-  content: fd11:202::/64
+  content: fd11:2::/64
   description: DMZ zone — IPv6 ULA
   state: present
   ref:
@@ -451,7 +461,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net6_svc
   type: network
-  content: fd11:203::/64
+  content: fd11:3::/64
   description: SVC zone — IPv6 ULA
   state: present
   ref:
@@ -460,7 +470,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net6_vpn
   type: network
-  content: fd11:204::/64
+  content: fd11:4::/64
   description: VPN zone — IPv6 ULA
   state: present
   ref:
@@ -469,7 +479,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net6_iot
   type: network
-  content: fd11:210::/64
+  content: fd11:10::/64
   description: IOT zone — IPv6 ULA
   state: present
   ref:
@@ -478,7 +488,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net6_voip
   type: network
-  content: fd11:211::/64
+  content: fd11:11::/64
   description: VOIP zone — IPv6 ULA
   state: present
   ref:
@@ -487,7 +497,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net6_storage
   type: network
-  content: fd11:220::/64
+  content: fd11:20::/64
   description: STORAGE zone — IPv6 ULA
   state: present
   ref:
@@ -496,7 +506,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net6_media
   type: network
-  content: fd11:230::/64
+  content: fd11:30::/64
   description: MEDIA zone — IPv6 ULA
   state: present
   ref:
@@ -505,7 +515,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net6_gaming
   type: network
-  content: fd11:232::/64
+  content: fd11:32::/64
   description: GAMING zone — IPv6 ULA
   state: present
   ref:
@@ -514,7 +524,7 @@ opn_aliases:
     ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net6_cctv
   type: network
-  content: fd11:240::/64
+  content: fd11:40::/64
   description: CCTV zone — IPv6 ULA
   state: present
   ref:
@@ -1673,83 +1683,83 @@ opn_unbound:
   - hostname: lxc-mgmt-deb13-test-01
     domain: test.by-research.be
     rr: A
-    server: 10.11.201.100
+    server: 10.11.1.100
   - hostname: lxc-mgmt-deb13-test-01
     domain: test.by-research.be
     rr: AAAA
-    server: fd11:201::100
+    server: fd11:1::100
   - hostname: lxc-dmz-deb13-test-01
     domain: test.by-research.be
     rr: A
-    server: 10.11.202.100
+    server: 10.11.2.100
   - hostname: lxc-dmz-deb13-test-01
     domain: test.by-research.be
     rr: AAAA
-    server: fd11:202::100
+    server: fd11:2::100
   - hostname: lxc-svc-deb13-test-01
     domain: test.by-research.be
     rr: A
-    server: 10.11.203.100
+    server: 10.11.3.100
   - hostname: lxc-svc-deb13-test-01
     domain: test.by-research.be
     rr: AAAA
-    server: fd11:203::100
+    server: fd11:3::100
   - hostname: lxc-vpn-deb13-test-01
     domain: test.by-research.be
     rr: A
-    server: 10.11.204.100
+    server: 10.11.4.100
   - hostname: lxc-vpn-deb13-test-01
     domain: test.by-research.be
     rr: AAAA
-    server: fd11:204::100
+    server: fd11:4::100
   - hostname: lxc-iot-ubu2404-test-01
     domain: test.by-research.be
     rr: A
-    server: 10.11.210.100
+    server: 10.11.10.100
   - hostname: lxc-iot-ubu2404-test-01
     domain: test.by-research.be
     rr: AAAA
-    server: fd11:210::100
+    server: fd11:10::100
   - hostname: lxc-voip-ubu2404-test-01
     domain: test.by-research.be
     rr: A
-    server: 10.11.211.100
+    server: 10.11.11.100
   - hostname: lxc-voip-ubu2404-test-01
     domain: test.by-research.be
     rr: AAAA
-    server: fd11:211::100
+    server: fd11:11::100
   - hostname: lxc-storage-ubu2404-test-01
     domain: test.by-research.be
     rr: A
-    server: 10.11.220.100
+    server: 10.11.20.100
   - hostname: lxc-storage-ubu2404-test-01
     domain: test.by-research.be
     rr: AAAA
-    server: fd11:220::100
+    server: fd11:20::100
   - hostname: lxc-media-rocky9-test-01
     domain: test.by-research.be
     rr: A
-    server: 10.11.230.100
+    server: 10.11.30.100
   - hostname: lxc-media-rocky9-test-01
     domain: test.by-research.be
     rr: AAAA
-    server: fd11:230::100
+    server: fd11:30::100
   - hostname: lxc-gaming-rocky9-test-01
     domain: test.by-research.be
     rr: A
-    server: 10.11.232.100
+    server: 10.11.32.100
   - hostname: lxc-gaming-rocky9-test-01
     domain: test.by-research.be
     rr: AAAA
-    server: fd11:232::100
+    server: fd11:32::100
   - hostname: lxc-cctv-rocky9-test-01
     domain: test.by-research.be
     rr: A
-    server: 10.11.240.100
+    server: 10.11.40.100
   - hostname: lxc-cctv-rocky9-test-01
     domain: test.by-research.be
     rr: AAAA
-    server: fd11:240::100
+    server: fd11:40::100
 
 # ---------------------------------------------------------------------------
 # Kea DHCP4 — service + per-VLAN subnets
@@ -1774,84 +1784,84 @@ opn_kea_dhcp4:
       - gaming
       - cctv
   subnets:
-    - subnet: 10.11.201.0/24
-      pools: 10.11.201.50-10.11.201.99
+    - subnet: 10.11.1.0/24
+      pools: 10.11.1.50-10.11.1.99
       description: mgmt DHCPv4 pool
       option_data:
-        routers: 10.11.201.1
-        domain_name_servers: 10.11.201.1
+        routers: 10.11.1.1
+        domain_name_servers: 10.11.1.1
         domain_name: test.by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
-    - subnet: 10.11.202.0/24
-      pools: 10.11.202.50-10.11.202.99
+    - subnet: 10.11.2.0/24
+      pools: 10.11.2.50-10.11.2.99
       description: dmz DHCPv4 pool
       option_data:
-        routers: 10.11.202.1
-        domain_name_servers: 10.11.202.1
+        routers: 10.11.2.1
+        domain_name_servers: 10.11.2.1
         domain_name: test.by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
-    - subnet: 10.11.203.0/24
-      pools: 10.11.203.50-10.11.203.99
+    - subnet: 10.11.3.0/24
+      pools: 10.11.3.50-10.11.3.99
       description: svc DHCPv4 pool
       option_data:
-        routers: 10.11.203.1
-        domain_name_servers: 10.11.203.1
+        routers: 10.11.3.1
+        domain_name_servers: 10.11.3.1
         domain_name: test.by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
-    - subnet: 10.11.204.0/24
-      pools: 10.11.204.50-10.11.204.99
+    - subnet: 10.11.4.0/24
+      pools: 10.11.4.50-10.11.4.99
       description: vpn DHCPv4 pool
       option_data:
-        routers: 10.11.204.1
-        domain_name_servers: 10.11.204.1
+        routers: 10.11.4.1
+        domain_name_servers: 10.11.4.1
         domain_name: test.by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
-    - subnet: 10.11.210.0/24
-      pools: 10.11.210.50-10.11.210.99
+    - subnet: 10.11.10.0/24
+      pools: 10.11.10.50-10.11.10.99
       description: iot DHCPv4 pool
       option_data:
-        routers: 10.11.210.1
-        domain_name_servers: 10.11.210.1
+        routers: 10.11.10.1
+        domain_name_servers: 10.11.10.1
         domain_name: test.by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
-    - subnet: 10.11.211.0/24
-      pools: 10.11.211.50-10.11.211.99
+    - subnet: 10.11.11.0/24
+      pools: 10.11.11.50-10.11.11.99
       description: voip DHCPv4 pool
       option_data:
-        routers: 10.11.211.1
-        domain_name_servers: 10.11.211.1
+        routers: 10.11.11.1
+        domain_name_servers: 10.11.11.1
         domain_name: test.by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
-    - subnet: 10.11.220.0/24
-      pools: 10.11.220.50-10.11.220.99
+    - subnet: 10.11.20.0/24
+      pools: 10.11.20.50-10.11.20.99
       description: storage DHCPv4 pool
       option_data:
-        routers: 10.11.220.1
-        domain_name_servers: 10.11.220.1
+        routers: 10.11.20.1
+        domain_name_servers: 10.11.20.1
         domain_name: test.by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
-    - subnet: 10.11.230.0/24
-      pools: 10.11.230.50-10.11.230.99
+    - subnet: 10.11.30.0/24
+      pools: 10.11.30.50-10.11.30.99
       description: media DHCPv4 pool
       option_data:
-        routers: 10.11.230.1
-        domain_name_servers: 10.11.230.1
+        routers: 10.11.30.1
+        domain_name_servers: 10.11.30.1
         domain_name: test.by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
-    - subnet: 10.11.232.0/24
-      pools: 10.11.232.50-10.11.232.99
+    - subnet: 10.11.32.0/24
+      pools: 10.11.32.50-10.11.32.99
       description: gaming DHCPv4 pool
       option_data:
-        routers: 10.11.232.1
-        domain_name_servers: 10.11.232.1
+        routers: 10.11.32.1
+        domain_name_servers: 10.11.32.1
         domain_name: test.by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
-    - subnet: 10.11.240.0/24
-      pools: 10.11.240.50-10.11.240.99
+    - subnet: 10.11.40.0/24
+      pools: 10.11.40.50-10.11.40.99
       description: cctv DHCPv4 pool
       option_data:
-        routers: 10.11.240.1
-        domain_name_servers: 10.11.240.1
+        routers: 10.11.40.1
+        domain_name_servers: 10.11.40.1
         domain_name: test.by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
 
@@ -1877,16 +1887,16 @@ opn_kea_dhcp6:
       - gaming
       - cctv
   subnets:
-    - {subnet: "fd11:201::/64", interface: mgmt,    description: "mgmt IPv6 subnet (SLAAC)",    ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
-    - {subnet: "fd11:202::/64", interface: dmz,     description: "dmz IPv6 subnet (SLAAC)",     ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
-    - {subnet: "fd11:203::/64", interface: svc,     description: "svc IPv6 subnet (SLAAC)",     ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
-    - {subnet: "fd11:204::/64", interface: vpn,     description: "vpn IPv6 subnet (SLAAC)",     ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
-    - {subnet: "fd11:210::/64", interface: iot,     description: "iot IPv6 subnet (SLAAC)",     ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
-    - {subnet: "fd11:211::/64", interface: voip,    description: "voip IPv6 subnet (SLAAC)",    ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
-    - {subnet: "fd11:220::/64", interface: storage, description: "storage IPv6 subnet (SLAAC)", ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
-    - {subnet: "fd11:230::/64", interface: media,   description: "media IPv6 subnet (SLAAC)",   ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
-    - {subnet: "fd11:232::/64", interface: gaming,  description: "gaming IPv6 subnet (SLAAC)",  ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
-    - {subnet: "fd11:240::/64", interface: cctv,    description: "cctv IPv6 subnet (SLAAC)",    ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:1::/64", interface: mgmt,    description: "mgmt IPv6 subnet (SLAAC)",    ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:2::/64", interface: dmz,     description: "dmz IPv6 subnet (SLAAC)",     ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:3::/64", interface: svc,     description: "svc IPv6 subnet (SLAAC)",     ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:4::/64", interface: vpn,     description: "vpn IPv6 subnet (SLAAC)",     ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:10::/64", interface: iot,     description: "iot IPv6 subnet (SLAAC)",     ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:11::/64", interface: voip,    description: "voip IPv6 subnet (SLAAC)",    ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:20::/64", interface: storage, description: "storage IPv6 subnet (SLAAC)", ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:30::/64", interface: media,   description: "media IPv6 subnet (SLAAC)",   ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:32::/64", interface: gaming,  description: "gaming IPv6 subnet (SLAAC)",  ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
+    - {subnet: "fd11:40::/64", interface: cctv,    description: "cctv IPv6 subnet (SLAAC)",    ref: {adr: "infra/0004", lib_manager: "Kea6SubnetManager", ansible_module: "opn_kea6_subnet"}}
 
 # ---------------------------------------------------------------------------
 # Dnsmasq — OPNsense 26.1 default DNS/DHCP/RA daemon
