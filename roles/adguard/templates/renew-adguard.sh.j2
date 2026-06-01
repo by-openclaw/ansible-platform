@@ -1,0 +1,23 @@
+#!/bin/bash
+# Copyright (c) BY-SYSTEMS SRL
+# SPDX-License-Identifier: Apache-2.0
+# Source: https://github.com/by-openclaw/ansible-platform
+#
+# Managed by Ansible role `adguard` (tasks/renew.yml). Do not edit by hand.
+# Renews the wildcard *.{{ adguard_domain }} cert via Cloudflare DNS-01 and
+# reloads AdGuardHome on success.
+set -e
+. /etc/lego/cloudflare.env
+export CF_DNS_API_TOKEN CF_ZONE_API_TOKEN LEGO_PATH=/etc/lego/cert
+if /usr/local/bin/lego \
+    --dns cloudflare \
+    --dns.propagation.disable-rns \
+    --dns.propagation.wait 60s \
+    --domains "*.{{ adguard_domain }}" \
+    --domains "{{ adguard_domain }}" \
+    renew --days {{ adguard_renew_days }} 2>&1; then
+    /usr/bin/systemctl reload-or-restart AdGuardHome
+    echo "[$(date)] renew check OK"
+else
+    echo "[$(date)] renew failed (non-zero exit)"
+fi
