@@ -1,0 +1,73 @@
+---
+# ==============================================================================
+# Role: adguard — wildcard TLS certificate via Cloudflare DNS-01 (lego)
+# First run uses `lego run`; subsequent runs use `lego renew --days`.
+# ==============================================================================
+
+- name: "cert | Ensure /etc/lego directories exist"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - /etc/lego
+    - /etc/lego/cert
+
+- name: "cert | Template Cloudflare API credentials (root, 0600)"
+  ansible.builtin.template:
+    src: cloudflare.env.j2
+    dest: /etc/lego/cloudflare.env
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: "cert | Check for existing wildcard certificate"
+  ansible.builtin.stat:
+    path: "/etc/lego/cert/certificates/_.{{ adguard_domain }}.crt"
+  register: adguard_cert_stat
+
+- name: "cert | Issue wildcard certificate (first run)"
+  ansible.builtin.command:
+    cmd: >-
+      /usr/local/bin/lego
+      --email {{ adguard_acme_email }}
+      --accept-tos
+      --dns cloudflare
+      --dns.propagation.disable-rns
+      --dns.propagation.wait 60s
+      --domains "*.{{ adguard_domain }}"
+      --domains "{{ adguard_domain }}"
+      run
+    creates: "/etc/lego/cert/certificates/_.{{ adguard_domain }}.crt"
+  environment:
+    CF_DNS_API_TOKEN: "{{ adguard_cf_token }}"
+    CF_ZONE_API_TOKEN: "{{ adguard_cf_token }}"
+    LEGO_PATH: /etc/lego/cert
+  when: not adguard_cert_stat.stat.exists
+  no_log: true
+
+- name: "cert | Renew wildcard certificate (subsequent runs, tolerant)"
+  ansible.builtin.command:
+    cmd: >-
+      /usr/local/bin/lego
+      --dns cloudflare
+      --dns.propagation.disable-rns
+      --dns.propagation.wait 60s
+      --domains "*.{{ adguard_domain }}"
+      --domains "{{ adguard_domain }}"
+      renew
+      --days {{ adguard_renew_days }}
+    chdir: /etc/lego
+  environment:
+    CF_DNS_API_TOKEN: "{{ adguard_cf_token }}"
+    CF_ZONE_API_TOKEN: "{{ adguard_cf_token }}"
+    LEGO_PATH: /etc/lego/cert
+  when: adguard_cert_stat.stat.exists
+  register: adguard_renew
+  changed_when: "'no renewal' not in (adguard_renew.stdout | lower) and 'is not due' not in (adguard_renew.stdout | lower)"
+  failed_when: false
+  no_log: true
+  notify: Restart AdGuardHome

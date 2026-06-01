@@ -1,0 +1,86 @@
+---
+# ==============================================================================
+# Role: adguard — install AdGuardHome + lego ACME client + dependencies
+# Idempotent: guarded by stat/creates; only fetches when absent.
+# ==============================================================================
+
+- name: "install | Ensure base dependencies present"
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - tar
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# ------------------------------------------------------------------------------
+# AdGuardHome — download tarball, unpack, register systemd service
+# ------------------------------------------------------------------------------
+- name: "install | Check whether AdGuardHome binary exists"
+  ansible.builtin.stat:
+    path: "{{ adguard_home_dir }}/AdGuardHome"
+  register: adguard_bin
+
+- name: "install | Download AdGuardHome release tarball"
+  ansible.builtin.get_url:
+    url: "{{ adguard_release_url }}"
+    dest: /tmp/AdGuardHome_linux_amd64.tar.gz
+    mode: "0644"
+  when: not adguard_bin.stat.exists
+
+- name: "install | Unpack AdGuardHome to {{ adguard_install_dir }}"
+  ansible.builtin.unarchive:
+    src: /tmp/AdGuardHome_linux_amd64.tar.gz
+    dest: "{{ adguard_install_dir }}"
+    remote_src: true
+    creates: "{{ adguard_home_dir }}/AdGuardHome"
+    owner: root
+    group: root
+  when: not adguard_bin.stat.exists
+
+- name: "install | Check whether AdGuardHome systemd unit is registered"
+  ansible.builtin.stat:
+    path: /etc/systemd/system/AdGuardHome.service
+  register: adguard_unit
+
+- name: "install | Register AdGuardHome systemd service"
+  ansible.builtin.command:
+    cmd: "{{ adguard_home_dir }}/AdGuardHome -s install"
+    creates: /etc/systemd/system/AdGuardHome.service
+  when: not adguard_unit.stat.exists
+
+# ------------------------------------------------------------------------------
+# lego — ACME client (Debian package too old for the Cloudflare DNS provider)
+# ------------------------------------------------------------------------------
+- name: "install | Detect installed lego version"
+  ansible.builtin.command: /usr/local/bin/lego --version
+  register: adguard_lego_check
+  changed_when: false
+  failed_when: false
+
+- name: "install | Determine whether the pinned lego version needs (re)install"
+  ansible.builtin.set_fact:
+    # Idempotent: (re)install only when lego is absent or not the pinned version.
+    adguard_lego_needs_install: >-
+      {{ adguard_lego_check.rc != 0
+         or adguard_lego_version not in adguard_lego_check.stdout }}
+
+- name: "install | Download lego release tarball"
+  ansible.builtin.get_url:
+    url: "{{ adguard_lego_url }}"
+    dest: /tmp/lego_linux_amd64.tar.gz
+    mode: "0644"
+  when: adguard_lego_needs_install | bool
+
+- name: "install | Extract lego binary to /usr/local/bin"
+  ansible.builtin.unarchive:
+    src: /tmp/lego_linux_amd64.tar.gz
+    dest: /usr/local/bin
+    remote_src: true
+    include:
+      - lego
+    owner: root
+    group: root
+    mode: "0755"
+  when: adguard_lego_needs_install | bool

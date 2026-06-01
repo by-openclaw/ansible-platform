@@ -1,0 +1,29 @@
+---
+# ==============================================================================
+# Role: adguard — render the full AdGuardHome.yaml deterministically.
+# Notifies a restart handler on change (no manual stop/start tasks).
+# ==============================================================================
+
+- name: "config | Ensure AdGuardHome home dir exists"
+  ansible.builtin.file:
+    path: "{{ adguard_home_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "config | Render /opt/AdGuardHome/AdGuardHome.yaml"
+  ansible.builtin.template:
+    src: AdGuardHome.yaml.j2
+    dest: "{{ adguard_home_dir }}/AdGuardHome.yaml"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: Restart AdGuardHome
+
+- name: "config | Ensure AdGuardHome is enabled and started"
+  ansible.builtin.systemd:
+    name: AdGuardHome
+    state: started
+    enabled: true

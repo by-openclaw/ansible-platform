@@ -1,0 +1,27 @@
+---
+# ==============================================================================
+# Role: adguard — main task dispatcher
+# Translates setup-adguard-tls.sh into idempotent Ansible:
+#   install (AdGuardHome + lego) -> cert (Cloudflare DNS-01 wildcard)
+#   -> config (AdGuardHome.yaml) -> renew (cron + script)
+# ==============================================================================
+
+- name: Install AdGuardHome and lego
+  ansible.builtin.import_tasks: install.yml
+  tags: [adguard, install]
+
+- name: Resolve controller-side secrets
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [adguard, cert, config]
+
+- name: Issue/renew wildcard TLS certificate
+  ansible.builtin.import_tasks: cert.yml
+  tags: [adguard, cert]
+
+- name: Render AdGuardHome configuration
+  ansible.builtin.import_tasks: config.yml
+  tags: [adguard, config]
+
+- name: Install certificate renewal automation
+  ansible.builtin.import_tasks: renew.yml
+  tags: [adguard, renew]
