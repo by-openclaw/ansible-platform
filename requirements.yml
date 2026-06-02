@@ -5,4 +5,14 @@ collections:
   - name: ansible.posix
     version: ">=1.5.0"
   - name: puzzle.opnsense
-    version: ">=1.4.0"
+    # Pin to 1.x — the opnsense role uses the 1.x module API (inline
+    # api_host/api_key/api_secret). puzzle.opnsense 2.0 removed those params.
+    # NOTE: puzzle modules edit /conf/config.xml on the FW → need root (blocked).
+    # The API-driven path is ansibleguy.opnsense + by_systems.opnsense (MVC lib).
+    version: ">=1.4.0,<2.0.0"
+  - name: ansibleguy.opnsense
+    # API-based (alias/rule/wireguard) — no root needed.
+    version: ">=1.2.0"
+  - name: by_systems.opnsense
+    # The MVC lib (lib-opnsense) — API-driven managers, no root.
+    version: ">=0.2.0"
