@@ -28,8 +28,10 @@ from pathlib import Path
 # Expected assigned interfaces (description -> must be 'up'). Mirrors the catalog;
 # WAN2 is gated behind --expect-wan2 until the seed assigns it.
 EXPECTED_IFACES = [
-    "OOB_MGMT", "LAN_TRUNK", "OOB", "DMZ", "SVC", "VPN",
-    "IoT", "VoIP", "Storage", "Media", "GAMING", "CCTV", "WAN1",
+    # Final naming (06-01): OOB = physical break-glass (vtnet1); LAN_TRUNK = trunk
+    # (vtnet0); MGMT = vlan1010 in-band mgmt; WAN_PROXIMUS = WAN1. Post-reseed names.
+    "OOB", "LAN_TRUNK", "MGMT", "DMZ", "SVC", "VPN",
+    "IoT", "VoIP", "Storage", "Media", "GAMING", "CCTV", "WAN_PROXIMUS",
 ]
 TELENET_V4_SUFFIX = ".222"
 TELENET_V6_SUFFIX = "::5"
@@ -108,11 +110,11 @@ def run(api: API, expect_wan2: bool) -> int:
         up = bool(v) and str(v.get("status", "")).lower() == "up"
         g.check(f"iface {d} up", up, (v or {}).get("status", "absent"))
 
-    # 2) WAN1 Proximus has a public-ish v4 (not RFC1918 / not empty)
-    wan1 = by_descr.get("WAN1") or {}
+    # 2) WAN_PROXIMUS has a public-ish v4 (not RFC1918 / not empty)
+    wan1 = by_descr.get("WAN_PROXIMUS") or by_descr.get("WAN1") or {}
     a4 = (wan1.get("addr4") or wan1.get("ipaddr") or "")
     wan1_ok = bool(a4) and not a4.startswith(("10.", "192.168.", "172.")) and a4 not in ("pppoe", "dhcp")
-    g.check("WAN1 Proximus public IPv4", wan1_ok, a4 or "none")
+    g.check("WAN_PROXIMUS public IPv4", wan1_ok, a4 or "none")
 
     # 3) WAN2 Telenet (gated)
     wan2 = by_descr.get("WAN_TELENET") or {}
