@@ -1,0 +1,94 @@
+---
+# WAN2 — Telenet gateways (static /29 IPv4 + /64 IPv6).
+#
+# IMPORTANT — division of responsibility (OPNsense 26.1.8 reality):
+#   * Interface ASSIGNMENT (vtnet2 -> optN) and its STATIC IP config are NOT
+#     exposed by the MVC API (addInterface / setInterface both return 404). Like
+#     every other interface (opt1..opt11), WAN2 must be assigned + addressed in
+#     the SEED (infra-terraform-proxmox, config.xml), IPs injected from
+#     net-isp-telenet.json at build time. See issue #32.
+#   * GATEWAYS are API-managed (/api/routing/settings) and live here in ansible.
+#
+# This task therefore only manages the Telenet gateways, and is guarded to run
+# only once the WAN2 interface actually exists on the FW (seed applied). It is a
+# no-op (skipped) until then, so the play stays green.
+#
+# default_gw=false on both: WAN1 Proximus stays the system default. The
+# gateway-group failover + per-VLAN policy routing (gaming->Proximus, wifiap->VPN
+# exits, Contabo->DE) are ADR-gated and intentionally NOT applied here (#32).
+
+- name: WAN2 | Fetch interface overview
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/interfaces/overview/interfacesInfo"
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_wan2_overview
+  delegate_to: localhost
+  become: false
+  tags: [wan2, network, gateway]
+
+- name: WAN2 | Resolve assigned identifier for {{ opnsense_wan2.device }}
+  ansible.builtin.set_fact:
+    opnsense_wan2_ident: >-
+      {{ (opnsense_wan2_overview.json | dict2items
+          | selectattr('value.device', 'eq', opnsense_wan2.device)
+          | selectattr('value.identifier', 'defined')
+          | selectattr('value.identifier', 'ne', '')
+          | map(attribute='key') | list | first) | default('') }}
+  delegate_to: localhost
+  become: false
+  tags: [wan2, network, gateway]
+
+- name: WAN2 | Note when interface is not yet assigned (seed pending)
+  ansible.builtin.debug:
+    msg: >-
+      WAN2 device {{ opnsense_wan2.device }} is not assigned yet — the interface
+      + static IPs must be added via the SEED first (issue #32). Skipping gateways.
+  when: opnsense_wan2_ident | length == 0
+  tags: [wan2, network, gateway]
+
+- name: WAN2 | Telenet IPv4 gateway (WAN_TELENET_GW)
+  ansibleguy.opnsense.gateway:
+    name: WAN_TELENET_GW
+    interface: "{{ opnsense_wan2_ident }}"
+    gateway: "{{ vault_telenet_ipv4_gateway }}"
+    ip_protocol: inet
+    default_gw: false
+    monitor_disable: true
+    description: "Telenet WAN2 IPv4 (500/50)"
+    enabled: true
+    state: present
+    firewall: "{{ opnsense_host }}"
+    api_port: "{{ opnsense_port }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: "{{ opnsense_verify_ssl | bool }}"
+  delegate_to: localhost
+  become: false
+  when: opnsense_wan2_ident | length > 0
+  tags: [wan2, network, gateway]
+
+- name: WAN2 | Telenet IPv6 gateway (WAN_TELENET_GW6)
+  ansibleguy.opnsense.gateway:
+    name: WAN_TELENET_GW6
+    interface: "{{ opnsense_wan2_ident }}"
+    gateway: "{{ vault_telenet_ipv6_gateway }}"
+    ip_protocol: inet6
+    default_gw: false
+    monitor_disable: true
+    description: "Telenet WAN2 IPv6"
+    enabled: true
+    state: present
+    firewall: "{{ opnsense_host }}"
+    api_port: "{{ opnsense_port }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: "{{ opnsense_verify_ssl | bool }}"
+  delegate_to: localhost
+  become: false
+  when: opnsense_wan2_ident | length > 0
+  tags: [wan2, network, gateway]
