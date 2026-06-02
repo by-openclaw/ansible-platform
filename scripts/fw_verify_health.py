@@ -134,12 +134,22 @@ def run(api: API, expect_wan2: bool) -> int:
     except Exception as e:  # noqa: BLE001
         g.check("gateways status reachable", False, str(e)[:24])
 
-    # 5) NetFlow / Insight active (reporting works)
+    # 5) Core services running (the actual "service didn't work" signal)
+    #    flowd_aggregate = Insight/NetFlow reporting; the rest = DNS chain, IPS, DHCP, agent.
+    required_services = [
+        "unbound", "dnscrypt-proxy", "crowdsec", "kea-dhcp", "qemu-ga", "flowd_aggregate",
+    ]
     try:
-        st = api.get("/api/diagnostics/netflow/status", method="POST")
-        g.check("NetFlow capture active", str(st.get("status")) == "active", str(st.get("status")))
+        svc = api.get("/api/core/service/search").get("rows", [])
+        running = {}
+        for r in svc:
+            running[r.get("name")] = running.get(r.get("name"), False) or str(r.get("running")) in ("1", "True", "true")
+        for name in required_services:
+            label = "reporting (flowd_aggregate)" if name == "flowd_aggregate" else name
+            g.check(f"service {label} running", running.get(name, False),
+                    "running" if running.get(name) else "DOWN")
     except Exception as e:  # noqa: BLE001
-        g.check("NetFlow status reachable", False, str(e)[:24])
+        g.check("service list reachable", False, str(e)[:24])
 
     return g.report()
 
