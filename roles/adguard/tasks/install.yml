@@ -10,9 +10,48 @@
       - ca-certificates
       - curl
       - tar
+      # cron is absent on the minimal debian-12-cloud image; the renewal task
+      # (renew.yml) uses ansible.builtin.cron, which needs the crontab binary.
+      - cron
     state: present
     update_cache: true
     cache_valid_time: 3600
+
+# ------------------------------------------------------------------------------
+# Free :53 for AdGuard. debian-12-cloud runs systemd-resolved with a stub
+# listener on 127.0.0.53:53; AdGuard binds 0.0.0.0:53 and would fail EADDRINUSE.
+# Disable the stub, then pin a static resolv.conf to the FW Unbound (SVC gateway)
+# so the host keeps working DNS once the stub is gone.
+# ------------------------------------------------------------------------------
+- name: "install | Disable systemd-resolved stub listener (frees :53)"
+  ansible.builtin.copy:
+    dest: /etc/systemd/resolved.conf.d/99-adguard.conf
+    content: |
+      [Resolve]
+      DNSStubListener=no
+    owner: root
+    group: root
+    mode: "0644"
+  register: adguard_resolved_stub
+
+- name: "install | Restart systemd-resolved to release :53"
+  ansible.builtin.systemd_service:
+    name: systemd-resolved
+    state: restarted
+  when: adguard_resolved_stub is changed
+
+- name: "install | Pin static resolv.conf to the FW Unbound (SVC gateway)"
+  ansible.builtin.copy:
+    dest: /etc/resolv.conf
+    content: |
+      # Managed by ansible (adguard role) — host resolves via the FW Unbound chain.
+      nameserver {{ adguard_upstreams[0] | regex_replace(':.*$', '') }}
+      options edns0 trust-ad
+    owner: root
+    group: root
+    mode: "0644"
+    follow: false
+  when: adguard_resolved_stub is changed
 
 # ------------------------------------------------------------------------------
 # AdGuardHome — download tarball, unpack, register systemd service
