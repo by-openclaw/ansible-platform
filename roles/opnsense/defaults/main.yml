@@ -97,7 +97,12 @@ opnsense_dhcp_mgmt_range_end: "10.1.1.199"
 # DoT-direct model (1.1.1.1/9.9.9.9:853) is removed; it caused TLS handshake
 # failures when pointed at the plaintext dnscrypt port.
 opnsense_unbound_enabled: true
-opnsense_unbound_dnscrypt_server: "::1"
+# dnscrypt-proxy binds BOTH loopbacks (127.0.0.1:53531 + [::1]:53531). Forward to
+# both for dual-stack loopback transport + failover (the loopback family does not
+# limit record resolution — A and AAAA both resolve over either).
+opnsense_unbound_dnscrypt_servers:
+  - "::1"
+  - "127.0.0.1"
 opnsense_unbound_dnscrypt_port: 53531
 
 # NTP

@@ -25,7 +25,9 @@
   become: false
   tags: [dns, unbound]
 
-- name: DNS | Ensure plaintext forward to dnscrypt-proxy exists
+# NOTE: forwards + DoT share the same model — the body is wrapped in `dot` with a
+# `type` selector. type=forward is a PLAINTEXT query forward (not TLS).
+- name: DNS | Ensure plaintext forward(s) to dnscrypt-proxy exist
   ansible.builtin.uri:
     url: "{{ opnsense_api_url }}/api/unbound/settings/addForward"
     method: POST
@@ -35,15 +37,23 @@
     validate_certs: false
     body_format: json
     body:
-      domain:
+      dot:
         enabled: "1"
+        type: "forward"
         domain: ""
-        server: "{{ opnsense_unbound_dnscrypt_server }}"
+        server: "{{ item }}"
         port: "{{ opnsense_unbound_dnscrypt_port | string }}"
+        verify: ""
+        forward_tcp_upstream: "0"
+        forward_first: "0"
+        description: "Unbound -> dnscrypt-proxy loopback"
     status_code: [200, 400]
+  loop: "{{ opnsense_unbound_dnscrypt_servers }}"
+  loop_control:
+    label: "{{ item }}:{{ opnsense_unbound_dnscrypt_port }}"
   when: >-
     opnsense_unbound_forwards.json.rows
-    | selectattr('server', 'equalto', opnsense_unbound_dnscrypt_server)
+    | selectattr('server', 'equalto', item)
     | selectattr('port', 'equalto', opnsense_unbound_dnscrypt_port | string)
     | list | length == 0
   register: opnsense_unbound_forward_added
