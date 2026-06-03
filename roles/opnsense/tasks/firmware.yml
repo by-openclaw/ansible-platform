@@ -93,7 +93,10 @@
   become: false
   tags: [firmware]
 
-- name: Firmware | Wait for FW to reboot and the API to return
+- name: Firmware | Wait for FW to reboot INTO {{ opnsense_firmware_target }}
+  # Must wait for the NEW version, not just any 200 (the FW is still up for a few
+  # seconds after /update before it reboots). failed_when:false tolerates the
+  # connection errors while it is rebooting.
   ansible.builtin.uri:
     url: "{{ opnsense_api_url }}/api/core/firmware/status"
     method: GET
@@ -101,12 +104,15 @@
     url_password: "{{ opnsense_api_secret }}"
     force_basic_auth: true
     validate_certs: false
-    status_code: 200
   register: opnsense_fw_back
-  until: opnsense_fw_back.status == 200
-  retries: 40
+  until: opnsense_firmware_target in (opnsense_fw_back.json.product_version | default(''))
+  retries: 50
   delay: 30
-  when: opnsense_firmware_upgrade | bool
+  failed_when: false
+  changed_when: false
+  when:
+    - opnsense_firmware_upgrade | bool
+    - opnsense_fw_status.json.status | default('') in ['update', 'upgrade']
   delegate_to: localhost
   become: false
   tags: [firmware]
