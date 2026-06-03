@@ -91,15 +91,14 @@ opnsense_dhcp_mgmt_enabled: true
 opnsense_dhcp_mgmt_range_start: "10.1.1.100"
 opnsense_dhcp_mgmt_range_end: "10.1.1.199"
 
-# DNS — Unbound
+# DNS — Unbound in the prod chain: AdGuard -> Unbound(:53) -> dnscrypt-proxy(:53531)
+# Unbound forwards PLAINTEXT to the local dnscrypt-proxy listener (which does the
+# encrypted upstream). Unbound itself does NO DoT — see dns.yml. The old
+# DoT-direct model (1.1.1.1/9.9.9.9:853) is removed; it caused TLS handshake
+# failures when pointed at the plaintext dnscrypt port.
 opnsense_unbound_enabled: true
-opnsense_unbound_dot_servers:
-  - host: "1.1.1.1"
-    port: 853
-    verify: "cloudflare-dns.com"
-  - host: "9.9.9.9"
-    port: 853
-    verify: "dns.quad9.net"
+opnsense_unbound_dnscrypt_server: "::1"
+opnsense_unbound_dnscrypt_port: 53531
 
 # NTP
 opnsense_ntp_servers:
