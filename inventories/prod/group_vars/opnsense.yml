@@ -594,6 +594,56 @@ opn_aliases:
   description: 'DoT port (TLS DNS)'
   state: present
   ref: {adr: 'naming/0003#§2-port-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}
+# --- ADR-compliant replacements for live drift aliases (test_internal_nets,
+#     by_rune_admin, hardcoded 10.1.3.101, public_doh_doT_dns) — naming/0003 §1/§3
+- name: host_adguard
+  type: host
+  content: 10.1.3.101
+  description: 'AdGuard Home DNS + web UI host on SVC VLAN (1030)'
+  state: present
+  ref: {adr: 'naming/0003#§1-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}
+- name: host_oob_admin
+  type: host
+  content: 10.6.239.103
+  description: 'OOB platform admin workstation (break-glass management access)'
+  state: present
+  ref: {adr: 'naming/0003#§1-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}
+- name: port_adguard_ui
+  type: port
+  content:
+  - '3000'
+  - '443'
+  description: 'AdGuard Home web UI (3000 + 443/TLS)'
+  state: present
+  ref: {adr: 'naming/0003#§2-port-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}
+- name: host_public_resolvers
+  type: host
+  content:
+  - '1.1.1.1'
+  - '1.0.0.1'
+  - '8.8.8.8'
+  - '8.8.4.4'
+  - '9.9.9.9'
+  - '149.112.112.112'
+  - '208.67.222.222'
+  - '208.67.220.220'
+  - '94.140.14.14'
+  - '94.140.15.15'
+  - '45.90.28.0'
+  - '45.90.30.0'
+  - '194.242.2.2'
+  - '193.19.108.2'
+  - '76.76.2.0'
+  - '76.76.10.0'
+  - '2606:4700:4700::1111'
+  - '2606:4700:4700::1001'
+  - '2001:4860:4860::8888'
+  - '2001:4860:4860::8844'
+  - '2620:fe::fe'
+  - '2620:fe::9'
+  description: 'Known public DoH/DoT resolver IPs (Cloudflare/Google/Quad9/OpenDNS/AdGuard/NextDNS/Mullvad/ControlD) — blocked on 443 to force the local AdGuard->Unbound->dnscrypt chain'
+  state: present
+  ref: {adr: 'naming/0003#§1-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}
 opn_filter_rules:
 - description: PASS MGMT→FW UI
   action: pass
@@ -1778,6 +1828,50 @@ opn_filter_rules:
   destination_net: host6_fw_gateways
   destination_not: '1'
   destination_port: port_dot
+  quick: '1'
+  enabled: '1'
+  state: present
+  ref: {adr: 'security/0001#dns-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
+# ---------------------------------------------------------------------------
+# ADR-compliant replacements for two live DRIFT rules (were: "Allow Rune (OOB)
+# -> AdGuard WebUI" with hardcoded 10.1.3.101 + by_rune_admin; and "BLOCK: VLAN
+# clients -> public DoH/DoT" with test_internal_nets/public_doh_doT_dns).
+# Now: PASS verb, alias-only (no literal IPs), role-named admin, grp_net_internal,
+# description format per naming/0003 §4.
+# ---------------------------------------------------------------------------
+- description: PASS oob_admin→AdGuard UI
+  action: pass
+  interface: lan
+  direction: in
+  ipprotocol: inet
+  protocol: tcp
+  source_net: host_oob_admin
+  destination_net: host_adguard
+  destination_port: port_adguard_ui
+  state: present
+  ref: {adr: 'naming/0003#§4-rule-oob-adguard-ui', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
+- description: 'BLOCK internal→public DoH resolvers (force local chain) v4'
+  action: block
+  interface: 'opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11'
+  direction: in
+  ipprotocol: inet
+  protocol: TCP/UDP
+  source_net: grp_net4_internal
+  destination_net: host_public_resolvers
+  destination_port: port_https
+  quick: '1'
+  enabled: '1'
+  state: present
+  ref: {adr: 'security/0001#dns-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
+- description: 'BLOCK internal→public DoH resolvers (force local chain) v6'
+  action: block
+  interface: 'opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11'
+  direction: in
+  ipprotocol: inet6
+  protocol: TCP/UDP
+  source_net: grp_net6_internal
+  destination_net: host_public_resolvers
+  destination_port: port_https
   quick: '1'
   enabled: '1'
   state: present
