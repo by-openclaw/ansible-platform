@@ -36,7 +36,27 @@
   become: false
   tags: [firmware]
 
-- name: Firmware | Upgrade to {{ opnsense_firmware_target }} (reboots)
+- name: Firmware | Apply package updates to {{ opnsense_firmware_target }} (reboots)
+  # status=='update' => point-release package updates => /update (NOT /upgrade,
+  # which is for major version jumps and no-ops here with "no packages to fetch").
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/core/firmware/update"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: 200
+  when:
+    - opnsense_fw_status.json.status | default('') == 'update'
+    - opnsense_firmware_upgrade | bool
+  delegate_to: localhost
+  become: false
+  tags: [firmware]
+
+- name: Firmware | Major version upgrade (reboots)
   ansible.builtin.uri:
     url: "{{ opnsense_api_url }}/api/core/firmware/upgrade"
     method: POST
@@ -48,7 +68,7 @@
     body: {}
     status_code: 200
   when:
-    - opnsense_fw_status.json.status | default('') == 'update'
+    - opnsense_fw_status.json.status | default('') == 'upgrade'
     - opnsense_firmware_upgrade | bool
   delegate_to: localhost
   become: false
