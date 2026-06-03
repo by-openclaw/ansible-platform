@@ -20,8 +20,47 @@ ansible_python_interpreter: /usr/bin/python3
 
 # System
 opnsense_hostname: "vm-opnsense-01"
-opnsense_domain: "by-research.be"
+# Search domain — never hardcode a real domain (no-real-domains rule).
+# Real value lives in vault (vault_opnsense_domain) / infra secret net-internal-domain.json.
+opnsense_domain: "{{ vault_opnsense_domain | default('example.local') }}"
 opnsense_timezone: "Europe/Brussels"
+
+# ── L2/L3 ownership ───────────────────────────────────────────────────────────
+# The SEED (config.xml) owns interface assignment + VLANs (no OPNsense API for
+# assignment — ADR services/0008). Leave VLAN management OFF so re-runs don't
+# spawn unassigned orphan VLANs (the live FW had 310/320/330 orphans from this).
+# Only flip true to bootstrap a fresh FW that has NO seed.
+opnsense_manage_vlans: false
+
+# ── Time sync ─────────────────────────────────────────────────────────────────
+# chrony (os-chrony) replaces the base ntpd. chrony.yml enables it and stops ntpd.
+opnsense_use_chrony: true
+opnsense_chrony_peers:
+  - "0.opnsense.pool.ntp.org"
+
+# ── LLDP (os-lldpd) ───────────────────────────────────────────────────────────
+# LLDP only, announced on INTERNAL interfaces (OOB + LAN_TRUNK + VLANs) — never
+# the WAN uplinks. Interface idents match the seed assignment order.
+opnsense_lldpd_enabled: true
+# Extra discovery protocols — keep OFF; LLDP (standard) is enough.
+# Flip opnsense_lldpd_cdp only if you add Cisco gear that requires CDP.
+opnsense_lldpd_cdp: false
+opnsense_lldpd_fdp: false
+opnsense_lldpd_edp: false
+opnsense_lldpd_sonmp: false
+opnsense_lldpd_interfaces:
+  - "lan"     # OOB
+  - "opt1"    # LAN_TRUNK
+  - "opt2"    # MGMT
+  - "opt3"    # DMZ
+  - "opt4"    # SVC
+  - "opt5"    # VPN
+  - "opt6"    # IoT
+  - "opt7"    # VoIP
+  - "opt8"    # Storage
+  - "opt9"    # Media
+  - "opt10"   # GAMING
+  - "opt11"   # CCTV
 
 # WAN
 opnsense_wan_interface: "vtnet0"

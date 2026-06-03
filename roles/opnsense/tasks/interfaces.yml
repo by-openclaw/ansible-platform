@@ -1,15 +1,18 @@
 ---
 # Interfaces — idempotent via OPNsense REST API
-# Creates VLAN sub-interfaces on vtnet1 (trunk) and assigns them as opt interfaces.
-# All tasks delegate_to: localhost — tunnel via Proxmox (opnsense_api_url set in playbook).
 #
-# Sequence:
-#   1. Fetch existing VLANs → build tag map
-#   2. Create missing VLANs on vtnet1
-#   3. Reconfigure (apply VLAN changes to kernel)
-#   4. Fetch interface assignments → build device map
-#   5. Assign new VLAN devices as OPT interfaces
-#   6. Reconfigure interfaces
+# ⚠️  L2/L3 TOPOLOGY IS OWNED BY THE SEED (config.xml), NOT ANSIBLE.
+# Per ADR services/0008: physical interface assignment has NO OPNsense API
+# (addInterface 404s — confirmed since April / PR #8436). The seed renders the
+# correct prod model (LAN_TRUNK=vtnet0, OOB=vtnet1, VLANs 1010-1400 on vtnet0).
+#
+# This file's VLAN-creation steps are the OLD test-era model (vtnet1, tags
+# 310/320/330). Running them only spawns UNASSIGNED orphan VLANs (assignment
+# 404s), which is exactly what happened on the live FW. They are therefore
+# GATED OFF by default via `opnsense_manage_vlans` (defaults to false). Leave it
+# false unless you are deliberately bootstrapping a fresh FW with no seed.
+#
+# All tasks delegate_to: localhost — tunnel via Proxmox (opnsense_api_url set in playbook).
 
 # ── Step 1: Existing VLANs ────────────────────────────────────────────────────
 
@@ -58,7 +61,9 @@
   loop: "{{ opnsense_vlans }}"
   loop_control:
     label: "VLAN {{ item.id }} ({{ item.name }})"
-  when: item.id | string not in opnsense_vlan_tag_map
+  when:
+    - opnsense_manage_vlans | default(false) | bool
+    - item.id | string not in opnsense_vlan_tag_map
   register: opnsense_vlans_created
   delegate_to: localhost
   become: false
@@ -132,7 +137,9 @@
   loop: "{{ opnsense_vlans }}"
   loop_control:
     label: "vtnet1.{{ item.id }} ({{ item.name }})"
-  when: "'vtnet1.' ~ item.id | string not in opnsense_assigned_devices"
+  when:
+    - opnsense_manage_vlans | default(false) | bool
+    - "'vtnet1.' ~ item.id | string not in opnsense_assigned_devices"
   register: opnsense_iface_assigned
   delegate_to: localhost
   become: false
@@ -160,6 +167,7 @@
   loop: "{{ opnsense_vlans }}"
   loop_control:
     label: "{{ item.name }} ({{ item.ip }}/{{ item.prefix }})"
+  when: opnsense_manage_vlans | default(false) | bool
   register: opnsense_iface_configured
   delegate_to: localhost
   become: false

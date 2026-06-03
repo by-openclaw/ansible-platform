@@ -1,0 +1,59 @@
+---
+# Chrony (os-chrony) — idempotent via OPNsense REST API.
+# Plugin installed by firmware.yml. Chrony REPLACES the base ntpd: we enable
+# chrony, then stop the legacy ntpd so the two daemons don't both bind :123.
+# Client-only (no allowednetworks). API is the only door (root SSH blocked).
+
+- name: Chrony | Configure + enable chronyd (client-only)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/chrony/general/set"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      general:
+        enabled: "1"
+        port: "323"
+        ntsclient: "0"
+        ntsnocert: "0"
+        peers: "{{ opnsense_chrony_peers | join(',') }}"
+        fallbackpeers: ""
+        allowednetworks: ""
+    status_code: [200, 400]
+  delegate_to: localhost
+  become: false
+  tags: [ntp, chrony]
+
+- name: Chrony | Reconfigure (apply + start chronyd)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/chrony/service/reconfigure"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: [200, 400]
+  delegate_to: localhost
+  become: false
+  tags: [ntp, chrony]
+
+- name: Chrony | Stop legacy ntpd (chrony owns time sync now)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/core/service/stop/ntpd"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: [200, 400, 404]
+  failed_when: false
+  delegate_to: localhost
+  become: false
+  tags: [ntp, chrony]
