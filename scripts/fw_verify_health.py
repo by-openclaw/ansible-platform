@@ -123,7 +123,7 @@ def run(api: API, expect_wan2: bool) -> int:
         a6w2 = (wan2.get("addr6") or wan2.get("ipaddrv6") or "")
         g.check("WAN2 Telenet assigned & up", bool(wan2) and str(wan2.get("status", "")).lower() == "up",
                 wan2.get("status", "absent"))
-        g.check("WAN2 Telenet IPv4 .222", a4w2.endswith(TELENET_V4_SUFFIX), a4w2 or "none")
+        g.check("WAN2 Telenet IPv4 .222", a4w2.split("/")[0].endswith(TELENET_V4_SUFFIX), a4w2 or "none")
         g.check("WAN2 Telenet IPv6 ::5", TELENET_V6_SUFFIX in a6w2, a6w2 or "none")
     else:
         g.check("WAN2 Telenet (skipped: --expect-wan2 off)", True, "seed pending")
