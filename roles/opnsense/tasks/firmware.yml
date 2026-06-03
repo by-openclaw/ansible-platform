@@ -144,21 +144,9 @@
   become: false
   tags: [firmware, plugins]
 
-- name: Firmware | Install missing plugins
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/core/firmware/install/{{ item }}"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: 200
-  loop: "{{ opnsense_plugins }}"
+- name: Firmware | Install missing plugins (sequentially, wait for each)
+  ansible.builtin.include_tasks: install_plugin.yml
+  loop: "{{ opnsense_plugins | difference(opnsense_installed_pkgs) }}"
   loop_control:
-    label: "{{ item }}"
-  when: item not in opnsense_installed_pkgs
-  delegate_to: localhost
-  become: false
+    loop_var: plugin_name
   tags: [firmware, plugins]
