@@ -22,7 +22,26 @@
   become: false
   tags: [firmware]
 
-- name: Firmware | Read status (poll until the async check settles)
+- name: Firmware | Wait for the async check to complete
+  # The check runs in the background; reading status too early returns a stale
+  # value (often a transient 'none'). Poll the check log until it reports DONE.
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/core/firmware/upgradestatus"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_fw_check
+  until: (opnsense_fw_check.json.status | default('')) == 'done'
+  retries: 12
+  delay: 5
+  delegate_to: localhost
+  become: false
+  tags: [firmware]
+
+- name: Firmware | Read resolved status (pending version / reboot)
   ansible.builtin.uri:
     url: "{{ opnsense_api_url }}/api/core/firmware/status"
     method: GET
@@ -32,10 +51,6 @@
     validate_certs: false
     status_code: 200
   register: opnsense_fw_status
-  # check is async — status starts as 'ok'/'busy' then resolves to update/upgrade/none
-  until: opnsense_fw_status.json.status | default('') in ['update', 'upgrade', 'none']
-  retries: 15
-  delay: 5
   delegate_to: localhost
   become: false
   tags: [firmware]
