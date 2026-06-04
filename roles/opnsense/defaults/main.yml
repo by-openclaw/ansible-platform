@@ -120,6 +120,24 @@ opnsense_ntp_servers:
   - "0.pool.ntp.org"
   - "1.pool.ntp.org"
 
+# ── Monit (os-monit) — monitoring + email alerts via Resend SMTP relay ────────
+# SMTP creds read from the secret file at apply time (never committed). The
+# from-address MUST be on a Resend-verified domain (e.g. resend.by-systems.be).
+opnsense_monit_enabled: true
+opnsense_monit_interval: 120
+opnsense_monit_startdelay: 120
+opnsense_monit_smtp_secret_path: "/home/by-systems/.openclaw/workspace/infra/secrets/monit-smtp-resend.json"
+# Process-down checks — pidfiles verified on vm-opns-01. ntpd is intentionally
+# NOT here (chrony replaced it). Gateways are covered by dpinger, not Monit.
+opnsense_monit_processes:
+  - {name: "unbound", pidfile: "/var/run/unbound.pid"}
+  - {name: "dnscrypt-proxy", pidfile: "/var/run/dnscrypt-proxy.pid"}
+  - {name: "crowdsec", pidfile: "/var/run/crowdsec.pid"}
+  - {name: "chronyd", pidfile: "/var/run/chrony/chronyd.pid"}
+  - {name: "flowd_aggregate", pidfile: "/var/run/flowd_aggregate.pid"}
+  - {name: "kea-dhcp4", pidfile: "/var/run/kea/kea-dhcp4.kea-dhcp4.pid"}
+  - {name: "kea-dhcp6", pidfile: "/var/run/kea/kea-dhcp6.kea-dhcp6.pid"}
+
 # Firewall aliases — source of truth for all firewall rules (ADR-0015)
 # content MUST be a list — ansibleguy.opnsense collection iterates it
 # Names are explicit by context (firewall alias) — no alias_ prefix needed
