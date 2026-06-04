@@ -1,27 +1,115 @@
 ---
-# DNS: Unbound resolver with DoT upstream
+# DNS — Unbound as the FW resolver in the prod chain:
+#   AdGuard (clients) -> Unbound (:53) -> dnscrypt-proxy (loopback :53531) -> upstream
+#
+# Unbound forwards EVERYTHING as PLAINTEXT to the local dnscrypt-proxy listener,
+# which does the encrypted upstream (DoH/DoT). Unbound itself must NOT do DoT —
+# a DoT (TLS) entry pointed at the plaintext dnscrypt port causes
+# "ssl handshake failed: channel closed" and is purged here.
+#
+# API only (root SSH blocked → puzzle/raw don't work). All tasks delegate_to localhost.
 
-- name: Ensure Unbound is enabled
-  puzzle.opnsense.unbound_general:
-    enabled: true
-    dnssec: true
-    api_host: "{{ opnsense_host }}"
-    api_key: "{{ opnsense_api_key }}"
-    api_secret: "{{ opnsense_api_secret }}"
-    ssl_verify: "{{ not opnsense_verify_ssl }}"
+# ── Plaintext forward to dnscrypt-proxy ──────────────────────────────────────
 
-- name: Ensure DoT upstream forwarders configured
-  puzzle.opnsense.unbound_forward:
-    enabled: true
-    type: "dot"
-    server: "{{ item.host }}"
-    port: "{{ item.port }}"
-    verify: "{{ item.verify }}"
-    api_host: "{{ opnsense_host }}"
-    api_key: "{{ opnsense_api_key }}"
-    api_secret: "{{ opnsense_api_secret }}"
-    ssl_verify: "{{ not opnsense_verify_ssl }}"
-    state: present
-  loop: "{{ opnsense_unbound_dot_servers }}"
+- name: DNS | Fetch existing Unbound query forwards
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/unbound/settings/searchForward"
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_unbound_forwards
+  delegate_to: localhost
+  become: false
+  tags: [dns, unbound]
+
+# NOTE: forwards + DoT share the same model — the body is wrapped in `dot` with a
+# `type` selector. type=forward is a PLAINTEXT query forward (not TLS).
+- name: DNS | Ensure plaintext forward(s) to dnscrypt-proxy exist
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/unbound/settings/addForward"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      dot:
+        enabled: "1"
+        type: "forward"
+        domain: ""
+        server: "{{ item }}"
+        port: "{{ opnsense_unbound_dnscrypt_port | string }}"
+        verify: ""
+        forward_tcp_upstream: "0"
+        forward_first: "0"
+        description: "Unbound -> dnscrypt-proxy loopback"
+    status_code: [200, 400]
+  loop: "{{ opnsense_unbound_dnscrypt_servers }}"
   loop_control:
-    label: "DoT {{ item.host }}"
+    label: "{{ item }}:{{ opnsense_unbound_dnscrypt_port }}"
+  when: >-
+    opnsense_unbound_forwards.json.rows
+    | selectattr('server', 'equalto', item)
+    | selectattr('port', 'equalto', opnsense_unbound_dnscrypt_port | string)
+    | list | length == 0
+  register: opnsense_unbound_forward_added
+  delegate_to: localhost
+  become: false
+  tags: [dns, unbound]
+
+# ── Purge any DoT (TLS) entries — the chain encrypts at dnscrypt, not unbound ──
+
+- name: DNS | Fetch existing Unbound DoT entries
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/unbound/settings/searchDot"
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_unbound_dots
+  delegate_to: localhost
+  become: false
+  tags: [dns, unbound]
+
+- name: DNS | Remove DoT entries (unbound must not do TLS in the dnscrypt chain)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/unbound/settings/delDot/{{ item.uuid }}"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: [200, 400, 404]
+  loop: "{{ opnsense_unbound_dots.json.rows | default([]) }}"
+  loop_control:
+    label: "DoT {{ item.server }}:{{ item.port }}"
+  register: opnsense_unbound_dot_removed
+  delegate_to: localhost
+  become: false
+  tags: [dns, unbound]
+
+# ── Apply ─────────────────────────────────────────────────────────────────────
+
+- name: DNS | Reconfigure Unbound
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/unbound/service/reconfigure"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: [200, 400]
+  when: opnsense_unbound_forward_added.changed | default(false) or opnsense_unbound_dot_removed.changed | default(false)
+  delegate_to: localhost
+  become: false
+  tags: [dns, unbound]

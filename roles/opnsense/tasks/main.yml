@@ -14,6 +14,11 @@
   ansible.builtin.include_tasks: system.yml
   tags: [system]
 
+- name: Include firmware (upgrade + plugins) tasks
+  ansible.builtin.include_tasks: firmware.yml
+  tags: [firmware, plugins]
+  when: opnsense_manage_firmware | default(true) | bool
+
 - name: Include interface tasks
   ansible.builtin.include_tasks: interfaces.yml
   tags: [interfaces, network]
@@ -35,9 +40,20 @@
   ansible.builtin.include_tasks: dhcp.yml
   tags: [dhcp]
 
-- name: Include NTP tasks
+- name: Include NTP tasks (base ntpd) — only when chrony is NOT used
   ansible.builtin.include_tasks: ntp.yml
   tags: [ntp]
+  when: not (opnsense_use_chrony | default(true) | bool)
+
+- name: Include chrony tasks (replaces base ntpd)
+  ansible.builtin.include_tasks: chrony.yml
+  tags: [ntp, chrony]
+  when: opnsense_use_chrony | default(true) | bool
+
+- name: Include LLDP tasks
+  ansible.builtin.include_tasks: lldpd.yml
+  tags: [services, lldpd]
+  when: opnsense_lldpd_enabled | default(true) | bool
 
 - name: Include firewall alias tasks
   ansible.builtin.include_tasks: aliases.yml
@@ -46,6 +62,11 @@
 - name: Include firewall rule tasks
   ansible.builtin.include_tasks: rules.yml
   tags: [firewall, rules]
+
+- name: Include Monit monitoring tasks
+  ansible.builtin.include_tasks: monit.yml
+  tags: [services, monit]
+  when: opnsense_monit_enabled | default(true) | bool
 
 - name: Include WireGuard tasks
   ansible.builtin.include_tasks: wireguard.yml
