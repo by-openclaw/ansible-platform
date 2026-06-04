@@ -1,0 +1,197 @@
+---
+# Monit — system/service monitoring with email alerts via Resend SMTP relay.
+# Idempotent via OPNsense REST API (root SSH blocked → API only). Mirrors the
+# proven live config: general SMTP, one enabled alert (recipient + verified
+# from-domain), process-down checks for the critical services, plus the default
+# system (CPU/load/mem) + RootFs (disk) monitors.
+#
+# SMTP creds are read from the secret store at apply time (never committed).
+# The from-address MUST be on a Resend-verified domain or sends are rejected.
+
+- name: Monit | Load Resend SMTP secret
+  ansible.builtin.set_fact:
+    opnsense_monitchk_smtp: "{{ (lookup('file', opnsenseopnsense_monitchk_smtp_secret_path) | from_json).fields }}"
+  no_log: true
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Configure general (SMTP relay to Resend + enable)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/monit/settings/set"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      monit:
+        general:
+          enabled: "1"
+          interval: "{{ opnsense_monit_interval | string }}"
+          startdelay: "{{ opnsense_monit_startdelay | string }}"
+          mailserver: "{{ opnsense_monitchk_smtp.smtp_host }}"
+          port: "{{ opnsense_monitchk_smtp.smtp_port }}"
+          username: "{{ opnsense_monitchk_smtp.smtp_username }}"
+          password: "{{ opnsense_monitchk_smtp.smtp_api_key }}"
+          ssl: "{{ '1' if opnsense_monitchk_smtp.smtp_tls == 'ssl' else '0' }}"
+          sslversion: "auto"
+          sslverify: "1"
+          httpdEnabled: "0"
+          httpdPort: "2812"
+          mmonitTimeout: "5"
+          mmonitRegisterCredentials: "1"
+    status_code: [200, 400]
+  no_log: true
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Fetch existing alerts
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/monit/settings/searchAlert"
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_monitchk_alerts
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Ensure alert is enabled with recipient + verified from-domain
+  ansible.builtin.uri:
+    url: >-
+      {{ opnsense_api_url }}/api/monit/settings/{{
+        ('setAlert/' ~ (opnsense_monitchk_alerts.json.rows | first).uuid)
+        if opnsense_monitchk_alerts.json.rows | length > 0 else 'addAlert' }}
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      alert:
+        enabled: "1"
+        recipient: "{{ opnsense_monitchk_smtp.to_address }}"
+        noton: "0"
+        events: ""
+        reminder: "0"
+        # Literal block = LF newlines only. CR (\r) breaks Monit's parser.
+        format: |-
+          from: {{ opnsense_monitchk_smtp.from_address }}
+          subject: [{{ opnsense_hostname }}] $SERVICE $EVENT
+          message: Monit on $HOST: $SERVICE $EVENT at $DATE -- $DESCRIPTION
+    status_code: [200, 400]
+  when: >-
+    opnsense_monitchk_alerts.json.rows | length == 0 or
+    (opnsense_monitchk_alerts.json.rows | selectattr('recipient', 'equalto', opnsense_monitchk_smtp.to_address)
+       | selectattr('enabled', 'equalto', '1') | list | length == 0)
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Fetch existing tests
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/monit/settings/searchTest"
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_monitchk_tests
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Ensure 'ProcessDown' test exists
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/monit/settings/addTest"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      test: {name: "ProcessDown", condition: "does not exist", action: "alert"}
+    status_code: [200, 400]
+  when: opnsense_monitchk_tests.json.rows | selectattr('name', 'equalto', 'ProcessDown') | list | length == 0
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Re-fetch tests (resolve ProcessDown uuid)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/monit/settings/searchTest"
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_monitchk_tests2
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Fetch existing services
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/monit/settings/searchService"
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_monitchk_services
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Ensure process-down check per critical service
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/monit/settings/addService"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      service:
+        enabled: "1"
+        name: "{{ item.name }}"
+        type: "process"
+        pidfile: "{{ item.pidfile }}"
+        match: ""
+        tests: "{{ (opnsense_monitchk_tests2.json.rows | selectattr('name', 'equalto', 'ProcessDown') | first).uuid }}"
+    status_code: [200, 400]
+  loop: "{{ opnsense_monit_processes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: opnsense_monitchk_services.json.rows | selectattr('name', 'equalto', item.name) | list | length == 0
+  register: opnsense_monitchk_svc_added
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Reconfigure (apply + validate)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/monit/service/reconfigure"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: [200, 400]
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
