@@ -32,6 +32,26 @@ opnsense_timezone: "Europe/Brussels"
 # Only flip true to bootstrap a fresh FW that has NO seed.
 opnsense_manage_vlans: false
 
+# ── Firewall-object ownership (aliases / rules / DHCP) ────────────────────────
+# These objects are owned by the CATALOG (inventories/<env>/group_vars/opnsense.yml
+# → opn_aliases / opn_filter_rules / opn_kea) and applied via the by_systems.opnsense
+# lib path (scripts/fw_apply_direct.py — services/0001 "Pass 1"). The role tasks
+# below (aliases.yml / rules.yml / dhcp.yml) still carry the OLD test-era 3-zone
+# model (net_mgmt/dmz/svc on 10.1.x, opt1/2/3, puzzle DHCP on opt1) and are NOT
+# wired to the catalog. Running them against prod would push the wrong model and
+# drift the FW (issue #51). They are therefore GATED OFF by default — same pattern
+# as opnsense_manage_vlans. A full untagged `ansible-playbook opnsense-prod.yml`
+# run is now safe: the stale tasks skip, the catalog stays the single source of
+# truth. Only flip these true to bootstrap a fresh FW with NO catalog/lib apply,
+# and migrate the data to the catalog model first.
+opnsense_manage_aliases: false
+opnsense_manage_rules: false
+opnsense_manage_dhcp: false
+# hostname/domain/timezone are SEED-owned (build-seed.py from net-internal-domain.json).
+# system.yml also uses the puzzle collection (httpapi connection) which is incompatible
+# with the prod playbook's inline api_* creds and fails outright. Gated OFF — issue #51.
+opnsense_manage_system: false
+
 # ── Time sync ─────────────────────────────────────────────────────────────────
 # chrony (os-chrony) replaces the base ntpd. chrony.yml enables it and stops ntpd.
 opnsense_use_chrony: true
@@ -233,7 +253,11 @@ opnsense_firewall_rules:
     destination_port: "port_wireguard"
 
 # WireGuard — tunnel wg-byresearch-01 (issue #88)
-opnsense_wireguard_enabled: true
+# OFF by default: the peer/server keys below resolve from vault (vault_opnsense_wg_*)
+# which is NOT yet provisioned, and WireGuard is not in the prod catalog. An untagged
+# run with this on would fail on the missing vault keys. Flip true (and provide the
+# vault keys) only on a FW where WireGuard is actually catalogued. See issue #51.
+opnsense_wireguard_enabled: false
 opnsense_wireguard_instance_name: "wg-byresearch-01"
 opnsense_wireguard_port: 51820
 opnsense_wireguard_tunnel_network: "10.99.0.0/24"
