@@ -1,0 +1,83 @@
+---
+# Activate plugin services via API reconfigure (NOT root/puzzle/raw).
+# The plugins are installed (firmware.yml) and the config is present (seed/running
+# config), so a reconfigure starts each service with its existing settings.
+# All API — the only door (root SSH is blocked by design).
+
+- name: Services | Enable qemu-guest-agent
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/qemuguestagent/settings/set"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: { qemuguestagent: { enabled: "1" } }
+    status_code: [200, 400]
+  delegate_to: localhost
+  become: false
+  tags: [services]
+
+- name: Services | Reconfigure each plugin service to (re)start it
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/{{ item }}/service/reconfigure"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: [200, 400, 404]
+  loop:
+    - unbound
+    - dnscryptproxy
+    - crowdsec
+    - qemuguestagent
+  loop_control:
+    label: "{{ item }}"
+  register: opnsense_svc_reconfig
+  failed_when: false
+  delegate_to: localhost
+  become: false
+  tags: [services]
+
+- name: Services | Reconfigure NetFlow / Insight reporting
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/diagnostics/netflow/reconfigure"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: [200, 400]
+  delegate_to: localhost
+  become: false
+  tags: [services, netflow]
+
+- name: Services | Read service states (verify)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/core/service/search"
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_svc_states
+  delegate_to: localhost
+  become: false
+  tags: [services]
+
+- name: Services | Show running services
+  ansible.builtin.debug:
+    msg: >-
+      {{ opnsense_svc_states.json.rows
+         | selectattr('name', 'in', ['unbound','dnscrypt-proxy','crowdsec','qemu-ga','flowd_aggregate','kea-dhcp'])
+         | map(attribute='name') | zip(opnsense_svc_states.json.rows
+             | selectattr('name', 'in', ['unbound','dnscrypt-proxy','crowdsec','qemu-ga','flowd_aggregate','kea-dhcp'])
+             | map(attribute='running')) | list }}
+  tags: [services]
