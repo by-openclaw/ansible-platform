@@ -1,0 +1,47 @@
+---
+# LLDP (os-lldpd) — idempotent via OPNsense REST API.
+# Plugin installed by firmware.yml. We enable LLDP only and restrict announcement
+# to INTERNAL interfaces (OOB + LAN_TRUNK + VLANs) — never the WAN uplinks, so we
+# don't leak topology to the ISPs. All other discovery protocols (CDP/FDP/EDP/
+# SONMP) stay off. API is the only door (root SSH blocked by design).
+
+- name: LLDP | Configure lldpd (LLDP only, internal interfaces, no WAN)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/lldpd/general/set"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      general:
+        enabled: "1"
+        # Discovery protocols — LLDP is always on; the rest default OFF.
+        # CDP only matters with Cisco gear that relies on it (toggle below).
+        cdp: "{{ '1' if opnsense_lldpd_cdp | default(false) | bool else '0' }}"
+        fdp: "{{ '1' if opnsense_lldpd_fdp | default(false) | bool else '0' }}"
+        edp: "{{ '1' if opnsense_lldpd_edp | default(false) | bool else '0' }}"
+        sonmp: "{{ '1' if opnsense_lldpd_sonmp | default(false) | bool else '0' }}"
+        agentx: "0"
+        interface: "{{ opnsense_lldpd_interfaces | join(',') }}"
+    status_code: [200, 400]
+  register: opnsense_lldpd_set
+  delegate_to: localhost
+  become: false
+  tags: [services, lldpd]
+
+- name: LLDP | Reconfigure (apply + start service)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/lldpd/service/reconfigure"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: [200, 400]
+  delegate_to: localhost
+  become: false
+  tags: [services, lldpd]
