@@ -13,6 +13,12 @@
 - name: Include system tasks
   ansible.builtin.include_tasks: system.yml
   tags: [system]
+  # hostname/domain/timezone are SEED-owned (build-seed.py renders config.xml from
+  # net-internal-domain.json) — same ownership principle as L2/L3 and firewall
+  # objects. system.yml also uses puzzle.opnsense.system_settings_general, which
+  # rejects this playbook's inline api_* creds (needs an httpapi connection) and
+  # fails the whole untagged run at task 1. Gated OFF by default — issue #51.
+  when: opnsense_manage_system | default(false) | bool
 
 - name: Include firmware (upgrade + plugins) tasks
   ansible.builtin.include_tasks: firmware.yml
@@ -39,6 +45,9 @@
 - name: Include DHCP tasks
   ansible.builtin.include_tasks: dhcp.yml
   tags: [dhcp]
+  # STALE old-3-zone model (puzzle DHCP on opt1). Prod DHCP = catalog opn_kea via
+  # the lib path. Gated OFF so an untagged run can't drift prod — see issue #51.
+  when: opnsense_manage_dhcp | default(false) | bool
 
 - name: Include NTP tasks (base ntpd) — only when chrony is NOT used
   ansible.builtin.include_tasks: ntp.yml
@@ -58,10 +67,16 @@
 - name: Include firewall alias tasks
   ansible.builtin.include_tasks: aliases.yml
   tags: [firewall, aliases]
+  # STALE old-3-zone aliases (net_mgmt/dmz/svc on 10.1.x). Prod aliases = catalog
+  # opn_aliases (net4_/net6_ dual-stack) via the lib path. Gated OFF — issue #51.
+  when: opnsense_manage_aliases | default(false) | bool
 
 - name: Include firewall rule tasks
   ansible.builtin.include_tasks: rules.yml
   tags: [firewall, rules]
+  # STALE old-3-zone rules (opt1/2/3 outbound). Prod rules = catalog opn_filter_rules
+  # via the lib path. Gated OFF so an untagged run can't drift prod — issue #51.
+  when: opnsense_manage_rules | default(false) | bool
 
 - name: Include service activation tasks
   ansible.builtin.include_tasks: services.yml
@@ -75,4 +90,5 @@
 - name: Include WireGuard tasks
   ansible.builtin.include_tasks: wireguard.yml
   tags: [wireguard, vpn]
-  when: opnsense_wireguard_enabled | default(true) | bool
+  # OFF by default — keys come from unprovisioned vault + not in prod catalog (#51).
+  when: opnsense_wireguard_enabled | default(false) | bool
