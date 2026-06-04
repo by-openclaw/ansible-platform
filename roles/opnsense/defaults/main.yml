@@ -20,8 +20,57 @@ ansible_python_interpreter: /usr/bin/python3
 
 # System
 opnsense_hostname: "vm-opnsense-01"
-opnsense_domain: "by-research.be"
+# Search domain — never hardcode a real domain (no-real-domains rule).
+# Real value lives in vault (vault_opnsense_domain) / infra secret net-internal-domain.json.
+opnsense_domain: "{{ vault_opnsense_domain | default('example.local') }}"
 opnsense_timezone: "Europe/Brussels"
+
+# ── L2/L3 ownership ───────────────────────────────────────────────────────────
+# The SEED (config.xml) owns interface assignment + VLANs (no OPNsense API for
+# assignment — ADR services/0008). Leave VLAN management OFF so re-runs don't
+# spawn unassigned orphan VLANs (the live FW had 310/320/330 orphans from this).
+# Only flip true to bootstrap a fresh FW that has NO seed.
+opnsense_manage_vlans: false
+
+# ── Time sync ─────────────────────────────────────────────────────────────────
+# chrony (os-chrony) replaces the base ntpd. chrony.yml enables it and stops ntpd.
+opnsense_use_chrony: true
+# Belgian NTP pool — geographically close stratum servers (FW is in Brussels TZ).
+opnsense_chrony_peers:
+  - "0.be.pool.ntp.org"
+  - "1.be.pool.ntp.org"
+  - "2.be.pool.ntp.org"
+  - "3.be.pool.ntp.org"
+# Networks chrony serves NTP to (empty list = client-only, no :123 listener).
+# Internal VLANs (v4+v6 dual-stack) + OOB management plane.
+opnsense_chrony_allowed_networks:
+  - "10.1.0.0/16"
+  - "fd01::/32"
+  - "10.6.224.0/20"
+
+# ── LLDP (os-lldpd) ───────────────────────────────────────────────────────────
+# LLDP only, announced on INTERNAL interfaces (OOB + LAN_TRUNK + VLANs) — never
+# the WAN uplinks. Interface idents match the seed assignment order.
+opnsense_lldpd_enabled: true
+# Extra discovery protocols — keep OFF; LLDP (standard) is enough.
+# Flip opnsense_lldpd_cdp only if you add Cisco gear that requires CDP.
+opnsense_lldpd_cdp: false
+opnsense_lldpd_fdp: false
+opnsense_lldpd_edp: false
+opnsense_lldpd_sonmp: false
+opnsense_lldpd_interfaces:
+  - "lan"     # OOB
+  - "opt1"    # LAN_TRUNK
+  - "opt2"    # MGMT
+  - "opt3"    # DMZ
+  - "opt4"    # SVC
+  - "opt5"    # VPN
+  - "opt6"    # IoT
+  - "opt7"    # VoIP
+  - "opt8"    # Storage
+  - "opt9"    # Media
+  - "opt10"   # GAMING
+  - "opt11"   # CCTV
 
 # WAN
 opnsense_wan_interface: "vtnet0"
@@ -52,15 +101,19 @@ opnsense_dhcp_mgmt_enabled: true
 opnsense_dhcp_mgmt_range_start: "10.1.1.100"
 opnsense_dhcp_mgmt_range_end: "10.1.1.199"
 
-# DNS — Unbound
+# DNS — Unbound in the prod chain: AdGuard -> Unbound(:53) -> dnscrypt-proxy(:53531)
+# Unbound forwards PLAINTEXT to the local dnscrypt-proxy listener (which does the
+# encrypted upstream). Unbound itself does NO DoT — see dns.yml. The old
+# DoT-direct model (1.1.1.1/9.9.9.9:853) is removed; it caused TLS handshake
+# failures when pointed at the plaintext dnscrypt port.
 opnsense_unbound_enabled: true
-opnsense_unbound_dot_servers:
-  - host: "1.1.1.1"
-    port: 853
-    verify: "cloudflare-dns.com"
-  - host: "9.9.9.9"
-    port: 853
-    verify: "dns.quad9.net"
+# dnscrypt-proxy binds BOTH loopbacks (127.0.0.1:53531 + [::1]:53531). Forward to
+# both for dual-stack loopback transport + failover (the loopback family does not
+# limit record resolution — A and AAAA both resolve over either).
+opnsense_unbound_dnscrypt_servers:
+  - "::1"
+  - "127.0.0.1"
+opnsense_unbound_dnscrypt_port: 53531
 
 # NTP
 opnsense_ntp_servers:
