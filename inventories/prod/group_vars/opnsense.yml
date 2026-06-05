@@ -1850,6 +1850,41 @@ opn_filter_rules:
   enabled: '1'
   state: present
   ref: {adr: 'security/0001#dns-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
+# ---------------------------------------------------------------------------
+# NTP enforcement (roadmap #3) — force every VLAN to the FW's own chrony.
+# Mirrors the DNS non-FW blocks above: quick-block any internal client trying
+# to reach NTP (123) on anything other than the FW gateways. Clients reach the
+# FW chrony via the per-VLAN "PASS <vlan>→FW any" rules and learn it via DHCP
+# option 42 (ntp_servers). Hardcoded external NTP is dropped, no bypass.
+# ---------------------------------------------------------------------------
+- description: 'BLOCK internal→non-FW port 123 (force chrony) v4'
+  action: block
+  interface: 'opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11'
+  direction: in
+  ipprotocol: inet
+  protocol: TCP/UDP
+  source_net: grp_net4_internal
+  destination_net: host4_fw_gateways
+  destination_not: '1'
+  destination_port: port_ntp
+  quick: '1'
+  enabled: '1'
+  state: present
+  ref: {adr: 'security/0001#ntp-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
+- description: 'BLOCK internal→non-FW port 123 (force chrony) v6'
+  action: block
+  interface: 'opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11'
+  direction: in
+  ipprotocol: inet6
+  protocol: TCP/UDP
+  source_net: grp_net6_internal
+  destination_net: host6_fw_gateways
+  destination_not: '1'
+  destination_port: port_ntp
+  quick: '1'
+  enabled: '1'
+  state: present
+  ref: {adr: 'security/0001#ntp-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
 opn_snat_rules: []
 opn_dnat_rules: []
 opn_unbound:
@@ -1978,6 +2013,12 @@ opn_kea_dhcp4:
       - media
       - gaming
       - cctv
+  # NOTE: each subnet declares ntp_servers (DHCP option 42 = its FW gateway) so
+  # clients discover the FW chrony (roadmap #3). The FW filter blocks external
+  # NTP regardless. ntp_servers is currently a no-op on UPDATE of existing
+  # subnets — lib-opnsense ensure() does not yet diff nested option_data
+  # (tracked: lib-opnsense#85). Kept here as declared desired-state; it applies
+  # automatically once #85 lands (or on subnet (re)create).
   subnets:
     - subnet: 10.1.1.0/24
       pools: 10.1.1.50-10.1.1.99
@@ -1985,6 +2026,7 @@ opn_kea_dhcp4:
       option_data:
         routers: 10.1.1.1
         domain_name_servers: 10.1.1.1
+        ntp_servers: 10.1.1.1
         domain_name: by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.2.0/24
@@ -1993,6 +2035,7 @@ opn_kea_dhcp4:
       option_data:
         routers: 10.1.2.1
         domain_name_servers: 10.1.2.1
+        ntp_servers: 10.1.2.1
         domain_name: by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.3.0/24
@@ -2001,6 +2044,7 @@ opn_kea_dhcp4:
       option_data:
         routers: 10.1.3.1
         domain_name_servers: 10.1.3.1
+        ntp_servers: 10.1.3.1
         domain_name: by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.4.0/24
@@ -2009,6 +2053,7 @@ opn_kea_dhcp4:
       option_data:
         routers: 10.1.4.1
         domain_name_servers: 10.1.4.1
+        ntp_servers: 10.1.4.1
         domain_name: by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.10.0/24
@@ -2017,6 +2062,7 @@ opn_kea_dhcp4:
       option_data:
         routers: 10.1.10.1
         domain_name_servers: 10.1.10.1
+        ntp_servers: 10.1.10.1
         domain_name: by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.11.0/24
@@ -2025,6 +2071,7 @@ opn_kea_dhcp4:
       option_data:
         routers: 10.1.11.1
         domain_name_servers: 10.1.11.1
+        ntp_servers: 10.1.11.1
         domain_name: by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.20.0/24
@@ -2033,6 +2080,7 @@ opn_kea_dhcp4:
       option_data:
         routers: 10.1.20.1
         domain_name_servers: 10.1.20.1
+        ntp_servers: 10.1.20.1
         domain_name: by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.30.0/24
@@ -2041,6 +2089,7 @@ opn_kea_dhcp4:
       option_data:
         routers: 10.1.30.1
         domain_name_servers: 10.1.30.1
+        ntp_servers: 10.1.30.1
         domain_name: by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.32.0/24
@@ -2049,6 +2098,7 @@ opn_kea_dhcp4:
       option_data:
         routers: 10.1.32.1
         domain_name_servers: 10.1.32.1
+        ntp_servers: 10.1.32.1
         domain_name: by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.40.0/24
@@ -2057,6 +2107,7 @@ opn_kea_dhcp4:
       option_data:
         routers: 10.1.40.1
         domain_name_servers: 10.1.40.1
+        ntp_servers: 10.1.40.1
         domain_name: by-research.be
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
 
