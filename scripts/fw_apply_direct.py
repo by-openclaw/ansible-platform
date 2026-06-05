@@ -58,6 +58,15 @@ DEFAULT_ENV = "test"
 WORKSPACE_SECRETS = Path("/home/by-systems/.openclaw/workspace/infra/secrets")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# Section groups selectable via --only. Each maps to one catalog concern so a
+# roadmap step can apply just its slice without touching the others:
+#   fw      -> opn_aliases, opn_filter_rules, opn_snat_rules, opn_dnat_rules
+#   dns     -> opn_unbound (host overrides + forwarders)
+#   kea     -> opn_kea_dhcp4 / opn_kea_dhcp6
+#   dnsmasq -> opn_dnsmasq
+#   radvd   -> opn_radvd
+SECTION_GROUPS = {"fw", "dns", "kea", "dnsmasq", "radvd"}
+
 log = logging.getLogger("fw_apply_direct")
 
 
@@ -349,6 +358,22 @@ async def main_async(args: argparse.Namespace) -> int:
     dnat = catalog.get("opn_dnat_rules", [])
     iface_map = catalog.get("opn_interface_map", {})
 
+    # --only section scoping: apply just the requested catalog slice(s) so each
+    # roadmap step touches only its own concern. Default (empty) = all sections.
+    only: set[str] = {s.strip() for s in (args.only or "").split(",") if s.strip()}
+    unknown = only - SECTION_GROUPS
+    if unknown:
+        raise SystemExit(
+            f"--only: unknown section(s) {sorted(unknown)}; valid: {sorted(SECTION_GROUPS)}"
+        )
+
+    def want(group: str) -> bool:
+        """True if this section group should run (no --only = run everything)."""
+        return not only or group in only
+
+    if only:
+        log.info("[ONLY] restricting to sections: %s", sorted(only))
+
     results: list[dict[str, Any]] = []
 
     async with OpnsenseClient(
@@ -358,14 +383,15 @@ async def main_async(args: argparse.Namespace) -> int:
         secret=creds["secret"],
         verify_ssl=creds["verify_ssl"],
     ) as client:
-        await apply_section(FwAliasManager,     client, aliases, "ALIAS",  args.check, results)
-        await apply_section(FwFilterManager,    client, rules,   "RULE",   args.check, results, iface_map=iface_map)
-        await apply_section(FwSourceNatManager, client, snat,    "SNAT",   args.check, results, iface_map=iface_map)
-        await apply_section(FwDnatManager,      client, dnat,    "DNAT",   args.check, results, iface_map=iface_map)
+        if want("fw"):
+            await apply_section(FwAliasManager,     client, aliases, "ALIAS",  args.check, results)
+            await apply_section(FwFilterManager,    client, rules,   "RULE",   args.check, results, iface_map=iface_map)
+            await apply_section(FwSourceNatManager, client, snat,    "SNAT",   args.check, results, iface_map=iface_map)
+            await apply_section(FwDnatManager,      client, dnat,    "DNAT",   args.check, results, iface_map=iface_map)
 
         # Unbound (split DNS) — opn_unbound block
         unbound = catalog.get("opn_unbound", {})
-        if unbound.get("enabled"):
+        if want("dns") and unbound.get("enabled"):
             host_overrides = [{"state": "present", **{k: v for k, v in h.items() if k != "ref"}} for h in unbound.get("host_overrides", [])]
             forwarders     = [{"state": "present", **{k: v for k, v in f.items() if k != "ref"}} for f in unbound.get("forwarders", [])]
             await apply_section(UbHostOverrideManager, client, host_overrides, "DNS_HO", args.check, results)
@@ -373,27 +399,27 @@ async def main_async(args: argparse.Namespace) -> int:
 
         # Kea DHCPv4 — general settings (enable + interfaces) then subnets
         kea4 = catalog.get("opn_kea_dhcp4", {})
-        if kea4.get("enabled"):
+        if want("kea") and kea4.get("enabled"):
             await apply_kea_general(client, "kea/dhcpv4", kea4.get("general", {}), iface_map, "KEA4", args.check, results)
             subnets4 = [{"state": "present", **s} for s in kea4.get("subnets", [])]
             await apply_section(Kea4SubnetManager, client, subnets4, "KEA4", args.check, results, iface_map=iface_map)
 
         # Kea DHCPv6 — general settings then subnets (interface-bound)
         kea6 = catalog.get("opn_kea_dhcp6", {})
-        if kea6.get("enabled"):
+        if want("kea") and kea6.get("enabled"):
             await apply_kea_general(client, "kea/dhcpv6", kea6.get("general", {}), iface_map, "KEA6", args.check, results)
             subnets6 = [{"state": "present", **s} for s in kea6.get("subnets", [])]
             await apply_section(Kea6SubnetManager, client, subnets6, "KEA6", args.check, results, iface_map=iface_map)
 
         # Single reconfigure for both Kea services
-        if kea4.get("enabled") or kea6.get("enabled"):
+        if want("kea") and (kea4.get("enabled") or kea6.get("enabled")):
             await reconfigure_kea(client, args.check, results)
 
         # Dnsmasq — singleton settings + sub-resources (lib-opnsense epic #65)
         # Order: settings first (must run before sub-resources can be applied
         # cleanly), then sub-resources, then service control last.
         dnsmasq = catalog.get("opn_dnsmasq", {})
-        if dnsmasq.get("enabled"):
+        if want("dnsmasq") and dnsmasq.get("enabled"):
             settings = dnsmasq.get("settings")
             if settings:
                 dn_mgr = DnsmasqSettingsManager(client)
@@ -451,7 +477,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
         # radvd — per-interface RA entries + service control
         radvd = catalog.get("opn_radvd", {})
-        if radvd.get("enabled"):
+        if want("radvd") and radvd.get("enabled"):
             ra_entries = [{"state": e.get("state", "present"), **{k: v for k, v in e.items() if k not in ("state", "ref")}}
                           for e in radvd.get("entries", [])]
             await apply_section(RadvdEntryManager, client, ra_entries, "RADVD", args.check, results, iface_map=iface_map)
@@ -485,6 +511,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", default=DEFAULT_ENV, help="Environment slug (default: test)")
     parser.add_argument("--check", action="store_true", help="Dry-run (no API writes)")
+    parser.add_argument(
+        "--only",
+        default="",
+        help=(
+            "Comma-separated section groups to apply (default: all). "
+            "Valid: fw, dns, kea, dnsmasq, radvd. "
+            "E.g. --only fw applies only aliases+rules+NAT."
+        ),
+    )
     parser.add_argument("--secret-file", help="Override secret file path (for ad-hoc test FW credentials)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose / DEBUG logging")
     args = parser.parse_args()
