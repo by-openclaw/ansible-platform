@@ -588,6 +588,15 @@ opn_aliases:
   description: 'FW IPv6 gateway IPs on the 10 internal VLANs'
   state: present
   ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}
+# Cluster host aliases — FW rules/NAT reference these, never raw IPs.
+- {name: host4_traefik, type: host, content: ['10.1.2.110'], description: 'Traefik ingress (DMZ) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: host6_traefik, type: host, content: ['fd01:2::110'], description: 'Traefik ingress (DMZ) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: host4_pgsql, type: host, content: ['10.1.3.110'], description: 'PostgreSQL (SVC) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: host6_pgsql, type: host, content: ['fd01:3::110'], description: 'PostgreSQL (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: host4_redis, type: host, content: ['10.1.3.117'], description: 'Redis (SVC) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: host6_redis, type: host, content: ['fd01:3::117'], description: 'Redis (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: host4_traefik_pub, type: host, content: ['213.214.47.222'], description: 'Traefik public IPv4 (Telenet /29)', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: host6_traefik_pub, type: host, content: ['2a02:1802:21::5'], description: 'Traefik public IPv6 GUA (Telenet)', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - name: port_dot
   type: port
   content: '853'
@@ -1894,86 +1903,18 @@ opn_unbound:
   - grp_net4_internal
   - grp_net6_internal
   host_overrides:
-  - hostname: lxc-mgmt-deb13-01
-    domain: by-research.be
-    rr: A
-    server: 10.1.1.100
-  - hostname: lxc-mgmt-deb13-01
-    domain: by-research.be
-    rr: AAAA
-    server: fd01:1::100
-  - hostname: lxc-dmz-deb13-01
-    domain: by-research.be
-    rr: A
-    server: 10.1.2.100
-  - hostname: lxc-dmz-deb13-01
-    domain: by-research.be
-    rr: AAAA
-    server: fd01:2::100
-  - hostname: lxc-svc-deb13-01
-    domain: by-research.be
-    rr: A
-    server: 10.1.3.100
-  - hostname: lxc-svc-deb13-01
-    domain: by-research.be
-    rr: AAAA
-    server: fd01:3::100
-  - hostname: lxc-vpn-deb13-01
-    domain: by-research.be
-    rr: A
-    server: 10.1.4.100
-  - hostname: lxc-vpn-deb13-01
-    domain: by-research.be
-    rr: AAAA
-    server: fd01:4::100
-  - hostname: lxc-iot-ubu2404-01
-    domain: by-research.be
-    rr: A
-    server: 10.1.10.100
-  - hostname: lxc-iot-ubu2404-01
-    domain: by-research.be
-    rr: AAAA
-    server: fd01:10::100
-  - hostname: lxc-voip-ubu2404-01
-    domain: by-research.be
-    rr: A
-    server: 10.1.11.100
-  - hostname: lxc-voip-ubu2404-01
-    domain: by-research.be
-    rr: AAAA
-    server: fd01:11::100
-  - hostname: lxc-storage-ubu2404-01
-    domain: by-research.be
-    rr: A
-    server: 10.1.20.100
-  - hostname: lxc-storage-ubu2404-01
-    domain: by-research.be
-    rr: AAAA
-    server: fd01:20::100
-  - hostname: lxc-media-rocky9-01
-    domain: by-research.be
-    rr: A
-    server: 10.1.30.100
-  - hostname: lxc-media-rocky9-01
-    domain: by-research.be
-    rr: AAAA
-    server: fd01:30::100
-  - hostname: lxc-gaming-rocky9-01
-    domain: by-research.be
-    rr: A
-    server: 10.1.32.100
-  - hostname: lxc-gaming-rocky9-01
-    domain: by-research.be
-    rr: AAAA
-    server: fd01:32::100
-  - hostname: lxc-cctv-rocky9-01
-    domain: by-research.be
-    rr: A
-    server: 10.1.40.100
-  - hostname: lxc-cctv-rocky9-01
-    domain: by-research.be
-    rr: AAAA
-    server: fd01:40::100
+  # --- Real cluster hosts (present) — split-horizon internal records ---
+  - {hostname: vm-adguard-01, domain: by-research.be, rr: A,    server: 10.1.3.101}
+  - {hostname: vm-adguard-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::101'}
+  - {hostname: lxc-traefik-01, domain: by-research.be, rr: A,    server: 10.1.2.110}
+  - {hostname: lxc-traefik-01, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: traefik, domain: by-research.be, rr: A,    server: 10.1.2.110}   # dashboard / ingress name
+  - {hostname: traefik, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: lxc-pgsql-01, domain: by-research.be, rr: A,    server: 10.1.3.110}
+  - {hostname: lxc-pgsql-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::110'}
+  - {hostname: lxc-redis-01, domain: by-research.be, rr: A,    server: 10.1.3.117}
+  - {hostname: lxc-redis-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::117'}
+  # (20 stale probe-fleet overrides pruned 2026-06-06 — never-built hosts.)
   # Query Forwarding — chain step: Unbound → dnscrypt-proxy on loopback.
   # Empty domain = catch-all → Unbound creates a `forward-zone "."` from these entries.
   #
