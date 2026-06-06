@@ -1,0 +1,69 @@
+---
+# ==============================================================================
+# postgres_db | provision one app DB + owner role on the shared cluster Postgres
+# Idempotent via `docker exec` (delegated to the Postgres host; local socket =
+# trust). Password is generated once + stored in the controller secret store.
+# ==============================================================================
+- name: "Postgresdb | Stat controller secret for {{ postgres_db_name }}"
+  ansible.builtin.stat:
+    path: "{{ postgres_db_secret_dir }}/{{ postgres_db_secret_file }}"
+  delegate_to: localhost
+  become: false
+  register: postgres_db_secret_stat
+
+- name: "Postgresdb | Load existing password for {{ postgres_db_name }}"
+  ansible.builtin.set_fact:
+    postgres_db_password: "{{ (lookup('file', postgres_db_secret_dir + '/' + postgres_db_secret_file) | from_json).fields.password }}"
+  no_log: true
+  when: postgres_db_secret_stat.stat.exists
+
+- name: "Postgresdb | Generate password for {{ postgres_db_name }}"
+  ansible.builtin.set_fact:
+    postgres_db_password: "{{ lookup('community.general.random_string', length=28, special=false) }}"
+  no_log: true
+  when: not postgres_db_secret_stat.stat.exists
+
+- name: "Postgresdb | Persist controller secret (0600) for {{ postgres_db_name }}"
+  ansible.builtin.copy:
+    dest: "{{ postgres_db_secret_dir }}/{{ postgres_db_secret_file }}"
+    mode: "0600"
+    content: "{{ {'fields': {'host': postgres_db_listen_ip, 'port': postgres_db_port,
+      'database': postgres_db_name, 'user': postgres_db_user,
+      'password': postgres_db_password}} | to_nice_json }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: not postgres_db_secret_stat.stat.exists
+
+- name: "Postgresdb | Check role exists: {{ postgres_db_user }}"
+  ansible.builtin.command:
+    cmd: docker exec {{ postgres_db_container }} psql -tAU postgres -d postgres -c "SELECT 1 FROM pg_roles WHERE rolname = '{{ postgres_db_user }}'"
+  delegate_to: "{{ postgres_db_host }}"
+  register: postgres_db_role_exists
+  changed_when: false
+
+- name: "Postgresdb | Create role {{ postgres_db_user }}"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ postgres_db_container }} psql -U postgres -d postgres
+      -c "CREATE ROLE {{ postgres_db_user }} LOGIN PASSWORD '{{ postgres_db_password }}'"
+  delegate_to: "{{ postgres_db_host }}"
+  when: postgres_db_role_exists.stdout | trim != '1'
+  no_log: true
+  changed_when: true
+
+- name: "Postgresdb | Check database exists: {{ postgres_db_name }}"
+  ansible.builtin.command:
+    cmd: docker exec {{ postgres_db_container }} psql -tAU postgres -d postgres -c "SELECT 1 FROM pg_database WHERE datname = '{{ postgres_db_name }}'"
+  delegate_to: "{{ postgres_db_host }}"
+  register: postgres_db_exists
+  changed_when: false
+
+- name: "Postgresdb | Create database (UTF-8) {{ postgres_db_name }}"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ postgres_db_container }} createdb -U postgres -O {{ postgres_db_user }}
+      -E UTF8 -T template0 --lc-collate=C.UTF-8 --lc-ctype=C.UTF-8 {{ postgres_db_name }}
+  delegate_to: "{{ postgres_db_host }}"
+  when: postgres_db_exists.stdout | trim != '1'
+  changed_when: true
