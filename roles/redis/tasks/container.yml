@@ -1,0 +1,34 @@
+---
+- name: "container | Pull the pinned Redis image"
+  community.docker.docker_image:
+    name: "{{ redis_image }}"
+    source: pull
+    state: present
+
+- name: "container | Run Redis"
+  community.docker.docker_container:
+    name: "{{ redis_container_name }}"
+    image: "{{ redis_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    command: "redis-server {{ redis_conf_file }}"
+    published_ports:
+      - "{{ redis_listen_ip }}:{{ redis_port }}:6379"
+      - "127.0.0.1:{{ redis_port }}:6379"
+    volumes:
+      - "{{ redis_data_volume }}:/data"
+      - "{{ redis_conf_host_dir }}:{{ redis_conf_host_dir }}:ro"
+      - "{{ redis_cert_host_dir }}:{{ redis_cert_host_dir }}:ro"
+
+- name: "container | Wait for Redis to accept TLS connections"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ redis_container_name }} redis-cli --tls --insecure
+      -h 127.0.0.1 -p {{ redis_tls_port }} -a {{ redis_requirepass }} ping
+  register: redis_ping
+  retries: 15
+  delay: 2
+  until: redis_ping.rc == 0 and 'PONG' in redis_ping.stdout
+  changed_when: false
+  no_log: true

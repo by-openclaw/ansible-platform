@@ -1,0 +1,15 @@
+---
+# One-time: retire the native Redis so the container can bind :6379.
+# Cache/broker had no persistent data yet → nothing to migrate.
+- name: "migrate | Stop + disable native redis-server (if present)"
+  ansible.builtin.systemd_service:
+    name: "redis-server"
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: "migrate | Mask the native redis-server unit"
+  ansible.builtin.systemd_service:
+    name: "redis-server"
+    masked: true
+  failed_when: false
