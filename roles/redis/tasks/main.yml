@@ -1,10 +1,10 @@
 ---
 # ==============================================================================
-# Role: redis — dispatcher
+# Role: redis (Docker) — dispatcher
 # ==============================================================================
-- name: Install Redis
-  ansible.builtin.import_tasks: install.yml
-  tags: [redis, install]
+- name: Retire any native Redis install
+  ansible.builtin.import_tasks: migrate.yml
+  tags: [redis, migrate]
 
 - name: Distribute the shared wildcard cert (TLS)
   ansible.builtin.import_tasks: tls.yml
@@ -14,6 +14,10 @@
   ansible.builtin.import_tasks: secrets.yml
   tags: [redis, secrets]
 
-- name: Configure Redis (TLS, auth, bind, persistence)
+- name: Render config (TLS, auth, persistence)
   ansible.builtin.import_tasks: config.yml
   tags: [redis, config]
+
+- name: Run the Redis container
+  ansible.builtin.import_tasks: container.yml
+  tags: [redis, container]

@@ -1,35 +1,18 @@
 ---
-- name: "config | Ensure the drop-in directory exists"
+- name: "config | Ensure the config dir exists (mounted into the container)"
   ansible.builtin.file:
-    path: "{{ redis_dropin_dir }}"
+    path: "{{ redis_conf_host_dir }}"
     state: directory
-    owner: redis
-    group: redis
-    mode: "0750"
-
-- name: "config | Render cluster drop-in (TLS, auth, bind, persistence)"
-  ansible.builtin.template:
-    src: 10-cluster.conf.j2
-    dest: "{{ redis_dropin }}"
     owner: root
-    group: redis
+    group: root
+    mode: "0755"
+
+- name: "config | Render redis.conf (TLS, auth, persistence)"
+  ansible.builtin.template:
+    src: redis.conf.j2
+    dest: "{{ redis_conf_file }}"
+    owner: "{{ redis_uid }}"
+    group: "{{ redis_uid }}"
     mode: "0640"
   no_log: true
   notify: Restart redis
-
-- name: "config | Include the drop-in from redis.conf (last line wins)"
-  ansible.builtin.lineinfile:
-    path: "{{ redis_conf }}"
-    line: "include {{ redis_dropin }}"
-    regexp: "^include {{ redis_dropin }}$"
-    insertafter: EOF
-    state: present
-  notify: Restart redis
-
-- name: "config | Ensure redis is started"
-  ansible.builtin.systemd_service:
-    name: redis-server
-    state: started
-
-- name: "config | Apply pending restart now"
-  ansible.builtin.meta: flush_handlers
