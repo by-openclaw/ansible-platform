@@ -19,6 +19,9 @@
       - "{{ pg_data_volume }}:/var/lib/postgresql/data"
       - "{{ pg_conf_host_dir }}:{{ pg_conf_host_dir }}:ro"
       - "{{ pg_cert_host_dir }}:{{ pg_cert_host_dir }}:ro"
+      # Host CA store (base installs ca-certificates) — standard on every
+      # container so in-container tools verify TLS against the public LE chain.
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
     env:
       POSTGRES_PASSWORD: "{{ pg_superuser_password }}"
       POSTGRES_USER: "postgres"

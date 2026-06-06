@@ -16,6 +16,9 @@
       - "{{ pgadmin_listen_ip }}:{{ pgadmin_host_port }}:{{ pgadmin_container_port }}"
     volumes:
       - "{{ pgadmin_data_volume }}:/var/lib/pgadmin"
+      # Host CA store — standard on every container so it verifies TLS (e.g.
+      # pgAdmin → Postgres sslmode=verify-full) against the public LE chain.
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
     env:
       PGADMIN_DEFAULT_EMAIL: "{{ pgadmin_default_email }}"
       PGADMIN_DEFAULT_PASSWORD: "{{ pgadmin_admin_password }}"
