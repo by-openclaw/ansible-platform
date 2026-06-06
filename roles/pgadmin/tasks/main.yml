@@ -1,0 +1,21 @@
+---
+# ==============================================================================
+# Role: pgadmin — dispatcher
+# ==============================================================================
+- name: Resolve / generate the admin password
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [pgadmin, secrets]
+
+- name: Run the pgAdmin container
+  ansible.builtin.import_tasks: container.yml
+  tags: [pgadmin, container]
+
+- name: Publish pgAdmin via Traefik (internal-only)
+  ansible.builtin.include_role:
+    name: traefik_route
+  vars:
+    traefik_route_name: pgadmin
+    traefik_route_fqdn: "{{ pgadmin_fqdn }}"
+    traefik_route_backend_url: "{{ pgadmin_traefik_backend }}"
+    traefik_route_internal_only: true
+  tags: [pgadmin, route]

@@ -1,0 +1,23 @@
+---
+# ==============================================================================
+# Role: pgadmin — pgAdmin 4 (Docker) on lxc-pgadmin-01 (SVC 10.1.3.140)
+# Internal-only DB admin UI, fronted by Traefik (wildcard TLS + ipAllowList).
+# Connects to Postgres over TLS (sslmode=verify-full, public LE CA).
+# ==============================================================================
+pgadmin_image: "dpage/pgadmin4:9.15"   # pinned (never :latest)
+
+pgadmin_fqdn: "pgadmin.by-research.be"
+
+# Bind the container to the SVC IP so Traefik (on the DMZ host) can reach it.
+pgadmin_listen_ip: "10.1.3.140"
+pgadmin_host_port: 8080
+pgadmin_container_port: 80
+pgadmin_traefik_backend: "http://{{ pgadmin_listen_ip }}:{{ pgadmin_host_port }}"
+
+# Initial admin login (password generated once + stored in the controller store).
+pgadmin_default_email: "admin@by-research.be"
+pgadmin_secret_dir: "~/.openclaw/workspace/infra/secrets"
+pgadmin_secret_file: "pgadmin-admin.json"
+
+# Persistent data (server list, prefs) across container re-creation.
+pgadmin_data_volume: "pgadmin-data"
