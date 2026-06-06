@@ -1,0 +1,48 @@
+---
+# ==============================================================================
+# tls_cert | distribute the shared wildcard cert from the cert-authority host
+# Single source of truth = the lego-issued cert on tls_cert_source_host. We
+# slurp it over the existing SSH/ProxyJump path and install it locally. Copy
+# compares content, so this is idempotent and re-runs only on actual renewal.
+# ==============================================================================
+- name: "TLS | Ensure the destination directory exists"
+  ansible.builtin.file:
+    path: "{{ tls_cert_dir }}"
+    state: directory
+    owner: "{{ tls_cert_owner }}"
+    group: "{{ tls_cert_group }}"
+    mode: "{{ tls_cert_dir_mode }}"
+
+- name: "TLS | Read the wildcard certificate from the cert-authority host"
+  ansible.builtin.slurp:
+    src: "{{ tls_cert_source_crt }}"
+  delegate_to: "{{ tls_cert_source_host }}"
+  register: tls_cert_src_crt
+  no_log: true
+
+- name: "TLS | Read the wildcard private key from the cert-authority host"
+  ansible.builtin.slurp:
+    src: "{{ tls_cert_source_key }}"
+  delegate_to: "{{ tls_cert_source_host }}"
+  register: tls_cert_src_key
+  no_log: true
+
+- name: "TLS | Install the wildcard certificate"
+  ansible.builtin.copy:
+    content: "{{ tls_cert_src_crt.content | b64decode }}"
+    dest: "{{ tls_cert_crt }}"
+    owner: "{{ tls_cert_owner }}"
+    group: "{{ tls_cert_group }}"
+    mode: "{{ tls_cert_crt_mode }}"
+  no_log: true
+  notify: tls_cert changed
+
+- name: "TLS | Install the wildcard private key"
+  ansible.builtin.copy:
+    content: "{{ tls_cert_src_key.content | b64decode }}"
+    dest: "{{ tls_cert_key }}"
+    owner: "{{ tls_cert_owner }}"
+    group: "{{ tls_cert_group }}"
+    mode: "{{ tls_cert_key_mode }}"
+  no_log: true
+  notify: tls_cert changed

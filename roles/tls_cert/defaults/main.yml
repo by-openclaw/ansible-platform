@@ -1,0 +1,28 @@
+---
+# ==============================================================================
+# Role: tls_cert — distribute the shared wildcard *.by-research.be cert
+# The cert is issued ONCE on the cert-authority host (lxc-traefik-01) via lego
+# DNS-01. This role copies that cert+key to every device that needs end-to-end
+# TLS (Postgres, Redis, …) WITHOUT re-running ACME per device — avoids the
+# Let's Encrypt duplicate-certificate rate limit ("every device has the cert").
+# ==============================================================================
+tls_cert_domain: "by-research.be"
+
+# Source of truth: the lego wildcard cert on the cert-authority host (inventory
+# hostname). Mirrors roles/traefik defaults (traefik_cert_crt/_key).
+tls_cert_source_host: "lxc-traefik-01"
+tls_cert_source_crt: "/etc/lego/cert/certificates/_.{{ tls_cert_domain }}.crt"
+tls_cert_source_key: "/etc/lego/cert/certificates/_.{{ tls_cert_domain }}.key"
+
+# Destination on the target host. Standard, service-agnostic location.
+tls_cert_dir: "/etc/ssl/by-research"
+tls_cert_crt: "{{ tls_cert_dir }}/wildcard.crt"
+tls_cert_key: "{{ tls_cert_dir }}/wildcard.key"
+
+# Ownership/permissions. Default root:root; consumers override the group so the
+# service user can read the key (e.g. postgresql passes tls_cert_group: postgres).
+tls_cert_owner: "root"
+tls_cert_group: "root"
+tls_cert_dir_mode: "0755"
+tls_cert_crt_mode: "0644"
+tls_cert_key_mode: "0640"
