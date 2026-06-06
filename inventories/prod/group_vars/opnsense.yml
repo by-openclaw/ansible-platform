@@ -199,6 +199,7 @@ opn_aliases:
     adr: naming/0003#§1-atomic-ports
     lib_manager: FwAliasManager
     ansible_module: by_systems.opnsense.opnsense_fw_alias
+- {name: port_web, type: port, content: ['80', '443'], description: 'HTTP+HTTPS (Traefik ingress)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - name: port_dns
   type: port
   content: '53'
@@ -1894,8 +1895,15 @@ opn_filter_rules:
   enabled: '1'
   state: present
   ref: {adr: 'security/0001#ntp-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
+- {description: 'PASS Telenet WAN → Traefik web (v4)', action: pass, interface: opt13, direction: in, ipprotocol: inet,  protocol: TCP, source_net: any, destination_net: host4_traefik, destination_port: port_web, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+- {description: 'PASS Telenet WAN → Traefik web (v6)', action: pass, interface: opt13, direction: in, ipprotocol: inet6, protocol: TCP, source_net: any, destination_net: host6_traefik, destination_port: port_web, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 opn_snat_rules: []
-opn_dnat_rules: []
+opn_dnat_rules:
+# Public ingress: Telenet WAN (opt13) :80/:443 → Traefik (dual-stack port-forward).
+- {descr: 'DNAT Telenet→Traefik HTTP (v4)',  interface: opt13, protocol: TCP, ipprotocol: inet,  destination: {network: host4_traefik_pub, port: '80'},  target: '10.1.2.110', local-port: '80',  state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
+- {descr: 'DNAT Telenet→Traefik HTTPS (v4)', interface: opt13, protocol: TCP, ipprotocol: inet,  destination: {network: host4_traefik_pub, port: '443'}, target: '10.1.2.110', local-port: '443', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
+- {descr: 'DNAT Telenet→Traefik HTTP (v6)',  interface: opt13, protocol: TCP, ipprotocol: inet6, destination: {network: host6_traefik_pub, port: '80'},  target: 'fd01:2::110', local-port: '80',  state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
+- {descr: 'DNAT Telenet→Traefik HTTPS (v6)', interface: opt13, protocol: TCP, ipprotocol: inet6, destination: {network: host6_traefik_pub, port: '443'}, target: 'fd01:2::110', local-port: '443', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
 opn_unbound:
   enabled: true
   domain: by-research.be
