@@ -1,0 +1,21 @@
+---
+# ==============================================================================
+# Role: postgres_db — create one app database + owner role on the shared cluster
+# PostgreSQL (lxc-pgsql-01). REUSABLE per-app: each app's playbook includes this
+# to provision its OWN DB+role at install time (separation of concerns — the
+# postgresql engine role does NOT create app DBs).
+#
+# Required (pass via include_role vars):
+#   postgres_db_name   e.g. "netbox"
+#   postgres_db_user   e.g. "netbox"
+# ==============================================================================
+# Where the PostgreSQL container runs (delegate target for docker exec).
+postgres_db_host: "lxc-pgsql-01"
+postgres_db_container: "postgres"
+postgres_db_listen_ip: "10.1.3.110"
+postgres_db_port: 5432
+
+# Controller-side secret store. The generated password is written here as
+# db-pgsql-<name>.json and consumed by the app (sslmode=verify-full).
+postgres_db_secret_dir: "~/.openclaw/workspace/infra/secrets"
+postgres_db_secret_file: "db-pgsql-{{ postgres_db_name }}.json"
