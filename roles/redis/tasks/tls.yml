@@ -1,0 +1,14 @@
+---
+# ==============================================================================
+# redis | TLS — install the shared wildcard cert (readable by redis)
+# Runs AFTER install.yml so the `redis` group exists. Uses the shared tls_cert
+# role so the cert is NOT re-issued here (single source = lxc-traefik-01 lego).
+# ==============================================================================
+- name: "tls | Distribute the wildcard cert (readable by redis)"
+  ansible.builtin.include_role:
+    name: tls_cert
+  vars:
+    tls_cert_group: redis
+    tls_cert_crt: "{{ redis_tls_cert }}"
+    tls_cert_key: "{{ redis_tls_key }}"
+  when: redis_tls | bool

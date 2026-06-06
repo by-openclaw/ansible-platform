@@ -1,0 +1,32 @@
+---
+# ==============================================================================
+# Role: redis — shared Redis (lxc-redis-01, SVC 10.1.3.117)
+# Internal-only (TCP, not behind Traefik). Cache/broker for Authentik + NetBox.
+# Single-node now; HA-adoptable (AOF + tls-replication) so a future replica /
+# Sentinel can attach with no rebuild and no data loss.
+# ==============================================================================
+redis_conf: "/etc/redis/redis.conf"
+redis_dropin_dir: "/etc/redis/redis.conf.d"
+redis_dropin: "{{ redis_dropin_dir }}/10-cluster.conf"
+redis_data_dir: "/var/lib/redis"
+
+# Listen on loopback + the SVC addresses (apps connect over SVC).
+redis_bind_addresses: "127.0.0.1 ::1 10.1.3.117 fd01:3::117"
+redis_port: 6379
+
+# TLS — shared wildcard *.by-research.be cert (distributed by the tls_cert role,
+# NOT re-issued here). Plaintext disabled (port 0); clients connect rediss://.
+redis_tls: true
+redis_tls_port: 6379
+redis_tls_cert: "/etc/ssl/by-research/wildcard.crt"
+redis_tls_key: "/etc/ssl/by-research/wildcard.key"
+
+# Auth: requirepass generated once + stored in the controller secret store.
+redis_secret_dir: "~/.openclaw/workspace/infra/secrets"
+redis_secret_file: "db-redis.json"
+
+# Durability — AOF so a replica can attach later (HA-adoptable). Broker use →
+# never evict (noeviction); raise maxmemory per workload if needed.
+redis_appendonly: "yes"
+redis_maxmemory: "0"
+redis_maxmemory_policy: "noeviction"
