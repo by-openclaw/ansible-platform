@@ -1,0 +1,38 @@
+---
+# ==============================================================================
+# Role: authentik — SSO / Identity Provider (Docker) on lxc-authentik-01 (SVC)
+# server + worker containers (same image). Uses the shared cluster PostgreSQL
+# (postgres_db: authentik) + Redis, both over verified TLS. Fronted by Traefik
+# (wildcard TLS). Upgrade = bump authentik_image tag.
+# ==============================================================================
+authentik_image: "ghcr.io/goauthentik/server:2026.5.2"   # pinned (never :latest)
+
+authentik_fqdn: "authentik.by-research.be"
+
+# Server HTTP backend (Traefik terminates TLS) — published on the SVC IP.
+authentik_listen_ip: "10.1.3.130"
+authentik_host_port: 9000
+authentik_container_port: 9000
+
+# Shared PostgreSQL (DB + role created by the postgres_db role).
+authentik_pg_host: "lxc-pgsql-01.by-research.be"
+authentik_pg_port: 5432
+authentik_pg_name: "authentik"
+authentik_pg_user: "authentik"
+
+# Shared Redis.
+authentik_redis_host: "lxc-redis-01.by-research.be"
+authentik_redis_port: 6379
+
+# Controller secret store.
+authentik_secret_dir: "~/.openclaw/workspace/infra/secrets"
+authentik_secret_file: "authentik.json"               # secret_key + bootstrap
+authentik_pg_secret_file: "db-pgsql-authentik.json"   # written by postgres_db
+authentik_redis_secret_file: "db-redis.json"
+
+# Initial admin (akadmin).
+authentik_bootstrap_email: "admin@by-research.be"
+
+# Persistent volumes.
+authentik_media_volume: "authentik-media"
+authentik_templates_volume: "authentik-templates"
