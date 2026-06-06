@@ -1,15 +1,18 @@
 ---
 # ==============================================================================
-# postgresql | TLS — install the shared wildcard cert (ssl=on)
-# Runs AFTER install.yml so the `postgres` group exists (the key is group-readable
-# by postgres). Uses the shared tls_cert role so the cert is NOT re-issued here
-# (single source = lxc-traefik-01 lego cert).
+# postgresql | TLS — install the shared wildcard cert for the container
+# The official image runs postgres as uid 999, so the key must be owned by 999
+# (mode 0600) for postgres to accept it. Uses the shared tls_cert role.
 # ==============================================================================
-- name: "tls | Distribute the wildcard cert (readable by postgres)"
+- name: "tls | Distribute the wildcard cert (owned by the container postgres uid)"
   ansible.builtin.include_role:
     name: tls_cert
   vars:
-    tls_cert_group: postgres
+    tls_cert_dir: "{{ pg_cert_host_dir }}"
     tls_cert_crt: "{{ pg_ssl_cert }}"
     tls_cert_key: "{{ pg_ssl_key }}"
+    tls_cert_owner: "{{ pg_uid }}"
+    tls_cert_group: "{{ pg_uid }}"
+    tls_cert_key_mode: "0600"
+    tls_cert_crt_mode: "0644"
   when: pg_ssl | bool

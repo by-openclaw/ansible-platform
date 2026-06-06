@@ -1,10 +1,7 @@
 ---
-- name: Restart postgresql
-  ansible.builtin.systemd_service:
-    name: "postgresql@{{ pg_version }}-main"
-    state: restarted
-
-- name: Reload postgresql
-  ansible.builtin.systemd_service:
-    name: "postgresql@{{ pg_version }}-main"
-    state: reloaded
+- name: Restart postgres
+  community.docker.docker_container:
+    name: "{{ pg_container_name }}"
+    state: started
+    restart: true
+  listen: "tls_cert changed"

@@ -1,0 +1,63 @@
+---
+- name: "container | Pull the pinned PostgreSQL image"
+  community.docker.docker_image:
+    name: "{{ pg_image }}"
+    source: pull
+    state: present
+
+- name: "container | Run PostgreSQL"
+  community.docker.docker_container:
+    name: "{{ pg_container_name }}"
+    image: "{{ pg_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    published_ports:
+      - "{{ pg_listen_ip }}:{{ pg_port }}:5432"
+      - "127.0.0.1:{{ pg_port }}:5432"
+    volumes:
+      - "{{ pg_data_volume }}:/var/lib/postgresql/data"
+      - "{{ pg_conf_host_dir }}:{{ pg_conf_host_dir }}:ro"
+      - "{{ pg_cert_host_dir }}:{{ pg_cert_host_dir }}:ro"
+    env:
+      POSTGRES_PASSWORD: "{{ pg_superuser_password }}"
+      POSTGRES_USER: "postgres"
+      POSTGRES_DB: "postgres"
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+    # HA-adoptable settings + TLS + our pg_hba, passed as server flags so we don't
+    # manage a full postgresql.conf. listen_addresses=* is safe: only the bound
+    # published ports are reachable.
+    command:
+      - "postgres"
+      - "-c"
+      - "listen_addresses=*"
+      - "-c"
+      - "password_encryption=scram-sha-256"
+      - "-c"
+      - "hba_file={{ pg_conf_host_dir }}/pg_hba.conf"
+      - "-c"
+      - "ssl={{ 'on' if pg_ssl | bool else 'off' }}"
+      - "-c"
+      - "ssl_cert_file={{ pg_ssl_cert }}"
+      - "-c"
+      - "ssl_key_file={{ pg_ssl_key }}"
+      - "-c"
+      - "wal_level=replica"
+      - "-c"
+      - "max_wal_senders=10"
+      - "-c"
+      - "max_replication_slots=10"
+      - "-c"
+      - "hot_standby=on"
+      - "-c"
+      - "wal_keep_size=512MB"
+  no_log: true
+
+- name: "container | Wait for PostgreSQL to accept connections"
+  ansible.builtin.command:
+    cmd: "docker exec {{ pg_container_name }} pg_isready -U postgres"
+  register: pg_ready
+  retries: 20
+  delay: 3
+  until: pg_ready.rc == 0
+  changed_when: false
