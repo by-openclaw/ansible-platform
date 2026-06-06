@@ -1,0 +1,26 @@
+---
+# ==============================================================================
+# Role: traefik — main dispatcher
+#   install (traefik binary + lego + systemd) -> secrets (Cloudflare token)
+#   -> cert (wildcard DNS-01) -> config (static + dynamic) -> renew (cron)
+# ==============================================================================
+
+- name: Install Traefik + lego + systemd unit
+  ansible.builtin.import_tasks: install.yml
+  tags: [traefik, install]
+
+- name: Resolve controller-side secrets
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [traefik, cert]
+
+- name: Issue/renew wildcard TLS certificate
+  ansible.builtin.import_tasks: cert.yml
+  tags: [traefik, cert]
+
+- name: Render Traefik static + dynamic configuration
+  ansible.builtin.import_tasks: config.yml
+  tags: [traefik, config]
+
+- name: Install certificate renewal automation
+  ansible.builtin.import_tasks: renew.yml
+  tags: [traefik, renew]

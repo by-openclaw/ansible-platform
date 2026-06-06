@@ -1,0 +1,109 @@
+---
+# ==============================================================================
+# Role: traefik — install Traefik binary + lego + systemd unit
+# Idempotent: guarded by stat/version checks; fetch only when absent/outdated.
+# ==============================================================================
+
+- name: "install | Ensure base dependencies present"
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - tar
+      - cron
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "install | Create Traefik directories"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ traefik_conf_dir }}"
+    - "{{ traefik_dynamic_dir }}"
+    - "{{ traefik_log_dir }}"
+
+# ------------------------------------------------------------------------------
+# Traefik binary — download pinned release, install to /usr/local/bin
+# ------------------------------------------------------------------------------
+- name: "install | Detect installed Traefik version"
+  ansible.builtin.command: "{{ traefik_bin }} version"
+  register: traefik_ver_check
+  changed_when: false
+  failed_when: false
+
+- name: "install | Determine whether the pinned Traefik version needs (re)install"
+  ansible.builtin.set_fact:
+    traefik_needs_install: >-
+      {{ traefik_ver_check.rc != 0
+         or (traefik_version | regex_replace('^v', '')) not in traefik_ver_check.stdout }}
+
+- name: "install | Download Traefik release tarball"
+  ansible.builtin.get_url:
+    url: "{{ traefik_release_url }}"
+    dest: "/tmp/traefik_{{ traefik_version }}_linux_{{ traefik_arch }}.tar.gz"
+    mode: "0644"
+  when: traefik_needs_install | bool
+
+- name: "install | Extract Traefik binary to /usr/local/bin"
+  ansible.builtin.unarchive:
+    src: "/tmp/traefik_{{ traefik_version }}_linux_{{ traefik_arch }}.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include:
+      - traefik
+    owner: root
+    group: root
+    mode: "0755"
+  when: traefik_needs_install | bool
+  notify: Restart traefik
+
+# ------------------------------------------------------------------------------
+# lego — ACME client (Cloudflare DNS-01), pinned (reuse roles/adguard approach)
+# ------------------------------------------------------------------------------
+- name: "install | Detect installed lego version"
+  ansible.builtin.command: /usr/local/bin/lego --version
+  register: traefik_lego_check
+  changed_when: false
+  failed_when: false
+
+- name: "install | Determine whether the pinned lego version needs (re)install"
+  ansible.builtin.set_fact:
+    traefik_lego_needs_install: >-
+      {{ traefik_lego_check.rc != 0
+         or traefik_lego_version not in traefik_lego_check.stdout }}
+
+- name: "install | Download lego release tarball"
+  ansible.builtin.get_url:
+    url: "{{ traefik_lego_url }}"
+    dest: /tmp/lego_linux_amd64.tar.gz
+    mode: "0644"
+  when: traefik_lego_needs_install | bool
+
+- name: "install | Extract lego binary to /usr/local/bin"
+  ansible.builtin.unarchive:
+    src: /tmp/lego_linux_amd64.tar.gz
+    dest: /usr/local/bin
+    remote_src: true
+    include:
+      - lego
+    owner: root
+    group: root
+    mode: "0755"
+  when: traefik_lego_needs_install | bool
+
+# ------------------------------------------------------------------------------
+# systemd unit
+# ------------------------------------------------------------------------------
+- name: "install | Deploy traefik systemd unit"
+  ansible.builtin.template:
+    src: traefik.service.j2
+    dest: /etc/systemd/system/traefik.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart traefik

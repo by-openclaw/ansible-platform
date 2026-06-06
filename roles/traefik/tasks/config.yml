@@ -1,0 +1,29 @@
+---
+# ==============================================================================
+# Role: traefik — static + dynamic configuration
+# ==============================================================================
+
+- name: "config | Render static config (traefik.yml)"
+  ansible.builtin.template:
+    src: traefik.yml.j2
+    dest: "{{ traefik_conf_dir }}/traefik.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart traefik
+
+- name: "config | Render dynamic config (TLS + dashboard router)"
+  ansible.builtin.template:
+    src: dynamic.yml.j2
+    dest: "{{ traefik_dynamic_dir }}/dynamic.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload traefik
+
+- name: "config | Enable + start traefik"
+  ansible.builtin.systemd_service:
+    name: traefik
+    enabled: true
+    state: started
+    daemon_reload: true
