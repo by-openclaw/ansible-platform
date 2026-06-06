@@ -1,0 +1,13 @@
+---
+- name: Restart traefik
+  ansible.builtin.systemd_service:
+    name: traefik
+    state: restarted
+    daemon_reload: true
+
+- name: Reload traefik
+  # Traefik hot-reloads file-provider dynamic config; a SIGHUP/reload is enough
+  # for cert refresh. Use restart as the safe fallback for static-config changes.
+  ansible.builtin.systemd_service:
+    name: traefik
+    state: restarted

@@ -1,0 +1,74 @@
+---
+# ==============================================================================
+# Role: traefik — wildcard TLS cert via Cloudflare DNS-01 (lego)
+# Mirrors roles/adguard/tasks/cert.yml. Traefik reads the cert via the file
+# provider (dynamic.yml). DNS-01 needs only outbound Cloudflare API — works
+# regardless of WAN/public exposure.
+# ==============================================================================
+
+- name: "cert | Ensure /etc/lego directories exist"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - /etc/lego
+    - /etc/lego/cert
+
+- name: "cert | Template Cloudflare API credentials (root, 0600)"
+  ansible.builtin.template:
+    src: cloudflare.env.j2
+    dest: /etc/lego/cloudflare.env
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: "cert | Check for existing wildcard certificate"
+  ansible.builtin.stat:
+    path: "{{ traefik_cert_crt }}"
+  register: traefik_cert_stat
+
+- name: "cert | Issue wildcard certificate (first run)"
+  ansible.builtin.command:
+    cmd: >-
+      /usr/local/bin/lego
+      --email {{ traefik_acme_email }}
+      --accept-tos
+      --dns cloudflare
+      --dns.propagation-wait 60s
+      --domains "*.{{ traefik_domain }}"
+      --domains "{{ traefik_domain }}"
+      run
+    creates: "{{ traefik_cert_crt }}"
+  environment:
+    CF_DNS_API_TOKEN: "{{ traefik_cf_token }}"
+    CF_ZONE_API_TOKEN: "{{ traefik_cf_token }}"
+    LEGO_PATH: /etc/lego/cert
+  when: not traefik_cert_stat.stat.exists
+  no_log: true
+  notify: Reload traefik
+
+- name: "cert | Renew wildcard certificate (subsequent runs, tolerant)"
+  ansible.builtin.command:
+    cmd: >-
+      /usr/local/bin/lego
+      --dns cloudflare
+      --dns.propagation-wait 60s
+      --domains "*.{{ traefik_domain }}"
+      --domains "{{ traefik_domain }}"
+      renew
+      --days {{ traefik_renew_days }}
+    chdir: /etc/lego
+  environment:
+    CF_DNS_API_TOKEN: "{{ traefik_cf_token }}"
+    CF_ZONE_API_TOKEN: "{{ traefik_cf_token }}"
+    LEGO_PATH: /etc/lego/cert
+  when: traefik_cert_stat.stat.exists
+  register: traefik_renew
+  changed_when: "'no renewal' not in (traefik_renew.stdout | lower) and 'is not due' not in (traefik_renew.stdout | lower)"
+  failed_when: false
+  no_log: true
+  notify: Reload traefik

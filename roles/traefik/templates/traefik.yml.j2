@@ -1,0 +1,32 @@
+{# Traefik v3 static config — managed by Ansible role `traefik`. Do not edit by hand. #}
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+# Entry points bind ":80"/":443" → dual-stack (IPv4 + IPv6) by default.
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    address: ":443"
+
+api:
+  dashboard: true
+
+providers:
+  file:
+    directory: {{ traefik_dynamic_dir }}
+    watch: true
+
+log:
+  level: INFO
+  filePath: {{ traefik_log_dir }}/traefik.log
+
+accessLog:
+  filePath: {{ traefik_log_dir }}/access.log

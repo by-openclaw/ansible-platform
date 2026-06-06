@@ -1,0 +1,23 @@
+#!/bin/bash
+# Copyright (c) BY-SYSTEMS SRL
+# SPDX-License-Identifier: Apache-2.0
+# Source: https://github.com/by-openclaw/ansible-platform
+#
+# Managed by Ansible role `traefik` (tasks/renew.yml). Do not edit by hand.
+# Renews the wildcard *.{{ traefik_domain }} cert via Cloudflare DNS-01, then
+# reloads Traefik so the file provider picks up the refreshed cert.
+set -euo pipefail
+
+set -a
+. /etc/lego/cloudflare.env
+set +a
+export LEGO_PATH=/etc/lego/cert
+
+/usr/local/bin/lego \
+  --dns cloudflare \
+  --dns.propagation-wait 60s \
+  --domains "*.{{ traefik_domain }}" \
+  --domains "{{ traefik_domain }}" \
+  renew --days {{ traefik_renew_days }}
+
+systemctl reload traefik 2>/dev/null || systemctl restart traefik

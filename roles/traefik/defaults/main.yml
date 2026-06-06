@@ -1,0 +1,44 @@
+---
+# ==============================================================================
+# Role: traefik — defaults (PROD lxc-traefik-01, DMZ 10.1.2.110 / fd01:2::110)
+# Single HTTPS ingress / reverse proxy for the platform cluster.
+# Certs via ACME DNS-01 (Cloudflare) wildcard *.by-research.be — reuses the
+# lego flow from roles/adguard. Public exposure (Telenet WAN2 .222, dual-stack)
+# is wired separately at WAN2 bring-up; this role is internal-complete.
+# ==============================================================================
+
+# Identity / addressing
+traefik_domain: "by-research.be"
+traefik_ip: "10.1.2.110"
+traefik_ip6: "fd01:2::110"
+traefik_dashboard_host: "traefik.{{ traefik_domain }}"
+
+# Internal networks allowed to reach the dashboard (split-horizon; never public).
+traefik_internal_cidrs:
+  - "10.1.0.0/16"
+  - "fd01::/16"
+  - "127.0.0.1/32"
+  - "::1/128"
+
+# Traefik binary (PINNED — never :latest, per platform standard)
+traefik_version: "v3.7.4"
+traefik_arch: "amd64"
+traefik_release_url: "https://github.com/traefik/traefik/releases/download/{{ traefik_version }}/traefik_{{ traefik_version }}_linux_{{ traefik_arch }}.tar.gz"
+traefik_bin: "/usr/local/bin/traefik"
+
+# Layout
+traefik_conf_dir: "/etc/traefik"
+traefik_dynamic_dir: "/etc/traefik/dynamic"
+traefik_log_dir: "/var/log/traefik"
+
+# lego ACME client (reuse roles/adguard pinned version + Cloudflare DNS-01)
+traefik_lego_version: "4.21.0"
+traefik_lego_url: "https://github.com/go-acme/lego/releases/download/v{{ traefik_lego_version }}/lego_v{{ traefik_lego_version }}_linux_amd64.tar.gz"
+traefik_renew_days: 30
+
+# Cloudflare secret (controller-side) — same file roles/adguard uses
+traefik_cf_secret: "~/.openclaw/workspace/infra/secrets/app-cloudflare-by-research-be.json"
+
+# lego cert output (wildcard) — Traefik reads these via the file provider
+traefik_cert_crt: "/etc/lego/cert/certificates/_.{{ traefik_domain }}.crt"
+traefik_cert_key: "/etc/lego/cert/certificates/_.{{ traefik_domain }}.key"

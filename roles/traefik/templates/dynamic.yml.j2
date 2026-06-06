@@ -1,0 +1,45 @@
+{# Traefik v3 dynamic config — managed by Ansible role `traefik`. Do not edit by hand. #}
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: {{ traefik_cert_crt }}
+        keyFile: {{ traefik_cert_key }}
+  certificates:
+    - certFile: {{ traefik_cert_crt }}
+      keyFile: {{ traefik_cert_key }}
+
+http:
+  middlewares:
+    internal-only:
+      # Dashboard is reachable only from internal networks (split-horizon).
+      ipAllowList:
+        sourceRange:
+{% for cidr in traefik_internal_cidrs %}
+          - "{{ cidr }}"
+{% endfor %}
+
+  routers:
+    # Traefik dashboard — internal only, TLS via the wildcard cert.
+    dashboard:
+      rule: "Host(`{{ traefik_dashboard_host }}`)"
+      entryPoints:
+        - websecure
+      service: api@internal
+      middlewares:
+        - internal-only
+      tls: {}
+
+  # Backend service routers (postgres-adjacent UIs, authentik, netbox, …) are
+  # added here as each cluster service comes up. Example shape:
+  #   routers:
+  #     netbox:
+  #       rule: "Host(`netbox.{{ traefik_domain }}`)"
+  #       entryPoints: [websecure]
+  #       service: netbox
+  #       tls: {}
+  #   services:
+  #     netbox:
+  #       loadBalancer:
+  #         servers:
+  #           - url: "http://10.1.3.120:8080"
