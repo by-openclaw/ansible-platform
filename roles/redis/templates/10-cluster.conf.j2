@@ -1,0 +1,26 @@
+{# Managed by Ansible role `redis`. Included last from redis.conf (overrides). #}
+bind {{ redis_bind_addresses }}
+protected-mode yes
+
+# TLS — shared wildcard cert distributed by the tls_cert role.
+{% if redis_tls | bool %}
+port 0
+tls-port {{ redis_tls_port }}
+tls-cert-file {{ redis_tls_cert }}
+tls-key-file {{ redis_tls_key }}
+tls-ca-cert-dir /etc/ssl/certs
+tls-auth-clients no
+tls-replication yes
+{% else %}
+port {{ redis_port }}
+{% endif %}
+
+# Auth.
+requirepass {{ redis_requirepass }}
+
+# Durability — AOF so a future replica/Sentinel can attach (HA-adoptable).
+dir {{ redis_data_dir }}
+appendonly {{ redis_appendonly }}
+appendfsync everysec
+maxmemory {{ redis_maxmemory }}
+maxmemory-policy {{ redis_maxmemory_policy }}
