@@ -1,0 +1,24 @@
+---
+- name: "databases | Create application roles"
+  community.postgresql.postgresql_user:
+    name: "{{ db.user }}"
+    password: "{{ pg_app_passwords[db.name] }}"
+    state: present
+  become: true
+  become_user: postgres
+  no_log: true
+  loop: "{{ pg_databases }}"
+  loop_control:
+    loop_var: db
+
+- name: "databases | Create application databases"
+  community.postgresql.postgresql_db:
+    name: "{{ db.name }}"
+    owner: "{{ db.user }}"
+    encoding: UTF-8
+    state: present
+  become: true
+  become_user: postgres
+  loop: "{{ pg_databases }}"
+  loop_control:
+    loop_var: db

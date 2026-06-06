@@ -1,0 +1,31 @@
+---
+# ==============================================================================
+# Role: postgresql — shared PostgreSQL 17 (lxc-pgsql-01, SVC 10.1.3.110)
+# Internal-only (TCP, not behind Traefik). Single-node now; HA-adoptable
+# (wal_level=replica etc.) so a future Patroni promotion needs no rebuild.
+# ==============================================================================
+pg_version: 17
+pg_conf_dir: "/etc/postgresql/{{ pg_version }}/main"
+pg_data_dir: "/var/lib/postgresql/{{ pg_version }}/main"
+
+# Listen on loopback + the SVC addresses (apps connect over SVC).
+pg_listen_addresses: "localhost,10.1.3.110,fd01:3::110"
+pg_port: 5432
+
+# App networks allowed (scram-sha-256). Restricted further by the FW.
+pg_app_cidrs:
+  - "10.1.3.0/24"
+  - "fd01:3::/64"
+
+# Application databases + roles (passwords generated + stored in the secret store).
+pg_databases:
+  - {name: netbox, user: netbox}
+  - {name: authentik, user: authentik}
+
+# Controller-side secret store for generated DB passwords.
+pg_secret_dir: "~/.openclaw/workspace/infra/secrets"
+
+# Daily logical backup (pg_dump). NAS offload = follow-up.
+pg_backup_dir: "/var/lib/postgresql/backups"
+pg_backup_hour: "2"
+pg_backup_keep_days: 7
