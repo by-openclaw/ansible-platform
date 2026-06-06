@@ -1,0 +1,11 @@
+#!/bin/bash
+# Copyright (c) BY-SYSTEMS SRL
+# SPDX-License-Identifier: Apache-2.0
+# Managed by Ansible role `postgresql` (tasks/backup.yml). Do not edit by hand.
+# Daily logical backup (pg_dumpall) + retention. NAS offload = follow-up.
+set -euo pipefail
+DIR="{{ pg_backup_dir }}"
+TS="$(date +%F)"
+pg_dumpall | gzip > "${DIR}/all-${TS}.sql.gz"
+find "${DIR}" -name 'all-*.sql.gz' -mtime +{{ pg_backup_keep_days }} -delete
+echo "$(date -Is) pg_dumpall ok -> ${DIR}/all-${TS}.sql.gz"

@@ -1,0 +1,23 @@
+---
+# ==============================================================================
+# Role: postgresql — dispatcher
+# ==============================================================================
+- name: Install PostgreSQL
+  ansible.builtin.import_tasks: install.yml
+  tags: [postgresql, install]
+
+- name: Resolve / generate app DB secrets
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [postgresql, secrets]
+
+- name: Configure PostgreSQL (listen, HA-ready, pg_hba)
+  ansible.builtin.import_tasks: config.yml
+  tags: [postgresql, config]
+
+- name: Create application roles + databases
+  ansible.builtin.import_tasks: databases.yml
+  tags: [postgresql, databases]
+
+- name: Install logical backup automation
+  ansible.builtin.import_tasks: backup.yml
+  tags: [postgresql, backup]

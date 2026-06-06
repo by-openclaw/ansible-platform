@@ -1,0 +1,29 @@
+---
+- name: "config | Drop-in cluster settings (listen + HA-ready)"
+  ansible.builtin.template:
+    src: 10-cluster.conf.j2
+    dest: "{{ pg_conf_dir }}/conf.d/10-cluster.conf"
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  notify: Restart postgresql
+
+- name: "config | Ensure conf.d is included"
+  ansible.builtin.lineinfile:
+    path: "{{ pg_conf_dir }}/postgresql.conf"
+    line: "include_dir = 'conf.d'"
+    regexp: "^#?include_dir = 'conf.d'"
+    state: present
+  notify: Restart postgresql
+
+- name: "config | pg_hba (scram-sha-256, SVC app access only)"
+  ansible.builtin.template:
+    src: pg_hba.conf.j2
+    dest: "{{ pg_conf_dir }}/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  notify: Reload postgresql
+
+- name: "config | Apply pending restart/reload now (so DB tasks can connect)"
+  ansible.builtin.meta: flush_handlers

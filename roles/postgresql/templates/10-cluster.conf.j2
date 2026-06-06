@@ -1,0 +1,16 @@
+{# Managed by Ansible role `postgresql`. Do not edit by hand. #}
+listen_addresses = '{{ pg_listen_addresses }}'
+port = {{ pg_port }}
+password_encryption = scram-sha-256
+
+# HA-adoptable (Patroni-ready) — these let a replica/Patroni attach later
+# WITHOUT rebuilding this node or losing data.
+wal_level = replica
+max_wal_senders = 10
+max_replication_slots = 10
+hot_standby = on
+wal_keep_size = 512MB
+
+# Modest single-node defaults (tune per workload).
+shared_buffers = 256MB
+max_connections = 200

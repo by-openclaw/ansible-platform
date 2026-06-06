@@ -1,0 +1,25 @@
+---
+- name: "backup | Ensure backup dir"
+  ansible.builtin.file:
+    path: "{{ pg_backup_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+
+- name: "backup | Deploy pg-backup.sh"
+  ansible.builtin.template:
+    src: pg-backup.sh.j2
+    dest: /usr/local/bin/pg-backup.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "backup | Daily pg_dumpall cron"
+  ansible.builtin.cron:
+    name: "pg-backup"
+    cron_file: pg-backup
+    user: postgres
+    minute: "0"
+    hour: "{{ pg_backup_hour }}"
+    job: "/usr/local/bin/pg-backup.sh >> /var/log/pg-backup.log 2>&1"

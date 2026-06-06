@@ -1,0 +1,29 @@
+---
+- name: "databases | Create application roles"
+  community.postgresql.postgresql_user:
+    name: "{{ db.user }}"
+    password: "{{ pg_app_passwords[db.name] }}"
+    state: present
+  become: true
+  become_user: postgres
+  no_log: true
+  loop: "{{ pg_databases }}"
+  loop_control:
+    loop_var: db
+
+- name: "databases | Create application databases"
+  community.postgresql.postgresql_db:
+    name: "{{ db.name }}"
+    owner: "{{ db.user }}"
+    # Cluster template1 is SQL_ASCII (initdb under C locale) → must use template0
+    # to create a UTF-8 DB. C.UTF-8 is glibc-builtin (no locale-gen needed).
+    template: template0
+    encoding: UTF-8
+    lc_collate: C.UTF-8
+    lc_ctype: C.UTF-8
+    state: present
+  become: true
+  become_user: postgres
+  loop: "{{ pg_databases }}"
+  loop_control:
+    loop_var: db
