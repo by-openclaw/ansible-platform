@@ -7,6 +7,10 @@ SVC network.
 - Installs `postgresql-17` + `python3-psycopg2`.
 - Listens on loopback + the SVC addresses; `scram-sha-256`; `pg_hba` allows the
   SVC zone only (further locked by the FW).
+- **TLS (`ssl=on`):** the shared wildcard `*.by-research.be` cert is distributed
+  by the `tls_cert` role (issued once on `lxc-traefik-01`, **not** re-issued
+  here). Remote app access is forced over TLS (`hostssl` in `pg_hba`); clients
+  connect with `sslmode=verify-full` against the publicly-trusted LE chain.
 - **HA-adoptable:** `wal_level=replica` etc. → a future replica / Patroni can
   attach with no rebuild and no data loss (per the deferred-HA design).
 - Creates app roles + DBs (`netbox`, `authentik`); passwords generated once and

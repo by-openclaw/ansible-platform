@@ -5,6 +5,7 @@ local   all       all                       scram-sha-256
 host    all       all       127.0.0.1/32    scram-sha-256
 host    all       all       ::1/128         scram-sha-256
 # App access from the SVC zone only (further restricted by the FW).
+# {{ pg_app_hba_type }} = hostssl forces TLS for remote app connections.
 {% for cidr in pg_app_cidrs %}
-host    all       all       {{ cidr }}      scram-sha-256
+{{ pg_app_hba_type }}    all       all       {{ cidr }}      scram-sha-256
 {% endfor %}
