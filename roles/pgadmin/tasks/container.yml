@@ -1,0 +1,29 @@
+---
+- name: "container | Pull the pinned pgAdmin image"
+  community.docker.docker_image:
+    name: "{{ pgadmin_image }}"
+    source: pull
+    state: present
+
+- name: "container | Run pgAdmin"
+  community.docker.docker_container:
+    name: pgadmin
+    image: "{{ pgadmin_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    published_ports:
+      - "{{ pgadmin_listen_ip }}:{{ pgadmin_host_port }}:{{ pgadmin_container_port }}"
+    volumes:
+      - "{{ pgadmin_data_volume }}:/var/lib/pgadmin"
+    env:
+      PGADMIN_DEFAULT_EMAIL: "{{ pgadmin_default_email }}"
+      PGADMIN_DEFAULT_PASSWORD: "{{ pgadmin_admin_password }}"
+      PGADMIN_LISTEN_PORT: "{{ pgadmin_container_port | string }}"
+      # Honor Traefik's X-Forwarded-* so pgAdmin builds correct https URLs.
+      PGADMIN_CONFIG_PROXY_X_FOR_COUNT: "1"
+      PGADMIN_CONFIG_PROXY_X_PROTO_COUNT: "1"
+      PGADMIN_CONFIG_PROXY_X_HOST_COUNT: "1"
+      PGADMIN_CONFIG_PROXY_X_PORT_COUNT: "1"
+      PGADMIN_CONFIG_PROXY_X_PREFIX_COUNT: "1"
+  no_log: true

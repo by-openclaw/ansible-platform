@@ -1,0 +1,29 @@
+{# Managed by Ansible role `traefik_route` (delegated from {{ inventory_hostname }}). Do not edit by hand. #}
+http:
+  routers:
+    {{ traefik_route_name }}:
+      rule: "Host(`{{ traefik_route_fqdn }}`)"
+      entryPoints:
+        - websecure
+      service: {{ traefik_route_name }}
+{% if traefik_route_internal_only | bool %}
+      middlewares:
+        - {{ traefik_route_name }}-internal
+{% endif %}
+      tls: {}
+
+  services:
+    {{ traefik_route_name }}:
+      loadBalancer:
+        servers:
+          - url: "{{ traefik_route_backend_url }}"
+{% if traefik_route_internal_only | bool %}
+
+  middlewares:
+    {{ traefik_route_name }}-internal:
+      ipAllowList:
+        sourceRange:
+{% for cidr in traefik_route_internal_cidrs %}
+          - "{{ cidr }}"
+{% endfor %}
+{% endif %}

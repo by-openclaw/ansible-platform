@@ -1,0 +1,23 @@
+---
+# ==============================================================================
+# Role: traefik_route — register a service router on the Traefik host
+# Drops a watched dynamic-config file ({{ route_name }}.yml) into Traefik's file
+# provider directory on the Traefik host (delegated). Reusable by EVERY web
+# service (per the per-service pattern): pgAdmin, Authentik, NetBox, …
+#
+# Required (pass via include_role vars):
+#   traefik_route_name        e.g. "pgadmin"   (router/service id, file name)
+#   traefik_route_fqdn        e.g. "pgadmin.by-research.be"
+#   traefik_route_backend_url e.g. "http://10.1.3.140:8080"
+# ==============================================================================
+traefik_route_host: "lxc-traefik-01"        # inventory hostname of the Traefik host
+traefik_route_dynamic_dir: "/etc/traefik/dynamic"
+
+# Internal-only services get an ipAllowList (no public exposure). Public services
+# (a Cloudflare record + DNAT exist) set this false.
+traefik_route_internal_only: true
+traefik_route_internal_cidrs:
+  - "10.1.0.0/16"
+  - "fd01::/16"
+  - "127.0.0.1/32"
+  - "::1/128"
