@@ -1,13 +1,13 @@
 ---
-- name: "backup | Ensure backup dir"
+- name: "backup | Ensure backup dir (host)"
   ansible.builtin.file:
     path: "{{ pg_backup_dir }}"
     state: directory
-    owner: postgres
-    group: postgres
+    owner: root
+    group: root
     mode: "0700"
 
-- name: "backup | Deploy pg-backup.sh"
+- name: "backup | Deploy pg-backup.sh (docker exec pg_dumpall)"
   ansible.builtin.template:
     src: pg-backup.sh.j2
     dest: /usr/local/bin/pg-backup.sh
@@ -15,11 +15,11 @@
     group: root
     mode: "0755"
 
-- name: "backup | Daily pg_dumpall cron"
+- name: "backup | Daily pg_dumpall cron (root)"
   ansible.builtin.cron:
     name: "pg-backup"
     cron_file: pg-backup
-    user: postgres
+    user: root
     minute: "0"
-    hour: "{{ pg_backup_hour }}"
+    hour: "2"
     job: "/usr/local/bin/pg-backup.sh >> /var/log/pg-backup.log 2>&1"

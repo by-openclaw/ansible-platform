@@ -1,0 +1,15 @@
+---
+# One-time: retire the native PostgreSQL so the container can bind :5432.
+# The app DBs were empty (no apps yet), so there is no data to migrate.
+- name: "migrate | Stop + disable native postgresql (if present)"
+  ansible.builtin.systemd_service:
+    name: "postgresql@17-main"
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: "migrate | Mask the native postgresql cluster unit"
+  ansible.builtin.systemd_service:
+    name: "postgresql@17-main"
+    masked: true
+  failed_when: false

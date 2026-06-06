@@ -1,22 +1,26 @@
 ---
 # ==============================================================================
-# Role: postgresql — dispatcher
+# Role: postgresql (Docker) — dispatcher
 # ==============================================================================
-- name: Install PostgreSQL
-  ansible.builtin.import_tasks: install.yml
-  tags: [postgresql, install]
+- name: Retire any native PostgreSQL install
+  ansible.builtin.import_tasks: migrate.yml
+  tags: [postgresql, migrate]
 
 - name: Distribute the shared wildcard cert (ssl=on)
   ansible.builtin.import_tasks: tls.yml
   tags: [postgresql, tls]
 
-- name: Resolve / generate app DB secrets
+- name: Resolve / generate DB secrets (superuser + apps)
   ansible.builtin.import_tasks: secrets.yml
   tags: [postgresql, secrets]
 
-- name: Configure PostgreSQL (listen, HA-ready, pg_hba)
+- name: Render config (pg_hba)
   ansible.builtin.import_tasks: config.yml
   tags: [postgresql, config]
+
+- name: Run the PostgreSQL container
+  ansible.builtin.import_tasks: container.yml
+  tags: [postgresql, container]
 
 - name: Create application roles + databases
   ansible.builtin.import_tasks: databases.yml
