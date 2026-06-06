@@ -20,12 +20,18 @@
       - "{{ redis_data_volume }}:/data"
       - "{{ redis_conf_host_dir }}:{{ redis_conf_host_dir }}:ro"
       - "{{ redis_cert_host_dir }}:{{ redis_cert_host_dir }}:ro"
+      # Host CA store (base installs ca-certificates) — the stock redis image
+      # ships none, so this lets the in-container redis-cli verify with --cacert
+      # (not just --insecure) and backs tls-ca-cert-dir.
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
 
-- name: "container | Wait for Redis to accept TLS connections"
+- name: "container | Wait for Redis to accept verified TLS connections"
   ansible.builtin.command:
     cmd: >-
-      docker exec {{ redis_container_name }} redis-cli --tls --insecure
-      -h 127.0.0.1 -p {{ redis_tls_port }} -a {{ redis_requirepass }} ping
+      docker exec {{ redis_container_name }} redis-cli --tls
+      --cacert /etc/ssl/certs/ca-certificates.crt
+      -h lxc-redis-01.by-research.be -p {{ redis_tls_port }}
+      -a {{ redis_requirepass }} ping
   register: redis_ping
   retries: 15
   delay: 2
