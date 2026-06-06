@@ -1,0 +1,35 @@
+---
+# ==============================================================================
+# certs-sync — refresh the shared wildcard cert on every TLS consumer.
+#
+# lego renews the wildcard on the Traefik host (cron); Traefik hot-reloads it.
+# Backends (Postgres, Redis, …) hold COPIES distributed by the tls_cert role, so
+# they must be re-synced after a renewal. This playbook re-runs each consumer's
+# tls task only — tls_cert is idempotent (copies only when the cert actually
+# changed → notifies the consumer's reload/restart handler):
+#   - Postgres: SIGHUP reload (transparent, no dropped connections)
+#   - Redis:    container restart (no live TLS reload; sub-second blip)
+#
+# Schedule weekly on the controller (well inside lego's 30-day pre-expiry window):
+#   17 4 * * 1  cd <repo> && ansible-playbook -i inventories/prod/hosts.yml \
+#                 playbooks/certs-sync.yml --vault-password-file .vault_pass
+# ==============================================================================
+- name: Sync wildcard cert to PostgreSQL
+  hosts: postgresql
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Refresh wildcard cert (postgres)"
+      ansible.builtin.include_role:
+        name: postgresql
+        tasks_from: tls.yml
+
+- name: Sync wildcard cert to Redis
+  hosts: redis
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Refresh wildcard cert (redis)"
+      ansible.builtin.include_role:
+        name: redis
+        tasks_from: tls.yml

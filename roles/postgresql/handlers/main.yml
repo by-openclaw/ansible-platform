@@ -1,7 +1,8 @@
 ---
-- name: Restart postgres
-  community.docker.docker_container:
-    name: "{{ pg_container_name }}"
-    state: started
-    restart: true
+# Cert/pg_hba changes only need a reload (SIGHUP) — Postgres re-reads
+# ssl_cert_file + pg_hba.conf WITHOUT dropping connections (transparent).
+- name: Reload postgres
+  ansible.builtin.command:
+    cmd: docker exec {{ pg_container_name }} psql -tAU postgres -c "SELECT pg_reload_conf()"
+  changed_when: true
   listen: "tls_cert changed"
