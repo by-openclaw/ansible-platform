@@ -1,0 +1,39 @@
+---
+- name: "container | Pull the pinned Vault image"
+  community.docker.docker_image:
+    name: "{{ vault_image }}"
+    source: pull
+    state: present
+
+- name: "container | Run Vault"
+  community.docker.docker_container:
+    name: "{{ vault_container_name }}"
+    image: "{{ vault_image }}"
+    command: server
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    published_ports:
+      - "{{ vault_listen_ip }}:{{ vault_port }}:8200"
+      - "127.0.0.1:{{ vault_port }}:8200"
+    volumes:
+      - "{{ vault_data_host_dir }}:/vault/data"
+      - "{{ vault_config_host_dir }}:/vault/config:ro"
+      - "{{ vault_cert_host_dir }}:{{ vault_cert_host_dir }}:ro"
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    env:
+      # In-container CLI (init/unseal via docker exec) talks to loopback; skip
+      # hostname verify there (the wildcard cert is for the FQDN, not 127.0.0.1).
+      VAULT_ADDR: "https://127.0.0.1:{{ vault_port }}"
+      VAULT_SKIP_VERIFY: "true"
+
+- name: "container | Wait for Vault to respond"
+  ansible.builtin.command:
+    cmd: "docker exec {{ vault_container_name }} vault status -format=json"
+  register: vault_status_wait
+  retries: 20
+  delay: 3
+  # rc 0 = unsealed, 2 = sealed (both mean Vault is up). Non-0/2 = not ready yet.
+  until: vault_status_wait.rc in [0, 2]
+  changed_when: false
+  failed_when: false

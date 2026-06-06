@@ -1,0 +1,60 @@
+---
+# Idempotent init + unseal. Unseal keys + root token are stored ONCE in the
+# controller secret store (CRITICAL — never printed). On a container restart
+# Vault seals; this re-unseals from the stored keys.
+- name: "init | Read Vault status (wait for a valid response)"
+  ansible.builtin.command:
+    cmd: "docker exec {{ vault_container_name }} vault status -format=json"
+  register: vault_status_raw
+  retries: 10
+  delay: 3
+  until: (vault_status_raw.stdout | trim | length) > 0
+  changed_when: false
+  failed_when: false
+
+- name: "init | Parse status"
+  ansible.builtin.set_fact:
+    vault_status: "{{ vault_status_raw.stdout | from_json }}"
+
+- name: "init | Operator init (first time only)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ vault_container_name }} vault operator init
+      -key-shares={{ vault_key_shares }} -key-threshold={{ vault_key_threshold }} -format=json
+  register: vault_init_raw
+  when: not vault_status.initialized
+  no_log: true
+  changed_when: true
+
+- name: "init | Persist unseal keys + root token (0600, CRITICAL)"
+  ansible.builtin.copy:
+    dest: "{{ vault_secret_dir }}/{{ vault_init_secret }}"
+    mode: "0600"
+    content: "{{ {'fields': {'url': 'https://' + vault_fqdn,
+      'root_token': (vault_init_raw.stdout | from_json).root_token,
+      'unseal_keys_b64': (vault_init_raw.stdout | from_json).unseal_keys_b64}} | to_nice_json }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: not vault_status.initialized
+
+- name: "init | Load unseal keys from the controller secret"
+  ansible.builtin.set_fact:
+    vault_unseal_keys: "{{ (lookup('file', vault_secret_dir + '/' + vault_init_secret) | from_json).fields.unseal_keys_b64 }}"
+  no_log: true
+  when: vault_status.sealed | default(true)
+
+- name: "init | Unseal Vault"
+  ansible.builtin.command:
+    cmd: "docker exec {{ vault_container_name }} vault operator unseal {{ item }}"
+  loop: "{{ vault_unseal_keys[:vault_key_threshold] }}"
+  when: vault_status.sealed | default(true)
+  no_log: true
+  changed_when: true
+
+- name: "init | Confirm Vault is unsealed"
+  ansible.builtin.command:
+    cmd: "docker exec {{ vault_container_name }} vault status -format=json"
+  register: vault_final
+  changed_when: false
+  failed_when: (vault_final.stdout | from_json).sealed

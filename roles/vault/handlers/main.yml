@@ -1,0 +1,8 @@
+---
+# Cert renewal → SIGHUP reloads the listener cert WITHOUT sealing (transparent).
+# (Vault is NOT restarted on config change — a restart seals it; see config.yml.)
+- name: Reload vault
+  ansible.builtin.command:
+    cmd: "docker kill -s HUP {{ vault_container_name }}"
+  changed_when: true
+  listen: "tls_cert changed"

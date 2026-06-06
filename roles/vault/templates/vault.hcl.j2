@@ -1,0 +1,18 @@
+{# Managed by Ansible role `vault`. Do not edit by hand. #}
+ui            = true
+# LXC: avoid the IPC_LOCK capability requirement (unprivileged container).
+disable_mlock = true
+
+storage "raft" {
+  path    = "/vault/data"
+  node_id = "vault-01"
+}
+
+listener "tcp" {
+  address       = "0.0.0.0:{{ vault_port }}"
+  tls_cert_file = "{{ vault_tls_cert }}"
+  tls_key_file  = "{{ vault_tls_key }}"
+}
+
+api_addr     = "https://{{ vault_node_fqdn }}:{{ vault_port }}"
+cluster_addr = "https://{{ vault_node_fqdn }}:{{ vault_cluster_port }}"

@@ -1,0 +1,22 @@
+---
+- name: "config | Ensure config + data dirs exist (owned by the vault uid)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ vault_uid }}"
+    group: "{{ vault_uid }}"
+    mode: "0750"
+  loop:
+    - "{{ vault_config_host_dir }}"
+    - "{{ vault_data_host_dir }}"
+
+- name: "config | Render vault.hcl"
+  ansible.builtin.template:
+    src: vault.hcl.j2
+    dest: "{{ vault_config_host_dir }}/vault.hcl"
+    owner: "{{ vault_uid }}"
+    group: "{{ vault_uid }}"
+    mode: "0640"
+  # No auto-restart notify: restarting Vault seals it. On first run the container
+  # reads this config at creation; for a later vault.hcl change, restart Vault
+  # manually (`docker restart vault`) then re-run the playbook to re-unseal.
