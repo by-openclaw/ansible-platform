@@ -1,0 +1,81 @@
+---
+- name: "containers | Pull the pinned NetBox image"
+  community.docker.docker_image:
+    name: "{{ netbox_image }}"
+    source: pull
+    state: present
+
+- name: "containers | Run netbox (web)"
+  community.docker.docker_container:
+    name: netbox
+    image: "{{ netbox_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    published_ports:
+      - "{{ netbox_listen_ip }}:{{ netbox_host_port }}:8080"
+    volumes:
+      - "{{ netbox_media_volume }}:/opt/netbox/netbox/media"
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    env: "{{ netbox_env }}"
+  no_log: true
+
+- name: "containers | Run netbox-worker (rqworker)"
+  community.docker.docker_container:
+    name: netbox-worker
+    image: "{{ netbox_image }}"
+    command: /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py rqworker high default low
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    volumes:
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    env: "{{ netbox_env }}"
+  no_log: true
+
+- name: "containers | Run netbox-housekeeping"
+  community.docker.docker_container:
+    name: netbox-housekeeping
+    image: "{{ netbox_image }}"
+    # v4.6.2 ships no housekeeping.sh wrapper — run the management command on a
+    # daily loop (maps cleanly to a future k8s CronJob).
+    command:
+      - /bin/sh
+      - "-c"
+      - "while true; do /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py housekeeping; sleep 86400; done"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    volumes:
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    env: "{{ netbox_env }}"
+  no_log: true
+
+- name: "containers | Wait for NetBox to be ready (first start runs migrations)"
+  ansible.builtin.uri:
+    url: "http://{{ netbox_listen_ip }}:{{ netbox_host_port }}/login/"
+    # NetBox enforces ALLOWED_HOSTS — probe with the served vhost Host header.
+    headers:
+      Host: "{{ netbox_fqdn }}"
+    status_code: 200
+  register: netbox_ready
+  retries: 40
+  delay: 5
+  until: netbox_ready.status == 200
+  changed_when: false
+
+- name: "containers | Gather running NetBox containers"
+  community.docker.docker_host_info:
+    containers: true
+    containers_filters:
+      status: running
+  register: netbox_running
+
+- name: "containers | Assert all three containers are Up"
+  ansible.builtin.assert:
+    that:
+      - "'/netbox' in (netbox_running.containers | map(attribute='Names') | flatten)"
+      - "'/netbox-worker' in (netbox_running.containers | map(attribute='Names') | flatten)"
+      - "'/netbox-housekeeping' in (netbox_running.containers | map(attribute='Names') | flatten)"
+    fail_msg: "One or more NetBox containers are not running"
+    success_msg: "netbox, netbox-worker and netbox-housekeeping are all Up"

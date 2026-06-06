@@ -1,0 +1,29 @@
+---
+# ==============================================================================
+# Role: netbox — dispatcher
+# ==============================================================================
+- name: Provision the NetBox database
+  ansible.builtin.include_role:
+    name: postgres_db
+  vars:
+    postgres_db_name: "{{ netbox_pg_name }}"
+    postgres_db_user: "{{ netbox_pg_user }}"
+  tags: [netbox, database]
+
+- name: Resolve / generate NetBox secrets
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [netbox, secrets]
+
+- name: Run the NetBox containers (web + worker + housekeeping)
+  ansible.builtin.import_tasks: containers.yml
+  tags: [netbox, container]
+
+- name: Publish NetBox via Traefik (internal-only)
+  ansible.builtin.include_role:
+    name: traefik_route
+  vars:
+    traefik_route_name: netbox
+    traefik_route_fqdn: "{{ netbox_fqdn }}"
+    traefik_route_backend_url: "http://{{ netbox_listen_ip }}:{{ netbox_host_port }}"
+    traefik_route_internal_only: true
+  tags: [netbox, route]
