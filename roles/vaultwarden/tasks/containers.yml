@@ -1,0 +1,33 @@
+---
+- name: "containers | Pull the pinned Vaultwarden image"
+  community.docker.docker_image:
+    name: "{{ vaultwarden_image }}"
+    source: pull
+    state: present
+
+- name: "containers | Run vaultwarden"
+  community.docker.docker_container:
+    name: "{{ vaultwarden_container_name }}"
+    image: "{{ vaultwarden_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    published_ports:
+      - "{{ vaultwarden_listen_ip }}:{{ vaultwarden_host_port }}:80"
+    volumes:
+      - "{{ vaultwarden_data_volume }}:/data"
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    env: "{{ vaultwarden_env }}"
+  no_log: true
+
+# First start runs the DB migrations (creates the schema in the empty Postgres
+# DB) before /alive answers 200 — retry generously.
+- name: "containers | Wait for Vaultwarden to be ready"
+  ansible.builtin.uri:
+    url: "http://{{ vaultwarden_listen_ip }}:{{ vaultwarden_host_port }}/alive"
+    status_code: 200
+  register: vaultwarden_ready
+  retries: 30
+  delay: 5
+  until: vaultwarden_ready.status == 200
+  changed_when: false

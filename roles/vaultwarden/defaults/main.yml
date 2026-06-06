@@ -1,0 +1,34 @@
+---
+# ==============================================================================
+# Role: vaultwarden — Bitwarden-compatible password manager (Docker) on
+# lxc-vaultwarden-01 (SVC). Single container. Uses the shared cluster PostgreSQL
+# (postgres_db: vaultwarden) over verified TLS. Fronted by Traefik (wildcard
+# TLS). Upgrade = bump vaultwarden_image tag.
+#
+# NOTE: distinct from Vault (roles/vault, vault.by-research.be) — Vault is the
+# infra secrets backend; Vaultwarden is the end-user password manager.
+# ==============================================================================
+vaultwarden_image: "vaultwarden/server:1.36.0"   # pinned (never :latest)
+
+vaultwarden_container_name: vaultwarden
+vaultwarden_fqdn: "vaultwarden.by-research.be"
+
+# HTTP backend (Traefik terminates TLS) — published on the SVC IP. Vaultwarden
+# serves the web vault + WebSocket notifications on the same :80 in 1.36.
+vaultwarden_listen_ip: "10.1.3.160"
+vaultwarden_host_port: 80
+vaultwarden_container_port: 80
+
+# Shared PostgreSQL (DB + role created by the postgres_db role).
+vaultwarden_pg_host: "lxc-pgsql-01.by-research.be"
+vaultwarden_pg_port: 5432
+vaultwarden_pg_name: "vaultwarden"
+vaultwarden_pg_user: "vaultwarden"
+
+# Controller secret store.
+vaultwarden_secret_dir: "~/.openclaw/workspace/infra/secrets"
+vaultwarden_secret_file: "vaultwarden.json"           # admin_token
+vaultwarden_pg_secret_file: "db-pgsql-vaultwarden.json" # written by postgres_db
+
+# Persistent volume (attachments, RSA keys, icon cache, sends).
+vaultwarden_data_volume: "vaultwarden-data"
