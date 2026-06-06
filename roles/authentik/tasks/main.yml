@@ -1,0 +1,29 @@
+---
+# ==============================================================================
+# Role: authentik — dispatcher
+# ==============================================================================
+- name: Provision the Authentik database
+  ansible.builtin.include_role:
+    name: postgres_db
+  vars:
+    postgres_db_name: "{{ authentik_pg_name }}"
+    postgres_db_user: "{{ authentik_pg_user }}"
+  tags: [authentik, database]
+
+- name: Resolve / generate Authentik secrets
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [authentik, secrets]
+
+- name: Run the Authentik containers (server + worker)
+  ansible.builtin.import_tasks: containers.yml
+  tags: [authentik, container]
+
+- name: Publish Authentik via Traefik (internal-only)
+  ansible.builtin.include_role:
+    name: traefik_route
+  vars:
+    traefik_route_name: authentik
+    traefik_route_fqdn: "{{ authentik_fqdn }}"
+    traefik_route_backend_url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}"
+    traefik_route_internal_only: true
+  tags: [authentik, route]

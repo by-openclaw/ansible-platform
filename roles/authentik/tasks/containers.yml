@@ -1,0 +1,50 @@
+---
+- name: "containers | Pull the pinned Authentik image"
+  community.docker.docker_image:
+    name: "{{ authentik_image }}"
+    source: pull
+    state: present
+
+- name: "containers | Run authentik-server"
+  community.docker.docker_container:
+    name: authentik-server
+    image: "{{ authentik_image }}"
+    command: server
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    published_ports:
+      - "{{ authentik_listen_ip }}:{{ authentik_host_port }}:9000"
+    volumes:
+      - "{{ authentik_media_volume }}:/media"
+      - "{{ authentik_templates_volume }}:/templates"
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    env: "{{ authentik_env }}"
+  no_log: true
+
+- name: "containers | Run authentik-worker"
+  community.docker.docker_container:
+    name: authentik-worker
+    image: "{{ authentik_image }}"
+    command: worker
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    volumes:
+      - "{{ authentik_media_volume }}:/media"
+      - "{{ authentik_templates_volume }}:/templates"
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+      # Worker manages embedded/Docker outposts via the Docker socket.
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    env: "{{ authentik_env }}"
+  no_log: true
+
+- name: "containers | Wait for Authentik to be ready"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/-/health/ready/"
+    status_code: [200, 204]
+  register: authentik_ready
+  retries: 40
+  delay: 5
+  until: authentik_ready.status in [200, 204]
+  changed_when: false
