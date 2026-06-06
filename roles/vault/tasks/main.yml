@@ -1,0 +1,31 @@
+---
+# ==============================================================================
+# Role: vault — dispatcher
+# ==============================================================================
+- name: Distribute the shared wildcard cert (TLS)
+  ansible.builtin.import_tasks: tls.yml
+  tags: [vault, tls]
+
+- name: Render Vault config
+  ansible.builtin.import_tasks: config.yml
+  tags: [vault, config]
+
+- name: Run the Vault container
+  ansible.builtin.import_tasks: container.yml
+  tags: [vault, container]
+
+- name: Initialise / unseal Vault
+  ansible.builtin.import_tasks: init.yml
+  tags: [vault, init]
+
+- name: Publish Vault via Traefik (internal-only)
+  ansible.builtin.include_role:
+    name: traefik_route
+  vars:
+    traefik_route_name: vault
+    traefik_route_fqdn: "{{ vault_fqdn }}"
+    # Vault speaks HTTPS — backend by node hostname so Traefik verifies the
+    # wildcard cert (resolves via Unbound override to 10.1.3.150).
+    traefik_route_backend_url: "https://{{ vault_node_fqdn }}:{{ vault_port }}"
+    traefik_route_internal_only: true
+  tags: [vault, route]

@@ -1,0 +1,32 @@
+---
+# ==============================================================================
+# Role: vault — HashiCorp Vault (Docker) on lxc-vault-01 (SVC 10.1.3.150)
+# Secrets backend, integrated raft storage, TLS via the shared wildcard cert,
+# fronted by Traefik (internal-only). Upgrade = bump vault_image tag (raft data
+# persists in the named volume). Single node now; raft is HA-adoptable.
+# ==============================================================================
+vault_image: "hashicorp/vault:2.0.2"   # pinned (never :latest)
+vault_container_name: "vault"
+
+vault_fqdn: "vault.by-research.be"            # external (Traefik) name
+vault_node_fqdn: "lxc-vault-01.by-research.be"  # the node's own address
+
+# Published on the SVC IP + loopback.
+vault_listen_ip: "10.1.3.150"
+vault_port: 8200
+vault_cluster_port: 8201
+vault_uid: 100                          # vault uid inside the official image
+
+# Host dirs bind-mounted into the container (raft data dir must be owned by the
+# vault uid — a root-owned named volume makes raft fail with permission denied).
+vault_data_host_dir: "/var/lib/vault/data"
+vault_config_host_dir: "/etc/vault/config"
+vault_cert_host_dir: "/etc/vault/certs"
+vault_tls_cert: "{{ vault_cert_host_dir }}/wildcard.crt"
+vault_tls_key: "{{ vault_cert_host_dir }}/wildcard.key"
+
+# Controller secret store — unseal keys + root token written here (CRITICAL).
+vault_secret_dir: "~/.openclaw/workspace/infra/secrets"
+vault_init_secret: "vault-init.json"
+vault_key_shares: 5
+vault_key_threshold: 3
