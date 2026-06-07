@@ -38,6 +38,12 @@ entries:
     attrs:
       name: {{ app.slug }}
       client_type: confidential
+      # Authentik 2026.x defaults grant_types to [] (empty = no flow permitted),
+      # which makes the authorization-code login fail with "Invalid grant_type
+      # for provider". Must be set explicitly for OIDC login to work.
+      grant_types:
+        - authorization_code
+        - refresh_token
       client_id: "{{ app.client_id }}"
       client_secret: "{{ app.client_secret }}"
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
