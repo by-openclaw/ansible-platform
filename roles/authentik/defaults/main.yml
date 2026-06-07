@@ -69,6 +69,8 @@ authentik_oidc_apps:
     group: "vaultwarden-admins"
     secret_file: "app-oidc-vaultwarden.json"
     restrict_to_group: true     # IdP-enforced: only vaultwarden-admins can log in
+    force_email_verified: true  # vaultwarden rejects email_verified=False (authentik default)
+    offline_access: true        # vaultwarden requests offline_access → needs refresh_token
     redirect_uris:
       - "https://vaultwarden.by-research.be/identity/connect/oidc-signin"
   - slug: nextcloud
@@ -78,7 +80,8 @@ authentik_oidc_apps:
     restrict_to_group: true     # IdP-enforced: only nextcloud-admins can log in
     redirect_uris:
       - "https://nextcloud.by-research.be/apps/user_oidc/code"
-      - "https://nextcloud.by-research.be/"   # RP-initiated logout (post_logout_redirect_uri)
+    logout_uris:                                # post_logout_redirect_uri (type=logout)
+      - "https://nextcloud.by-research.be/"
   # NOTE: defguard SSO-into-defguard via Authentik is enterprise-only — omitted.
 
 # --- Identity: groups + human users (declarative) -------------------------------
