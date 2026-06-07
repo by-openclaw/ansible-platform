@@ -1,7 +1,7 @@
 # role: defguard (Docker)
 
 **Defguard** — WireGuard VPN + **Authentik OIDC SSO** + **tunnel MFA** — on
-`lxc-defguard-01` (DMZ `10.1.2.120`). Three containers from pinned images:
+`lxc-defguard-01` (SVC `10.1.3.180`). Three containers from pinned images:
 `defguard-core` (control plane + web/enrollment UI, `ghcr.io/defguard/defguard`),
 `defguard-proxy` (enrollment / desktop-client proxy,
 `ghcr.io/defguard/defguard-proxy`) and `defguard-gateway` (WireGuard data plane,
