@@ -12,3 +12,12 @@ docker_packages:
 # json-file log rotation (containers default to unbounded logs otherwise).
 docker_log_max_size: "10m"
 docker_log_max_file: "3"
+
+# --- IPv6 dual-stack -----------------------------------------------------------
+# Give containers a ULA bridge + ip6tables NAT so they can reach the platform's
+# v6 (fd01::/16) — without this, a container resolving a FQDN to an AAAA gets
+# "network unreachable" and falls back to v4. Docker 26.x needs experimental:true
+# for ip6tables (GA in 27+). The bridge subnet is private and masqueraded to the
+# host's real v6, so a single ULA is safe to share across hosts.
+docker_ipv6: true
+docker_fixed_cidr_v6: "fd00:d0c::/64"

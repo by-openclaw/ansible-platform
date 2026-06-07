@@ -15,6 +15,9 @@
     published_ports:
       - "{{ pg_listen_ip }}:{{ pg_port }}:5432"
       - "127.0.0.1:{{ pg_port }}:5432"
+      # Dual-stack: publish on the SVC IPv6 + v6 loopback (ip6tables DNAT).
+      - "[{{ pg_listen_ip6 }}]:{{ pg_port }}:5432"
+      - "[::1]:{{ pg_port }}:5432"
     volumes:
       - "{{ pg_data_volume }}:/var/lib/postgresql/data"
       - "{{ pg_conf_host_dir }}:{{ pg_conf_host_dir }}:ro"
