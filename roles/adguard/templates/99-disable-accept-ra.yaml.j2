@@ -1,0 +1,10 @@
+# Managed by Ansible (adguard role) — static IPv6 only.
+# cloud-init owns 50-cloud-init.yaml (the static addresses); this 99- drop-in
+# merges in and disables IPv6 Router Advertisement / SLAAC so the host keeps
+# ONLY its static fd01:3:: address (which matches the FW catalog) instead of an
+# extra auto-generated EUI-64 mngtmpaddr.
+network:
+  version: 2
+  ethernets:
+    {{ adguard_primary_iface }}:
+      accept-ra: false
