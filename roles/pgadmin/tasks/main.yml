@@ -6,9 +6,19 @@
   ansible.builtin.import_tasks: secrets.yml
   tags: [pgadmin, secrets]
 
+- name: Provision the shared PostgreSQL connection (servers.json)
+  ansible.builtin.import_tasks: servers.yml
+  when: pgadmin_register_pg_server | bool
+  tags: [pgadmin, servers]
+
 - name: Run the pgAdmin container
   ansible.builtin.import_tasks: container.yml
   tags: [pgadmin, container]
+
+- name: Import the shared PostgreSQL connection (existing setups)
+  ansible.builtin.import_tasks: servers_import.yml
+  when: pgadmin_register_pg_server | bool
+  tags: [pgadmin, servers]
 
 - name: Publish pgAdmin via Traefik (internal-only)
   ansible.builtin.include_role:
