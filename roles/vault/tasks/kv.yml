@@ -1,0 +1,21 @@
+---
+# Enable the KV v2 secrets engine so the platform can store keys in Vault.
+# Idempotent: only enable when the mount is absent.
+- name: "kv | Load root token (controller secret)"
+  ansible.builtin.set_fact:
+    vault_root_token: "{{ (lookup('file', vault_secret_dir + '/' + vault_init_secret) | from_json).fields.root_token }}"
+  no_log: true
+
+- name: "kv | List secrets engines"
+  ansible.builtin.command:
+    cmd: "docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault secrets list -format=json"
+  register: vault_secrets_list
+  changed_when: false
+  no_log: true
+
+- name: "kv | Enable KV v2 at the secret path"
+  ansible.builtin.command:
+    cmd: "docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault secrets enable -path={{ vault_kv_path }} kv-v2"
+  when: (vault_kv_path + '/') not in (vault_secrets_list.stdout | from_json)
+  no_log: true
+  changed_when: true

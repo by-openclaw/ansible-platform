@@ -1,0 +1,14 @@
+---
+# Provision a SHARED PostgreSQL connection via servers.json, imported by pgAdmin
+# on container startup. No password stored — entered on connect (Vault later).
+- name: "servers | Ensure the servers.json directory exists"
+  ansible.builtin.file:
+    path: "{{ pgadmin_servers_host_path | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: "servers | Render the shared servers.json (Postgres, no password)"
+  ansible.builtin.template:
+    src: servers.json.j2
+    dest: "{{ pgadmin_servers_host_path }}"
+    mode: "0644"

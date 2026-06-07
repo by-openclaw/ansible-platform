@@ -1,0 +1,29 @@
+---
+# ==============================================================================
+# Role: defguard — dispatcher
+# ==============================================================================
+- name: Provision the defguard database
+  ansible.builtin.include_role:
+    name: postgres_db
+  vars:
+    postgres_db_name: "{{ defguard_pg_name }}"
+    postgres_db_user: "{{ defguard_pg_user }}"
+  tags: [defguard, database]
+
+- name: Resolve / generate defguard secrets
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [defguard, secrets]
+
+- name: Build the userspace gateway image and run the defguard containers
+  ansible.builtin.import_tasks: containers.yml
+  tags: [defguard, container]
+
+- name: Publish defguard via Traefik (internal-only)
+  ansible.builtin.include_role:
+    name: traefik_route
+  vars:
+    traefik_route_name: defguard
+    traefik_route_fqdn: "{{ defguard_fqdn }}"
+    traefik_route_backend_url: "http://{{ defguard_listen_ip }}:{{ defguard_core_host_port }}"
+    traefik_route_internal_only: true
+  tags: [defguard, route]

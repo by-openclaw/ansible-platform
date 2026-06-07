@@ -1,0 +1,36 @@
+{# Managed by Ansible role `authentik`. Declarative groups + human users.
+   Passwords are NOT set here (Authentik hashes them) — they are set via the API
+   after this blueprint creates the users. #}
+version: 1
+metadata:
+  name: identity-core
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+{% for g in authentik_groups %}
+  - model: authentik_core.group
+    id: group-{{ g }}
+    identifiers:
+      name: {{ g }}
+    attrs:
+      name: {{ g }}
+{% if g in authentik_superuser_groups %}
+      is_superuser: true
+{% endif %}
+{% endfor %}
+{% for u in authentik_users_resolved %}
+  - model: authentik_core.user
+    id: user-{{ u.username }}
+    identifiers:
+      username: {{ u.username }}
+    attrs:
+      username: {{ u.username }}
+      name: "{{ u.name }}"
+      email: {{ u.email }}
+      is_active: true
+      type: internal
+      groups:
+{% for g in u.groups %}
+        - !Find [authentik_core.group, [name, {{ g }}]]
+{% endfor %}
+{% endfor %}

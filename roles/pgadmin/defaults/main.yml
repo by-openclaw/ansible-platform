@@ -21,3 +21,32 @@ pgadmin_secret_file: "pgadmin-admin.json"
 
 # Persistent data (server list, prefs) across container re-creation.
 pgadmin_data_volume: "pgadmin-data"
+
+# --- Authentik OIDC SSO (optional) ---------------------------------------------
+# Wired only when the OIDC client secret file exists (created by the SSO phase).
+# The Authentik app/provider is declared in the authentik role (authentik_oidc_apps).
+pgadmin_oidc_secret_file: "app-oidc-pgadmin.json"
+pgadmin_authentik_base: "https://authentik.by-research.be"
+pgadmin_oidc_app_slug: "pgadmin"
+pgadmin_oidc_display_name: "BY-RESEARCH SSO"
+# Only members of this Authentik group may log into pgAdmin (group-based access).
+pgadmin_oidc_access_group: "pgadmin-admins"
+
+# --- Pre-provisioned PostgreSQL connection (shared servers.json) ----------------
+# Registers the platform Postgres as a SHARED server visible to all SSO users.
+# Password is NOT stored — entered on connect (sourced from Vault later).
+pgadmin_register_pg_server: true
+pgadmin_pg_server_name: "BY-RESEARCH PostgreSQL"
+pgadmin_pg_host: "lxc-pgsql-01.by-research.be"   # FQDN so verify-full matches the cert
+pgadmin_pg_port: 5432
+pgadmin_pg_maintenance_db: "postgres"
+pgadmin_pg_username: "postgres"                   # superuser → sees all service DBs
+# Shared servers expose shared_username (not username) to non-owner SSO users —
+# must be set or pgAdmin shows "Username must be specified".
+pgadmin_pg_shared_username: "postgres"
+pgadmin_pg_sslmode: "verify-full"
+pgadmin_servers_host_path: "/etc/pgadmin/servers.json"
+# libpq (used by pgAdmin to reach Postgres) looks for the verify-full CA at
+# ~/.postgresql/root.crt by default. The container HOME is /home/pgadmin; point
+# that path at the system bundle (ISRG Root X1 → trusts the LE server cert).
+pgadmin_pg_root_cert_path: "/home/pgadmin/.postgresql/root.crt"

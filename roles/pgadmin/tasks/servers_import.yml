@@ -1,0 +1,51 @@
+---
+# The PGADMIN_SERVER_JSON_FILE env only imports on first init. For an existing
+# pgAdmin (persisted data volume) load the connection explicitly. Idempotent:
+# only (re)load when the server is absent or its host/port has drifted, so a
+# no-change run reports changed=0 (and never creates a duplicate).
+- name: "servers | Wait for pgAdmin to be ready"
+  ansible.builtin.uri:
+    url: "http://{{ pgadmin_listen_ip }}:{{ pgadmin_host_port }}/login"
+    status_code: 200
+  register: pgadmin_ready
+  retries: 20
+  delay: 3
+  until: pgadmin_ready.status == 200
+  changed_when: false
+
+- name: "servers | Check whether the shared server already matches"
+  community.docker.docker_container_exec:
+    container: pgadmin
+    command: >-
+      /venv/bin/python3 -c "import sqlite3,sys;
+      c=sqlite3.connect('/var/lib/pgadmin/pgadmin4.db');
+      r=c.execute('select 1 from server where name=:n and host=:h and port=:p and shared_username=:s',
+      {'n':'{{ pgadmin_pg_server_name }}','h':'{{ pgadmin_pg_host }}','p':{{ pgadmin_pg_port }},'s':'{{ pgadmin_pg_shared_username }}'}).fetchone();
+      sys.stdout.write('present' if r else 'absent')"
+  register: pgadmin_server_check
+  changed_when: false
+
+- name: "servers | Load the shared servers.json into pgAdmin"
+  community.docker.docker_container_exec:
+    container: pgadmin
+    command: >-
+      /venv/bin/python3 /pgadmin4/setup.py load-servers
+      /pgadmin4/servers.json --user {{ pgadmin_default_email }} --replace
+  register: pgadmin_load
+  changed_when: true
+  when: "'present' not in pgadmin_server_check.stdout"
+
+# The CLI load-servers does not set shared_username (only the web import does),
+# so non-owner SSO users get "Username must be specified". Set it directly;
+# idempotent via rowcount (only changes when it actually differs).
+- name: "servers | Ensure shared_username on the shared server"
+  community.docker.docker_container_exec:
+    container: pgadmin
+    command: >-
+      /venv/bin/python3 -c "import sqlite3,sys;
+      c=sqlite3.connect('/var/lib/pgadmin/pgadmin4.db');
+      cur=c.execute('update server set shared_username=:s where name=:n and shared=1 and (shared_username is null or shared_username != :s)',
+      {'s':'{{ pgadmin_pg_shared_username }}','n':'{{ pgadmin_pg_server_name }}'});
+      c.commit(); sys.stdout.write('updated' if cur.rowcount else 'nochange')"
+  register: pgadmin_shared_u
+  changed_when: "'updated' in pgadmin_shared_u.stdout"

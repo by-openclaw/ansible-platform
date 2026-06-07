@@ -6,13 +6,28 @@
   ansible.builtin.import_tasks: secrets.yml
   tags: [pgadmin, secrets]
 
+- name: Provision the shared PostgreSQL connection (servers.json)
+  ansible.builtin.import_tasks: servers.yml
+  when: pgadmin_register_pg_server | bool
+  tags: [pgadmin, servers]
+
 - name: Run the pgAdmin container
   ansible.builtin.import_tasks: container.yml
   tags: [pgadmin, container]
 
+- name: Import the shared PostgreSQL connection (existing setups)
+  ansible.builtin.import_tasks: servers_import.yml
+  when: pgadmin_register_pg_server | bool
+  tags: [pgadmin, servers]
+
 - name: Publish pgAdmin via Traefik (internal-only)
   ansible.builtin.include_role:
     name: traefik_route
+    # apply tags to the INCLUDED tasks too — without this, `--tags route` runs
+    # the include but skips the route's file-write (dynamic include_role does not
+    # propagate tags to inner tasks), so the route is never re-rendered.
+    apply:
+      tags: [pgadmin, route]
   vars:
     traefik_route_name: pgadmin
     traefik_route_fqdn: "{{ pgadmin_fqdn }}"

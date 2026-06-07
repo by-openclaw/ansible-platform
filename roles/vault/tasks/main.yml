@@ -18,6 +18,14 @@
   ansible.builtin.import_tasks: init.yml
   tags: [vault, init]
 
+- name: Enable the KV v2 secrets engine
+  ansible.builtin.import_tasks: kv.yml
+  tags: [vault, kv]
+
+- name: Wire Vault login to Authentik OIDC (SSO)
+  ansible.builtin.import_tasks: oidc.yml
+  tags: [vault, oidc, sso]
+
 - name: Publish Vault via Traefik (internal-only)
   ansible.builtin.include_role:
     name: traefik_route
