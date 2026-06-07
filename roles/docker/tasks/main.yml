@@ -14,7 +14,16 @@
     group: root
     mode: "0755"
 
-- name: "Docker | Configure log rotation (daemon.json)"
+- name: "Docker | Enable IPv6 forwarding (persisted) for the v6 bridge"
+  ansible.posix.sysctl:
+    name: net.ipv6.conf.all.forwarding
+    value: "1"
+    sysctl_set: true
+    state: present
+    reload: true
+  when: docker_ipv6 | bool
+
+- name: "Docker | Configure log rotation + IPv6 (daemon.json)"
   ansible.builtin.template:
     src: daemon.json.j2
     dest: /etc/docker/daemon.json
