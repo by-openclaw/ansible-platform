@@ -82,7 +82,16 @@ authentik_oidc_apps:
       - "https://nextcloud.by-research.be/apps/user_oidc/code"
     logout_uris:                                # post_logout_redirect_uri (type=logout)
       - "https://nextcloud.by-research.be/"
-  # NOTE: defguard SSO-into-defguard via Authentik is enterprise-only — omitted.
+  - slug: defguard
+    name: "Defguard"
+    group: "defguard-admins"
+    secret_file: "defguard-oidc.json"
+    # defguard external OIDC login (open-source/core). The provider is registered
+    # in defguard's admin (Settings > OpenID Connect) using these client creds.
+    # Dashboard callback per defguard docs. (No restrict_to_group: defguard maps
+    # its own roles; keep the group available for later.)
+    redirect_uris:
+      - "https://defguard.by-research.be/auth/callback"
 
 # --- Identity: groups + human users (declarative) -------------------------------
 # Passwords set via API from app-user-<username>.json after the blueprint creates
@@ -94,6 +103,7 @@ authentik_groups:
   - netbox-admins
   - vaultwarden-admins
   - nextcloud-admins
+  - defguard-admins
   - infra-admins
   - dev
 # Groups whose members are Authentik superusers (can manage Authentik itself).
