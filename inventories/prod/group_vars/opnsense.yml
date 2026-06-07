@@ -113,6 +113,27 @@ opn_aliases:
     adr: infra/0004#§8-wireguard-endpoint
     lib_manager: FwAliasManager
     ansible_module: by_systems.opnsense.opnsense_fw_alias
+# Dual-stack: Defguard hands each device a v6 inner address from net6_vpn
+# (fd01:4::/64) too, so VPN clients reach internal fd01:* services. Same
+# group-based model, mirrored in v6 (empty alias = matches nothing).
+- name: wg6_admins
+  type: network
+  content: []      # e.g. ['fd01:4::10/128'] — admin WG client v6 IPs
+  description: WG client group — admins v6 (full internal access)
+  state: present
+  ref:
+    adr: infra/0004#§8-wireguard-endpoint
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
+- name: wg6_devs
+  type: network
+  content: []      # e.g. ['fd01:4::50/128'] — developer WG client v6 IPs
+  description: WG client group — developers v6 (scoped internal access)
+  state: present
+  ref:
+    adr: infra/0004#§8-wireguard-endpoint
+    lib_manager: FwAliasManager
+    ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net4_iot
   type: network
   content: 10.1.10.0/24
@@ -640,8 +661,8 @@ opn_aliases:
 - {name: host6_vaultwarden, type: host, content: ['fd01:3::160'], description: 'Vaultwarden (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host4_nextcloud, type: host, content: ['10.1.3.170'], description: 'Nextcloud (SVC) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host6_nextcloud, type: host, content: ['fd01:3::170'], description: 'Nextcloud (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: host4_defguard, type: host, content: ['10.1.3.180'], description: 'Defguard VPN (SVC) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: host6_defguard, type: host, content: ['fd01:3::180'], description: 'Defguard VPN (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: host4_defguard, type: host, content: ['10.1.2.120'], description: 'Defguard VPN (DMZ) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: host6_defguard, type: host, content: ['fd01:2::120'], description: 'Defguard VPN (DMZ) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host4_traefik_pub, type: host, content: ['213.214.47.222'], description: 'Traefik public IPv4 (Telenet /29)', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host6_traefik_pub, type: host, content: ['2a02:1802:21::5'], description: 'Traefik public IPv6 GUA (Telenet)', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - name: port_dot
@@ -913,7 +934,11 @@ opn_filter_rules:
     adr: infra/0004#§1-row-dmz-reverse-proxy
     lib_manager: FwFilterRuleManager
     ansible_module: by_systems.opnsense.opnsense_fw_filter
-- description: PASS DMZ Traefik→SVC Defguard (reverse proxy)
+# Defguard now lives in the DMZ (vlan1020) alongside Traefik, so this is an
+# intra-DMZ (DMZ→DMZ) reverse-proxy hop. DMZ blocks intra-zone by default (the
+# "BLOCK DMZ→internal default" below covers net4_dmz→net4_dmz), so this explicit
+# PASS is REQUIRED for Traefik to reach the Defguard UI backend. Paired v4/v6.
+- description: PASS DMZ Traefik→DMZ Defguard (reverse proxy v4)
   action: pass
   interface: dmz
   direction: in
@@ -923,6 +948,21 @@ opn_filter_rules:
   destination_net: host4_defguard
   destination_port: port_defguard
   sequence: 1062
+  state: present
+  ref:
+    adr: infra/0004#§1-row-dmz-reverse-proxy
+    lib_manager: FwFilterRuleManager
+    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- description: PASS DMZ Traefik→DMZ Defguard (reverse proxy v6)
+  action: pass
+  interface: dmz
+  direction: in
+  ipprotocol: inet6
+  protocol: tcp
+  source_net: host6_traefik
+  destination_net: host6_defguard
+  destination_port: port_defguard
+  sequence: 1063
   state: present
   ref:
     adr: infra/0004#§1-row-dmz-reverse-proxy
@@ -2085,6 +2125,13 @@ opn_filter_rules:
   ref: {adr: 'security/0001#ntp-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
 - {description: 'PASS Telenet WAN → Traefik web (v4)', action: pass, interface: opt13, direction: in, ipprotocol: inet,  protocol: TCP, source_net: any, destination_net: host4_traefik, destination_port: port_web, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - {description: 'PASS Telenet WAN → Traefik web (v6)', action: pass, interface: opt13, direction: in, ipprotocol: inet6, protocol: TCP, source_net: any, destination_net: host6_traefik, destination_port: port_web, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+# WireGuard ingress PASS — cloned from the Traefik web PASS pair, swapping the
+# web port for port_wg (udp/51820). Paired v4/v6 on opt13 (Telenet WAN). These
+# pair with the staged DNAT below and are the ONLY outward-facing PASS rules for
+# Defguard. STAGED — do NOT `fw_apply` until the operator authorizes opening
+# udp/51820 (infra/0004 §8); excluded from the live internal apply.
+- {description: 'PASS Telenet WAN → Defguard WireGuard (v4) [STAGED — operator-authorize before apply]', action: pass, interface: opt13, direction: in, ipprotocol: inet,  protocol: UDP, source_net: any, destination_net: host4_defguard, destination_port: port_wg, quick: '1', enabled: '1', state: present, ref: {adr: 'infra/0004#§8-wireguard-endpoint', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+- {description: 'PASS Telenet WAN → Defguard WireGuard (v6) [STAGED — operator-authorize before apply]', action: pass, interface: opt13, direction: in, ipprotocol: inet6, protocol: UDP, source_net: any, destination_net: host6_defguard, destination_port: port_wg, quick: '1', enabled: '1', state: present, ref: {adr: 'infra/0004#§8-wireguard-endpoint', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 opn_snat_rules: []
 opn_dnat_rules:
 # Public ingress: Telenet WAN (opt13) :80/:443 → Traefik (dual-stack port-forward).
@@ -2092,11 +2139,14 @@ opn_dnat_rules:
 - {descr: 'DNAT Telenet→Traefik HTTPS (v4)', interface: opt13, protocol: TCP, ipprotocol: inet,  destination: {network: host4_traefik_pub, port: '443'}, target: '10.1.2.110', local-port: '443', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
 - {descr: 'DNAT Telenet→Traefik HTTP (v6)',  interface: opt13, protocol: TCP, ipprotocol: inet6, destination: {network: host6_traefik_pub, port: '80'},  target: 'fd01:2::110', local-port: '80',  state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
 - {descr: 'DNAT Telenet→Traefik HTTPS (v6)', interface: opt13, protocol: TCP, ipprotocol: inet6, destination: {network: host6_traefik_pub, port: '443'}, target: 'fd01:2::110', local-port: '443', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
-# WireGuard ingress: WAN udp/51820 (alias port_wg) → Defguard gateway (10.1.3.180).
-# STAGED ONLY — this is the single outward-facing rule. Do NOT `fw_apply` it until
-# the operator authorizes opening udp/51820 (infra/0004 §8). Present in the catalog
-# so the apply is a one-liner once approved. interface=wan = the primary PPPoE WAN.
-- {descr: 'DNAT WAN→Defguard WireGuard (udp/51820) [STAGED — operator-authorize before apply]', interface: wan, protocol: UDP, ipprotocol: inet, destination: {network: 'wanip', port: '51820'}, target: '10.1.3.180', local-port: '51820', state: present, ref: {adr: 'infra/0004#§8-wireguard-endpoint', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
+# WireGuard ingress: Telenet WAN (opt13) udp/51820 → Defguard gateway, dual-stack
+# port-forward. Cloned from the Traefik HTTP/HTTPS DNAT pair above (same interface
+# opt13, same host4/6_traefik_pub public dest), swapping the web port for udp/51820.
+# STAGED ONLY — the single outward-facing pair. Do NOT `fw_apply` until the operator
+# authorizes opening udp/51820 (infra/0004 §8). Present in the catalog so the apply
+# is a one-liner once approved. Pairs with the staged WAN PASS rules above.
+- {descr: 'DNAT Telenet→Defguard WireGuard (v4) [STAGED — operator-authorize before apply]', interface: opt13, protocol: UDP, ipprotocol: inet,  destination: {network: host4_traefik_pub, port: '51820'}, target: '10.1.2.120', local-port: '51820', state: present, ref: {adr: 'infra/0004#§8-wireguard-endpoint', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
+- {descr: 'DNAT Telenet→Defguard WireGuard (v6) [STAGED — operator-authorize before apply]', interface: opt13, protocol: UDP, ipprotocol: inet6, destination: {network: host6_traefik_pub, port: '51820'}, target: 'fd01:2::120', local-port: '51820', state: present, ref: {adr: 'infra/0004#§8-wireguard-endpoint', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
 opn_unbound:
   enabled: true
   domain: by-research.be
@@ -2143,8 +2193,8 @@ opn_unbound:
   # Service name → Traefik (internal split-horizon; Nextcloud is published via Traefik).
   - {hostname: nextcloud, domain: by-research.be, rr: A,    server: 10.1.2.110}
   - {hostname: nextcloud, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
-  - {hostname: lxc-defguard-01, domain: by-research.be, rr: A, server: 10.1.3.180}
-  - {hostname: lxc-defguard-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::180'}
+  - {hostname: lxc-defguard-01, domain: by-research.be, rr: A,    server: 10.1.2.120}
+  - {hostname: lxc-defguard-01, domain: by-research.be, rr: AAAA, server: 'fd01:2::120'}
   # Service name → Traefik (internal split-horizon; Defguard web/enrollment via Traefik).
   - {hostname: defguard, domain: by-research.be, rr: A, server: 10.1.2.110}
   - {hostname: defguard, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
