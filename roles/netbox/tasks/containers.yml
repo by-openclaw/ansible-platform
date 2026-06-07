@@ -14,9 +14,7 @@
     pull: false
     published_ports:
       - "{{ netbox_listen_ip }}:{{ netbox_host_port }}:8080"
-    volumes:
-      - "{{ netbox_media_volume }}:/opt/netbox/netbox/media"
-      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    volumes: "{{ [netbox_media_volume ~ ':/opt/netbox/netbox/media', '/etc/ssl/certs:/etc/ssl/certs:ro'] + netbox_extra_mounts }}"
     env: "{{ netbox_env }}"
   no_log: true
 
@@ -28,8 +26,7 @@
     state: started
     restart_policy: unless-stopped
     pull: false
-    volumes:
-      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    volumes: "{{ ['/etc/ssl/certs:/etc/ssl/certs:ro'] + netbox_extra_mounts }}"
     env: "{{ netbox_env }}"
   no_log: true
 
@@ -46,8 +43,7 @@
     state: started
     restart_policy: unless-stopped
     pull: false
-    volumes:
-      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    volumes: "{{ ['/etc/ssl/certs:/etc/ssl/certs:ro'] + netbox_extra_mounts }}"
     env: "{{ netbox_env }}"
   no_log: true
 
