@@ -36,3 +36,18 @@ authentik_bootstrap_email: "admin@by-research.be"
 # Persistent volumes.
 authentik_media_volume: "authentik-media"
 authentik_templates_volume: "authentik-templates"
+
+# --- OIDC / SSO blueprints (declarative, one per cluster service) ----------------
+# Host dir mounted into the containers at /blueprints/custom; Authentik auto-applies.
+authentik_blueprints_dir: "/opt/authentik/blueprints"
+# Each entry → one OIDC app. client_id/client_secret are loaded from secret_file
+# (app-oidc-<slug>.json under the workspace secrets dir) in secrets.yml. Add a
+# service here to wire its SSO — same pattern for every svc.
+authentik_oidc_apps:
+  - slug: vault
+    name: "Vault"
+    group: "vault-admins"
+    secret_file: "app-oidc-vault.json"
+    redirect_uris:
+      - "https://vault.by-research.be/ui/vault/auth/oidc/oidc/callback"
+      - "http://localhost:8250/oidc/callback"

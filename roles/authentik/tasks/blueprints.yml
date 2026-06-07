@@ -1,0 +1,30 @@
+---
+# Render one OIDC blueprint per cluster service into the mounted blueprints dir.
+# Authentik's worker auto-discovers + applies them (declarative, idempotent). A
+# change to any file notifies the restart handler so the worker re-applies now
+# instead of on its next poll.
+- name: "blueprints | Ensure the host blueprints dir exists"
+  ansible.builtin.file:
+    path: "{{ authentik_blueprints_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "blueprints | Render the per-service OIDC blueprints"
+  ansible.builtin.template:
+    src: oidc-app.yaml.j2
+    dest: "{{ authentik_blueprints_dir }}/oidc-{{ app.slug }}.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ authentik_oidc_resolved }}"
+  loop_control:
+    loop_var: app
+    label: "{{ app.slug }}"
+  no_log: true   # app carries client_secret
+  notify: Restart authentik
+
+# Apply immediately so callers don't wait for the worker's poll interval.
+- name: "blueprints | Flush handlers to apply blueprints now"
+  ansible.builtin.meta: flush_handlers
