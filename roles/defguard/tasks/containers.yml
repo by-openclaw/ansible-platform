@@ -1,8 +1,14 @@
 ---
-- name: "containers | Create the defguard docker network"
+- name: "containers | Create the defguard docker network (dual-stack)"
   community.docker.docker_network:
     name: defguard
     state: present
+    enable_ipv6: true
+    # User-defined networks don't inherit the daemon's fixed-cidr-v6, so give it
+    # an explicit ULA v6 subnet (Docker auto-assigns the v4 pool). Masqueraded to
+    # the host's real v6 via ip6tables, like the default bridge.
+    ipam_config:
+      - subnet: "{{ defguard_network_v6_subnet }}"
 
 - name: "containers | Pull the pinned defguard core image"
   community.docker.docker_image:
