@@ -23,6 +23,11 @@
 - name: Publish pgAdmin via Traefik (internal-only)
   ansible.builtin.include_role:
     name: traefik_route
+    # apply tags to the INCLUDED tasks too — without this, `--tags route` runs
+    # the include but skips the route's file-write (dynamic include_role does not
+    # propagate tags to inner tasks), so the route is never re-rendered.
+    apply:
+      tags: [pgadmin, route]
   vars:
     traefik_route_name: pgadmin
     traefik_route_fqdn: "{{ pgadmin_fqdn }}"
