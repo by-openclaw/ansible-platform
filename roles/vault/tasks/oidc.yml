@@ -1,0 +1,92 @@
+---
+# Wire Vault login to Authentik OIDC (SSO). Group `vault-admins` (from the
+# Authentik blueprint) → Vault `admins` policy via an external identity group.
+# Vault reaches Authentik's discovery URL over TLS (LE chain in /etc/ssl/certs,
+# resolves via Unbound split-horizon → Traefik). All facts no_log (creds).
+- name: "oidc | Load root token + OIDC client creds"
+  ansible.builtin.set_fact:
+    vault_root_token: "{{ (lookup('file', vault_secret_dir + '/' + vault_init_secret) | from_json).fields.root_token }}"
+    vault_oidc: "{{ (lookup('file', vault_secret_dir + '/' + vault_oidc_secret_file) | from_json).fields }}"
+  no_log: true
+
+- name: "oidc | Write the admins policy"
+  ansible.builtin.command:
+    cmd: "docker exec -i -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault policy write {{ vault_admin_policy_name }} -"
+    stdin: "{{ lookup('template', 'admins-policy.hcl.j2') }}"
+  no_log: true
+  changed_when: true
+
+- name: "oidc | List auth methods"
+  ansible.builtin.command:
+    cmd: "docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault auth list -format=json"
+  register: vault_auth_list
+  changed_when: false
+  no_log: true
+
+- name: "oidc | Enable the OIDC auth method"
+  ansible.builtin.command:
+    cmd: "docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault auth enable oidc"
+  when: "'oidc/' not in (vault_auth_list.stdout | from_json)"
+  no_log: true
+  changed_when: true
+
+- name: "oidc | Capture the OIDC mount accessor"
+  ansible.builtin.command:
+    cmd: "docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault auth list -format=json"
+  register: vault_auth_list2
+  changed_when: false
+  no_log: true
+
+- name: "oidc | Set accessor fact"
+  ansible.builtin.set_fact:
+    vault_oidc_accessor: "{{ (vault_auth_list2.stdout | from_json)['oidc/'].accessor }}"
+  no_log: true
+
+- name: "oidc | Configure auth/oidc (Authentik discovery + client)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }}
+      vault write auth/oidc/config
+      oidc_discovery_url={{ vault_oidc_discovery_url }}
+      oidc_client_id={{ vault_oidc.client_id }}
+      oidc_client_secret={{ vault_oidc.client_secret }}
+      default_role={{ vault_oidc_default_role }}
+  no_log: true
+  changed_when: true
+
+- name: "oidc | Configure the default OIDC role"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }}
+      vault write auth/oidc/role/{{ vault_oidc_default_role }}
+      user_claim=sub groups_claim=groups token_policies=default token_ttl=1h
+      oidc_scopes=openid oidc_scopes=profile oidc_scopes=email oidc_scopes=groups
+      {% for u in vault_oidc.redirect_uris %}allowed_redirect_uris={{ u }} {% endfor %}
+  no_log: true
+  changed_when: true
+
+- name: "oidc | Create/update the external admin identity group"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }}
+      vault write identity/group name={{ vault_oidc_admin_group }} type=external policies={{ vault_admin_policy_name }}
+  no_log: true
+  changed_when: true
+
+- name: "oidc | Read the admin group (id + current alias)"
+  ansible.builtin.command:
+    cmd: "docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault read -format=json identity/group/name/{{ vault_oidc_admin_group }}"
+  register: vault_group_read
+  changed_when: false
+  no_log: true
+
+- name: "oidc | Map the Authentik group → Vault group (alias, once)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }}
+      vault write identity/group-alias name={{ vault_oidc_admin_group }}
+      mount_accessor={{ vault_oidc_accessor }}
+      canonical_id={{ (vault_group_read.stdout | from_json).data.id }}
+  when: not ((vault_group_read.stdout | from_json).data.alias | default({}))
+  no_log: true
+  changed_when: true
