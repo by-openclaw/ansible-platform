@@ -25,6 +25,57 @@
   no_log: true   # app carries client_secret
   notify: Restart authentik
 
+- name: "blueprints | Render the identity blueprint (groups + users)"
+  ansible.builtin.template:
+    src: identity.yaml.j2
+    dest: "{{ authentik_blueprints_dir }}/identity-core.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  no_log: true   # users carry email/name
+  notify: Restart authentik
+
 # Apply immediately so callers don't wait for the worker's poll interval.
 - name: "blueprints | Flush handlers to apply blueprints now"
   ansible.builtin.meta: flush_handlers
+
+# Passwords can't be set in a blueprint (Authentik hashes them) — set via API
+# once the blueprint has created the user. Wait for the API + the user to exist.
+- name: "blueprints | Wait for the Authentik API to be ready"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/-/health/ready/"
+    status_code: [200, 204]
+  register: authentik_ready
+  retries: 30
+  delay: 5
+  until: authentik_ready.status in [200, 204]
+
+- name: "blueprints | Resolve user pks (wait for the blueprint to create them)"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/core/users/?username={{ user.username }}"
+    headers:
+      Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}"
+  register: authentik_user_lookup
+  retries: 24
+  delay: 5
+  until: (authentik_user_lookup.json.results | default([])) | length > 0
+  loop: "{{ authentik_users_resolved }}"
+  loop_control:
+    loop_var: user
+    label: "{{ user.username }}"
+  no_log: true
+
+- name: "blueprints | Set user passwords (initial; rotate after first login)"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/core/users/{{ item.0.json.results[0].pk }}/set_password/"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}"
+    body_format: json
+    body:
+      password: "{{ item.1.password }}"
+    status_code: [204]
+  loop: "{{ authentik_user_lookup.results | zip(authentik_users_resolved) | list }}"
+  loop_control:
+    label: "{{ item.1.username }}"
+  no_log: true

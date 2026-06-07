@@ -51,3 +51,18 @@ authentik_oidc_apps:
     redirect_uris:
       - "https://vault.by-research.be/ui/vault/auth/oidc/oidc/callback"
       - "http://localhost:8250/oidc/callback"
+
+# --- Identity: groups + human users (declarative) -------------------------------
+# Passwords set via API from app-user-<username>.json after the blueprint creates
+# the user (Authentik hashes them; can't be set in a blueprint).
+authentik_groups:
+  - platform-admins
+  - vault-admins
+  - infra-admins
+  - dev
+authentik_users:
+  - username: yboujraf
+    secret_file: "app-user-yboujraf.json"
+
+# Outbound email (password resets / MFA / notifications) via Resend (by-research).
+authentik_resend_secret_file: "app-resend-by-research.json"
