@@ -1,0 +1,33 @@
+---
+# ==============================================================================
+# adguard | IPv6 hygiene — static-only addressing
+# This VM (netplan -> systemd-networkd) accepts Router Advertisements by default,
+# so it gains an extra SLAAC/EUI-64 global v6 (dynamic mngtmpaddr) alongside the
+# static fd01:3:: address declared in the FW catalog. Disable RA so the host is
+# static-only; then flush any already-assigned dynamic address. Idempotent.
+# ==============================================================================
+- name: "Netplan drop-in to disable IPv6 RA/SLAAC (static-only)"
+  ansible.builtin.template:
+    src: 99-disable-accept-ra.yaml.j2
+    dest: /etc/netplan/99-disable-accept-ra.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: "Apply netplan"
+
+- name: "Apply netplan now (so RA is off before flushing)"
+  ansible.builtin.meta: flush_handlers
+
+- name: "Flush stale dynamic (SLAAC) global IPv6 addresses"
+  ansible.builtin.shell: |
+    set -o pipefail
+    removed=0
+    for a in $(ip -o -6 addr show dev {{ adguard_primary_iface }} scope global \
+              | awk '/dynamic/{print $4}'); do
+      ip -6 addr del "$a" dev {{ adguard_primary_iface }} && removed=1
+    done
+    echo "removed=${removed}"
+  args:
+    executable: /bin/bash
+  register: adguard_ra_flush
+  changed_when: "'removed=1' in adguard_ra_flush.stdout"
