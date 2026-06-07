@@ -50,12 +50,22 @@ nextcloud_pg_secret_file: "db-pgsql-nextcloud.json"     # written by postgres_db
 nextcloud_redis_secret_file: "db-redis.json"
 nextcloud_s3_secret_file: "infra-backup-s3-contabo.json"
 
-# Initial local break-glass admin (SSO via Authentik wired later).
+# Initial local break-glass admin (kept alongside SSO as the break-glass login).
 nextcloud_admin_user: "admin"
 
 # Persistent volume (Nextcloud app code + config; USER DATA lives on S3).
 nextcloud_app_volume: "nextcloud-app"
 
-# Apps to install/enable after first-run install.
+# Apps to install/enable after first-run install. user_oidc = Authentik SSO.
 nextcloud_apps:
   - drawio
+  - user_oidc
+
+# --- Authentik OIDC SSO (wired only when the client secret file exists) ---------
+# Official user_oidc app, configured idempotently via occ. Access is gated
+# IdP-side by the nextcloud-admins group (authentik restrict_to_group); groups
+# are provisioned into Nextcloud from the `groups` claim.
+nextcloud_oidc_secret_file: "app-oidc-nextcloud.json"
+nextcloud_authentik_base: "https://authentik.by-research.be"
+nextcloud_oidc_app_slug: "nextcloud"
+nextcloud_oidc_provider_id: "authentik"

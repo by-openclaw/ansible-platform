@@ -80,6 +80,36 @@
   register: nextcloud_app_enable
   changed_when: "'already enabled' not in nextcloud_app_enable.stdout"
 
+# --- Authentik OIDC SSO (user_oidc) -------------------------------------------
+# Declarative upsert of the Authentik provider. Access is gated IdP-side by the
+# nextcloud-admins group (restrict_to_group); group-provisioning syncs the
+# `groups` claim into Nextcloud groups. Local admin stays as break-glass.
+- name: "post-install | Configure the Authentik OIDC provider (user_oidc)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -u
+      - www-data
+      - nextcloud
+      - php
+      - occ
+      - user_oidc:provider
+      - "{{ nextcloud_oidc_provider_id }}"
+      - "--clientid={{ nextcloud_oidc.client_id }}"
+      - "--clientsecret={{ nextcloud_oidc.client_secret }}"
+      - "--discoveryuri={{ nextcloud_authentik_base }}/application/o/{{ nextcloud_oidc_app_slug }}/.well-known/openid-configuration"
+      - "--scope=openid email profile groups"
+      - "--unique-uid=0"
+      - "--mapping-uid=preferred_username"
+      - "--mapping-display-name=name"
+      - "--mapping-email=email"
+      - "--mapping-groups=groups"
+      - "--group-provisioning=1"
+  no_log: true
+  changed_when: false   # declarative upsert (same inputs converge to same state)
+  when: nextcloud_oidc_stat.stat.exists
+
 # --- assertions ---------------------------------------------------------------
 - name: "post-install | Confirm S3 primary object store is active"
   ansible.builtin.command:

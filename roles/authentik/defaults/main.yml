@@ -64,6 +64,21 @@ authentik_oidc_apps:
     restrict_to_group: true     # IdP-enforced: only netbox-admins can log in
     redirect_uris:
       - "https://netbox.by-research.be/oauth/complete/oidc/"
+  - slug: vaultwarden
+    name: "Vaultwarden"
+    group: "vaultwarden-admins"
+    secret_file: "app-oidc-vaultwarden.json"
+    restrict_to_group: true     # IdP-enforced: only vaultwarden-admins can log in
+    redirect_uris:
+      - "https://vaultwarden.by-research.be/identity/connect/oidc-signin"
+  - slug: nextcloud
+    name: "Nextcloud"
+    group: "nextcloud-admins"
+    secret_file: "app-oidc-nextcloud.json"
+    restrict_to_group: true     # IdP-enforced: only nextcloud-admins can log in
+    redirect_uris:
+      - "https://nextcloud.by-research.be/apps/user_oidc/code"
+  # NOTE: defguard SSO-into-defguard via Authentik is enterprise-only — omitted.
 
 # --- Identity: groups + human users (declarative) -------------------------------
 # Passwords set via API from app-user-<username>.json after the blueprint creates
@@ -73,6 +88,8 @@ authentik_groups:
   - vault-admins
   - pgadmin-admins
   - netbox-admins
+  - vaultwarden-admins
+  - nextcloud-admins
   - infra-admins
   - dev
 # Groups whose members are Authentik superusers (can manage Authentik itself).
