@@ -81,7 +81,10 @@ async def provision(args: argparse.Namespace) -> int:
     creds = load_credentials(args.env)
     user = args.user
     group = args.group
-    email = f"{user}@{args.domain}"
+    # Email is metadata only and is NOT auto-generated — a fabricated address that
+    # doesn't exist in the mail server is worse than none. Set it explicitly with
+    # --email if (and only if) a real mailbox exists.
+    email = args.email
     check = not args.apply
 
     async with OpnsenseClient(
@@ -119,10 +122,11 @@ async def provision(args: argparse.Namespace) -> int:
         webgui_password = None
         user_params: dict[str, Any] = {
             "name": user,
-            "email": email,
             "comment": "OOB break-glass admin (managed by opn_oob_admin.py)",
             "shell": "",
         }
+        if email:
+            user_params["email"] = email
         if gid:
             user_params["group_memberships"] = gid
         if not user_exists:
@@ -155,9 +159,11 @@ async def provision(args: argparse.Namespace) -> int:
             payload: dict[str, Any] = {"fields": {
                 "host": creds["host"], "port": creds["port"],
                 "verify_ssl": creds["verify_ssl"],
-                "username": user, "email": email, "group": group,
+                "username": user, "group": group,
                 "role": "oob-break-glass-admin", "domain": args.domain,
             }}
+            if email:
+                payload["fields"]["email"] = email
             # Merge with any existing file so a re-run that only mints a key keeps the pw.
             if out.exists():
                 payload["fields"].update(json.loads(out.read_text()).get("fields", {}))
@@ -179,7 +185,8 @@ def main() -> int:
     p.add_argument("--env", default="prod")
     p.add_argument("--user", default="oob-admin")
     p.add_argument("--group", default="oob-admins")
-    p.add_argument("--domain", default="by-research.be")
+    p.add_argument("--domain", default="by-research.be", help="metadata only (not used to build an email)")
+    p.add_argument("--email", default="", help="real mailbox only; omitted by default (no fabricated address)")
     p.add_argument("--apply", action="store_true", help="write changes (default: dry-run)")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
