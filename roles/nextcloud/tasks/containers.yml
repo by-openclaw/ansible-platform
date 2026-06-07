@@ -1,0 +1,68 @@
+---
+- name: "containers | Pull the pinned Nextcloud image"
+  community.docker.docker_image:
+    name: "{{ nextcloud_image }}"
+    source: pull
+    state: present
+
+- name: "containers | Run nextcloud (web)"
+  community.docker.docker_container:
+    name: nextcloud
+    image: "{{ nextcloud_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    published_ports:
+      - "{{ nextcloud_listen_ip }}:{{ nextcloud_host_port }}:80"
+    volumes:
+      - "{{ nextcloud_app_volume }}:/var/www/html"
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    env: "{{ nextcloud_env }}"
+  no_log: true
+
+- name: "containers | Run nextcloud-cron (background jobs)"
+  community.docker.docker_container:
+    name: nextcloud-cron
+    image: "{{ nextcloud_image }}"
+    entrypoint: /cron.sh
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    volumes:
+      - "{{ nextcloud_app_volume }}:/var/www/html"
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    env: "{{ nextcloud_env }}"
+  no_log: true
+
+# First start runs the automated install (creates the schema in the empty
+# Postgres DB over libpq TLS + S3 primary wiring) before status.php reports
+# installed — retry generously.
+- name: "containers | Wait for Nextcloud install to finish"
+  ansible.builtin.uri:
+    url: "http://{{ nextcloud_listen_ip }}:{{ nextcloud_host_port }}/status.php"
+    headers:
+      Host: "{{ nextcloud_fqdn }}"
+    status_code: 200
+    return_content: true
+  register: nextcloud_ready
+  retries: 60
+  delay: 5
+  until:
+    - nextcloud_ready.status == 200
+    - "'\"installed\":true' in nextcloud_ready.content"
+  changed_when: false
+
+- name: "containers | Gather running Nextcloud containers"
+  community.docker.docker_host_info:
+    containers: true
+    containers_filters:
+      status: running
+  register: nextcloud_running
+
+- name: "containers | Assert both containers are Up"
+  ansible.builtin.assert:
+    that:
+      - "'/nextcloud' in (nextcloud_running.containers | map(attribute='Names') | flatten)"
+      - "'/nextcloud-cron' in (nextcloud_running.containers | map(attribute='Names') | flatten)"
+    fail_msg: "nextcloud and/or nextcloud-cron are not running"
+    success_msg: "nextcloud and nextcloud-cron are both Up"

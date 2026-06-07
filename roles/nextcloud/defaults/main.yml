@@ -1,0 +1,61 @@
+---
+# ==============================================================================
+# Role: nextcloud — files / drawio (Docker) on lxc-nextcloud-01 (SVC)
+# web + cron containers (same image). Primary storage = Contabo S3 (object
+# storage). Uses the shared cluster PostgreSQL (postgres_db: nextcloud) + Redis,
+# both over verified TLS. Fronted by Traefik (wildcard TLS). drawio installed as
+# a Nextcloud app (diagrams stored as files -> on S3). Upgrade = bump the
+# nextcloud_image tag.
+# ==============================================================================
+nextcloud_image: "nextcloud:33-apache"   # pinned (never :latest)
+
+nextcloud_fqdn: "nextcloud.by-research.be"
+
+# Web HTTP backend (Traefik terminates TLS) — published on the SVC IP.
+nextcloud_listen_ip: "10.1.3.170"
+nextcloud_host_port: 80
+nextcloud_container_port: 80
+
+# Traefik is the only reverse proxy in front of Nextcloud (trusted proxy).
+nextcloud_trusted_proxy: "10.1.2.110"
+
+# Shared PostgreSQL (DB + role created by the postgres_db role). Nextcloud uses
+# libpq; verify-full + CA enforced via config.php dbdriveroptions (the official
+# image has no sslmode env).
+nextcloud_pg_host: "lxc-pgsql-01.by-research.be"
+nextcloud_pg_port: 5432
+nextcloud_pg_name: "nextcloud"
+nextcloud_pg_user: "nextcloud"
+nextcloud_pg_sslmode: "verify-full"
+nextcloud_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"
+
+# Shared Redis (TLS). The official image's REDIS_HOST env does NOT enable TLS,
+# so Redis is configured via a mounted config.php snippet with ssl_context.
+nextcloud_redis_host: "lxc-redis-01.by-research.be"
+nextcloud_redis_port: 6379
+
+# Contabo S3 — PRIMARY object storage (bucket precreated out-of-band).
+nextcloud_s3_bucket: "nextcloud-data"
+nextcloud_s3_host: "eu2.contabostorage.com"
+nextcloud_s3_port: 443
+nextcloud_s3_ssl: "true"
+nextcloud_s3_region: "eu2"
+nextcloud_s3_usepath_style: "true"   # Contabo requires path-style addressing
+nextcloud_s3_autocreate: "false"     # we precreate the bucket
+
+# Controller secret store.
+nextcloud_secret_dir: "~/.openclaw/workspace/infra/secrets"
+nextcloud_secret_file: "nextcloud.json"                 # admin_user + admin_password
+nextcloud_pg_secret_file: "db-pgsql-nextcloud.json"     # written by postgres_db
+nextcloud_redis_secret_file: "db-redis.json"
+nextcloud_s3_secret_file: "infra-backup-s3-contabo.json"
+
+# Initial local break-glass admin (SSO via Authentik wired later).
+nextcloud_admin_user: "admin"
+
+# Persistent volume (Nextcloud app code + config; USER DATA lives on S3).
+nextcloud_app_volume: "nextcloud-app"
+
+# Apps to install/enable after first-run install.
+nextcloud_apps:
+  - drawio
