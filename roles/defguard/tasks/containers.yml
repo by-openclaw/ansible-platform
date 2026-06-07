@@ -1,0 +1,160 @@
+---
+- name: "containers | Create the defguard docker network"
+  community.docker.docker_network:
+    name: defguard
+    state: present
+
+- name: "containers | Pull the pinned defguard core image"
+  community.docker.docker_image:
+    name: "{{ defguard_core_image }}"
+    source: pull
+    state: present
+
+- name: "containers | Pull the pinned defguard proxy image"
+  community.docker.docker_image:
+    name: "{{ defguard_proxy_image }}"
+    source: pull
+    state: present
+
+- name: "containers | Pull the pinned defguard gateway base image"
+  community.docker.docker_image:
+    name: "{{ defguard_gateway_base_image }}"
+    source: pull
+    state: present
+
+# Userspace gateway: bundle wireguard-go into a derived image (stock image has
+# none; unprivileged+nesting LXC has no host wg kernel module).
+- name: "containers | Create the defguard build directory"
+  ansible.builtin.file:
+    path: /opt/defguard
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "containers | Render the userspace gateway Dockerfile"
+  ansible.builtin.template:
+    src: Dockerfile.gateway-userspace.j2
+    dest: /opt/defguard/Dockerfile.gateway-userspace
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: "containers | Build the userspace defguard gateway image"
+  community.docker.docker_image:
+    name: "{{ defguard_gateway_image }}"
+    build:
+      path: /opt/defguard
+      dockerfile: Dockerfile.gateway-userspace
+      pull: false
+    source: build
+    state: present
+    force_source: false
+
+- name: "containers | Run defguard-core (control plane + web/enrollment UI)"
+  community.docker.docker_container:
+    name: defguard-core
+    image: "{{ defguard_core_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    networks:
+      - name: defguard
+    published_ports:
+      - "{{ defguard_listen_ip }}:{{ defguard_core_host_port }}:{{ defguard_core_container_port }}"
+    volumes:
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    env: "{{ defguard_core_env }}"
+  no_log: true
+
+- name: "containers | Run defguard-proxy (enrollment / desktop-client proxy)"
+  community.docker.docker_container:
+    name: defguard-proxy
+    image: "{{ defguard_proxy_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    networks:
+      - name: defguard
+    published_ports:
+      - "{{ defguard_listen_ip }}:{{ defguard_proxy_host_port }}:{{ defguard_proxy_container_port }}"
+    volumes:
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    env: "{{ defguard_proxy_env }}"
+  no_log: true
+
+# Userspace WireGuard needs the /dev/net/tun device node. In an unprivileged LXC
+# this node only exists if the PVE host grants it to the container (one-time host
+# config — see README "Host prerequisite"). Detect it: if absent, the gateway is
+# NOT started (core/proxy/UI still come up), and the play reports the exact host
+# config needed rather than enabling a host kernel hack from inside the guest.
+- name: "containers | Stat the tun device node"
+  ansible.builtin.stat:
+    path: /dev/net/tun
+  register: defguard_tun
+
+- name: "containers | Warn when the tun device node is missing"
+  ansible.builtin.debug:
+    msg: >-
+      /dev/net/tun is absent in this unprivileged LXC — the userspace WireGuard
+      gateway cannot start until the PVE host grants it. Add to the container's
+      /etc/pve/lxc/{{ defguard_lxc_vmid }}.conf on the host:
+      'lxc.cgroup2.devices.allow: c 10:200 rwm' and
+      'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file 0 0',
+      then restart the container. core + proxy + UI are up; gateway is pending.
+  when: not defguard_tun.stat.exists
+
+# Gateway in USERSPACE mode: needs NET_ADMIN + /dev/net/tun (no host kernel wg).
+- name: "containers | Run defguard-gateway (userspace wireguard-go data plane)"
+  community.docker.docker_container:
+    name: defguard-gateway
+    image: "{{ defguard_gateway_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    networks:
+      - name: defguard
+    capabilities:
+      - NET_ADMIN
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    published_ports:
+      - "{{ defguard_listen_ip }}:{{ defguard_wg_udp_port }}:{{ defguard_wg_udp_port }}/udp"
+    volumes:
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    env: "{{ defguard_gateway_env }}"
+  no_log: true
+  when: defguard_tun.stat.exists
+
+- name: "containers | Wait for defguard core to be ready (first start runs migrations)"
+  ansible.builtin.uri:
+    url: "http://{{ defguard_listen_ip }}:{{ defguard_core_host_port }}/api/v1/health"
+    status_code: 200
+  register: defguard_ready
+  retries: 40
+  delay: 5
+  until: defguard_ready.status == 200
+  changed_when: false
+
+- name: "containers | Gather running defguard containers"
+  community.docker.docker_host_info:
+    containers: true
+    containers_filters:
+      status: running
+  register: defguard_running
+
+- name: "containers | Assert the defguard control-plane containers are up"
+  ansible.builtin.assert:
+    that:
+      - "'/defguard-core' in (defguard_running.containers | map(attribute='Names') | flatten)"
+      - "'/defguard-proxy' in (defguard_running.containers | map(attribute='Names') | flatten)"
+    fail_msg: "defguard-core and/or defguard-proxy are not running"
+    success_msg: "defguard-core and defguard-proxy are up"
+
+- name: "containers | Assert the userspace gateway is up when tun is present"
+  ansible.builtin.assert:
+    that:
+      - "'/defguard-gateway' in (defguard_running.containers | map(attribute='Names') | flatten)"
+    fail_msg: "defguard-gateway is not running despite /dev/net/tun being present"
+    success_msg: "defguard-gateway (userspace wireguard-go) is up"
+  when: defguard_tun.stat.exists
