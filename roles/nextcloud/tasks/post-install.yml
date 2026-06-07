@@ -81,6 +81,18 @@
   changed_when: "'already enabled' not in nextcloud_app_enable.stdout"
 
 # --- Authentik OIDC SSO (user_oidc) -------------------------------------------
+# Nextcloud's HTTP client blocks requests to private/local IPs by default (SSRF
+# protection). Authentik resolves to a private SVC/DMZ IP, so user_oidc's
+# server-side discovery fetch fails with "Could not reach the OpenID Connect
+# provider" until local remote servers are allowed. Required for the internal IdP.
+- name: "post-install | Allow Nextcloud HTTP client to reach the internal IdP"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      allow_local_remote_servers --type=boolean --value=true
+  changed_when: true
+  when: nextcloud_oidc_stat.stat.exists
+
 # Declarative upsert of the Authentik provider. Access is gated IdP-side by the
 # nextcloud-admins group (restrict_to_group); group-provisioning syncs the
 # `groups` claim into Nextcloud groups. Local admin stays as break-glass.
