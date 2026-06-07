@@ -1,0 +1,96 @@
+---
+# Post-install via occ (run as www-data inside the web container). All steps are
+# idempotent (occ config:system:set + app install/enable guards).
+
+# --- Redis over TLS -----------------------------------------------------------
+# The official image's REDIS_HOST env does NOT enable TLS, so wire Redis here via
+# occ (writes config.php inside the volume — the write-safe, supported path).
+# rediss:// + ssl_context verifies the peer against the mounted system CA bundle.
+- name: "post-install | Configure Redis host (TLS)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      redis host --value="{{ nextcloud_redis_host }}"
+  changed_when: true
+
+- name: "post-install | Configure Redis port"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      redis port --type=integer --value="{{ nextcloud_redis_port }}"
+  changed_when: true
+
+- name: "post-install | Configure Redis password"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      redis password --value="{{ nextcloud_redis_password }}"
+  no_log: true
+  changed_when: true
+
+- name: "post-install | Configure Redis TLS (ssl_context verify_peer)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      redis ssl_context verify_peer --type=boolean --value=true
+  changed_when: true
+
+- name: "post-install | Configure Redis TLS (ssl_context cafile)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      redis ssl_context cafile --value="{{ nextcloud_pg_sslrootcert }}"
+  changed_when: true
+
+- name: "post-install | Enable Redis memcache (local/distributed/locking)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      {{ item.key }} --value="{{ item.value }}"
+  loop:
+    - { key: "memcache.local", value: "\\OC\\Memcache\\APCu" }
+    - { key: "memcache.distributed", value: "\\OC\\Memcache\\Redis" }
+    - { key: "memcache.locking", value: "\\OC\\Memcache\\Redis" }
+  changed_when: true
+
+# --- drawio app ---------------------------------------------------------------
+- name: "post-install | List installed apps"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ app:list --output=json
+  register: nextcloud_app_list
+  changed_when: false
+
+- name: "post-install | Parse enabled + disabled apps"
+  ansible.builtin.set_fact:
+    nextcloud_apps_present: >-
+      {{ (nextcloud_app_list.stdout | from_json).enabled.keys() | list
+         + (nextcloud_app_list.stdout | from_json).disabled.keys() | list }}
+
+- name: "post-install | Install missing apps"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ app:install {{ item }}
+  loop: "{{ nextcloud_apps }}"
+  when: item not in nextcloud_apps_present
+  changed_when: true
+
+- name: "post-install | Enable apps"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ app:enable {{ item }}
+  loop: "{{ nextcloud_apps }}"
+  register: nextcloud_app_enable
+  changed_when: "'already enabled' not in nextcloud_app_enable.stdout"
+
+# --- assertions ---------------------------------------------------------------
+- name: "post-install | Confirm S3 primary object store is active"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ config:system:get objectstore class
+  register: nextcloud_objectstore
+  changed_when: false
+  failed_when: "'S3' not in nextcloud_objectstore.stdout"
+
+- name: "post-install | Confirm Redis memcache.locking is active"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ config:system:get memcache.locking
+  register: nextcloud_locking
+  changed_when: false
+  failed_when: "'Redis' not in nextcloud_locking.stdout"

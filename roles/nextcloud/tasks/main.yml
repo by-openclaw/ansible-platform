@@ -1,0 +1,33 @@
+---
+# ==============================================================================
+# Role: nextcloud — dispatcher
+# ==============================================================================
+- name: Provision the Nextcloud database
+  ansible.builtin.include_role:
+    name: postgres_db
+  vars:
+    postgres_db_name: "{{ nextcloud_pg_name }}"
+    postgres_db_user: "{{ nextcloud_pg_user }}"
+  tags: [nextcloud, database]
+
+- name: Resolve / generate Nextcloud secrets
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [nextcloud, secrets]
+
+- name: Run the Nextcloud containers (web + cron)
+  ansible.builtin.import_tasks: containers.yml
+  tags: [nextcloud, container]
+
+- name: Post-install (occ — TLS config, trusted proxy, drawio)
+  ansible.builtin.import_tasks: post-install.yml
+  tags: [nextcloud, post]
+
+- name: Publish Nextcloud via Traefik (internal-only)
+  ansible.builtin.include_role:
+    name: traefik_route
+  vars:
+    traefik_route_name: nextcloud
+    traefik_route_fqdn: "{{ nextcloud_fqdn }}"
+    traefik_route_backend_url: "http://{{ nextcloud_listen_ip }}:{{ nextcloud_host_port }}"
+    traefik_route_internal_only: true
+  tags: [nextcloud, route]
