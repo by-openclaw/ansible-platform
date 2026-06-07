@@ -34,9 +34,20 @@ netbox_secret_file: "netbox.json"               # secret_key + superuser + token
 netbox_pg_secret_file: "db-pgsql-netbox.json"   # written by postgres_db
 netbox_redis_secret_file: "db-redis.json"
 
-# Initial local break-glass admin (SSO via Authentik wired later).
+# Initial local break-glass admin (kept alongside SSO as the break-glass login).
 netbox_superuser_name: "admin"
 netbox_superuser_email: "admin@by-research.be"
+
+# --- Authentik OIDC SSO (wired only when the client secret file exists) ---------
+# python-social-auth OIDC backend. The Authentik app/provider/group are declared
+# in the authentik role (authentik_oidc_apps: netbox). Access = netbox-admins.
+netbox_oidc_secret_file: "app-oidc-netbox.json"
+netbox_authentik_base: "https://authentik.by-research.be"
+netbox_oidc_app_slug: "netbox"
+# Members of this Authentik group become NetBox superusers (group sync from the
+# OIDC `groups` claim). Login restriction to the group is enforced IdP-side
+# (authentik application policy binding, restrict_to_group).
+netbox_oidc_superuser_group: "netbox-admins"
 
 # Persistent volume (uploaded files / images).
 netbox_media_volume: "netbox-media"

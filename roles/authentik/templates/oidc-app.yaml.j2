@@ -69,3 +69,17 @@ entries:
       name: {{ app.name }}
       slug: {{ app.slug }}
       provider: !KeyOf provider-{{ app.slug }}
+{% if app.restrict_to_group | default(false) %}
+
+  # RBAC: bind the access group to the application so ONLY its members can launch
+  # / authenticate to it (enforced at the IdP). Opt-in per app via restrict_to_group.
+  - model: authentik_policies.policybinding
+    id: binding-{{ app.slug }}-group
+    identifiers:
+      target: !KeyOf app-{{ app.slug }}
+      group: !KeyOf group-{{ app.slug }}
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+{% endif %}
