@@ -80,6 +80,185 @@
   register: nextcloud_app_enable
   changed_when: "'already enabled' not in nextcloud_app_enable.stdout"
 
+# --- Authentik OIDC SSO (user_oidc) -------------------------------------------
+# Nextcloud's HTTP client blocks requests to private/local IPs by default (SSRF
+# protection). Authentik resolves to a private SVC/DMZ IP, so user_oidc's
+# server-side discovery fetch fails with "Could not reach the OpenID Connect
+# provider" until local remote servers are allowed. Required for the internal IdP.
+- name: "post-install | Allow Nextcloud HTTP client to reach the internal IdP"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      allow_local_remote_servers --type=boolean --value=true
+  changed_when: true
+  when: nextcloud_oidc_stat.stat.exists
+
+# Declarative upsert of the Authentik provider. Access is gated IdP-side by the
+# nextcloud-admins group (restrict_to_group); group-provisioning syncs the
+# `groups` claim into Nextcloud groups. Local admin stays as break-glass.
+- name: "post-install | Configure the Authentik OIDC provider (user_oidc)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -u
+      - www-data
+      - nextcloud
+      - php
+      - occ
+      - user_oidc:provider
+      - "{{ nextcloud_oidc_provider_id }}"
+      - "--clientid={{ nextcloud_oidc.client_id }}"
+      - "--clientsecret={{ nextcloud_oidc.client_secret }}"
+      - "--discoveryuri={{ nextcloud_authentik_base }}/application/o/{{ nextcloud_oidc_app_slug }}/.well-known/openid-configuration"
+      - "--scope=openid email profile groups"
+      - "--unique-uid=0"
+      - "--mapping-uid=preferred_username"
+      - "--mapping-display-name=name"
+      - "--mapping-email=email"
+      - "--mapping-groups=groups"
+      - "--group-provisioning=1"
+      # Include id_token_hint on logout — authentik rejects the end-session
+      # redirect (Bad Request) without it. Fixes the logout "Bad Request".
+      - "--send-id-token-hint=1"
+  no_log: true
+  changed_when: false   # declarative upsert (same inputs converge to same state)
+  when: nextcloud_oidc_stat.stat.exists
+
+# --- Outbound email (Resend SMTP) ---------------------------------------------
+# Same relay the other cluster apps send through (verified). Stored in config.php
+# via occ (the official image exposes no mail_* env). All idempotent. Port 465 =>
+# implicit TLS (ssl), otherwise STARTTLS (tls).
+- name: "post-install | Configure SMTP mail (Resend)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      {{ item.key }} {{ item.type | default('') }} --value="{{ item.value }}"
+  loop:
+    - { key: "mail_smtpmode", value: "smtp" }
+    - { key: "mail_sendmailmode", value: "smtp" }
+    - { key: "mail_smtphost", value: "{{ nextcloud_resend.smtp_host }}" }
+    - { key: "mail_smtpport", value: "{{ nextcloud_resend.smtp_port }}", type: "--type=integer" }
+    - { key: "mail_smtpsecure", value: "{{ 'ssl' if (nextcloud_resend.smtp_port | int) == 465 else 'tls' }}" }
+    - { key: "mail_smtpauth", value: "true", type: "--type=boolean" }
+    - { key: "mail_smtpauthtype", value: "LOGIN" }
+    - { key: "mail_smtpname", value: "{{ nextcloud_resend.smtp_username }}" }
+    - { key: "mail_from_address", value: "{{ nextcloud_resend.from_address.split('@')[0] }}" }
+    - { key: "mail_domain", value: "{{ nextcloud_resend.from_address.split('@')[1] }}" }
+  loop_control:
+    label: "{{ item.key }}"
+  changed_when: true
+  when: nextcloud_resend is defined
+
+- name: "post-install | Configure SMTP password (Resend API key)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      mail_smtppassword --value="{{ nextcloud_resend.smtp_api_key }}"
+  no_log: true
+  changed_when: true
+  when: nextcloud_resend is defined
+
+# --- Sharing policy -----------------------------------------------------------
+# Public link shares: default + enforced expiry, mandatory password, share-by-email
+# (the sharebymail app is enabled above). config:app:set core is idempotent.
+- name: "post-install | Configure sharing policy (links + expiry + password)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:app:set core
+      {{ item.key }} --value="{{ item.value }}"
+  loop:
+    - { key: "shareapi_enabled", value: "yes" }
+    - { key: "shareapi_allow_links", value: "yes" }
+    - { key: "shareapi_default_expire_date", value: "yes" }
+    - { key: "shareapi_expire_after_n_days", value: "{{ nextcloud_share_default_expire_days | string }}" }
+    - { key: "shareapi_enforce_expire_date", value: "{{ 'yes' if nextcloud_share_enforce_expire else 'no' }}" }
+    - { key: "shareapi_enforce_links_password", value: "{{ 'yes' if nextcloud_share_enforce_password else 'no' }}" }
+  loop_control:
+    label: "{{ item.key }}"
+  changed_when: true
+
+# --- Setup-check + security hardening + clean instance -------------------------
+- name: "post-install | Apply system hardening config"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      {{ item.key }} {{ item.type | default('') }} --value="{{ item.value }}"
+  loop:
+    - { key: "default_phone_region", value: "{{ nextcloud_phone_region }}" }
+    - { key: "maintenance_window_start", value: "{{ nextcloud_maintenance_window_start }}", type: "--type=integer" }
+    - { key: "serverid", value: "{{ nextcloud_serverid }}", type: "--type=integer" }
+    # clean instance — no starter/demo files for any (incl. future) user
+    - { key: "skeletondirectory", value: "{{ '' if nextcloud_skeleton_empty else '/var/www/html/core/skeleton' }}" }
+    # security: brute-force protection on; hide the public sign-up promo link
+    - { key: "auth.bruteforce.protection.enabled", value: "true", type: "--type=boolean" }
+    - { key: "simpleSignUpLink.shown", value: "false", type: "--type=boolean" }
+  loop_control:
+    label: "{{ item.key }}"
+  changed_when: true
+
+# Trusted proxies — Traefik IP + the docker bridge gateway range (the container's
+# immediate peer via published-port NAT). Both must be trusted so Nextcloud reads
+# the real client IP from X-Forwarded-For (fixes "remote address could not be
+# determined" + makes bruteforce protection see real client IPs). occ sets array
+# elements by index.
+- name: "post-install | Configure trusted proxies (Traefik + docker bridge)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      trusted_proxies {{ item.0 }} --value="{{ item.1 }}"
+  loop:
+    - [0, "{{ nextcloud_trusted_proxy }}"]
+    - [1, "{{ nextcloud_docker_bridge_cidr }}"]
+  loop_control:
+    label: "{{ item.1 }}"
+  changed_when: true
+
+# Quota — onedrive-like per-user limit (config:app:set files). New users inherit
+# this; existing users are set explicitly below.
+- name: "post-install | Set default user quota"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:app:set files
+      default_quota --value="{{ nextcloud_default_quota }}"
+  changed_when: true
+
+- name: "post-install | List existing users"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ user:list --output=json
+  register: nextcloud_user_list
+  changed_when: false
+
+- name: "post-install | Apply the quota to existing users"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ user:setting
+      {{ item }} files quota "{{ nextcloud_default_quota }}"
+  loop: "{{ (nextcloud_user_list.stdout | from_json).keys() | list }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+
+# Disable apps we don't use (setup-warning nags + footprint). See defaults for the
+# rationale of each (twofactor_totp removed because MFA is enforced at Authentik).
+- name: "post-install | Disable unused apps"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ app:disable {{ item }}
+  loop: "{{ nextcloud_apps_disabled }}"
+  register: nextcloud_app_disable
+  changed_when: >-
+    'already disabled' not in nextcloud_app_disable.stdout
+    and 'No such app' not in nextcloud_app_disable.stdout
+    and 'be disabled' not in nextcloud_app_disable.stdout
+  failed_when: false
+
+# Keep drawio's injected mimetype map consistent (cheap; regenerates
+# core/js/mimetypelist.js so it reflects the registered .drawio/.dwb types).
+- name: "post-install | Update mimetype JS"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ maintenance:mimetype:update-js
+  changed_when: true
+
 # --- assertions ---------------------------------------------------------------
 - name: "post-install | Confirm S3 primary object store is active"
   ansible.builtin.command:

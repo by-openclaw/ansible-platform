@@ -64,6 +64,36 @@ authentik_oidc_apps:
     restrict_to_group: true     # IdP-enforced: only netbox-admins can log in
     redirect_uris:
       - "https://netbox.by-research.be/oauth/complete/oidc/"
+  - slug: vaultwarden
+    name: "Vaultwarden"
+    group: "vaultwarden-admins"
+    secret_file: "app-oidc-vaultwarden.json"
+    restrict_to_group: true     # IdP-enforced: only vaultwarden-admins can log in
+    force_email_verified: true  # vaultwarden rejects email_verified=False (authentik default)
+    offline_access: true        # vaultwarden requests offline_access → needs refresh_token
+    redirect_uris:
+      - "https://vaultwarden.by-research.be/identity/connect/oidc-signin"
+  - slug: nextcloud
+    name: "Nextcloud"
+    group: "nextcloud-users"    # ACCESS group — any member may log into Nextcloud
+    admin_source_group: "nextcloud-admins"  # members of THIS group also get NC admin
+    secret_file: "app-oidc-nextcloud.json"
+    restrict_to_group: true     # IdP-enforced: only nextcloud-users can log in
+    admin_group_alias: "admin"  # admin_source_group members → NC "admin" group
+    redirect_uris:
+      - "https://nextcloud.by-research.be/apps/user_oidc/code"
+    logout_uris:                                # post_logout_redirect_uri (type=logout)
+      - "https://nextcloud.by-research.be/"
+  - slug: defguard
+    name: "Defguard"
+    group: "defguard-admins"
+    secret_file: "defguard-oidc.json"
+    # defguard external OIDC login (open-source/core). The provider is registered
+    # in defguard's admin (Settings > OpenID Connect) using these client creds.
+    # Dashboard callback per defguard docs. (No restrict_to_group: defguard maps
+    # its own roles; keep the group available for later.)
+    redirect_uris:
+      - "https://defguard.by-research.be/auth/callback"
 
 # --- Identity: groups + human users (declarative) -------------------------------
 # Passwords set via API from app-user-<username>.json after the blueprint creates
@@ -73,15 +103,26 @@ authentik_groups:
   - vault-admins
   - pgadmin-admins
   - netbox-admins
+  - vaultwarden-admins
+  - nextcloud-users     # access group — any member can use Nextcloud (OneDrive-like)
+  - nextcloud-admins    # subset of users that additionally get NC admin rights
+  - defguard-admins
   - infra-admins
   - dev
 # Groups whose members are Authentik superusers (can manage Authentik itself).
 # platform-admins = top-level platform operators.
 authentik_superuser_groups:
   - platform-admins
+# Admin-account separation (EntraID-style): the daily-driver account (yboujraf)
+# holds NO admin groups — it is a regular user. A SEPARATE privileged account
+# (adm_yboujraf) holds the *-admins groups and is the Authentik superuser. Manage
+# admin things only from adm_yboujraf. Break-glass beyond these: Authentik akadmin
+# (bootstrap) + each app's local admin.
 authentik_users:
   - username: yboujraf
-    secret_file: "app-user-yboujraf.json"
+    secret_file: "app-user-yboujraf.json"      # regular user (nextcloud-users)
+  - username: adm_yboujraf
+    secret_file: "app-user-adm_yboujraf.json"  # PRIVILEGED admin account
 
 # Outbound email (password resets / MFA / notifications) via Resend (by-research).
 authentik_resend_secret_file: "app-resend-by-research.json"
