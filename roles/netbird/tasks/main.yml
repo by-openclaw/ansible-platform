@@ -1,0 +1,21 @@
+---
+# ==============================================================================
+# Role: netbird — dispatcher (combined model, Ansible-only, no .sh installer)
+#   secrets -> containers (netbird-server + dashboard) -> Traefik route
+#   -> bootstrap (owner via /api/setup + Authentik external IdP via the API)
+# ==============================================================================
+- name: Resolve / generate NetBird secrets
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [netbird, secrets]
+
+- name: Run the NetBird containers (combined server + dashboard)
+  ansible.builtin.import_tasks: containers.yml
+  tags: [netbird, container]
+
+- name: Publish NetBird via Traefik (file provider, h2c gRPC)
+  ansible.builtin.import_tasks: route.yml
+  tags: [netbird, route]
+
+- name: Bootstrap owner + Authentik external IdP (NetBird API)
+  ansible.builtin.import_tasks: bootstrap.yml
+  tags: [netbird, bootstrap]

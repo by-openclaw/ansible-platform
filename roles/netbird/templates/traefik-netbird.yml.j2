@@ -1,0 +1,43 @@
+{# Managed by Ansible role `netbird` (delegated to the Traefik host). Do not edit.
+   File-provider translation of the official combined-model Traefik LABELS
+   (getting-started.sh render_docker_compose_traefik): one host, three routers —
+   gRPC (h2c), backend (REST/OAuth2/relay/ws), dashboard (catch-all). PUBLIC — NO
+   ipAllowList: remote peers must reach /api, /signalexchange.*, /relay etc. from
+   the internet (the WAN DNAT forwards 443 here). Backends are on the SVC IP. #}
+http:
+  routers:
+    # gRPC — needs the h2c backend (HTTP/2 cleartext to netbird-server :80).
+    netbird-grpc:
+      rule: "Host(`{{ netbird_fqdn }}`) && (PathPrefix(`/signalexchange.SignalExchange/`) || PathPrefix(`/management.ManagementService/`))"
+      entryPoints: [websecure]
+      service: netbird-server-h2c
+      priority: 100
+      tls: {}
+    # Backend — REST API, embedded Dex OAuth2, relay (WS), ws-proxy (WS).
+    netbird-backend:
+      rule: "Host(`{{ netbird_fqdn }}`) && (PathPrefix(`/relay`) || PathPrefix(`/ws-proxy/`) || PathPrefix(`/api`) || PathPrefix(`/oauth2`))"
+      entryPoints: [websecure]
+      service: netbird-server
+      priority: 90
+      tls: {}
+    # Dashboard — catch-all (lowest priority), per the official label priority=1.
+    netbird-dashboard:
+      rule: "Host(`{{ netbird_fqdn }}`)"
+      entryPoints: [websecure]
+      service: netbird-dashboard
+      priority: 1
+      tls: {}
+
+  services:
+    netbird-server:
+      loadBalancer:
+        servers:
+          - url: "http://{{ netbird_listen_ip }}:{{ netbird_http_port }}"
+    netbird-server-h2c:
+      loadBalancer:
+        servers:
+          - url: "h2c://{{ netbird_listen_ip }}:{{ netbird_http_port }}"
+    netbird-dashboard:
+      loadBalancer:
+        servers:
+          - url: "http://{{ netbird_listen_ip }}:{{ netbird_dashboard_port }}"

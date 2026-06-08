@@ -91,9 +91,22 @@ authentik_oidc_apps:
     # defguard external OIDC login (open-source/core). The provider is registered
     # in defguard's admin (Settings > OpenID Connect) using these client creds.
     # Dashboard callback per defguard docs. (No restrict_to_group: defguard maps
-    # its own roles; keep the group available for later.)
+    # its own roles; keep the group available for later.) RETIRING → replaced by
+    # netbird; removed when vm-defguard-01 is decommissioned.
     redirect_uris:
       - "https://defguard.by-research.be/auth/callback"
+  - slug: netbird
+    name: "NetBird"
+    group: "netbird-users"        # ACCESS group — only members may authenticate
+    secret_file: "app-oidc-netbird.json"
+    restrict_to_group: true       # IdP-enforced: only netbird-users can log in
+    # NetBird (combined model) federates its embedded Dex to Authentik. Dex's
+    # callback carries a server-generated connector id, so register a REGEX redirect
+    # covering https://netbird.by-research.be/oauth2/callback/<id>. Standard
+    # authorization_code flow (Dex handles device/PKCE, not Authentik directly).
+    redirect_uris: []
+    redirect_uris_regex:
+      - "https://netbird\\.by-research\\.be/oauth2/callback/.*"
 
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
@@ -120,6 +133,8 @@ authentik_groups:
   - nextcloud-users     # access group — any member can use Nextcloud (OneDrive-like)
   - nextcloud-admins    # subset of users that additionally get NC admin rights
   - traefik-admins      # forwardAuth gate for the Traefik dashboard (admin-only svc)
+  - netbird-users       # access group — only members may authenticate to NetBird VPN
+  - netbird-admins      # NetBird admins (NetBird's own owner/admin role set in-app)
   - defguard-admins
   - infra-admins
   - dev

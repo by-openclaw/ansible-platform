@@ -19,6 +19,14 @@ entryPoints:
       # HSTS on every HTTPS response (middleware defined in the file provider).
       middlewares:
         - hsts@file
+    # Long-lived gRPC + WebSocket streams (NetBird management/signal/relay) require
+    # the responding timeouts disabled — mirrors the official NetBird reverse-proxy
+    # guide (readTimeout/writeTimeout/idleTimeout = 0). Harmless for the other apps.
+    transport:
+      respondingTimeouts:
+        readTimeout: "0s"
+        writeTimeout: "0s"
+        idleTimeout: "0s"
 
 api:
   dashboard: true

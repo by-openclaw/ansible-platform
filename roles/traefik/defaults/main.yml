@@ -14,8 +14,13 @@ traefik_ip6: "fd01:2::110"
 traefik_dashboard_host: "traefik.{{ traefik_domain }}"
 
 # Internal networks allowed to reach the dashboard (split-horizon; never public).
+# 100.64.0.0/10 = the NetBird overlay (CGNAT) range — VPN peers reach the dashboard
+# over the tunnel and must pass this network gate; Authentik + traefik-admins then
+# enforce identity. The admin LAN (10.6.0.0/16) is intentionally NOT here — admin
+# access to internal-only surfaces is via the NetBird VPN, not a mgmt-LAN hole.
 traefik_internal_cidrs:
   - "10.1.0.0/16"
+  - "100.64.0.0/10"
   - "fd01::/16"
   - "127.0.0.1/32"
   - "::1/128"

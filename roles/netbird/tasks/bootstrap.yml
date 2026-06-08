@@ -1,0 +1,103 @@
+---
+# Headless bootstrap (runs on the netbird host against the local API on :80):
+#   1) create the first owner via POST /api/setup (+ PAT)  — idempotent: skipped
+#      once the PAT secret exists (account already created).
+#   2) add Authentik as an external OIDC IdP via POST /api/identity-providers
+#      — idempotent: skipped when an IdP named "Authentik" already exists.
+- name: "bootstrap | Stat the netbird setup secret (PAT) on controller"
+  ansible.builtin.stat:
+    path: "{{ netbird_secret_dir }}/{{ netbird_setup_secret_file }}"
+  delegate_to: localhost
+  become: false
+  register: netbird_setup_stat
+
+- name: "bootstrap | Load existing PAT"
+  ansible.builtin.set_fact:
+    netbird_pat: "{{ (lookup('file', netbird_secret_dir + '/' + netbird_setup_secret_file) | from_json).fields.personal_access_token }}"
+  no_log: true
+  when: netbird_setup_stat.stat.exists
+
+- name: "bootstrap | Create the first owner via POST /api/setup (headless)"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_http_port }}/api/setup"
+    method: POST
+    body_format: json
+    body:
+      email: "{{ netbird_owner.email }}"
+      name: "{{ netbird_owner.name }}"
+      password: "{{ netbird_owner.password }}"
+      create_pat: true
+      pat_expire_in: "{{ netbird_pat_expire_days | int }}"
+  register: netbird_setup
+  failed_when: false           # an existing account returns 4xx — handled below
+  no_log: true
+  when: not netbird_setup_stat.stat.exists
+
+- name: "bootstrap | Warn if /api/setup reports the account already exists"
+  ansible.builtin.debug:
+    msg: >-
+      /api/setup returned {{ netbird_setup.status }} (account likely already created)
+      but no PAT secret is stored — create a PAT in the dashboard and write it to
+      {{ netbird_setup_secret_file }} to let Ansible wire the Authentik IdP.
+  when:
+    - not netbird_setup_stat.stat.exists
+    - netbird_setup.status not in [200, 201]
+
+- name: "bootstrap | Persist the PAT to the controller secret store (0600)"
+  ansible.builtin.copy:
+    dest: "{{ netbird_secret_dir }}/{{ netbird_setup_secret_file }}"
+    mode: "0600"
+    content: "{{ {'fields': netbird_setup.json} | to_nice_json }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when:
+    - not netbird_setup_stat.stat.exists
+    - netbird_setup.status in [200, 201]
+
+- name: "bootstrap | Use the freshly-created PAT when setup just ran"
+  ansible.builtin.set_fact:
+    netbird_pat: "{{ netbird_setup.json.personal_access_token }}"
+  no_log: true
+  when:
+    - netbird_setup is defined
+    - netbird_setup.status | default(0) in [200, 201]
+
+# --- Authentik external OIDC IdP (the embedded Dex federates to it) --------------
+- name: "bootstrap | List existing NetBird identity providers"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_http_port }}/api/identity-providers"
+    method: GET
+    headers:
+      Authorization: "Token {{ netbird_pat }}"
+    status_code: [200]
+  register: netbird_idps
+  no_log: true
+  when: netbird_pat | default('') | length > 0
+
+- name: "bootstrap | Add Authentik as an external OIDC IdP (idempotent)"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_http_port }}/api/identity-providers"
+    method: POST
+    headers:
+      Authorization: "Token {{ netbird_pat }}"
+    body_format: json
+    body:
+      type: "oidc"
+      name: "{{ netbird_authentik_idp_name }}"
+      client_id: "{{ netbird_oidc.client_id }}"
+      client_secret: "{{ netbird_oidc.client_secret }}"
+      issuer: "{{ netbird_authentik_issuer }}"
+    status_code: [200, 201]
+  register: netbird_idp_add
+  no_log: true
+  when:
+    - netbird_pat | default('') | length > 0
+    - (netbird_idps.json | default([]) | selectattr('name', 'defined') | selectattr('name', 'equalto', netbird_authentik_idp_name) | list | length) == 0
+
+- name: "bootstrap | NetBird bootstrap summary"
+  ansible.builtin.debug:
+    msg:
+      - "owner (local Dex break-glass): {{ netbird_owner_email }} — password in {{ netbird_owner_secret_file }}"
+      - "Authentik IdP: {{ 'added' if (netbird_idp_add is defined and netbird_idp_add.status | default(0) in [200, 201]) else 'already present / skipped' }}"
+      - "callback to allow in Authentik: https://{{ netbird_fqdn }}/oauth2/callback/<connector-id> (blueprint registers a regex match)"
