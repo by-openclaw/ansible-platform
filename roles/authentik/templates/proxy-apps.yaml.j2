@@ -1,0 +1,67 @@
+{# Managed by Ansible role `authentik`. Do not edit by hand.
+   forwardAuth (Proxy Provider) for NO-AUTH apps (e.g. the Traefik dashboard).
+   ONE blueprint file for ALL proxy apps so the embedded-outpost entry can bind the
+   providers via !KeyOf within the same file (order-safe; !Find across files can race
+   the worker's apply order). Declarative + self-reconciling. #}
+version: 1
+metadata:
+  name: proxy-apps
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+{% for app in authentik_proxy_apps %}
+  # --- {{ app.slug }} ---------------------------------------------------------
+  # Access group for this app (members pass forwardAuth; everyone else gets 403).
+  - model: authentik_core.group
+    id: group-{{ app.slug }}
+    identifiers:
+      name: {{ app.group }}
+    attrs:
+      name: {{ app.group }}
+
+  # Proxy provider in forward_single mode (Traefik forwardAuth, single host).
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-{{ app.slug }}
+    identifiers:
+      name: {{ app.slug }}
+    attrs:
+      name: {{ app.slug }}
+      external_host: "{{ app.external_host }}"
+      mode: forward_single
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+
+  # Application tile bound to the provider.
+  - model: authentik_core.application
+    id: app-{{ app.slug }}
+    identifiers:
+      slug: {{ app.slug }}
+    attrs:
+      name: "{{ app.name }}"
+      slug: {{ app.slug }}
+      provider: !KeyOf provider-{{ app.slug }}
+
+  # RBAC: ONLY members of the access group may pass forwardAuth (enforced at the IdP).
+  - model: authentik_policies.policybinding
+    id: binding-{{ app.slug }}-group
+    identifiers:
+      target: !KeyOf app-{{ app.slug }}
+      group: !KeyOf group-{{ app.slug }}
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+{% endfor %}
+
+  # Bind every proxy provider to the built-in embedded outpost (the one the server
+  # runs at :9000 /outpost.goauthentik.io/ — what Traefik's forwardAuth address hits).
+  # Identifiers match the existing outpost by name → this UPDATES it (only `providers`).
+  - model: authentik_outposts.outpost
+    id: embedded-outpost
+    identifiers:
+      name: "authentik Embedded Outpost"
+    attrs:
+      providers:
+{% for app in authentik_proxy_apps %}
+        - !KeyOf provider-{{ app.slug }}
+{% endfor %}
