@@ -27,7 +27,14 @@ entries:
       scope_name: groups
       description: "User group names for {{ app.slug }} RBAC"
       expression: |
-        return {"groups": [group.name for group in request.user.ak_groups.all()]}
+        groups = [group.name for group in request.user.ak_groups.all()]
+{% if app.admin_group_alias is defined %}
+        # Emit the app's native admin group name (e.g. nextcloud "admin") when the
+        # user is in this app's access group, so group-provisioning grants admin.
+        if "{{ app.group }}" in groups:
+            groups.append("{{ app.admin_group_alias }}")
+{% endif %}
+        return {"groups": groups}
 {% if app.force_email_verified | default(false) %}
 
   # Custom `email` scope mapping that asserts email_verified=True. authentik's
