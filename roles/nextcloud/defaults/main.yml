@@ -102,17 +102,24 @@ nextcloud_default_quota: "50 GB"          # applied to new AND existing users
 # --- Clean instance (no demo/example content for any user, incl. future) ---------
 nextcloud_skeleton_empty: true            # skeletondirectory="" → zero starter files
 
-# Apps disabled to clear setup warnings, kill nags, and trim the footprint to a
-# focused "files + sharing" instance (no OneDrive-everything bloat):
-#   app_api               External-Apps deploy daemon (we run no Ex-Apps)
-#   twofactor_totp        NC-native 2FA — MFA is enforced at Authentik (the IdP),
-#                         so NC 2FA is redundant and only triggers the "2FA not
-#                         enforced" nag. Removing the provider clears it.
-#   firstrunwizard        the "welcome" popup
-#   survey_client         usage telemetry to Nextcloud
-#   weather_status        dashboard weather widget
-#   recommendations       "recommended files" widget
-#   nextcloud_announcements  marketing announcements
+# Apps disabled to trim the footprint to a focused "files + sharing" instance (no
+# OneDrive-everything bloat). KEPT (core): files*, dav (sync clients), user_oidc,
+# drawio, sharebymail, viewer/files_pdfviewer, theming, settings, provisioning_api
+# (SSO group sync), password_policy/bruteforcesettings (security), serverinfo
+# (Monitoring/usage), logreader, updatenotification, activity, text, twofactor_*.
+#   app_api / firstrunwizard / survey_client / weather_status / recommendations /
+#   nextcloud_announcements  — Ex-Apps daemon, welcome popup, telemetry, widgets
+#   dashboard                — the start-page widget board (we open straight to Files)
+#   photos                   — photo gallery (images still open in the file viewer)
+#   user_status              — presence / status emoji
+#   circles                  — Teams (no Talk/Deck here that need it)
+#   contactsinteraction / related_resources / files_reminders / support — minor widgets
+#   federation               — cross-Nextcloud-server federation (we are standalone;
+#                              internal + public-link sharing is unaffected). The
+#                              federation *API* apps (federatedfilesharing,
+#                              cloud_federation_api, lookup_server_connector) are
+#                              forced shipped apps NC refuses to disable — left on,
+#                              harmless (no remote federation configured).
 nextcloud_apps_disabled:
   - app_api
   - firstrunwizard
@@ -120,3 +127,12 @@ nextcloud_apps_disabled:
   - weather_status
   - recommendations
   - nextcloud_announcements
+  - dashboard
+  - photos
+  - user_status
+  - circles
+  - contactsinteraction
+  - related_resources
+  - files_reminders
+  - support
+  - federation
