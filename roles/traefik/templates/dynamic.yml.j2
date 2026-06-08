@@ -19,6 +19,16 @@ http:
           - "{{ cidr }}"
 {% endfor %}
 
+    # HSTS — applied to EVERY service via the websecure entrypoint (Traefik
+    # terminates TLS, so the backends never see HTTPS and cannot emit it). This
+    # clears Nextcloud's "Strict-Transport-Security not set" setup-check and
+    # hardens every *.{{ traefik_domain }} app.
+    hsts:
+      headers:
+        stsSeconds: {{ traefik_hsts_seconds }}
+        stsIncludeSubdomains: {{ traefik_hsts_include_subdomains | lower }}
+        stsPreload: {{ traefik_hsts_preload | lower }}
+
   routers:
     # Traefik dashboard — internal only, TLS via the wildcard cert.
     dashboard:
