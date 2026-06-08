@@ -87,7 +87,31 @@ nextcloud_share_enforce_password: true    # public links must carry a password
 nextcloud_phone_region: "BE"              # default_phone_region (ISO 3166-1 alpha-2)
 nextcloud_maintenance_window_start: 1     # UTC hour for heavy daily jobs (low usage)
 nextcloud_serverid: 0                     # serverid (0-511); single-server → 0
-# Apps disabled to clear setup warnings / trim footprint. app_api = External-Apps
-# deploy daemon (we run no Ex-Apps) → its "no deploy daemon" warning goes away.
+
+# --- Quota (onedrive-like; per-user). Contabo plan 250 GB now → 1 TB later. ------
+nextcloud_default_quota: "50 GB"          # applied to new AND existing users
+
+# --- Clean instance (no demo/example content for any user, incl. future) ---------
+nextcloud_skeleton_empty: true            # skeletondirectory="" → zero starter files
+
+# Apps disabled to clear setup warnings, kill nags, and trim the footprint to a
+# focused "files + sharing" instance (no OneDrive-everything bloat):
+#   app_api               External-Apps deploy daemon (we run no Ex-Apps)
+#   twofactor_totp        NC-native 2FA — MFA is enforced at Authentik (the IdP),
+#                         so NC 2FA is redundant and only triggers the "2FA not
+#                         enforced" nag. Removing the provider clears it.
+#   firstrunwizard        the "welcome" popup
+#   survey_client         usage telemetry to Nextcloud
+#   weather_status        dashboard weather widget
+#   recommendations       "recommended files" widget
+#   nextcloud_announcements  marketing announcements
 nextcloud_apps_disabled:
   - app_api
+  - twofactor_totp          # primary NC 2FA provider — MFA is enforced at Authentik
+  # (twofactor_backupcodes is a FORCED shipped fallback NC refuses to disable; it
+  #  is not a usable standalone 2FA method, so leaving it on is harmless.)
+  - firstrunwizard
+  - survey_client
+  - weather_status
+  - recommendations
+  - nextcloud_announcements

@@ -75,10 +75,11 @@ authentik_oidc_apps:
       - "https://vaultwarden.by-research.be/identity/connect/oidc-signin"
   - slug: nextcloud
     name: "Nextcloud"
-    group: "nextcloud-admins"
+    group: "nextcloud-users"    # ACCESS group — any member may log into Nextcloud
+    admin_source_group: "nextcloud-admins"  # members of THIS group also get NC admin
     secret_file: "app-oidc-nextcloud.json"
-    restrict_to_group: true     # IdP-enforced: only nextcloud-admins can log in
-    admin_group_alias: "admin"  # nextcloud-admins members → NC "admin" group (admin rights)
+    restrict_to_group: true     # IdP-enforced: only nextcloud-users can log in
+    admin_group_alias: "admin"  # admin_source_group members → NC "admin" group
     redirect_uris:
       - "https://nextcloud.by-research.be/apps/user_oidc/code"
     logout_uris:                                # post_logout_redirect_uri (type=logout)
@@ -103,7 +104,8 @@ authentik_groups:
   - pgadmin-admins
   - netbox-admins
   - vaultwarden-admins
-  - nextcloud-admins
+  - nextcloud-users     # access group — any member can use Nextcloud (OneDrive-like)
+  - nextcloud-admins    # subset of users that additionally get NC admin rights
   - defguard-admins
   - infra-admins
   - dev

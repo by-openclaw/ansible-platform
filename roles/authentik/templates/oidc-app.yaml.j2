@@ -30,8 +30,11 @@ entries:
         groups = [group.name for group in request.user.ak_groups.all()]
 {% if app.admin_group_alias is defined %}
         # Emit the app's native admin group name (e.g. nextcloud "admin") when the
-        # user is in this app's access group, so group-provisioning grants admin.
-        if "{{ app.group }}" in groups:
+        # user is in the admin SOURCE group (defaults to the access group), so
+        # group-provisioning grants admin. Decoupling access vs admin lets a broad
+        # access group (e.g. nextcloud-users) log in while only the admin source
+        # group (nextcloud-admins) gets elevated.
+        if "{{ app.admin_source_group | default(app.group) }}" in groups:
             groups.append("{{ app.admin_group_alias }}")
 {% endif %}
         return {"groups": groups}

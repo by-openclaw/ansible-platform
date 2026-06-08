@@ -178,8 +178,8 @@
     label: "{{ item.key }}"
   changed_when: true
 
-# --- Setup-check hardening (clears admin "Security & setup warnings") ----------
-- name: "post-install | Apply setup-check hardening config"
+# --- Setup-check + security hardening + clean instance -------------------------
+- name: "post-install | Apply system hardening config"
   ansible.builtin.command:
     cmd: >-
       docker exec -u www-data nextcloud php occ config:system:set
@@ -188,18 +188,51 @@
     - { key: "default_phone_region", value: "{{ nextcloud_phone_region }}" }
     - { key: "maintenance_window_start", value: "{{ nextcloud_maintenance_window_start }}", type: "--type=integer" }
     - { key: "serverid", value: "{{ nextcloud_serverid }}", type: "--type=integer" }
+    # clean instance — no starter/demo files for any (incl. future) user
+    - { key: "skeletondirectory", value: "{{ '' if nextcloud_skeleton_empty else '/var/www/html/core/skeleton' }}" }
+    # security: brute-force protection on; hide the public sign-up promo link
+    - { key: "auth.bruteforce.protection.enabled", value: "true", type: "--type=boolean" }
+    - { key: "simpleSignUpLink.shown", value: "false", type: "--type=boolean" }
   loop_control:
     label: "{{ item.key }}"
   changed_when: true
 
-# Disable apps we don't use that raise setup warnings (app_api = External-Apps
-# deploy daemon — we run no Ex-Apps).
+# Quota — onedrive-like per-user limit (config:app:set files). New users inherit
+# this; existing users are set explicitly below.
+- name: "post-install | Set default user quota"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:app:set files
+      default_quota --value="{{ nextcloud_default_quota }}"
+  changed_when: true
+
+- name: "post-install | List existing users"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ user:list --output=json
+  register: nextcloud_user_list
+  changed_when: false
+
+- name: "post-install | Apply the quota to existing users"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ user:setting
+      {{ item }} files quota "{{ nextcloud_default_quota }}"
+  loop: "{{ (nextcloud_user_list.stdout | from_json).keys() | list }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+
+# Disable apps we don't use (setup-warning nags + footprint). See defaults for the
+# rationale of each (twofactor_totp removed because MFA is enforced at Authentik).
 - name: "post-install | Disable unused apps"
   ansible.builtin.command:
     cmd: docker exec -u www-data nextcloud php occ app:disable {{ item }}
   loop: "{{ nextcloud_apps_disabled }}"
   register: nextcloud_app_disable
-  changed_when: "'already disabled' not in nextcloud_app_disable.stdout and 'No such app' not in nextcloud_app_disable.stdout"
+  changed_when: >-
+    'already disabled' not in nextcloud_app_disable.stdout
+    and 'No such app' not in nextcloud_app_disable.stdout
+    and 'be disabled' not in nextcloud_app_disable.stdout
   failed_when: false
 
 # Keep drawio's injected mimetype map consistent (cheap; regenerates
