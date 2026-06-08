@@ -113,9 +113,16 @@ authentik_groups:
 # platform-admins = top-level platform operators.
 authentik_superuser_groups:
   - platform-admins
+# Admin-account separation (EntraID-style): the daily-driver account (yboujraf)
+# holds NO admin groups — it is a regular user. A SEPARATE privileged account
+# (adm_yboujraf) holds the *-admins groups and is the Authentik superuser. Manage
+# admin things only from adm_yboujraf. Break-glass beyond these: Authentik akadmin
+# (bootstrap) + each app's local admin.
 authentik_users:
   - username: yboujraf
-    secret_file: "app-user-yboujraf.json"
+    secret_file: "app-user-yboujraf.json"      # regular user (nextcloud-users)
+  - username: adm_yboujraf
+    secret_file: "app-user-adm_yboujraf.json"  # PRIVILEGED admin account
 
 # Outbound email (password resets / MFA / notifications) via Resend (by-research).
 authentik_resend_secret_file: "app-resend-by-research.json"
