@@ -118,6 +118,9 @@
       - "--mapping-email=email"
       - "--mapping-groups=groups"
       - "--group-provisioning=1"
+      # Include id_token_hint on logout — authentik rejects the end-session
+      # redirect (Bad Request) without it. Fixes the logout "Bad Request".
+      - "--send-id-token-hint=1"
   no_log: true
   changed_when: false   # declarative upsert (same inputs converge to same state)
   when: nextcloud_oidc_stat.stat.exists
