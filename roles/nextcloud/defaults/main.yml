@@ -16,8 +16,12 @@ nextcloud_listen_ip: "10.1.3.170"
 nextcloud_host_port: 80
 nextcloud_container_port: 80
 
-# Traefik is the only reverse proxy in front of Nextcloud (trusted proxy).
+# Traefik is the only reverse proxy in front of Nextcloud (trusted proxy). The
+# container's immediate peer is the docker bridge gateway (published-port NAT), so
+# that range must ALSO be trusted for Nextcloud to read the X-Forwarded-For chain
+# (else "remote address could not be determined" + wrong client IP for bruteforce).
 nextcloud_trusted_proxy: "10.1.2.110"
+nextcloud_docker_bridge_cidr: "172.17.0.0/16"
 
 # Shared PostgreSQL (DB + role created by the postgres_db role). Nextcloud uses
 # libpq; verify-full + CA enforced via config.php dbdriveroptions (the official
@@ -58,10 +62,14 @@ nextcloud_app_volume: "nextcloud-app"
 
 # Apps to install/enable after first-run install. user_oidc = Authentik SSO;
 # sharebymail = "share by email" (send a password-protected link to an address).
+# twofactor_totp kept ENABLED: NC nags either way (delegating MFA to Authentik), and
+# "no provider available" reads as a security gap — so keep the provider so the
+# break-glass local admin can use 2FA. (NC's "not enforced" note is expected.)
 nextcloud_apps:
   - drawio
   - user_oidc
   - sharebymail
+  - twofactor_totp
 
 # --- Authentik OIDC SSO (wired only when the client secret file exists) ---------
 # Official user_oidc app, configured idempotently via occ. Access is gated
@@ -107,9 +115,6 @@ nextcloud_skeleton_empty: true            # skeletondirectory="" → zero starte
 #   nextcloud_announcements  marketing announcements
 nextcloud_apps_disabled:
   - app_api
-  - twofactor_totp          # primary NC 2FA provider — MFA is enforced at Authentik
-  # (twofactor_backupcodes is a FORCED shipped fallback NC refuses to disable; it
-  #  is not a usable standalone 2FA method, so leaving it on is harmless.)
   - firstrunwizard
   - survey_client
   - weather_status
