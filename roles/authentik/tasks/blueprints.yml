@@ -25,6 +25,16 @@
   no_log: true   # app carries client_secret
   notify: Restart authentik
 
+- name: "blueprints | Render the forwardAuth (proxy) blueprint for no-auth apps"
+  ansible.builtin.template:
+    src: proxy-apps.yaml.j2
+    dest: "{{ authentik_blueprints_dir }}/proxy-apps.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  when: authentik_proxy_apps | default([]) | length > 0
+  notify: Restart authentik
+
 - name: "blueprints | Render the identity blueprint (groups + users)"
   ansible.builtin.template:
     src: identity.yaml.j2

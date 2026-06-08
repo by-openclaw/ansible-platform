@@ -29,13 +29,49 @@ http:
         stsIncludeSubdomains: {{ traefik_hsts_include_subdomains | lower }}
         stsPreload: {{ traefik_hsts_preload | lower }}
 
+    # Authentik forwardAuth → embedded outpost. Unauthenticated requests get a 302
+    # to Authentik (SSO); after login the user must be in traefik-admins (bound to
+    # the proxy app at the IdP) or the outpost returns 403. Identity headers are
+    # copied back onto the request (harmless for api@internal; standard for the app).
+    authentik:
+      forwardAuth:
+        address: "{{ traefik_authentik_outpost_url }}/outpost.goauthentik.io/auth/traefik"
+        trustForwardHeader: true
+        authResponseHeaders:
+{% for h in traefik_authentik_auth_headers %}
+          - "{{ h }}"
+{% endfor %}
+
+  services:
+    # Authentik embedded outpost — serves the forwardAuth check AND the
+    # /outpost.goauthentik.io/ login-callback + static assets on the dashboard host.
+    authentik-outpost:
+      loadBalancer:
+        servers:
+          - url: "{{ traefik_authentik_outpost_url }}"
+
   routers:
-    # Traefik dashboard — internal only, TLS via the wildcard cert.
+    # Traefik dashboard — internal network AND Authentik SSO (traefik-admins).
     dashboard:
       rule: "Host(`{{ traefik_dashboard_host }}`)"
       entryPoints:
         - websecure
       service: api@internal
+      middlewares:
+        - internal-only
+        - authentik
+      tls: {}
+
+    # Authentik outpost endpoints on the dashboard host (login callback + assets).
+    # MUST NOT carry the `authentik` middleware (it IS the auth flow) — only the
+    # internal-network gate. Higher priority so it wins over the catch-all dashboard
+    # rule for the /outpost.goauthentik.io/ path.
+    dashboard-outpost:
+      rule: "Host(`{{ traefik_dashboard_host }}`) && PathPrefix(`/outpost.goauthentik.io/`)"
+      priority: 100
+      entryPoints:
+        - websecure
+      service: authentik-outpost
       middlewares:
         - internal-only
       tls: {}

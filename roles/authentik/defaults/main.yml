@@ -95,6 +95,19 @@ authentik_oidc_apps:
     redirect_uris:
       - "https://defguard.by-research.be/auth/callback"
 
+# --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
+# For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
+# Authentik fronts them with a Proxy Provider in `forward_single` mode, served by the
+# built-in EMBEDDED OUTPOST (runs inside the authentik server at :9000, path
+# /outpost.goauthentik.io/). Traefik calls it via forwardAuth: unauthenticated →
+# redirect to Authentik; authenticated but not in `group` → 403. Add an app here to
+# gate it — same "one list entry" pattern as authentik_oidc_apps.
+authentik_proxy_apps:
+  - slug: traefik-dashboard
+    name: "Traefik Dashboard"
+    group: "traefik-admins"                       # only this group passes forwardAuth
+    external_host: "https://traefik.by-research.be"
+
 # --- Identity: groups + human users (declarative) -------------------------------
 # Passwords set via API from app-user-<username>.json after the blueprint creates
 # the user (Authentik hashes them; can't be set in a blueprint).
@@ -106,6 +119,7 @@ authentik_groups:
   - vaultwarden-admins
   - nextcloud-users     # access group — any member can use Nextcloud (OneDrive-like)
   - nextcloud-admins    # subset of users that additionally get NC admin rights
+  - traefik-admins      # forwardAuth gate for the Traefik dashboard (admin-only svc)
   - defguard-admins
   - infra-admins
   - dev
