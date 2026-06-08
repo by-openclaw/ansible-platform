@@ -1,0 +1,17 @@
+---
+# ==============================================================================
+# Role: netbox — handlers
+# ==============================================================================
+# Docker does NOT reload a bind-mounted config file into a running container, so
+# when the OIDC pipeline config (/etc/netbox/config/extra.py) changes, the
+# containers must be restarted for NetBox to pick it up. All three load the same
+# merged netbox.configuration, so restart them together.
+- name: "Restart netbox"
+  community.docker.docker_container:
+    name: "{{ item }}"
+    state: started
+    restart: true
+  loop:
+    - netbox
+    - netbox-worker
+    - netbox-housekeeping

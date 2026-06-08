@@ -7,15 +7,18 @@ SOCIAL_AUTH_OIDC_SCOPE = ['groups']
 
 def oidc_set_roles(backend, user, response=None, *args, **kwargs):
     """social-auth pipeline step: map the Authentik `groups` claim to NetBox
-    roles. Members of the admin group become superuser/staff; non-members are
-    demoted. Idempotent — runs on every OIDC login."""
+    roles. Members of the admin group become superuser; non-members are demoted.
+    Idempotent — runs on every OIDC login.
+
+    NB: NetBox 4.x dropped the Django admin site, so its User model has NO
+    `is_staff` attribute (referencing it raises AttributeError and breaks the
+    whole login). Manage `is_superuser` only."""
     if user is None or getattr(backend, 'name', '') != 'oidc':
         return
     groups = (response or {}).get('groups') or []
     is_admin = '{{ netbox_oidc_superuser_group }}' in groups
-    if user.is_superuser != is_admin or user.is_staff != is_admin:
+    if user.is_superuser != is_admin:
         user.is_superuser = is_admin
-        user.is_staff = is_admin
         user.save()
 
 
