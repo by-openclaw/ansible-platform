@@ -56,10 +56,12 @@ nextcloud_admin_user: "admin"
 # Persistent volume (Nextcloud app code + config; USER DATA lives on S3).
 nextcloud_app_volume: "nextcloud-app"
 
-# Apps to install/enable after first-run install. user_oidc = Authentik SSO.
+# Apps to install/enable after first-run install. user_oidc = Authentik SSO;
+# sharebymail = "share by email" (send a password-protected link to an address).
 nextcloud_apps:
   - drawio
   - user_oidc
+  - sharebymail
 
 # --- Authentik OIDC SSO (wired only when the client secret file exists) ---------
 # Official user_oidc app, configured idempotently via occ. Access is gated
@@ -69,3 +71,14 @@ nextcloud_oidc_secret_file: "app-oidc-nextcloud.json"
 nextcloud_authentik_base: "https://authentik.by-research.be"
 nextcloud_oidc_app_slug: "nextcloud"
 nextcloud_oidc_provider_id: "authentik"
+
+# --- Outbound email (Resend SMTP) -----------------------------------------------
+# Same Resend relay the other cluster apps send through (vault/authentik/… —
+# verified working). Configured via occ (the official image has no mail_* env).
+nextcloud_resend_secret_file: "app-resend-by-research.json"
+
+# --- Sharing policy (public links: expiry + password + share-by-email) ----------
+# "share with expiration + password + email" — applied to public link shares.
+nextcloud_share_default_expire_days: 30   # default public-link expiry (days)
+nextcloud_share_enforce_expire: true      # users cannot exceed/disable the expiry
+nextcloud_share_enforce_password: true    # public links must carry a password
