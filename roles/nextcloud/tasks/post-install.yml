@@ -178,6 +178,37 @@
     label: "{{ item.key }}"
   changed_when: true
 
+# --- Setup-check hardening (clears admin "Security & setup warnings") ----------
+- name: "post-install | Apply setup-check hardening config"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      {{ item.key }} {{ item.type | default('') }} --value="{{ item.value }}"
+  loop:
+    - { key: "default_phone_region", value: "{{ nextcloud_phone_region }}" }
+    - { key: "maintenance_window_start", value: "{{ nextcloud_maintenance_window_start }}", type: "--type=integer" }
+    - { key: "serverid", value: "{{ nextcloud_serverid }}", type: "--type=integer" }
+  loop_control:
+    label: "{{ item.key }}"
+  changed_when: true
+
+# Disable apps we don't use that raise setup warnings (app_api = External-Apps
+# deploy daemon — we run no Ex-Apps).
+- name: "post-install | Disable unused apps"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ app:disable {{ item }}
+  loop: "{{ nextcloud_apps_disabled }}"
+  register: nextcloud_app_disable
+  changed_when: "'already disabled' not in nextcloud_app_disable.stdout and 'No such app' not in nextcloud_app_disable.stdout"
+  failed_when: false
+
+# Keep drawio's injected mimetype map consistent (cheap; regenerates
+# core/js/mimetypelist.js so it reflects the registered .drawio/.dwb types).
+- name: "post-install | Update mimetype JS"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ maintenance:mimetype:update-js
+  changed_when: true
+
 # --- assertions ---------------------------------------------------------------
 - name: "post-install | Confirm S3 primary object store is active"
   ansible.builtin.command:
