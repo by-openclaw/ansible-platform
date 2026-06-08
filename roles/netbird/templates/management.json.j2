@@ -1,0 +1,93 @@
+{# Managed by Ansible role `netbird`. Do not edit by hand.
+   NetBird management config — modeled on infrastructure_files/management.json.tmpl
+   (netbirdio/netbird). Store = PostgreSQL; IdP = Authentik (login only; user-mgmt
+   off). Secrets injected from the controller secret store. #}
+{
+    "Stuns": [
+        {
+            "Proto": "udp",
+            "URI": "stun:{{ netbird_fqdn }}:{{ netbird_coturn_port }}",
+            "Username": "",
+            "Password": null
+        }
+    ],
+    "TURNConfig": {
+        "Turns": [
+            {
+                "Proto": "udp",
+                "URI": "turn:{{ netbird_fqdn }}:{{ netbird_coturn_port }}",
+                "Username": "{{ netbird_turn_user }}",
+                "Password": "{{ netbird_secrets.turn_password }}"
+            }
+        ],
+        "CredentialsTTL": "12h",
+        "Secret": "{{ netbird_secrets.turn_password }}",
+        "TimeBasedCredentials": false
+    },
+    "Relay": {
+        "Addresses": ["{{ netbird_relay_endpoint }}"],
+        "CredentialsTTL": "24h",
+        "Secret": "{{ netbird_secrets.relay_auth_secret }}"
+    },
+    "Signal": {
+        "Proto": "{{ netbird_signal_protocol }}",
+        "URI": "{{ netbird_fqdn }}:{{ netbird_signal_public_port }}",
+        "Username": "",
+        "Password": null
+    },
+    "ReverseProxy": {
+        "TrustedHTTPProxies": [],
+        "TrustedHTTPProxiesCount": 0,
+        "TrustedPeers": ["0.0.0.0/0"]
+    },
+    "DisableDefaultPolicy": false,
+    "Datadir": "",
+    "DataStoreEncryptionKey": "{{ netbird_secrets.datastore_enc_key }}",
+    "StoreConfig": {
+        "Engine": "postgres"
+    },
+    "HttpConfig": {
+        "Address": "0.0.0.0:{{ netbird_mgmt_port }}",
+        "AuthIssuer": "{{ netbird_oidc_issuer }}",
+        "AuthAudience": "{{ netbird_oidc.client_id }}",
+        "AuthKeysLocation": "{{ netbird_oidc_jwks }}",
+        "AuthUserIDClaim": "{{ netbird_oidc_user_id_claim }}",
+        "CertFile": "",
+        "CertKey": "",
+        "IdpSignKeyRefreshEnabled": true,
+        "OIDCConfigEndpoint": "{{ netbird_oidc_config_endpoint }}"
+    },
+    "IdpManagerConfig": {
+        "ManagerType": "{{ 'authentik' if netbird_idp_mgmt else 'none' }}"
+    },
+    "DeviceAuthorizationFlow": {
+        "Provider": "hosted",
+        "ProviderConfig": {
+          "Audience": "{{ netbird_oidc.client_id }}",
+          "AuthorizationEndpoint": "{{ netbird_oidc_authorization_endpoint }}",
+          "Domain": "",
+          "ClientID": "{{ netbird_oidc.client_id }}",
+          "ClientSecret": "",
+          "TokenEndpoint": "{{ netbird_oidc_token_endpoint }}",
+          "DeviceAuthEndpoint": "{{ netbird_oidc_device_endpoint }}",
+          "Scope": "{{ netbird_oidc_scopes }}",
+          "UseIDToken": false,
+          "RedirectURLs": null
+         }
+    },
+    "PKCEAuthorizationFlow": {
+        "ProviderConfig": {
+            "Audience": "{{ netbird_oidc.client_id }}",
+            "ClientID": "{{ netbird_oidc.client_id }}",
+            "ClientSecret": "{{ netbird_oidc.client_secret }}",
+            "Domain": "",
+            "AuthorizationEndpoint": "{{ netbird_oidc_authorization_endpoint }}",
+            "TokenEndpoint": "{{ netbird_oidc_token_endpoint }}",
+            "Scope": "{{ netbird_oidc_scopes }}",
+            "RedirectURLs": ["http://localhost:53000"],
+            "UseIDToken": false,
+            "DisablePromptLogin": true,
+            "LoginFlag": 0
+        }
+    }
+}

@@ -1,0 +1,94 @@
+---
+# ==============================================================================
+# Role: netbird — NetBird CE (self-hosted Zero-Trust VPN) on lxc-netbird-01 (SVC)
+# Replaces defguard (whose external OIDC SSO is license-gated in 2.0.1). Five
+# Docker containers (pinned tags, never :latest):
+#   dashboard   — web UI (nginx :80)                  -> Traefik Host(netbird.…)
+#   signal      — peer ICE candidate exchange (:10000 gRPC/h2c)
+#   relay       — TURN-like fallback over WS (:33080)
+#   management  — control plane + REST/gRPC API (:33073) + management.json
+#   coturn      — STUN/TURN (host network, udp 3478)
+# Authentik is the OIDC IdP (external SSO is FREE on NetBird CE — no account).
+# Shared cluster PostgreSQL is the management store (verified TLS). Fronted by
+# Traefik (wildcard TLS; h2c for the gRPC backends). Upgrade = bump the tags.
+#
+# NOTE: live-verify after lxc-netbird-01 (infra #46) is applied — management.json
+# OIDC fields (esp. the device-auth + PKCE flows) typically need one live tune.
+# ==============================================================================
+
+# --- Pinned images (never :latest) ----------------------------------------------
+netbird_version: "0.72.2"                                   # mgmt/signal/relay (in lockstep)
+netbird_management_image: "netbirdio/management:{{ netbird_version }}"
+netbird_signal_image: "netbirdio/signal:{{ netbird_version }}"
+netbird_relay_image: "netbirdio/relay:{{ netbird_version }}"
+netbird_dashboard_image: "netbirdio/dashboard:v2.39.0"
+netbird_coturn_image: "coturn/coturn:4.6.2"
+
+# --- Public identity / endpoints ------------------------------------------------
+netbird_fqdn: "netbird.by-research.be"
+# SVC IP this LXC's containers publish on (Traefik on the DMZ reaches these).
+netbird_listen_ip: "10.1.3.181"
+
+# Container/host port map (published on netbird_listen_ip; coturn is host-net).
+netbird_mgmt_port: 33073        # management REST + gRPC (h2c)
+netbird_signal_port: 10000      # signal gRPC (h2c)
+netbird_relay_port: 33080       # relay WS
+netbird_dashboard_port: 8088    # dashboard nginx :80 -> host 8088
+netbird_coturn_port: 3478       # STUN/TURN udp (host network)
+
+# Public-facing endpoints (via Traefik 443). The relay is exposed over TLS WS
+# at /relay; the signal/management gRPC ride 443 with h2c upstreams.
+netbird_signal_protocol: "https"
+netbird_signal_public_port: 443
+netbird_relay_endpoint: "rels://{{ netbird_fqdn }}:443/relay"
+
+# --- Shared PostgreSQL (store engine = postgres) --------------------------------
+netbird_pg_host: "lxc-pgsql-01.by-research.be"
+netbird_pg_port: 5432
+netbird_pg_name: "netbird"
+netbird_pg_user: "netbird"
+netbird_pg_sslmode: "verify-full"
+netbird_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"
+
+# --- Authentik OIDC (the IdP; client id/secret from the secret file) ------------
+# IdP USER-MANAGEMENT (listing/inviting via the IdP API) is left OFF — it is the
+# cloud-gated feature; NetBird still does full OIDC login (dashboard PKCE + CLI
+# device-code) and JIT-creates users on first login. Set netbird_idp_mgmt=false.
+netbird_idp_mgmt: false
+netbird_authentik_base: "https://authentik.by-research.be"
+netbird_oidc_app_slug: "netbird"
+netbird_oidc_issuer: "{{ netbird_authentik_base }}/application/o/{{ netbird_oidc_app_slug }}/"
+netbird_oidc_config_endpoint: "{{ netbird_oidc_issuer }}.well-known/openid-configuration"
+netbird_oidc_jwks: "{{ netbird_oidc_issuer }}jwks/"
+netbird_oidc_token_endpoint: "{{ netbird_authentik_base }}/application/o/token/"
+netbird_oidc_authorization_endpoint: "{{ netbird_authentik_base }}/application/o/authorize/"
+netbird_oidc_device_endpoint: "{{ netbird_authentik_base }}/application/o/device/"
+netbird_oidc_scopes: "openid profile email offline_access"
+netbird_oidc_user_id_claim: "sub"
+
+# --- Controller secret store ----------------------------------------------------
+netbird_secret_dir: "~/.openclaw/workspace/infra/secrets"
+netbird_secret_file: "netbird-core.json"                 # enc key + relay/turn secrets
+netbird_oidc_secret_file: "app-oidc-netbird.json"        # authentik client id/secret
+netbird_pg_secret_file: "db-pgsql-netbird.json"          # written by postgres_db
+
+# --- coturn (STUN/TURN) ---------------------------------------------------------
+netbird_turn_user: "netbird"
+netbird_turn_min_port: 49152     # relay UDP range (must be DNAT'd on the WAN(s))
+netbird_turn_max_port: 65535
+# Public IP coturn advertises for relayed candidates (1:1 DNAT). Telenet static
+# /29 endpoint; Proximus is dynamic (add a 2nd external-ip line if relaying it).
+netbird_coturn_external_ip: "213.214.47.222"
+
+# --- Misc -----------------------------------------------------------------------
+netbird_disable_anonymous_metrics: "true"
+netbird_dns_domain: "netbird.selfhosted"       # overlay DNS suffix (NOT the public FQDN)
+netbird_single_account_domain: "{{ netbird_fqdn }}"  # single-org mode (one shared account)
+netbird_build_dir: "/opt/netbird"
+# Dual-stack ULA subnet for the netbird docker network (user-defined nets don't
+# inherit the daemon fixed-cidr-v6). Masqueraded to the host's real v6.
+netbird_network_v6_subnet: "fd00:d0b::/64"
+
+# Traefik host (the traefik_route pattern: drop a watched dynamic-config file).
+netbird_traefik_host: "lxc-traefik-01"
+netbird_traefik_dynamic_dir: "/etc/traefik/dynamic"

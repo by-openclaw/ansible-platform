@@ -1,0 +1,161 @@
+---
+- name: "containers | Create the netbird build directory"
+  ansible.builtin.file:
+    path: "{{ netbird_build_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: "containers | Render management.json"
+  ansible.builtin.template:
+    src: management.json.j2
+    dest: "{{ netbird_build_dir }}/management.json"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: "Restart netbird management"
+
+- name: "containers | Render turnserver.conf"
+  ansible.builtin.template:
+    src: turnserver.conf.j2
+    dest: "{{ netbird_build_dir }}/turnserver.conf"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: "Restart netbird coturn"
+
+- name: "containers | Create the netbird docker network (dual-stack)"
+  community.docker.docker_network:
+    name: netbird
+    state: present
+    enable_ipv6: true
+    ipam_config:
+      - subnet: "{{ netbird_network_v6_subnet }}"
+
+- name: "containers | Pull the pinned netbird images"
+  community.docker.docker_image:
+    name: "{{ item }}"
+    source: pull
+    state: present
+  loop:
+    - "{{ netbird_dashboard_image }}"
+    - "{{ netbird_signal_image }}"
+    - "{{ netbird_relay_image }}"
+    - "{{ netbird_management_image }}"
+    - "{{ netbird_coturn_image }}"
+
+- name: "containers | Run netbird-dashboard (web UI)"
+  community.docker.docker_container:
+    name: netbird-dashboard
+    image: "{{ netbird_dashboard_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    networks:
+      - name: netbird
+    published_ports:
+      - "{{ netbird_listen_ip }}:{{ netbird_dashboard_port }}:80"
+    env: "{{ netbird_dashboard_env }}"
+  no_log: true
+
+- name: "containers | Run netbird-signal (ICE candidate exchange)"
+  community.docker.docker_container:
+    name: netbird-signal
+    image: "{{ netbird_signal_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    networks:
+      - name: netbird
+    published_ports:
+      - "{{ netbird_listen_ip }}:{{ netbird_signal_port }}:10000"
+    volumes:
+      - "netbird-signal:/var/lib/netbird"
+
+- name: "containers | Run netbird-relay (WS relay fallback)"
+  community.docker.docker_container:
+    name: netbird-relay
+    image: "{{ netbird_relay_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    networks:
+      - name: netbird
+    published_ports:
+      - "{{ netbird_listen_ip }}:{{ netbird_relay_port }}:33080"
+    env: "{{ netbird_relay_env }}"
+  no_log: true
+
+- name: "containers | Run netbird-management (control plane + API)"
+  community.docker.docker_container:
+    name: netbird-management
+    image: "{{ netbird_management_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    networks:
+      - name: netbird
+    published_ports:
+      - "{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}:33073"
+    volumes:
+      - "netbird-mgmt:/var/lib/netbird"
+      - "{{ netbird_build_dir }}/management.json:/etc/netbird/management.json:ro"
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    env: "{{ netbird_management_env }}"
+    command:
+      - "--port"
+      - "33073"
+      - "--log-file"
+      - "console"
+      - "--log-level"
+      - "info"
+      - "--disable-anonymous-metrics={{ netbird_disable_anonymous_metrics }}"
+      - "--single-account-mode-domain={{ netbird_single_account_domain }}"
+      - "--dns-domain={{ netbird_dns_domain }}"
+  no_log: true
+
+- name: "containers | Run netbird-coturn (STUN/TURN, host network)"
+  community.docker.docker_container:
+    name: netbird-coturn
+    image: "{{ netbird_coturn_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    network_mode: host
+    volumes:
+      - "{{ netbird_build_dir }}/turnserver.conf:/etc/turnserver.conf:ro"
+    command: ["-c", "/etc/turnserver.conf"]
+
+- name: "containers | Flush handlers (apply config restarts before health check)"
+  ansible.builtin.meta: flush_handlers
+
+- name: "containers | Wait for netbird management to be ready"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}/api/healthz"
+    status_code: [200, 401]
+  register: netbird_ready
+  retries: 30
+  delay: 5
+  until: netbird_ready.status in [200, 401]
+  changed_when: false
+
+- name: "containers | Gather running netbird containers"
+  community.docker.docker_host_info:
+    containers: true
+    containers_filters:
+      status: running
+  register: netbird_running
+
+- name: "containers | Assert all netbird containers are up"
+  ansible.builtin.assert:
+    that:
+      - "'/netbird-management' in (netbird_running.containers | map(attribute='Names') | flatten)"
+      - "'/netbird-signal' in (netbird_running.containers | map(attribute='Names') | flatten)"
+      - "'/netbird-relay' in (netbird_running.containers | map(attribute='Names') | flatten)"
+      - "'/netbird-dashboard' in (netbird_running.containers | map(attribute='Names') | flatten)"
+      - "'/netbird-coturn' in (netbird_running.containers | map(attribute='Names') | flatten)"
+    fail_msg: "one or more netbird containers are not running"
+    success_msg: "netbird management + signal + relay + dashboard + coturn are up"

@@ -1,0 +1,23 @@
+---
+# ==============================================================================
+# Role: netbird — dispatcher
+# ==============================================================================
+- name: Provision the NetBird database
+  ansible.builtin.include_role:
+    name: postgres_db
+  vars:
+    postgres_db_name: "{{ netbird_pg_name }}"
+    postgres_db_user: "{{ netbird_pg_user }}"
+  tags: [netbird, database]
+
+- name: Resolve / generate NetBird secrets
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [netbird, secrets]
+
+- name: Run the NetBird containers (management + signal + relay + dashboard + coturn)
+  ansible.builtin.import_tasks: containers.yml
+  tags: [netbird, container]
+
+- name: Publish NetBird via Traefik (public multi-router)
+  ansible.builtin.import_tasks: route.yml
+  tags: [netbird, route]

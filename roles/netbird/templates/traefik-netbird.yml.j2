@@ -1,0 +1,69 @@
+{# Managed by Ansible role `netbird` (delegated to the Traefik host). Do not edit.
+   NetBird needs several routers on one host: dashboard (catch-all), management
+   REST (/api) + gRPC (h2c) + ws-proxy, signal gRPC (h2c) + ws-proxy, relay WS.
+   PUBLIC — NO ipAllowList: remote peers must reach the API/signal/relay from the
+   internet (the dual-WAN FW DNAT forwards 443 here). Admin-only hardening of the
+   dashboard, if wanted, is a separate middleware. #}
+http:
+  routers:
+    netbird-dashboard:
+      rule: "Host(`{{ netbird_fqdn }}`)"
+      entryPoints: [websecure]
+      service: netbird-dashboard
+      tls: {}
+    netbird-api:
+      rule: "Host(`{{ netbird_fqdn }}`) && PathPrefix(`/api`)"
+      entryPoints: [websecure]
+      service: netbird-management
+      tls: {}
+    netbird-management:
+      rule: "Host(`{{ netbird_fqdn }}`) && PathPrefix(`/management.ManagementService/`)"
+      entryPoints: [websecure]
+      service: netbird-management-grpc
+      tls: {}
+    netbird-wsproxy-mgmt:
+      rule: "Host(`{{ netbird_fqdn }}`) && PathPrefix(`/ws-proxy/management`)"
+      entryPoints: [websecure]
+      service: netbird-management
+      tls: {}
+    netbird-signal:
+      rule: "Host(`{{ netbird_fqdn }}`) && PathPrefix(`/signalexchange.SignalExchange/`)"
+      entryPoints: [websecure]
+      service: netbird-signal-grpc
+      tls: {}
+    netbird-wsproxy-signal:
+      rule: "Host(`{{ netbird_fqdn }}`) && PathPrefix(`/ws-proxy/signal`)"
+      entryPoints: [websecure]
+      service: netbird-signal
+      tls: {}
+    netbird-relay:
+      rule: "Host(`{{ netbird_fqdn }}`) && PathPrefix(`/relay`)"
+      entryPoints: [websecure]
+      service: netbird-relay
+      tls: {}
+
+  services:
+    netbird-dashboard:
+      loadBalancer:
+        servers:
+          - url: "http://{{ netbird_listen_ip }}:{{ netbird_dashboard_port }}"
+    netbird-management:
+      loadBalancer:
+        servers:
+          - url: "http://{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}"
+    netbird-management-grpc:
+      loadBalancer:
+        servers:
+          - url: "h2c://{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}"
+    netbird-signal:
+      loadBalancer:
+        servers:
+          - url: "http://{{ netbird_listen_ip }}:{{ netbird_signal_port }}"
+    netbird-signal-grpc:
+      loadBalancer:
+        servers:
+          - url: "h2c://{{ netbird_listen_ip }}:{{ netbird_signal_port }}"
+    netbird-relay:
+      loadBalancer:
+        servers:
+          - url: "http://{{ netbird_listen_ip }}:{{ netbird_relay_port }}"

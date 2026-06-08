@@ -1,0 +1,13 @@
+---
+# Publish NetBird via Traefik: drop a watched multi-router dynamic-config file on
+# the Traefik host (file provider). PUBLIC — remote peers must reach the API /
+# signal / relay over the internet, so no ipAllowList here (the dual-WAN FW DNAT
+# governs exposure). h2c upstreams for the gRPC services.
+- name: "route | Render the netbird Traefik dynamic config on the Traefik host"
+  ansible.builtin.template:
+    src: traefik-netbird.yml.j2
+    dest: "{{ netbird_traefik_dynamic_dir }}/netbird.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  delegate_to: "{{ netbird_traefik_host }}"

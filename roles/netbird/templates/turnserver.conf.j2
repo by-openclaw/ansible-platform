@@ -1,0 +1,28 @@
+{# Managed by Ansible role `netbird`. Do not edit by hand.
+   coturn for NetBird STUN/TURN. Static long-term credential (matches the
+   management.json TURNConfig user/password; TimeBasedCredentials=false). #}
+listening-port={{ netbird_coturn_port }}
+tls-listening-port=5349
+
+# Relay media port range — MUST be DNAT'd on every WAN that accepts peers.
+min-port={{ netbird_turn_min_port }}
+max-port={{ netbird_turn_max_port }}
+
+fingerprint
+lt-cred-mech
+user={{ netbird_turn_user }}:{{ netbird_secrets.turn_password }}
+realm={{ netbird_fqdn }}
+
+# coturn runs behind 1:1 DNAT — advertise the public IP mapped to this host so
+# relayed candidates are reachable. PUBLIC/PRIVATE form. (Telenet static path;
+# Proximus is dynamic — add a second external-ip line if relaying over it.)
+external-ip={{ netbird_coturn_external_ip }}/{{ netbird_listen_ip }}
+
+no-cli
+no-software-attribute
+no-multicast-peers
+# Deny relaying to internal ranges (SSRF / lateral-movement guard).
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=fd00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
