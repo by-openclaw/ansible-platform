@@ -1,0 +1,119 @@
+---
+# Dynamic DNS (os-ddclient) — publish the active-WAN public IP to Cloudflare.
+#
+# Lib-first + ansible-exclusive: the DDNS account is configured via
+# by_systems.opnsense.opnsense_ddns_account (wraps lib DdnsAccountManager).
+# Requires the os-ddclient plugin (installed by firmware.yml via opnsense_plugins).
+#
+# IMPORTANT — record ownership:
+#   * The os-ddclient native Cloudflare backend only UPDATES an existing record;
+#     it never creates one. So the apex anchor A/AAAA must be pre-created.
+#   * The anchor record's VALUE is owned by ddclient (it tracks the active WAN).
+#     ansible therefore CREATES the anchor only if absent (existence-check first)
+#     and never re-asserts its value — so the two never fight.
+#   * Static service records (CNAMEs vpn->apex, …) are managed separately via
+#     community.general.cloudflare_dns (present/absent).
+#
+# The Cloudflare API token is read at runtime from the controller secret store and
+# never committed; loaded with no_log. password is no_log in the module spec.
+
+- name: "DynDNS | Assert Cloudflare secret is present on controller"
+  ansible.builtin.stat:
+    path: "{{ opnsense_cf_secret }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: opnsense_cf_secret_stat
+  tags: [dyndns, dns]
+
+- name: "DynDNS | Fail when Cloudflare secret missing"
+  ansible.builtin.fail:
+    msg: "Missing Cloudflare secret at {{ opnsense_cf_secret }}"
+  when: not opnsense_cf_secret_stat.stat.exists
+  run_once: true
+  tags: [dyndns, dns]
+
+- name: "DynDNS | Load Cloudflare API token + zone id from controller secret"
+  ansible.builtin.set_fact:
+    opnsense_cf_token: "{{ (lookup('file', opnsense_cf_secret) | from_json).fields.api_token }}"
+    opnsense_cf_zone_id: "{{ (lookup('file', opnsense_cf_secret) | from_json).fields.zone_id }}"
+  no_log: true
+  run_once: true
+  tags: [dyndns, dns]
+
+# --- Bootstrap the anchor record (create-if-absent; value owned by ddclient) ---
+- name: "DynDNS | Cloudflare — check whether the anchor A record already exists"
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones/{{ opnsense_cf_zone_id }}/dns_records?type=A&name={{ item.hostnames }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ opnsense_cf_token }}"
+    status_code: 200
+  register: opnsense_cf_anchor_check
+  loop: "{{ opnsense_dyndns_accounts }}"
+  loop_control:
+    label: "{{ item.hostnames }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  tags: [dyndns, dns]
+
+- name: "DynDNS | Cloudflare — create the anchor A record only if absent (ddclient owns the value after)"
+  community.general.cloudflare_dns:
+    api_token: "{{ opnsense_cf_token }}"
+    zone: "{{ item.item.zone }}"
+    record: "{{ '@' if item.item.hostnames == item.item.zone else item.item.hostnames }}"
+    type: A
+    value: "{{ opnsense_dyndns_seed_ip }}"
+    ttl: "{{ item.item.ttl | default(60) }}"
+    proxied: false
+    state: present
+  loop: "{{ opnsense_cf_anchor_check.results }}"
+  loop_control:
+    label: "{{ item.item.hostnames }}"
+  when: item.json.result | length == 0
+  delegate_to: localhost
+  become: false
+  no_log: true
+  tags: [dyndns, dns]
+
+# --- Configure the os-ddclient account (lib-first via the collection module) ---
+- name: "DynDNS | Ensure Cloudflare DDNS accounts (os-ddclient)"
+  by_systems.opnsense.opnsense_ddns_account:
+    host: "{{ opnsense_host }}"
+    port: "{{ opnsense_api_port }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: "{{ opn_verify_ssl | default(false) }}"
+    description: "{{ item.description }}"
+    service: "{{ item.service | default('cloudflare') }}"
+    username: "{{ item.username | default('') }}"
+    password: "{{ opnsense_cf_token }}"
+    zone: "{{ item.zone }}"
+    hostnames: "{{ item.hostnames }}"
+    checkip: "{{ item.checkip | default('web_cloudflare') }}"
+    interface: "{{ item.interface | default('') }}"
+    ttl: "{{ item.ttl | default(60) }}"
+    force_ssl: "{{ item.force_ssl | default(true) }}"
+    enabled: "{{ item.enabled | default(true) }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opnsense_dyndns_accounts }}"
+  loop_control:
+    label: "{{ item.description }}"
+  delegate_to: localhost
+  become: false
+  tags: [dyndns, dns]
+
+- name: "DynDNS | Restart os-ddclient so it publishes the active-WAN IP immediately"
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/dyndns/service/restart"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  tags: [dyndns, dns]
