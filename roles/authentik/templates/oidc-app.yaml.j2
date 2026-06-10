@@ -124,6 +124,12 @@ entries:
 {% if app.icon is defined and app.icon %}
       meta_icon: "{{ app.icon }}"
 {% endif %}
+{% if app.launch_url is defined and app.launch_url %}
+      # Explicit tile link. Without it Authentik derives the launch URL from the
+      # provider's redirect URI — which for a REGEX redirect (e.g. netbird) renders
+      # the escaped pattern (https://vpn\.by-research\.be...). Set it cleanly here.
+      meta_launch_url: "{{ app.launch_url }}"
+{% endif %}
 {% if app.restrict_to_group | default(false) %}
 
   # RBAC: bind the access group to the application so ONLY its members can launch
