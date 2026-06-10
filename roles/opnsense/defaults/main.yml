@@ -279,8 +279,11 @@ opnsense_wireguard_peers:
 
 # WAN gateway monitor IPs (Proximus PPPoE peer doesn't answer ICMP — monitor
 # external hosts, like pfSense01 did with 1.1.1.1). Telenet monitors its own gw.
+# v6 monitor MUST be reachable over Proximus v6: Quad9 v6 (2620:fe::fe) does NOT
+# route from Proximus (100% loss) → false gateway-down → LAN v6 drops. Google v6
+# (2001:4860:4860::8888) is reachable (verified 4.9 ms). Quad9 v4 (9.9.9.9) is fine.
 opnsense_proximus_monitor_v4: "9.9.9.9"
-opnsense_proximus_monitor_v6: "2620:fe::fe"
+opnsense_proximus_monitor_v6: "2001:4860:4860::8888"
 # Firmware upgrade + plugins (reproducible via roles/opnsense/tasks/firmware.yml,
 # NOT ad-hoc API). 26.1.8+ is required for the MVC gateway/firmware endpoints.
 opnsense_firmware_target: "26.1.9"
