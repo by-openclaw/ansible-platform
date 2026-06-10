@@ -25,3 +25,10 @@ traefik_route_internal_cidrs:
 # desktop). Set per-environment in group_vars so EVERY route re-render keeps them
 # — without this, re-rendering a single route silently drops desk access.
 traefik_route_admin_cidrs: []
+
+# Public services (internal_only=false) get a per-client rate limit (brute-force
+# throttle) instead of the ipAllowList. CrowdSec/Suricata at the FW + the app login
+# + host fail2ban remain the other layers.
+traefik_route_public_hardening: true
+traefik_route_ratelimit_average: 50   # req/s per client IP (sustained)
+traefik_route_ratelimit_burst: 100    # short burst allowance

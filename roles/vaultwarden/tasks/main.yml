@@ -18,12 +18,14 @@
   ansible.builtin.import_tasks: containers.yml
   tags: [vaultwarden, container]
 
-- name: Publish Vaultwarden via Traefik (internal-only)
+- name: Publish Vaultwarden via Traefik (public + rate-limit)
   ansible.builtin.include_role:
     name: traefik_route
+    apply:
+      tags: [route]
   vars:
     traefik_route_name: vaultwarden
     traefik_route_fqdn: "{{ vaultwarden_fqdn }}"
     traefik_route_backend_url: "http://{{ vaultwarden_listen_ip }}:{{ vaultwarden_host_port }}"
-    traefik_route_internal_only: true
+    traefik_route_internal_only: false
   tags: [vaultwarden, route]

@@ -22,12 +22,14 @@
   ansible.builtin.import_tasks: blueprints.yml
   tags: [authentik, blueprints, sso]
 
-- name: Publish Authentik via Traefik (internal-only)
+- name: Publish Authentik via Traefik (public + rate-limit)
   ansible.builtin.include_role:
     name: traefik_route
+    apply:
+      tags: [route]
   vars:
     traefik_route_name: authentik
     traefik_route_fqdn: "{{ authentik_fqdn }}"
     traefik_route_backend_url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}"
-    traefik_route_internal_only: true
+    traefik_route_internal_only: false
   tags: [authentik, route]
