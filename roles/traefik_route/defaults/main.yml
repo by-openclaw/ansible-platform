@@ -30,5 +30,9 @@ traefik_route_admin_cidrs: []
 # throttle) instead of the ipAllowList. CrowdSec/Suricata at the FW + the app login
 # + host fail2ban remain the other layers.
 traefik_route_public_hardening: true
-traefik_route_ratelimit_average: 50   # req/s per client IP (sustained)
-traefik_route_ratelimit_burst: 100    # short burst allowance
+# Generous so asset/icon-heavy SPAs (e.g. the Bitwarden web-vault, which bursts a
+# favicon request per item on unlock) are NOT throttled. Still caps egregious abuse;
+# real brute-force protection = FW CrowdSec + app login + fail2ban (+ Traefik
+# CrowdSec bouncer, follow-up). Tune per-route via these vars if needed.
+traefik_route_ratelimit_average: 300   # req/s per client IP (sustained)
+traefik_route_ratelimit_burst: 600     # short burst allowance
