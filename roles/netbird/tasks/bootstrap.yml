@@ -75,6 +75,24 @@
   no_log: true
   when: netbird_pat | default('') | length > 0
 
+# Force-recreate the IdP when its embedded-Dex connector callback is stale — e.g.
+# after an FQDN rename (netbird.* -> vpn.*). The connector's redirect URI is baked
+# in at registration time from the Dex issuer, so a plain create-if-absent never
+# refreshes it. Run with `-e netbird_idp_force_recreate=true` once after a rename.
+- name: "bootstrap | Delete the existing Authentik IdP (force recreate)"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_http_port }}/api/identity-providers/{{ _netbird_idp_id }}"
+    method: DELETE
+    headers:
+      Authorization: "Token {{ netbird_pat }}"
+    status_code: [200, 204]
+  vars:
+    _netbird_idp_id: "{{ (netbird_idps.json | default([]) | selectattr('name', 'defined') | selectattr('name', 'equalto', netbird_authentik_idp_name) | map(attribute='id') | first) | default('') }}"
+  when:
+    - netbird_idp_force_recreate | default(false) | bool
+    - netbird_pat | default('') | length > 0
+    - _netbird_idp_id | length > 0
+
 - name: "bootstrap | Add Authentik as an external OIDC IdP (idempotent)"
   ansible.builtin.uri:
     url: "http://{{ netbird_listen_ip }}:{{ netbird_http_port }}/api/identity-providers"
@@ -93,7 +111,8 @@
   no_log: true
   when:
     - netbird_pat | default('') | length > 0
-    - (netbird_idps.json | default([]) | selectattr('name', 'defined') | selectattr('name', 'equalto', netbird_authentik_idp_name) | list | length) == 0
+    - (netbird_idp_force_recreate | default(false) | bool) or
+      (netbird_idps.json | default([]) | selectattr('name', 'defined') | selectattr('name', 'equalto', netbird_authentik_idp_name) | list | length) == 0
 
 - name: "bootstrap | NetBird bootstrap summary"
   ansible.builtin.debug:
