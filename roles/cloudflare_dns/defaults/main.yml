@@ -1,0 +1,36 @@
+---
+# Declarative Cloudflare DNS for the public exposure model (by-research.be).
+# Controller-side (community.general.cloudflare_dns). The API token is read at
+# runtime from the workspace secret store (never committed).
+#
+# Anchors:
+#   by-research.be (apex)  = Telenet STATIC dual-stack  -> the DEFAULT anchor
+#   dyn.by-research.be     = Proximus DYNAMIC (os-ddclient; see opnsense role)
+# Public services CNAME to the apex by default; Proximus-bound services CNAME to
+# `dyn` (+ outbound PBR). No ISP identity in any public name (ISO 27001 / NIS2).
+cloudflare_dns_secret: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/app-cloudflare-by-research-be.json"
+cloudflare_dns_zone: "by-research.be"
+
+# Telenet static WAN IPs (public; mirror catalog host4/6_wan_pub). Could move to
+# vault (vault_telenet_ipv4/ipv6) — kept inline to match the existing catalog.
+cloudflare_dns_apex_v4: "213.214.47.222"
+cloudflare_dns_apex_v6: "2a02:1802:21::5"
+
+cloudflare_dns_records:
+  # --- Apex = Telenet static (default anchor). solo => exactly one record. ---
+  - {record: "@", type: A, value: "{{ cloudflare_dns_apex_v4 }}", state: present, solo: true}
+  - {record: "@", type: AAAA, value: "{{ cloudflare_dns_apex_v6 }}", state: present, solo: true}
+
+  # --- vpn: convert from Telenet direct A/AAAA to CNAME -> apex (delete first) ---
+  - {record: "vpn", type: A, state: absent}
+  - {record: "vpn", type: AAAA, state: absent}
+  - {record: "vpn", type: CNAME, value: "by-research.be", state: present, solo: true}
+
+  # --- public services -> Telenet apex (dual-stack inherited via CNAME) ---
+  - {record: "nextcloud", type: CNAME, value: "by-research.be", state: present, solo: true}
+  - {record: "vaultwarden", type: CNAME, value: "by-research.be", state: present, solo: true}
+  - {record: "authentik", type: CNAME, value: "by-research.be", state: present, solo: true}
+
+  # --- admin tool: remove public record (VPN-only via internal split-DNS) ---
+  - {record: "traefik", type: A, state: absent}
+  - {record: "traefik", type: AAAA, state: absent}

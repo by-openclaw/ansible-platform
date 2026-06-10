@@ -317,31 +317,32 @@ opnsense_dyndns_seed_ip: "192.0.2.1"
 opnsense_dyndns_seed_ip6: "2001:db8::1"   # RFC 3849 doc range; ddclient overwrites
 
 opnsense_dyndns_accounts:
-  # Dual-stack: one account per family (os-ddclient resolves ONE address per
-  # account; record type follows the checkip family). Both target the apex.
-  #   checkip 'if'  = Interface [IPv4] -> A
-  #   checkip 'if6' = Interface [IPv6] -> AAAA (reads the Proximus GUA on opt12)
-  # Local interface read = reliable (no external HTTP); pins to opt12 (active WAN).
-  # Failover-swing (web/default-route or per-WAN accounts) is a follow-up with the
-  # gateway-group work. record_type drives the Cloudflare anchor pre-create only.
-  - description: "cloudflare-apex-active-wan"
+  # Proximus DYNAMIC anchor = `dyn.by-research.be` (neutral name, no ISP identity).
+  # Telenet is the static default anchor (the apex by-research.be, NOT DynDNS).
+  # Only services explicitly bound to Proximus CNAME to `dyn` (+ outbound PBR).
+  # Dual-stack: one account per family (os-ddclient resolves ONE address each;
+  # record type follows the checkip family).
+  #   checkip 'if'  = Interface [IPv4] -> A   ;  'if6' = Interface [IPv6] -> AAAA (GUA)
+  # Local interface read = reliable (no external HTTP); pins to opt12 (Proximus).
+  # record_type drives the Cloudflare anchor pre-create only.
+  - description: "cloudflare-dyn-proximus"
     service: cloudflare
-    username: ""                 # empty (no '@') => Cloudflare Bearer-token auth
+    username: ""                     # empty (no '@') => Cloudflare Bearer-token auth
     zone: "by-research.be"
-    hostnames: "by-research.be"  # apex anchor — service names CNAME to this
+    hostnames: "dyn.by-research.be"  # Proximus dynamic anchor
     checkip: "if"
-    interface: "opt12"           # Proximus pppoe0 (active dynamic WAN)
+    interface: "opt12"               # Proximus pppoe0
     record_type: "A"
-    ttl: 60                      # low TTL for fast failover
+    ttl: 60
     force_ssl: true
     enabled: true
     state: present
-  - description: "cloudflare-apex-active-wan-v6"
+  - description: "cloudflare-dyn-proximus-v6"
     service: cloudflare
     username: ""
     zone: "by-research.be"
-    hostnames: "by-research.be"
-    checkip: "if6"               # Interface [IPv6] -> reads the Proximus GUA on opt12
+    hostnames: "dyn.by-research.be"
+    checkip: "if6"                    # Interface [IPv6] -> Proximus GUA on opt12
     interface: "opt12"
     record_type: "AAAA"
     ttl: 60

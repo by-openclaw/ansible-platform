@@ -1,0 +1,37 @@
+---
+# Apply the declarative Cloudflare DNS record set. Idempotent (cloudflare_dns
+# diffs each record). Deletions are listed before the CNAME that replaces them
+# (a CNAME cannot coexist with A/AAAA on the same name).
+
+- name: "Cloudflare DNS | Assert API secret is present on controller"
+  ansible.builtin.stat:
+    path: "{{ cloudflare_dns_secret }}"
+  register: cloudflare_dns_secret_stat
+  run_once: true
+
+- name: "Cloudflare DNS | Fail when the Cloudflare secret is missing"
+  ansible.builtin.fail:
+    msg: "Missing Cloudflare secret at {{ cloudflare_dns_secret }}"
+  when: not cloudflare_dns_secret_stat.stat.exists
+  run_once: true
+
+- name: "Cloudflare DNS | Load Cloudflare API token from controller secret"
+  ansible.builtin.set_fact:
+    cloudflare_dns_token: "{{ (lookup('file', cloudflare_dns_secret) | from_json).fields.api_token }}"
+  no_log: true
+  run_once: true
+
+- name: "Cloudflare DNS | Ensure DNS records"
+  community.general.cloudflare_dns:
+    api_token: "{{ cloudflare_dns_token }}"
+    zone: "{{ cloudflare_dns_zone }}"
+    record: "{{ item.record }}"
+    type: "{{ item.type }}"
+    value: "{{ item.value | default(omit) }}"
+    solo: "{{ item.solo | default(omit) if item.state == 'present' else omit }}"
+    proxied: "{{ false if item.state == 'present' else omit }}"
+    ttl: "{{ item.ttl | default(300) if item.state == 'present' else omit }}"
+    state: "{{ item.state }}"
+  loop: "{{ cloudflare_dns_records }}"
+  loop_control:
+    label: "{{ item.record }} {{ item.type }} ({{ item.state }})"
