@@ -42,9 +42,9 @@
   tags: [dyndns, dns]
 
 # --- Bootstrap the anchor record (create-if-absent; value owned by ddclient) ---
-- name: "DynDNS | Cloudflare — check whether the anchor A record already exists"
+- name: "DynDNS | Cloudflare — check whether the anchor record already exists"
   ansible.builtin.uri:
-    url: "https://api.cloudflare.com/client/v4/zones/{{ opnsense_cf_zone_id }}/dns_records?type=A&name={{ item.hostnames }}"
+    url: "https://api.cloudflare.com/client/v4/zones/{{ opnsense_cf_zone_id }}/dns_records?type={{ item.record_type | default('A') }}&name={{ item.hostnames }}"
     method: GET
     headers:
       Authorization: "Bearer {{ opnsense_cf_token }}"
@@ -58,13 +58,13 @@
   no_log: true
   tags: [dyndns, dns]
 
-- name: "DynDNS | Cloudflare — create the anchor A record only if absent (ddclient owns the value after)"
+- name: "DynDNS | Cloudflare — create the anchor record only if absent (ddclient owns the value after)"
   community.general.cloudflare_dns:
     api_token: "{{ opnsense_cf_token }}"
     zone: "{{ item.item.zone }}"
     record: "{{ '@' if item.item.hostnames == item.item.zone else item.item.hostnames }}"
-    type: A
-    value: "{{ opnsense_dyndns_seed_ip }}"
+    type: "{{ item.item.record_type | default('A') }}"
+    value: "{{ opnsense_dyndns_seed_ip6 if (item.item.record_type | default('A')) == 'AAAA' else opnsense_dyndns_seed_ip }}"
     ttl: "{{ item.item.ttl | default(60) }}"
     proxied: false
     state: present

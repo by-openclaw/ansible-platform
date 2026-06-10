@@ -314,20 +314,37 @@ opnsense_cf_secret: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secre
 # record is created with this value only when absent; os-ddclient overwrites it with
 # the live active-WAN IP on its first push (we restart the daemon to make that immediate).
 opnsense_dyndns_seed_ip: "192.0.2.1"
+opnsense_dyndns_seed_ip6: "2001:db8::1"   # RFC 3849 doc range; ddclient overwrites
 
 opnsense_dyndns_accounts:
+  # Dual-stack: one account per family (os-ddclient resolves ONE address per
+  # account; record type follows the checkip family). Both target the apex.
+  #   checkip 'if'  = Interface [IPv4] -> A
+  #   checkip 'if6' = Interface [IPv6] -> AAAA (reads the Proximus GUA on opt12)
+  # Local interface read = reliable (no external HTTP); pins to opt12 (active WAN).
+  # Failover-swing (web/default-route or per-WAN accounts) is a follow-up with the
+  # gateway-group work. record_type drives the Cloudflare anchor pre-create only.
   - description: "cloudflare-apex-active-wan"
     service: cloudflare
     username: ""                 # empty (no '@') => Cloudflare Bearer-token auth
     zone: "by-research.be"
     hostnames: "by-research.be"  # apex anchor — service names CNAME to this
-    # checkip: local interface read of the active WAN (reliable, no external HTTP).
-    # 'if' = Interface [IPv4], bound to opt12 (Proximus = active default WAN today).
-    # NOTE: this pins detection to opt12. Failover-swing (web method following the
-    # default route, or per-WAN accounts) is a follow-up with the gateway-group work.
     checkip: "if"
     interface: "opt12"           # Proximus pppoe0 (active dynamic WAN)
+    record_type: "A"
     ttl: 60                      # low TTL for fast failover
+    force_ssl: true
+    enabled: true
+    state: present
+  - description: "cloudflare-apex-active-wan-v6"
+    service: cloudflare
+    username: ""
+    zone: "by-research.be"
+    hostnames: "by-research.be"
+    checkip: "if6"               # Interface [IPv6] -> reads the Proximus GUA on opt12
+    interface: "opt12"
+    record_type: "AAAA"
+    ttl: 60
     force_ssl: true
     enabled: true
     state: present
