@@ -1,0 +1,242 @@
+---
+# ==============================================================================
+# Enroll THIS host as a NetBird routing peer so remote VPN clients reach the
+# internal LAN (and resolve internal names via AdGuard). Two halves:
+#   server-side (NetBird API on :80): routers group, reusable setup key, the
+#                10.1.0.0/16 route, the AdGuard DNS nameserver — all GET-checked
+#                before POST so re-runs are no-ops (the API does NOT dedupe).
+#   peer-side  : /etc/hosts pin (no hairpin), IP forwarding, install the client,
+#                `netbird up` once (skipped when already Connected).
+# Gated by netbird_routing_peer_enabled. Tag: routing.
+# ==============================================================================
+
+- name: "routing-peer | Stat the NetBird PAT secret on the controller"
+  ansible.builtin.stat:
+    path: "{{ netbird_secret_dir }}/{{ netbird_setup_secret_file }}"
+  delegate_to: localhost
+  become: false
+  register: netbird_rp_pat_stat
+
+- name: "routing-peer | Load the PAT (admin API token)"
+  ansible.builtin.set_fact:
+    netbird_pat: "{{ (lookup('file', netbird_secret_dir + '/' + netbird_setup_secret_file) | from_json).fields.personal_access_token }}"
+  no_log: true
+  when:
+    - netbird_pat is not defined
+    - netbird_rp_pat_stat.stat.exists
+
+- name: "routing-peer | Fail clearly if no PAT is available"
+  ansible.builtin.fail:
+    msg: >-
+      No NetBird PAT found ({{ netbird_setup_secret_file }}). Run the bootstrap
+      tasks first (creates the owner + PAT) before wiring the routing peer.
+  when: netbird_pat | default('') | length == 0
+
+- name: "routing-peer | Local NetBird API base + peer-match facts"
+  ansible.builtin.set_fact:
+    netbird_rp_api: "http://{{ netbird_listen_ip }}:{{ netbird_http_port }}"
+    netbird_rp_peer_match: "{{ inventory_hostname }}"   # peers API hostname == inventory name
+
+# --- Server-side: routers group -------------------------------------------------
+- name: "routing-peer | List NetBird groups"
+  ansible.builtin.uri:
+    url: "{{ netbird_rp_api }}/api/groups"
+    method: GET
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    status_code: [200]
+  register: netbird_rp_groups
+  no_log: true
+
+- name: "routing-peer | Create the routers group (idempotent)"
+  ansible.builtin.uri:
+    url: "{{ netbird_rp_api }}/api/groups"
+    method: POST
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    body_format: json
+    body: { name: "{{ netbird_routers_group }}" }
+    status_code: [200, 201]
+  register: netbird_rp_routers_grp_new
+  no_log: true
+  when: (netbird_rp_groups.json | selectattr('name', 'equalto', netbird_routers_group) | list | length) == 0
+
+- name: "routing-peer | Resolve group ids (routers + access group)"
+  ansible.builtin.set_fact:
+    netbird_rp_routers_gid: >-
+      {{ (netbird_rp_groups.json | selectattr('name', 'equalto', netbird_routers_group) | map(attribute='id') | first)
+         if (netbird_rp_groups.json | selectattr('name', 'equalto', netbird_routers_group) | list | length)
+         else netbird_rp_routers_grp_new.json.id }}
+    netbird_rp_access_gid: "{{ netbird_rp_groups.json | selectattr('name', 'equalto', netbird_route_access_group) | map(attribute='id') | first }}"
+
+# --- Server-side: reusable setup key in the routers group -----------------------
+- name: "routing-peer | List setup keys"
+  ansible.builtin.uri:
+    url: "{{ netbird_rp_api }}/api/setup-keys"
+    method: GET
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    status_code: [200]
+  register: netbird_rp_keys
+  no_log: true
+
+- name: "routing-peer | Create the reusable router setup key (idempotent)"
+  ansible.builtin.uri:
+    url: "{{ netbird_rp_api }}/api/setup-keys"
+    method: POST
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    body_format: json
+    body:
+      name: "{{ netbird_router_setup_key_name }}"
+      type: "reusable"
+      expires_in: 31536000      # 1y; reusable so it survives client re-enroll
+      usage_limit: 0            # unlimited
+      auto_groups: ["{{ netbird_rp_routers_gid }}"]
+      ephemeral: false
+    status_code: [200, 201]
+  register: netbird_rp_key_new
+  no_log: true
+  when: (netbird_rp_keys.json | selectattr('name', 'equalto', netbird_router_setup_key_name) | list | length) == 0
+
+# The plaintext key is returned ONLY on create. Persist it on the peer so a later
+# (re)enroll can read it — a key that already existed server-side but has no local
+# file can't be recovered (delete it in the dashboard to regenerate).
+- name: "routing-peer | Persist the freshly-created setup key on the peer (0600)"
+  ansible.builtin.copy:
+    dest: "{{ netbird_router_setup_key_file }}"
+    content: "{{ netbird_rp_key_new.json.key }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: netbird_rp_key_new is defined and netbird_rp_key_new.json is defined
+
+# --- Peer-side: no-hairpin + forwarding + client + enroll -----------------------
+- name: "routing-peer | Pin this host's client to Traefik internally (no public hairpin)"
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '\s{{ netbird_fqdn | regex_escape }}$'
+    line: "{{ netbird_traefik_ip }} {{ netbird_fqdn }}"
+    state: present
+
+- name: "routing-peer | Enable IP forwarding (router must forward LAN traffic)"
+  ansible.posix.sysctl:
+    name: "{{ item }}"
+    value: "1"
+    sysctl_set: true
+    state: present
+    reload: true
+  loop:
+    - net.ipv4.ip_forward
+    - net.ipv6.conf.all.forwarding
+
+- name: "routing-peer | Install the NetBird client (official repo; idempotent)"
+  ansible.builtin.shell: "set -o pipefail; curl -fsSL https://pkgs.netbird.io/install.sh | sh"
+  args:
+    executable: /bin/bash
+    creates: /usr/bin/netbird
+
+- name: "routing-peer | Current client status"
+  ansible.builtin.command: netbird status
+  register: netbird_rp_status
+  changed_when: false
+  failed_when: false
+
+- name: "routing-peer | Read the setup key for enrollment"
+  ansible.builtin.slurp:
+    src: "{{ netbird_router_setup_key_file }}"
+  register: netbird_rp_key_slurp
+  no_log: true
+  when: "'Management: Connected' not in (netbird_rp_status.stdout | default(''))"
+
+- name: "routing-peer | Enroll this host as a routing peer (netbird up)"
+  ansible.builtin.command: >-
+    netbird up
+    --management-url {{ netbird_http_protocol }}://{{ netbird_fqdn }}
+    --setup-key {{ netbird_rp_key_slurp.content | b64decode | trim }}
+  register: netbird_rp_up
+  changed_when: true
+  no_log: true
+  when: "'Management: Connected' not in (netbird_rp_status.stdout | default(''))"
+
+# --- Server-side: route + DNS (after the peer exists) ---------------------------
+- name: "routing-peer | Find this host's peer (wait for enrollment to register)"
+  ansible.builtin.uri:
+    url: "{{ netbird_rp_api }}/api/peers"
+    method: GET
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    status_code: [200]
+  register: netbird_rp_peers
+  no_log: true
+  until: (netbird_rp_peers.json | selectattr('hostname', 'search', netbird_rp_peer_match) | list | length) > 0
+  retries: 12
+  delay: 5
+
+- name: "routing-peer | Resolve the router peer id"
+  ansible.builtin.set_fact:
+    netbird_rp_peer_id: "{{ netbird_rp_peers.json | selectattr('hostname', 'search', netbird_rp_peer_match) | map(attribute='id') | first }}"
+
+- name: "routing-peer | List routes"
+  ansible.builtin.uri:
+    url: "{{ netbird_rp_api }}/api/routes"
+    method: GET
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    status_code: [200]
+  register: netbird_rp_routes
+  no_log: true
+
+- name: "routing-peer | Create the internal-LAN route (idempotent)"
+  ansible.builtin.uri:
+    url: "{{ netbird_rp_api }}/api/routes"
+    method: POST
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    body_format: json
+    body:
+      network_id: "{{ netbird_route_network_id }}"
+      network: "{{ netbird_route_network }}"
+      peer: "{{ netbird_rp_peer_id }}"
+      masquerade: "{{ netbird_route_masquerade }}"
+      metric: "{{ netbird_route_metric | int }}"
+      enabled: true
+      groups: ["{{ netbird_rp_access_gid }}"]
+    status_code: [200, 201]
+  register: netbird_rp_route_new
+  no_log: true
+  when: (netbird_rp_routes.json | selectattr('network_id', 'equalto', netbird_route_network_id) | list | length) == 0
+
+- name: "routing-peer | List DNS nameservers"
+  ansible.builtin.uri:
+    url: "{{ netbird_rp_api }}/api/dns/nameservers"
+    method: GET
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    status_code: [200]
+  register: netbird_rp_ns
+  no_log: true
+
+- name: "routing-peer | Create the AdGuard DNS nameserver group (idempotent)"
+  ansible.builtin.uri:
+    url: "{{ netbird_rp_api }}/api/dns/nameservers"
+    method: POST
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    body_format: json
+    body:
+      name: "{{ netbird_dns_nameserver_name }}"
+      description: "Internal AdGuard (DNS chain head)"
+      nameservers:
+        - ip: "{{ netbird_dns_nameserver_ip }}"
+          ns_type: "udp"
+          port: "{{ netbird_dns_nameserver_port | int }}"
+      enabled: true
+      groups: ["{{ netbird_rp_access_gid }}"]
+      primary: true            # catch-all resolver for tunnelled peers
+      domains: []
+      search_domains_enabled: false
+    status_code: [200, 201]
+  register: netbird_rp_ns_new
+  no_log: true
+  when: (netbird_rp_ns.json | selectattr('name', 'equalto', netbird_dns_nameserver_name) | list | length) == 0
+
+- name: "routing-peer | Routing-peer summary"
+  ansible.builtin.debug:
+    msg:
+      - "router peer: {{ netbird_rp_peer_id }} (group {{ netbird_routers_group }})"
+      - "route {{ netbird_route_network }}: {{ 'created' if netbird_rp_route_new is changed else 'present' }}"
+      - "DNS {{ netbird_dns_nameserver_ip }}: {{ 'created' if netbird_rp_ns_new is changed else 'present' }}"
+      - "client enroll: {{ 'ran' if netbird_rp_up is changed else 'already Connected' }}"

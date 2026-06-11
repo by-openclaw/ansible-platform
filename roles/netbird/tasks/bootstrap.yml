@@ -87,7 +87,10 @@
       Authorization: "Token {{ netbird_pat }}"
     status_code: [200, 204]
   vars:
-    _netbird_idp_id: "{{ (netbird_idps.json | default([]) | selectattr('name', 'defined') | selectattr('name', 'equalto', netbird_authentik_idp_name) | map(attribute='id') | first) | default('') }}"
+    _netbird_idp_id: >-
+      {{ (netbird_idps.json | default([]) | selectattr('name', 'defined')
+          | selectattr('name', 'equalto', netbird_authentik_idp_name)
+          | map(attribute='id') | first) | default('') }}
   when:
     - netbird_idp_force_recreate | default(false) | bool
     - netbird_pat | default('') | length > 0
