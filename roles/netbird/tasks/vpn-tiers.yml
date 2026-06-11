@@ -1,0 +1,157 @@
+---
+# ==============================================================================
+# VPN access tiers via NetBird route distribution (no JWT/IdP-group sync):
+#   - ensure the `vpn-full` group
+#   - re-point the full internal-lan /16 route from `All` -> `vpn-full`
+#   - publish the web /32 routes (Traefik + AdGuard) to `All` (every peer = web)
+#   - put admin users' future peers in vpn-full (NetBird user.auto_groups)
+# Idempotent: GET-checks before each write. Gated by netbird_vpn_tiers_enabled.
+# Tag: tiers.
+# ==============================================================================
+
+- name: "vpn-tiers | Stat the NetBird PAT secret on the controller"
+  ansible.builtin.stat:
+    path: "{{ netbird_secret_dir }}/{{ netbird_setup_secret_file }}"
+  delegate_to: localhost
+  become: false
+  register: netbird_vt_pat_stat
+
+- name: "vpn-tiers | Load the PAT (admin API token)"
+  ansible.builtin.set_fact:
+    netbird_pat: "{{ (lookup('file', netbird_secret_dir + '/' + netbird_setup_secret_file) | from_json).fields.personal_access_token }}"
+  no_log: true
+  when:
+    - netbird_pat is not defined
+    - netbird_vt_pat_stat.stat.exists
+
+- name: "vpn-tiers | Fail clearly if no PAT is available"
+  ansible.builtin.fail:
+    msg: "No NetBird PAT found ({{ netbird_setup_secret_file }}). Run bootstrap first."
+  when: netbird_pat | default('') | length == 0
+
+- name: "vpn-tiers | Local NetBird API base"
+  ansible.builtin.set_fact:
+    netbird_vt_api: "http://{{ netbird_listen_ip }}:{{ netbird_http_port }}"
+
+# --- vpn-full group -------------------------------------------------------------
+- name: "vpn-tiers | List NetBird groups"
+  ansible.builtin.uri:
+    url: "{{ netbird_vt_api }}/api/groups"
+    method: GET
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    status_code: [200]
+  register: netbird_vt_groups
+  no_log: true
+
+- name: "vpn-tiers | Create the vpn-full group (idempotent)"
+  ansible.builtin.uri:
+    url: "{{ netbird_vt_api }}/api/groups"
+    method: POST
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    body_format: json
+    body: { name: "{{ netbird_vpn_full_group }}" }
+    status_code: [200, 201]
+  register: netbird_vt_full_new
+  no_log: true
+  when: (netbird_vt_groups.json | selectattr('name', 'equalto', netbird_vpn_full_group) | list | length) == 0
+
+- name: "vpn-tiers | Resolve group ids (All + vpn-full)"
+  ansible.builtin.set_fact:
+    netbird_vt_all_gid: "{{ netbird_vt_groups.json | selectattr('name', 'equalto', 'All') | map(attribute='id') | first }}"
+    netbird_vt_full_gid: >-
+      {{ (netbird_vt_groups.json | selectattr('name', 'equalto', netbird_vpn_full_group) | map(attribute='id') | first)
+         if (netbird_vt_groups.json | selectattr('name', 'equalto', netbird_vpn_full_group) | list | length)
+         else netbird_vt_full_new.json.id }}
+
+# --- routes ---------------------------------------------------------------------
+- name: "vpn-tiers | List routes"
+  ansible.builtin.uri:
+    url: "{{ netbird_vt_api }}/api/routes"
+    method: GET
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    status_code: [200]
+  register: netbird_vt_routes
+  no_log: true
+
+- name: "vpn-tiers | Resolve the full (internal-lan) route object"
+  ansible.builtin.set_fact:
+    netbird_vt_full_route: "{{ netbird_vt_routes.json | selectattr('network_id', 'equalto', netbird_route_network_id) | first }}"
+
+- name: "vpn-tiers | Re-point the full route from All -> vpn-full"
+  ansible.builtin.uri:
+    url: "{{ netbird_vt_api }}/api/routes/{{ netbird_vt_full_route.id }}"
+    method: PUT
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    body_format: json
+    body:
+      network_id: "{{ netbird_vt_full_route.network_id }}"
+      network: "{{ netbird_vt_full_route.network }}"
+      peer: "{{ netbird_vt_full_route.peer }}"
+      metric: "{{ netbird_vt_full_route.metric | int }}"
+      masquerade: "{{ netbird_vt_full_route.masquerade }}"
+      enabled: "{{ netbird_vt_full_route.enabled }}"
+      keep_route: "{{ netbird_vt_full_route.keep_route | default(false) }}"
+      description: "{{ netbird_vt_full_route.description | default('') }}"
+      groups: ["{{ netbird_vt_full_gid }}"]
+    status_code: [200]
+  register: netbird_vt_repoint
+  no_log: true
+  when: netbird_vt_full_route.groups != [netbird_vt_full_gid]
+
+- name: "vpn-tiers | Publish the web /32 routes to All (every peer = web)"
+  ansible.builtin.uri:
+    url: "{{ netbird_vt_api }}/api/routes"
+    method: POST
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    body_format: json
+    body:
+      network_id: "{{ item.network_id }}"
+      network: "{{ item.network }}"
+      peer: "{{ netbird_vt_full_route.peer }}"     # same routing peer advertises these
+      masquerade: true
+      metric: "{{ netbird_route_metric | int }}"
+      enabled: true
+      groups: ["{{ netbird_vt_all_gid }}"]
+    status_code: [200, 201]
+  register: netbird_vt_web_new
+  no_log: true
+  loop: "{{ netbird_vpn_web_routes }}"
+  loop_control:
+    label: "{{ item.network_id }} ({{ item.network }})"
+  when: (netbird_vt_routes.json | selectattr('network_id', 'equalto', item.network_id) | list | length) == 0
+
+# --- admin users -> vpn-full (auto_groups so their peers get full reach) ---------
+- name: "vpn-tiers | List NetBird users"
+  ansible.builtin.uri:
+    url: "{{ netbird_vt_api }}/api/users"
+    method: GET
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    status_code: [200]
+  register: netbird_vt_users
+  no_log: true
+
+- name: "vpn-tiers | Add vpn-full to admin users' auto_groups"
+  ansible.builtin.uri:
+    url: "{{ netbird_vt_api }}/api/users/{{ item.id }}"
+    method: PUT
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    body_format: json
+    body:
+      role: "{{ item.role }}"
+      is_blocked: "{{ item.is_blocked | default(false) }}"
+      auto_groups: "{{ (item.auto_groups | default([]) + [netbird_vt_full_gid]) | unique }}"
+    status_code: [200]
+  register: netbird_vt_user_upd
+  no_log: true
+  loop: "{{ netbird_vt_users.json | selectattr('email', 'in', netbird_vpn_full_users) | list }}"
+  loop_control:
+    label: "{{ item.email }}"
+  when: netbird_vt_full_gid not in (item.auto_groups | default([]))
+
+- name: "vpn-tiers | Tiers summary"
+  ansible.builtin.debug:
+    msg:
+      - "vpn-full group: {{ netbird_vt_full_gid }}"
+      - "full route {{ netbird_route_network }} -> {{ 'repointed to vpn-full' if netbird_vt_repoint is changed else 'already on vpn-full' }}"
+      - "web routes (All): {{ netbird_vpn_web_routes | map(attribute='network') | list }}"
+      - "admin users set to vpn-full: {{ netbird_vt_users.json | selectattr('email', 'in', netbird_vpn_full_users) | map(attribute='email') | list }}"

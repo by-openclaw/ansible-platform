@@ -92,3 +92,20 @@ netbird_route_access_group: "All"                # NetBird group(s) that get the
 netbird_dns_nameserver_name: "internal-adguard"
 netbird_dns_nameserver_ip: "10.1.3.101"          # AdGuard (DNS chain head)
 netbird_dns_nameserver_port: 53
+
+# --- VPN access tiers (route distribution by NetBird group) ----------------------
+# Two tiers, NO per-user JWT/IdP-group sync needed:
+#   web baseline → group `All` (EVERY peer): /32 routes to Traefik (all web apps by
+#     name) + AdGuard (DNS). So a normal user (only in All) is web-only.
+#   full → group `vpn-full` (admins): the whole internal supernet — the routing
+#     peer's internal-lan /16 route is re-pointed off `All` onto `vpn-full`. Admin
+#     NetBird users' peers join vpn-full via the user's auto_groups.
+# Per-user auto-tiering by IdP claim (JWT groups through the embedded Dex) is
+# DEFERRED (RBAC-via-NetBox direction) — see [[reference_rbac_access_model]].
+netbird_vpn_tiers_enabled: true
+netbird_vpn_full_group: "vpn-full"
+netbird_vpn_web_routes:                           # /32 dests every peer (All) may reach
+  - { network_id: "web-traefik", network: "10.1.2.110/32" }   # Traefik → web apps
+  - { network_id: "web-dns", network: "10.1.3.101/32" }       # AdGuard → DNS
+netbird_vpn_full_users:                           # NetBird users (by email) → vpn-full
+  - "{{ netbird_owner_email }}"                    # adm_yboujraf (owner/admin)
