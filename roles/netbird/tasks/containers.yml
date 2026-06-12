@@ -1,4 +1,21 @@
 ---
+# Multi-container NetBird stack (official Traefik compose, in pure Ansible). The
+# old combined `netbird-server` is removed first (it held host :80 + :3478, which
+# the new dashboard + coturn need). TLS is terminated by our Traefik; every
+# backend here is plaintext (gRPC = h2c).
+
+# --- Remove the old combined container + its config -----------------------------
+- name: "containers | Remove the old combined netbird-server (model swap)"
+  community.docker.docker_container:
+    name: netbird-server
+    state: absent
+
+- name: "containers | Remove the stale combined config.yaml"
+  ansible.builtin.file:
+    path: "{{ netbird_build_dir }}/config.yaml"
+    state: absent
+
+# --- Build dir + rendered config ------------------------------------------------
 - name: "containers | Create the netbird build directory"
   ansible.builtin.file:
     path: "{{ netbird_build_dir }}"
@@ -7,15 +24,29 @@
     group: root
     mode: "0750"
 
-- name: "containers | Render config.yaml (combined server)"
+- name: "containers | Render management.json (Authentik-direct)"
   ansible.builtin.template:
-    src: config.yaml.j2
-    dest: "{{ netbird_build_dir }}/config.yaml"
+    src: management.json.j2
+    dest: "{{ netbird_build_dir }}/management.json"
     owner: root
     group: root
     mode: "0640"
   no_log: true
-  notify: "Restart netbird server"
+  notify: "Restart netbird management"
+
+- name: "containers | Validate the rendered management.json is valid JSON"
+  ansible.builtin.command: "python3 -c \"import json,sys; json.load(open('{{ netbird_build_dir }}/management.json'))\""
+  changed_when: false
+
+- name: "containers | Render turnserver.conf"
+  ansible.builtin.template:
+    src: turnserver.conf.j2
+    dest: "{{ netbird_build_dir }}/turnserver.conf"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: "Restart netbird coturn"
 
 - name: "containers | Render dashboard.env"
   ansible.builtin.template:
@@ -26,6 +57,7 @@
     mode: "0640"
   notify: "Restart netbird dashboard"
 
+# --- Network + images -----------------------------------------------------------
 - name: "containers | Create the netbird docker network"
   community.docker.docker_network:
     name: netbird
@@ -37,34 +69,14 @@
     source: pull
     state: present
   loop:
-    - "{{ netbird_server_image }}"
     - "{{ netbird_dashboard_image }}"
+    - "{{ netbird_management_image }}"
+    - "{{ netbird_signal_image }}"
+    - "{{ netbird_relay_image }}"
+    - "{{ netbird_coturn_image }}"
 
-- name: "containers | Run netbird-server (combined mgmt+signal+relay+STUN+Dex)"
-  community.docker.docker_container:
-    name: netbird-server
-    image: "{{ netbird_server_image }}"
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    networks:
-      - name: netbird
-    published_ports:
-      - "{{ netbird_listen_ip }}:{{ netbird_http_port }}:80"
-      - "{{ netbird_listen_ip }}:{{ netbird_stun_port }}:{{ netbird_stun_port }}/udp"
-    volumes:
-      - "{{ netbird_data_volume }}:/var/lib/netbird"
-      - "{{ netbird_build_dir }}/config.yaml:/etc/netbird/config.yaml:ro"
-    env:
-      # Enables the headless first-owner bootstrap via POST /api/setup (+ PAT).
-      NB_SETUP_PAT_ENABLED: "{{ netbird_setup_pat_enabled | string | lower }}"
-    command: ["--config", "/etc/netbird/config.yaml"]
-    log_options:
-      max-size: "500m"
-      max-file: "2"
-    log_driver: json-file
-
-- name: "containers | Run netbird-dashboard (web UI)"
+# --- Containers -----------------------------------------------------------------
+- name: "containers | Run netbird-dashboard (web UI / SPA)"
   community.docker.docker_container:
     name: netbird-dashboard
     image: "{{ netbird_dashboard_image }}"
@@ -76,24 +88,109 @@
     published_ports:
       - "{{ netbird_listen_ip }}:{{ netbird_dashboard_port }}:80"
     env_file: "{{ netbird_build_dir }}/dashboard.env"
-    log_options:
-      max-size: "500m"
-      max-file: "2"
+    log_options: { max-size: "500m", max-file: "2" }
+    log_driver: json-file
+
+- name: "containers | Run netbird-management (control plane + API)"
+  community.docker.docker_container:
+    name: netbird-management
+    image: "{{ netbird_management_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    networks:
+      - name: netbird
+    published_ports:
+      - "{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}:{{ netbird_mgmt_port }}"
+    # Resolve Authentik internally via our Traefik (no public hairpin; survives the
+    # NetBird client rewriting host resolv.conf once the routing peer is up).
+    etc_hosts:
+      authentik.by-research.be: "{{ netbird_traefik_ip }}"
+    volumes:
+      - "{{ netbird_mgmt_volume }}:/var/lib/netbird"
+      - "{{ netbird_build_dir }}/management.json:/etc/netbird/management.json:ro"
+    command:
+      - "--port"
+      - "{{ netbird_mgmt_port }}"
+      - "--log-file"
+      - "console"
+      - "--log-level"
+      - "info"
+      - "--disable-anonymous-metrics={{ netbird_disable_anonymous_metrics | bool | lower }}"
+      - "--single-account-mode-domain={{ netbird_single_account_mode_domain }}"
+      - "--dns-domain={{ netbird_mgmt_dns_domain }}"
+    env:
+      NETBIRD_STORE_ENGINE_POSTGRES_DSN: ""
+      NETBIRD_STORE_ENGINE_MYSQL_DSN: ""
+    log_options: { max-size: "500m", max-file: "2" }
+    log_driver: json-file
+
+- name: "containers | Run netbird-signal (peer signalling; gRPC h2c + ws)"
+  community.docker.docker_container:
+    name: netbird-signal
+    image: "{{ netbird_signal_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    networks:
+      - name: netbird
+    published_ports:
+      - "{{ netbird_listen_ip }}:{{ netbird_signal_grpc_port }}:{{ netbird_signal_grpc_port }}"
+      - "{{ netbird_listen_ip }}:{{ netbird_signal_ws_host_port }}:{{ netbird_signal_ws_port }}"
+    volumes:
+      - "{{ netbird_signal_volume }}:/var/lib/netbird"
+    log_options: { max-size: "500m", max-file: "2" }
+    log_driver: json-file
+
+- name: "containers | Run netbird-relay (relayed data path; wss)"
+  community.docker.docker_container:
+    name: netbird-relay
+    image: "{{ netbird_relay_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    networks:
+      - name: netbird
+    published_ports:
+      - "{{ netbird_listen_ip }}:{{ netbird_relay_port }}:{{ netbird_relay_port }}"
+    env:
+      NB_LOG_LEVEL: "info"
+      NB_LISTEN_ADDRESS: ":{{ netbird_relay_port }}"
+      NB_EXPOSED_ADDRESS: "rels://{{ netbird_fqdn }}:{{ netbird_public_port }}/relay"
+      NB_AUTH_SECRET: "{{ netbird_core.relay_auth_secret }}"
+    log_options: { max-size: "500m", max-file: "2" }
+    log_driver: json-file
+  no_log: true
+
+- name: "containers | Run netbird-coturn (STUN/TURN; host network)"
+  community.docker.docker_container:
+    name: netbird-coturn
+    image: "{{ netbird_coturn_image }}"
+    state: "{{ 'started' if netbird_coturn_enabled | bool else 'absent' }}"
+    restart_policy: unless-stopped
+    pull: false
+    network_mode: host
+    volumes:
+      - "{{ netbird_build_dir }}/turnserver.conf:/etc/turnserver.conf:ro"
+    command: ["-c", "/etc/turnserver.conf"]
+    log_options: { max-size: "500m", max-file: "2" }
     log_driver: json-file
 
 - name: "containers | Flush handlers (apply config restarts before readiness)"
   ansible.builtin.meta: flush_handlers
 
-# Authoritative readiness probe (getting-started.sh wait_management_direct):
-# the embedded Dex OIDC discovery endpoint returns 200 once the server is up.
-- name: "containers | Wait for netbird-server to be ready (embedded Dex OIDC discovery)"
+# --- Readiness ------------------------------------------------------------------
+# Management serves REST on :33073 (plaintext). Unauthenticated /api returns 401 —
+# proof it is up and the auth middleware (Authentik JWT validation) is wired.
+- name: "containers | Wait for netbird-management to serve the API"
   ansible.builtin.uri:
-    url: "http://{{ netbird_listen_ip }}:{{ netbird_http_port }}/oauth2/.well-known/openid-configuration"
-    status_code: [200]
-  register: netbird_ready
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}/api/users"
+    method: GET
+    status_code: [401, 403, 200]
+  register: netbird_mgmt_ready
   retries: 40
   delay: 3
-  until: netbird_ready.status == 200
+  until: netbird_mgmt_ready.status in [401, 403, 200]
   changed_when: false
 
 - name: "containers | Gather running netbird containers"
@@ -103,10 +200,12 @@
       status: running
   register: netbird_running
 
-- name: "containers | Assert both netbird containers are up"
+- name: "containers | Assert the core containers are up"
   ansible.builtin.assert:
     that:
-      - "'/netbird-server' in (netbird_running.containers | map(attribute='Names') | flatten)"
       - "'/netbird-dashboard' in (netbird_running.containers | map(attribute='Names') | flatten)"
-    fail_msg: "netbird-server and/or netbird-dashboard are not running"
-    success_msg: "netbird-server + dashboard are up (combined model)"
+      - "'/netbird-management' in (netbird_running.containers | map(attribute='Names') | flatten)"
+      - "'/netbird-signal' in (netbird_running.containers | map(attribute='Names') | flatten)"
+      - "'/netbird-relay' in (netbird_running.containers | map(attribute='Names') | flatten)"
+    fail_msg: "one or more NetBird containers are not running"
+    success_msg: "NetBird multi-container stack is up (dashboard/management/signal/relay)"

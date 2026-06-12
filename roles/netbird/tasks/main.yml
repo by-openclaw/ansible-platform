@@ -1,31 +1,57 @@
 ---
 # ==============================================================================
-# Role: netbird — dispatcher (combined model, Ansible-only, no .sh installer)
-#   secrets -> containers (netbird-server + dashboard) -> Traefik route
-#   -> bootstrap (owner via /api/setup + Authentik external IdP via the API)
+# Role: netbird — dispatcher (multi-container / Authentik-direct, Ansible-only).
+#   secrets -> oidc-discovery (live Authentik endpoints) -> containers (5-svc
+#   stack) -> Traefik route. Then PHASE 2 (gated on a NetBird PAT existing):
+#   routing peer + VPN tiers. The PAT is created by the owner AFTER the first
+#   Authentik login (no local owner in this model), then dropped into
+#   netbird-setup.json to unlock phase 2.
 # ==============================================================================
-- name: Resolve / generate NetBird secrets
+- name: Resolve NetBird secrets (core + Authentik OIDC client + service account)
   ansible.builtin.import_tasks: secrets.yml
   tags: [netbird, secrets]
 
-- name: Run the NetBird containers (combined server + dashboard)
+- name: Derive Authentik OIDC endpoints from live discovery
+  ansible.builtin.import_tasks: oidc-discovery.yml
+  tags: [netbird, oidc]
+
+- name: Run the NetBird multi-container stack
   ansible.builtin.import_tasks: containers.yml
   tags: [netbird, container]
 
-- name: Publish NetBird via Traefik (file provider, h2c gRPC)
+- name: Publish NetBird via Traefik (file provider, split backends, h2c gRPC)
   ansible.builtin.import_tasks: route.yml
   tags: [netbird, route]
 
-- name: Bootstrap owner + Authentik external IdP (NetBird API)
-  ansible.builtin.import_tasks: bootstrap.yml
-  tags: [netbird, bootstrap]
+# --- Phase 2: only runs once a NetBird PAT exists (post first-login) -------------
+- name: Check for a NetBird PAT (unlocks phase 2)
+  ansible.builtin.stat:
+    path: "{{ netbird_secret_dir }}/{{ netbird_setup_secret_file }}"
+  delegate_to: localhost
+  become: false
+  register: netbird_pat_stat
+  tags: [netbird, routing, tiers]
 
 - name: Enroll this host as a routing peer (advertise internal LAN + AdGuard DNS)
   ansible.builtin.import_tasks: routing-peer.yml
-  when: netbird_routing_peer_enabled | default(true) | bool
+  when:
+    - netbird_routing_peer_enabled | default(true) | bool
+    - netbird_pat_stat.stat.exists
   tags: [netbird, routing]
 
 - name: Configure VPN access tiers (web baseline on All, full on vpn-full)
   ansible.builtin.import_tasks: vpn-tiers.yml
-  when: netbird_vpn_tiers_enabled | default(true) | bool
+  when:
+    - netbird_vpn_tiers_enabled | default(true) | bool
+    - netbird_pat_stat.stat.exists
   tags: [netbird, tiers]
+
+- name: Note when phase 2 is skipped (no PAT yet)
+  ansible.builtin.debug:
+    msg: >-
+      NetBird stack deployed. PHASE 2 (routing peer + VPN tiers) skipped — no PAT
+      yet. Log in once at https://{{ netbird_fqdn }} (becomes the owner), create a
+      Personal Access Token in the dashboard, write it to
+      {{ netbird_setup_secret_file }} (fields.personal_access_token), then re-run.
+  when: not netbird_pat_stat.stat.exists
+  tags: [netbird, routing, tiers]

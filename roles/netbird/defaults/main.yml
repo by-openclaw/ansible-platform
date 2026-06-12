@@ -1,111 +1,141 @@
 ---
 # ==============================================================================
-# Role: netbird — NetBird CE (OFFICIAL COMBINED model) on lxc-netbird-01 (SVC)
-# Reproduces, in pure Ansible, what the official getting-started.sh generates for
-# the "existing Traefik" path — NO .sh installer is run. Two containers:
-#   netbird-server  — combined Management + Signal + Relay + STUN + embedded Dex IdP
-#                     (single image; config.yaml). Listens :80 (HTTP REST + gRPC
-#                     h2c + WS) and STUN on :3478/udp.
-#   dashboard       — web UI (talks to the embedded Dex at /oauth2).
-# Fronted by OUR Traefik (file provider, h2c for the gRPC routers). Store = sqlite
-# in the data volume (the official default; Postgres is a documented switch).
-# Authentik is added as an EXTERNAL OIDC IdP via the NetBird API (Dex federates to
-# it) — see tasks/bootstrap.yml. Upgrade = bump the pinned image tags.
+# Role: netbird — NetBird CE (OFFICIAL multi-container model) on lxc-netbird-01.
+#
+# This is the deployment the goauthentik.io NetBird guide targets: NetBird's own
+# login IS Authentik (direct OIDC), with NO bundled/Dex IdP. It reproduces, in
+# pure Ansible, exactly what NetBird's getting-started.sh (configure.sh) renders
+# from its official templates — management.json + the Traefik docker-compose —
+# only translated to OUR split topology (Traefik runs on a separate host and
+# reaches these containers over the SVC network via the file provider).
+#
+# Five containers (official stack):
+#   dashboard   — web UI (SPA); redirects the browser to Authentik to log in.
+#   management  — control plane + REST/gRPC API; validates Authentik JWTs and
+#                 syncs the user list from Authentik (IdP manager = service acct).
+#   signal      — peer signalling (gRPC h2c + ws-proxy).
+#   relay       — relayed data path (wss) for hard-NAT peers.
+#   coturn      — STUN/TURN (host network) for direct-connection optimisation.
+#
+# Auth model (verbatim from the goauthentik.io doc, mapped into management.json):
+#   - PKCE flow (dashboard browser login)  -> Authentik authorize/token
+#   - Device flow (CLI / mobile `netbird up`) -> Authentik device endpoint
+#   - IdP manager (user sync)              -> Authentik service account "NetBird"
+# The five OIDC endpoints are NOT hardcoded — the role fetches Authentik's live
+# .well-known/openid-configuration (like configure.sh) and derives them. See
+# tasks/oidc-discovery.yml + templates/management.json.j2.
 # ==============================================================================
 
-# --- Pinned images (never :latest; installer default is :latest) ----------------
-netbird_server_image: "netbirdio/netbird-server:0.72.2"     # combined server
+# --- Pinned images (never :latest) ----------------------------------------------
 netbird_dashboard_image: "netbirdio/dashboard:v2.39.0"
+netbird_management_image: "netbirdio/management:0.72.3"
+netbird_signal_image: "netbirdio/signal:0.72.3"
+netbird_relay_image: "netbirdio/relay:0.72.3"
+netbird_coturn_image: "coturn/coturn:4.6.2"
 
 # --- Identity / addressing ------------------------------------------------------
 # Public name = vpn.by-research.be (CNAME -> apex/Telenet; see cloudflare_dns role).
 netbird_fqdn: "vpn.by-research.be"
 netbird_listen_ip: "10.1.3.181"                # SVC IP the containers publish on
-
-# Published host ports on netbird_listen_ip (Traefik on the DMZ reaches these).
-netbird_http_port: 80          # netbird-server :80 — HTTP REST + gRPC (h2c) + WS
-netbird_dashboard_port: 8080   # dashboard :80 -> host 8080
-netbird_stun_port: 3478        # STUN/UDP (published direct; DNAT'd on the WAN)
-
-# Public exposed URL (TLS terminated by our Traefik).
-netbird_public_port: 443
+netbird_public_port: 443                        # TLS terminated by our Traefik
 netbird_http_protocol: "https"
 
-# Embedded Dex issuer + redirect URIs (verbatim from getting-started.sh).
-netbird_oauth2_issuer: "https://{{ netbird_fqdn }}/oauth2"
-netbird_dashboard_redirect_uris:
-  - "https://{{ netbird_fqdn }}/nb-auth"
-  - "https://{{ netbird_fqdn }}/nb-silent-auth"
-netbird_cli_redirect_uris:
-  - "http://localhost:53000/"
+# Container-internal ports (verbatim from the official Traefik compose template).
+# Published on netbird_listen_ip so the remote Traefik can reach each backend.
+netbird_dashboard_port: 80                       # dashboard SPA
+netbird_mgmt_port: 33073                         # management REST + gRPC(h2c) + ws
+netbird_signal_grpc_port: 10000                  # signal gRPC (h2c)
+netbird_signal_ws_port: 80                       # signal ws-proxy  (publish as 8081)
+netbird_signal_ws_host_port: 8081                # host-published port for signal ws
+netbird_relay_port: 33080                        # relay (wss)
+netbird_stun_port: 3478                          # coturn STUN/TURN (host network)
 
-# Our Traefik = the trusted reverse proxy (sets the real client IP via XFF).
+# --- Authentik OIDC (the goauthentik.io doc's setup.env, mapped here) -----------
+# These two secret files already exist (the Authentik side is provisioned):
+#   app-oidc-netbird.json     -> fields.client_id / client_secret (public client)
+#   netbird-authentik-sa.json -> fields.username (NetBird) / password (app token)
+netbird_oidc_secret_file: "app-oidc-netbird.json"
+netbird_authentik_sa_file: "netbird-authentik-sa.json"
+netbird_oidc_app_slug: "netbird"
+netbird_oidc_base: "https://authentik.by-research.be/application/o/{{ netbird_oidc_app_slug }}"
+netbird_oidc_config_endpoint: "{{ netbird_oidc_base }}/.well-known/openid-configuration"
+
+# Scopes — exactly as the goauthentik.io doc prescribes.
+netbird_auth_supported_scopes: "openid profile email offline_access entitlements goauthentik.io/api"
+netbird_device_auth_scope: "openid"              # doc default (device flow)
+# Dashboard redirect paths (doc: /auth + /silent-auth). Covered by the Authentik
+# provider redirect regex https://vpn.by-research.be/.*
+netbird_auth_redirect_uri: "/auth"
+netbird_auth_silent_redirect_uri: "/silent-auth"
+netbird_pkce_redirect_url: "http://localhost:53000"   # CLI/device PKCE loopback
+netbird_pkce_disable_prompt_login: true
+netbird_idp_signkey_refresh: false
+netbird_mgmt_idp: "authentik"
+# IdP-manager service account extra config (NETBIRD_IDP_MGMT_EXTRA_* -> ExtraConfig).
+netbird_idp_extra_username: "NetBird"            # = service account username
+
+# --- Management server knobs ----------------------------------------------------
+# single-account mode: every @by-research.be user joins ONE NetBird org (prevents
+# the per-user tenant forking the bundled-IdP model produced).
+netbird_single_account_mode_domain: "by-research.be"
+netbird_mgmt_dns_domain: "netbird.selfhosted"
+netbird_disable_anonymous_metrics: true
+netbird_disable_default_policy: false
+netbird_store_engine: "sqlite"
+
+# --- TURN -----------------------------------------------------------------------
+netbird_turn_domain: "{{ netbird_fqdn }}"
+netbird_turn_user: "self"
+netbird_turn_min_port: 49152
+netbird_turn_max_port: 65535
+# Public IP coturn advertises for relayed candidates. Empty -> line omitted
+# (STUN + the relay container still work; set later to optimise TURN).
+netbird_turn_external_ip: ""
+
+# --- Our Traefik (separate host, file provider) ---------------------------------
 netbird_traefik_ip: "10.1.2.110"
 netbird_traefik_host: "lxc-traefik-01"
 netbird_traefik_dynamic_dir: "/etc/traefik/dynamic"
 
-# --- Store: sqlite in the data volume (official default) ------------------------
-# Postgres is a documented switch (store.engine: postgres + a libpq DSN) if shared-
-# store consistency is later wanted; sqlite keeps the official-install simplicity.
-netbird_store_engine: "sqlite"
-netbird_data_volume: "netbird_data"
+# --- Layout ---------------------------------------------------------------------
 netbird_build_dir: "/opt/netbird"
-
-# --- Bootstrap owner (local Dex break-glass admin) ------------------------------
-# The first owner is created headlessly via POST /api/setup (needs NB_SETUP_PAT_ENABLED).
-# This is the LOCAL Dex account (break-glass, like akadmin / Nextcloud's local admin);
-# everyday login is via Authentik SSO (added below).
-netbird_setup_pat_enabled: true
-netbird_owner_email: "adm_yboujraf@by-research.be"
-netbird_owner_name: "Adm Yboujraf"
-netbird_pat_expire_days: 365
-netbird_owner_secret_file: "netbird-owner.json"   # email/name/password (generated)
-netbird_setup_secret_file: "netbird-setup.json"   # PAT, written after /api/setup
-
-# --- Authentik external OIDC IdP (added via the NetBird API; Dex federates) ------
-netbird_authentik_idp_name: "Authentik"
-netbird_authentik_issuer: "https://authentik.by-research.be/application/o/netbird/"
-netbird_oidc_secret_file: "app-oidc-netbird.json"  # client_id/secret (shared w/ authentik blueprint)
+netbird_mgmt_volume: "netbird-mgmt"
+netbird_signal_volume: "netbird-signal"
 
 # --- Controller secret store ----------------------------------------------------
 netbird_secret_dir: "~/.openclaw/workspace/infra/secrets"
-netbird_core_secret_file: "netbird-core.json"      # relay authSecret + datastore enc key
+netbird_core_secret_file: "netbird-core.json"    # datastore_enc_key / relay_auth_secret / turn_password
+# NetBird PAT for the role's own API automation (routing peer + tiers). NOT created
+# by the install (no local owner in the Authentik model) — created by the owner
+# AFTER the first Authentik login, then stored here to unlock phase 2.
+netbird_setup_secret_file: "netbird-setup.json"  # fields.personal_access_token
 
-# --- Routing peer: this host advertises the internal LAN to VPN clients ----------
-# The netbird CLIENT runs on THIS host (Kernel WG interface — the LXC has
-# /dev/net/tun) and is enrolled as a router advertising the internal supernet, so a
-# remote VPN peer reaches internal services by IP. DNS for the platform is pointed
-# at AdGuard so internal names resolve over the tunnel. Server-side objects
-# (group/setup-key/route/nameserver) are created via the NetBird API; the local
-# peer is enrolled once with the reusable setup key (idempotent on `netbird status`).
-# The /etc/hosts pin sends THIS host's client to Traefik internally (10.1.2.110),
-# avoiding a public hairpin to its own FQDN. See tasks/routing-peer.yml.
+# --- coturn toggle (optional optimisation; relay covers hard-NAT regardless) -----
+netbird_coturn_enabled: true
+
+# ==============================================================================
+# Phase 2 — routing peer + VPN tiers (run only once a PAT exists). These advertise
+# the internal LAN to VPN clients and split web-vs-full access by NetBird group.
+# Gated by netbird_routing_peer_enabled / netbird_vpn_tiers_enabled AND a PAT.
+# ==============================================================================
 netbird_routing_peer_enabled: true
-netbird_routers_group: "routers"                 # NetBird group the router peer joins
+netbird_api_port: "{{ netbird_mgmt_port }}"      # role API automation hits mgmt:33073
+netbird_routers_group: "routers"
 netbird_router_setup_key_name: "router-key"
-netbird_router_setup_key_file: "/root/.nb_setup_key"   # plaintext key on the peer (0600)
+netbird_router_setup_key_file: "/root/.nb_setup_key"
 netbird_route_network_id: "internal-lan"
-netbird_route_network: "10.1.0.0/16"             # internal supernet advertised to peers
+netbird_route_network: "10.1.0.0/16"
 netbird_route_metric: 9999
-netbird_route_masquerade: true                   # NAT on the router → no client routes needed
-netbird_route_access_group: "All"                # NetBird group(s) that get the route + DNS
+netbird_route_masquerade: true
+netbird_route_access_group: "All"
 netbird_dns_nameserver_name: "internal-adguard"
 netbird_dns_nameserver_ip: "10.1.3.101"          # AdGuard (DNS chain head)
 netbird_dns_nameserver_port: 53
 
-# --- VPN access tiers (route distribution by NetBird group) ----------------------
-# Two tiers, NO per-user JWT/IdP-group sync needed:
-#   web baseline → group `All` (EVERY peer): /32 routes to Traefik (all web apps by
-#     name) + AdGuard (DNS). So a normal user (only in All) is web-only.
-#   full → group `vpn-full` (admins): the whole internal supernet — the routing
-#     peer's internal-lan /16 route is re-pointed off `All` onto `vpn-full`. Admin
-#     NetBird users' peers join vpn-full via the user's auto_groups.
-# Per-user auto-tiering by IdP claim (JWT groups through the embedded Dex) is
-# DEFERRED (RBAC-via-NetBox direction) — see [[reference_rbac_access_model]].
 netbird_vpn_tiers_enabled: true
 netbird_vpn_full_group: "vpn-full"
-netbird_vpn_web_routes:                           # /32 dests every peer (All) may reach
-  - { network_id: "web-traefik", network: "10.1.2.110/32" }   # Traefik → web apps
-  - { network_id: "web-dns", network: "10.1.3.101/32" }       # AdGuard → DNS
-netbird_vpn_full_users:                           # NetBird users (by email) → vpn-full
-  - "{{ netbird_owner_email }}"                    # adm_yboujraf (owner/admin)
+netbird_vpn_web_routes:
+  - { network_id: "web-traefik", network: "10.1.2.110/32" }   # Traefik -> web apps
+  - { network_id: "web-dns", network: "10.1.3.101/32" }       # AdGuard -> DNS
+netbird_vpn_full_users:
+  - "adm_yboujraf@by-research.be"                 # admin -> full internal reach
