@@ -23,35 +23,32 @@
   ansible.builtin.import_tasks: route.yml
   tags: [netbird, route]
 
-# --- Phase 2: only runs once a NetBird PAT exists (post first-login) -------------
-- name: Check for a NetBird PAT (unlocks phase 2)
-  ansible.builtin.stat:
-    path: "{{ netbird_secret_dir }}/{{ netbird_setup_secret_file }}"
-  delegate_to: localhost
-  become: false
-  register: netbird_pat_stat
+# --- Phase 2: routing peer + tiers (driven by a DEDICATED service token) ---------
+- name: Ensure the automation service user + token (sets netbird_pat)
+  ansible.builtin.import_tasks: automation-token.yml
   tags: [netbird, routing, tiers]
 
 - name: Enroll this host as a routing peer (advertise internal LAN + AdGuard DNS)
   ansible.builtin.import_tasks: routing-peer.yml
   when:
     - netbird_routing_peer_enabled | default(true) | bool
-    - netbird_pat_stat.stat.exists
+    - netbird_pat is defined
   tags: [netbird, routing]
 
 - name: Configure VPN access tiers (web baseline on All, full on vpn-full)
   ansible.builtin.import_tasks: vpn-tiers.yml
   when:
     - netbird_vpn_tiers_enabled | default(true) | bool
-    - netbird_pat_stat.stat.exists
+    - netbird_pat is defined
   tags: [netbird, tiers]
 
-- name: Note when phase 2 is skipped (no PAT yet)
+- name: Note when phase 2 is skipped (no automation token yet)
   ansible.builtin.debug:
     msg: >-
-      NetBird stack deployed. PHASE 2 (routing peer + VPN tiers) skipped — no PAT
-      yet. Log in once at https://{{ netbird_fqdn }} (becomes the owner), create a
-      Personal Access Token in the dashboard, write it to
-      {{ netbird_setup_secret_file }} (fields.personal_access_token), then re-run.
-  when: not netbird_pat_stat.stat.exists
+      NetBird stack deployed. PHASE 2 (routing peer + VPN tiers) skipped — no
+      automation token. Log in once at https://{{ netbird_fqdn }} (first login =
+      owner), create a Personal Access Token in the dashboard, write it to
+      {{ netbird_setup_secret_file }} (fields.personal_access_token), then re-run —
+      the role mints a dedicated service-user token and you can revoke the human PAT.
+  when: netbird_pat is not defined
   tags: [netbird, routing, tiers]

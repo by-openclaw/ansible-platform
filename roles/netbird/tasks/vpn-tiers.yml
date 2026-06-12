@@ -9,25 +9,11 @@
 # Tag: tiers.
 # ==============================================================================
 
-- name: "vpn-tiers | Stat the NetBird PAT secret on the controller"
-  ansible.builtin.stat:
-    path: "{{ netbird_secret_dir }}/{{ netbird_setup_secret_file }}"
-  delegate_to: localhost
-  become: false
-  register: netbird_vt_pat_stat
-
-- name: "vpn-tiers | Load the PAT (admin API token)"
-  ansible.builtin.set_fact:
-    netbird_pat: "{{ (lookup('file', netbird_secret_dir + '/' + netbird_setup_secret_file) | from_json).fields.personal_access_token }}"
-  no_log: true
-  when:
-    - netbird_pat is not defined
-    - netbird_vt_pat_stat.stat.exists
-
-- name: "vpn-tiers | Fail clearly if no PAT is available"
-  ansible.builtin.fail:
-    msg: "No NetBird PAT found ({{ netbird_setup_secret_file }}). Run bootstrap first."
-  when: netbird_pat | default('') | length == 0
+- name: "vpn-tiers | Require the automation token (set by automation-token.yml)"
+  ansible.builtin.assert:
+    that: netbird_pat is defined and (netbird_pat | length > 0)
+    fail_msg: "netbird_pat not set — automation-token.yml must run first."
+    quiet: true
 
 - name: "vpn-tiers | Local NetBird API base"
   ansible.builtin.set_fact:

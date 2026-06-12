@@ -105,10 +105,16 @@ netbird_signal_volume: "netbird-signal"
 # --- Controller secret store ----------------------------------------------------
 netbird_secret_dir: "~/.openclaw/workspace/infra/secrets"
 netbird_core_secret_file: "netbird-core.json"    # datastore_enc_key / relay_auth_secret / turn_password
-# NetBird PAT for the role's own API automation (routing peer + tiers). NOT created
-# by the install (no local owner in the Authentik model) — created by the owner
-# AFTER the first Authentik login, then stored here to unlock phase 2.
-netbird_setup_secret_file: "netbird-setup.json"  # fields.personal_access_token
+# NetBird automation token. The role uses a DEDICATED service user (never a human's
+# PAT) for all API automation (routing peer + tiers). Bootstrap (one-time): NetBird
+# has no token-bootstrap, so the first token must come from a human owner — drop it
+# into netbird-setup.json after the first Authentik login. automation-token.yml then
+# mints the service-user token (netbird-automation.json) and the human PAT can be
+# revoked. Once the service token exists, the bootstrap PAT is no longer needed.
+netbird_setup_secret_file: "netbird-setup.json"         # bootstrap PAT (human, one-time)
+netbird_automation_user: "netbird-automation"           # dedicated service user (admin)
+netbird_automation_token_file: "netbird-automation.json"  # service-user PAT (role-managed)
+netbird_pat_expire_days: 365
 
 # --- coturn toggle (optional optimisation; relay covers hard-NAT regardless) -----
 netbird_coturn_enabled: true
