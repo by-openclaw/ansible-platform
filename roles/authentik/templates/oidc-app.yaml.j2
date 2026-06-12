@@ -64,13 +64,21 @@ entries:
       name: {{ app.slug }}
     attrs:
       name: {{ app.slug }}
-      client_type: confidential
+      # Most apps are confidential (client_secret). NetBird's dashboard is a public
+      # SPA doing PKCE, so it must be a PUBLIC client (override per app).
+      client_type: {{ app.client_type | default('confidential') }}
       # Authentik 2026.x defaults grant_types to [] (empty = no flow permitted),
-      # which makes the authorization-code login fail with "Invalid grant_type
-      # for provider". Must be set explicitly for OIDC login to work.
+      # which makes any token request fail with "Invalid grant_type for provider".
+      # Must be set explicitly. extra_grant_types adds non-interactive grants — e.g.
+      # NetBird needs client_credentials (IdP-manager user sync + JWT→account
+      # resolution; login completes then drops without it) and the device-code grant
+      # (CLI / mobile `netbird up`).
       grant_types:
         - authorization_code
         - refresh_token
+{% for gt in app.extra_grant_types | default([]) %}
+        - {{ gt }}
+{% endfor %}
       client_id: "{{ app.client_id }}"
       client_secret: "{{ app.client_secret }}"
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
@@ -109,6 +117,15 @@ entries:
 {% if app.offline_access | default(false) %}
         # refresh-token support (client requests the offline_access scope)
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, offline_access]]
+{% endif %}
+{% if app.entitlements | default(false) %}
+        # entitlements scope (per the goauthentik.io NetBird guide)
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, entitlements]]
+{% endif %}
+{% if app.api_access | default(false) %}
+        # authentik API access (goauthentik.io/api) — NetBird's IdP manager uses the
+        # client_credentials grant with this scope to read the user directory.
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, "goauthentik.io/api"]]
 {% endif %}
         - !KeyOf scope-groups-{{ app.slug }}
 

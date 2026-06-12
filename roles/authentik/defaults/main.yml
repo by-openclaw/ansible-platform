@@ -101,13 +101,21 @@ authentik_oidc_apps:
     group: "netbird-users"        # ACCESS group — only members may authenticate
     secret_file: "app-oidc-netbird.json"
     restrict_to_group: true       # IdP-enforced: only netbird-users can log in
-    # NetBird (combined model) federates its embedded Dex to Authentik. Dex's
-    # callback carries a server-generated connector id, so register a REGEX redirect
-    # covering https://vpn.by-research.be/oauth2/callback/<id>. Standard
-    # authorization_code flow (Dex handles device/PKCE, not Authentik directly).
-    redirect_uris: []
+    # Multi-container NetBird logs in against Authentik DIRECTLY (no Dex), per the
+    # goauthentik.io NetBird guide. The dashboard is a PUBLIC SPA doing PKCE; the
+    # CLI/mobile use the device-code grant; the IdP manager uses client_credentials.
+    client_type: public
+    extra_grant_types:
+      - client_credentials
+      - "urn:ietf:params:oauth:grant-type:device_code"
+    offline_access: true          # refresh tokens (NetBird requests offline_access)
+    entitlements: true            # per the guide's Selected Scopes
+    api_access: true              # goauthentik.io/api — IdP-manager directory reads
+    # PKCE loopback (CLI/mobile) + the dashboard's /auth and /silent-auth callbacks.
+    redirect_uris:
+      - "http://localhost:53000"
     redirect_uris_regex:
-      - "https://vpn\\.by-research\\.be/oauth2/callback.*"
+      - "https://vpn\\.by-research\\.be/.*"
 
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
