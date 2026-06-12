@@ -1,0 +1,46 @@
+---
+# Account-level session policy (NIS2): set peer_login_expiration so peers must
+# re-authenticate interactively via Authentik (+TOTP) after the configured window.
+# Idempotent: GET current settings, PUT only when they differ. Uses the automation
+# token (netbird_pat, set by automation-token.yml). Gated by
+# netbird_account_settings_enabled.
+
+- name: "account-settings | Get the account + current settings"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/accounts"
+    method: GET
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    status_code: [200]
+  register: netbird_as_acc
+  no_log: true
+
+- name: "account-settings | Resolve account id + settings"
+  ansible.builtin.set_fact:
+    netbird_as_id: "{{ netbird_as_acc.json[0].id }}"
+    netbird_as_cur: "{{ netbird_as_acc.json[0].settings }}"
+
+- name: "account-settings | Apply session policy (login expiration) when changed"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/accounts/{{ netbird_as_id }}"
+    method: PUT
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    body_format: json
+    body:
+      settings: >-
+        {{ netbird_as_cur | combine({
+             'peer_login_expiration_enabled': netbird_peer_login_expiration_enabled | bool,
+             'peer_login_expiration': netbird_peer_login_expiration | int }) }}
+    status_code: [200]
+  register: netbird_as_put
+  no_log: true
+  when: >-
+    (netbird_as_cur.peer_login_expiration | default(0) | int) != (netbird_peer_login_expiration | int)
+    or (netbird_as_cur.peer_login_expiration_enabled | default(false) | bool) != (netbird_peer_login_expiration_enabled | bool)
+
+- name: "account-settings | Summary"
+  ansible.builtin.debug:
+    msg: >-
+      session policy: login_expiration={{ netbird_peer_login_expiration | int }}s
+      ({{ (netbird_peer_login_expiration | int / 3600) | round(1) }}h)
+      enabled={{ netbird_peer_login_expiration_enabled | bool }}
+      ({{ 'updated' if netbird_as_put is changed else 'already set' }})

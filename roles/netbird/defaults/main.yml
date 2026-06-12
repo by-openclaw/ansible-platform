@@ -68,7 +68,11 @@ netbird_device_auth_scope: "openid"              # doc default (device flow)
 netbird_auth_redirect_uri: "/auth"
 netbird_auth_silent_redirect_uri: "/silent-auth"
 netbird_pkce_redirect_url: "http://localhost:53000"   # CLI/device PKCE loopback
-netbird_pkce_disable_prompt_login: true
+# prompt=login: false here means NetBird SENDS prompt=login → Authentik ALWAYS shows
+# its login screen on an interactive auth (instead of silently reusing its cookie).
+# Required to SWAP SSO accounts (yboujraf ↔ adm_yboujraf) on one device, and aligns
+# with NIS2 (force re-auth at the IdP, MFA each time). Trade-off: an extra login tap.
+netbird_pkce_disable_prompt_login: false
 netbird_idp_signkey_refresh: false
 netbird_mgmt_idp: "authentik"
 # IdP-manager service account extra config (NETBIRD_IDP_MGMT_EXTRA_* -> ExtraConfig).
@@ -145,3 +149,11 @@ netbird_vpn_web_routes:
   - { network_id: "web-dns", network: "10.1.3.101/32" }       # AdGuard -> DNS
 netbird_vpn_full_users:
   - "adm_yboujraf@by-research.be"                 # admin -> full internal reach
+
+# --- Account session policy (NIS2) ----------------------------------------------
+# Force a fresh interactive Authentik login (+TOTP) after this long. NIS2 is
+# risk-based (no fixed number); 8h ≈ one working day, re-auth at the IdP each time.
+# Set netbird_peer_login_expiration to your policy value (e.g. 3600=1h, 43200=12h).
+netbird_account_settings_enabled: true
+netbird_peer_login_expiration_enabled: true
+netbird_peer_login_expiration: 28800             # seconds (8h)
