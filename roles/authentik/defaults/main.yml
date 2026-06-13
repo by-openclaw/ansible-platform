@@ -116,6 +116,19 @@ authentik_oidc_apps:
       - "http://localhost:53000"
     redirect_uris_regex:
       - "https://vpn\\.by-research\\.be/.*"
+  - slug: proxmox
+    launch_url: "https://10.6.224.105:8006"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/proxmox.svg"
+    name: "Proxmox VE"
+    group: "proxmox-admins"       # access group — only members may log into PVE
+    secret_file: "app-oidc-proxmox.json"
+    restrict_to_group: true       # IdP-enforced: only proxmox-admins can log in
+    # PVE OIDC realm maps its username from the `sub` claim → email (goauthentik.io
+    # PVE guide). The PVE realm's --username-claim must match this (email).
+    sub_mode: user_email
+    # PVE sends its UI base URL as the OIDC redirect_uri. Internal-only (OOB/mgmt).
+    redirect_uris:
+      - "https://10.6.224.105:8006"
 
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
@@ -135,6 +148,7 @@ authentik_proxy_apps:
 # the user (Authentik hashes them; can't be set in a blueprint).
 authentik_groups:
   - platform-admins
+  - proxmox-admins      # access group — only members may log into Proxmox VE (#145)
   - vault-admins
   - pgadmin-admins
   - netbox-admins

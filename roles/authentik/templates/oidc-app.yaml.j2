@@ -67,6 +67,11 @@ entries:
       # Most apps are confidential (client_secret). NetBird's dashboard is a public
       # SPA doing PKCE, so it must be a PUBLIC client (override per app).
       client_type: {{ app.client_type | default('confidential') }}
+{% if app.sub_mode is defined %}
+      # `sub` claim source. Proxmox VE maps its username from this — the
+      # goauthentik.io PVE guide uses the user's email (sub_mode: user_email).
+      sub_mode: {{ app.sub_mode }}
+{% endif %}
       # Authentik 2026.x defaults grant_types to [] (empty = no flow permitted),
       # which makes any token request fail with "Invalid grant_type for provider".
       # Must be set explicitly. extra_grant_types adds non-interactive grants — e.g.
