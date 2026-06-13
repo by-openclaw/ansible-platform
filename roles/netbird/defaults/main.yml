@@ -68,11 +68,9 @@ netbird_device_auth_scope: "openid"              # doc default (device flow)
 netbird_auth_redirect_uri: "/auth"
 netbird_auth_silent_redirect_uri: "/silent-auth"
 netbird_pkce_redirect_url: "http://localhost:53000"   # CLI/device PKCE loopback
-# prompt=login: false here means NetBird SENDS prompt=login → Authentik ALWAYS shows
-# its login screen on an interactive auth (instead of silently reusing its cookie).
-# Required to SWAP SSO accounts (yboujraf ↔ adm_yboujraf) on one device, and aligns
-# with NIS2 (force re-auth at the IdP, MFA each time). Trade-off: an extra login tap.
-netbird_pkce_disable_prompt_login: false
+# Keep the smooth login (no forced re-prompt). Account swap is handled by signing out
+# in the client, not by forcing prompt=login (which created logout/redirect friction).
+netbird_pkce_disable_prompt_login: true
 netbird_idp_signkey_refresh: false
 netbird_mgmt_idp: "authentik"
 # IdP-manager service account extra config (NETBIRD_IDP_MGMT_EXTRA_* -> ExtraConfig).
@@ -156,4 +154,8 @@ netbird_vpn_full_users:
 # Set netbird_peer_login_expiration to your policy value (e.g. 3600=1h, 43200=12h).
 netbird_account_settings_enabled: true
 netbird_peer_login_expiration_enabled: true
-netbird_peer_login_expiration: 28800             # seconds (8h)
+netbird_peer_login_expiration: 86400             # seconds (24h baseline; tune for NIS2 later)
+# New SSO users land BLOCKED (pending approval) by default → the client loops on
+# "user pending approval cannot add peers". Authentik's netbird-users group is already
+# the access gate, so disable NetBird's redundant user approval → members auto-join.
+netbird_user_approval_required: false

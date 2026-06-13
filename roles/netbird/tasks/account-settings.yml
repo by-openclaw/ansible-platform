@@ -19,7 +19,7 @@
     netbird_as_id: "{{ netbird_as_acc.json[0].id }}"
     netbird_as_cur: "{{ netbird_as_acc.json[0].settings }}"
 
-- name: "account-settings | Apply session policy (login expiration) when changed"
+- name: "account-settings | Apply account policy (session + auto-join) when changed"
   ansible.builtin.uri:
     url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/accounts/{{ netbird_as_id }}"
     method: PUT
@@ -29,18 +29,22 @@
       settings: >-
         {{ netbird_as_cur | combine({
              'peer_login_expiration_enabled': netbird_peer_login_expiration_enabled | bool,
-             'peer_login_expiration': netbird_peer_login_expiration | int }) }}
+             'peer_login_expiration': netbird_peer_login_expiration | int,
+             'extra': (netbird_as_cur.extra | default({})
+                       | combine({'user_approval_required': netbird_user_approval_required | bool})) }) }}
     status_code: [200]
   register: netbird_as_put
   no_log: true
   when: >-
     (netbird_as_cur.peer_login_expiration | default(0) | int) != (netbird_peer_login_expiration | int)
     or (netbird_as_cur.peer_login_expiration_enabled | default(false) | bool) != (netbird_peer_login_expiration_enabled | bool)
+    or (netbird_as_cur.extra.user_approval_required | default(true) | bool) != (netbird_user_approval_required | bool)
 
 - name: "account-settings | Summary"
   ansible.builtin.debug:
     msg: >-
-      session policy: login_expiration={{ netbird_peer_login_expiration | int }}s
+      account policy: login_expiration={{ netbird_peer_login_expiration | int }}s
       ({{ (netbird_peer_login_expiration | int / 3600) | round(1) }}h)
       enabled={{ netbird_peer_login_expiration_enabled | bool }}
+      user_approval_required={{ netbird_user_approval_required | bool }}
       ({{ 'updated' if netbird_as_put is changed else 'already set' }})
