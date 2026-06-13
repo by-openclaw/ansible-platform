@@ -26,6 +26,15 @@ proxmox_oidc_username_claim: "email"
 # which claim carries them → PVE syncs OIDC users into matching PVE groups on login.
 proxmox_oidc_scopes: "openid profile email groups"
 proxmox_oidc_groups_claim: "groups"
+# Re-apply the claimed groups on EVERY login (not just first autocreate). Without this,
+# PVE only sets groups when it first creates the user; an existing user whose groups
+# changed in Authentik (or who was created before the groups-claim was configured)
+# never re-syncs → lands with no permissions. With overwrite, PVE sets the user's PVE
+# groups to exactly the claimed groups that EXIST in PVE (autocreate stays off, so only
+# proxmox-admins — the one we ACL — is synced; the user's other Authentik groups are
+# ignored). Authentik is the source of truth for membership. Verified: this is the knob
+# that was missing (groups scope WAS granted + in the id_token, but PVE didn't re-sync).
+proxmox_oidc_groups_overwrite: 1
 proxmox_oidc_autocreate: 1                # auto-create the PVE user on first login
 proxmox_oidc_default: 0                    # not the default realm (PAM stays default)
 proxmox_oidc_comment: "Authentik SSO"
