@@ -1,0 +1,49 @@
+---
+# Reproduce configure.sh's OIDC discovery step in Ansible: fetch Authentik's live
+# .well-known/openid-configuration and derive the issuer / jwks / token / device /
+# authorization endpoints. NOT hardcoded — whatever Authentik publishes is used.
+#
+# Authentik is pinned to our Traefik in /etc/hosts so the management container (and
+# this fetch) resolve it internally (no public hairpin, and immune to the NetBird
+# client rewriting resolv.conf once the routing peer is up).
+
+- name: "oidc-discovery | Pin authentik to Traefik in /etc/hosts (internal resolve)"
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '\s authentik\.by-research\.be$'
+    line: "{{ netbird_traefik_ip }} authentik.by-research.be"
+    state: present
+
+- name: "oidc-discovery | Fetch Authentik OpenID configuration"
+  ansible.builtin.uri:
+    url: "{{ netbird_oidc_config_endpoint }}"
+    method: GET
+    return_content: true
+    status_code: [200]
+    validate_certs: true
+  register: netbird_oidc_disco
+  retries: 10
+  delay: 3
+  until: netbird_oidc_disco.status == 200
+
+- name: "oidc-discovery | Derive the OIDC endpoints (like configure.sh / jq)"
+  ansible.builtin.set_fact:
+    netbird_oidc_issuer: "{{ netbird_oidc_disco.json.issuer }}"
+    netbird_oidc_jwks: "{{ netbird_oidc_disco.json.jwks_uri }}"
+    netbird_oidc_token: "{{ netbird_oidc_disco.json.token_endpoint }}"
+    netbird_oidc_device: "{{ netbird_oidc_disco.json.device_authorization_endpoint }}"
+    netbird_oidc_authz: "{{ netbird_oidc_disco.json.authorization_endpoint }}"
+
+- name: "oidc-discovery | Assert every derived endpoint is present"
+  ansible.builtin.assert:
+    that:
+      - netbird_oidc_issuer | length > 0
+      - netbird_oidc_jwks | length > 0
+      - netbird_oidc_token | length > 0
+      - netbird_oidc_device | length > 0
+      - netbird_oidc_authz | length > 0
+    fail_msg: >-
+      Authentik discovery is missing an endpoint (issuer/jwks/token/device/authz).
+      Check the 'netbird' OAuth2 provider + that the device authorization flow is
+      enabled on the brand.
+    success_msg: "Authentik OIDC endpoints derived (issuer {{ netbird_oidc_issuer }})"

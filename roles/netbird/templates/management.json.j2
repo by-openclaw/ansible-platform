@@ -1,0 +1,112 @@
+{# Managed by Ansible role `netbird`. Do NOT edit by hand.
+   Faithful render of NetBird's official infrastructure_files/management.json.tmpl
+   (configure.sh envsubst), with OUR values. The five OIDC endpoints come from
+   Authentik's live .well-known/openid-configuration (tasks/oidc-discovery.yml) —
+   never hardcoded. Auth = Authentik DIRECT (no Dex). Behind our Traefik (TLS at
+   :443): Signal proto = https, Relay = rels://…:443/relay. #}
+{
+    "Stuns": [
+        {
+            "Proto": "udp",
+            "URI": "stun:{{ netbird_turn_domain }}:{{ netbird_stun_port }}",
+            "Username": "",
+            "Password": null
+        }
+    ],
+    "TURNConfig": {
+        "Turns": [
+            {
+                "Proto": "udp",
+                "URI": "turn:{{ netbird_turn_domain }}:{{ netbird_stun_port }}",
+                "Username": "{{ netbird_turn_user }}",
+                "Password": "{{ netbird_core.turn_password }}"
+            }
+        ],
+        "CredentialsTTL": "12h",
+        "Secret": "secret",
+        "TimeBasedCredentials": false
+    },
+    "Relay": {
+        "Addresses": ["rels://{{ netbird_fqdn }}:{{ netbird_public_port }}/relay"],
+        "CredentialsTTL": "24h",
+        "Secret": "{{ netbird_core.relay_auth_secret }}"
+    },
+    "Signal": {
+        "Proto": "https",
+        "URI": "{{ netbird_fqdn }}:{{ netbird_public_port }}",
+        "Username": "",
+        "Password": null
+    },
+    "ReverseProxy": {
+        "TrustedHTTPProxies": ["{{ netbird_traefik_ip }}/32"],
+        "TrustedHTTPProxiesCount": 0,
+        "TrustedPeers": [
+             "0.0.0.0/0"
+        ]
+    },
+    "DisableDefaultPolicy": {{ netbird_disable_default_policy | bool | lower }},
+    "Datadir": "",
+    "DataStoreEncryptionKey": "{{ netbird_core.datastore_enc_key }}",
+    "StoreConfig": {
+        "Engine": "{{ netbird_store_engine }}"
+    },
+    "HttpConfig": {
+        "Address": "0.0.0.0:{{ netbird_public_port }}",
+        "AuthIssuer": "{{ netbird_oidc_issuer }}",
+        "AuthAudience": "{{ netbird_oidc.client_id }}",
+        "AuthKeysLocation": "{{ netbird_oidc_jwks }}",
+        "AuthUserIDClaim": "",
+        "CertFile": "",
+        "CertKey": "",
+        "IdpSignKeyRefreshEnabled": {{ netbird_idp_signkey_refresh | bool | lower }},
+        "OIDCConfigEndpoint": "{{ netbird_oidc_config_endpoint }}"
+    },
+    "IdpManagerConfig": {
+        "ManagerType": "{{ netbird_mgmt_idp }}",
+        "ClientConfig": {
+            "Issuer": "{{ netbird_oidc_issuer }}",
+            "TokenEndpoint": "{{ netbird_oidc_token }}",
+            "ClientID": "{{ netbird_oidc.client_id }}",
+            "ClientSecret": "",
+            "GrantType": "client_credentials"
+        },
+        "ExtraConfig": {
+            "Username": "{{ netbird_sa.username }}",
+            "Password": "{{ netbird_sa.password }}"
+        },
+        "Auth0ClientCredentials": null,
+        "AzureClientCredentials": null,
+        "KeycloakClientCredentials": null,
+        "ZitadelClientCredentials": null
+     },
+    "DeviceAuthorizationFlow": {
+        "Provider": "hosted",
+        "ProviderConfig": {
+          "Audience": "{{ netbird_oidc.client_id }}",
+          "AuthorizationEndpoint": "",
+          "Domain": "",
+          "ClientID": "{{ netbird_oidc.client_id }}",
+          "ClientSecret": "",
+          "TokenEndpoint": "{{ netbird_oidc_token }}",
+          "DeviceAuthEndpoint": "{{ netbird_oidc_device }}",
+          "Scope": "{{ netbird_device_auth_scope }}",
+          "UseIDToken": false,
+          "RedirectURLs": null
+         }
+    },
+    "PKCEAuthorizationFlow": {
+        "ProviderConfig": {
+            "Audience": "{{ netbird_oidc.client_id }}",
+            "ClientID": "{{ netbird_oidc.client_id }}",
+            "ClientSecret": "",
+            "Domain": "",
+            "AuthorizationEndpoint": "{{ netbird_oidc_authz }}",
+            "TokenEndpoint": "{{ netbird_oidc_token }}",
+            "Scope": "{{ netbird_auth_supported_scopes }}",
+            "RedirectURLs": ["{{ netbird_pkce_redirect_url }}"],
+            "UseIDToken": false,
+            "DisablePromptLogin": {{ netbird_pkce_disable_prompt_login | bool | lower }},
+            "LoginFlag": 0
+        }
+    }
+}

@@ -1,0 +1,113 @@
+---
+# Ensure a DEDICATED NetBird automation service user + token (never a human's PAT).
+# Sets the `netbird_pat` fact consumed by routing-peer.yml + vpn-tiers.yml.
+#
+# NetBird has no token-bootstrap: the very first token must come from a human owner
+# (created in the dashboard after the first Authentik login, dropped into
+# netbird-setup.json). This task uses that bootstrap PAT ONCE to mint a service-user
+# token, persists it to netbird-automation.json, and from then on reuses it — the
+# bootstrap PAT can be revoked. Idempotent: skips minting when the service token exists.
+
+- name: "automation-token | Stat the service token on the controller"
+  ansible.builtin.stat:
+    path: "{{ netbird_secret_dir }}/{{ netbird_automation_token_file }}"
+  delegate_to: localhost
+  become: false
+  register: netbird_at_stat
+
+- name: "automation-token | Load the existing service token"
+  ansible.builtin.set_fact:
+    netbird_pat: "{{ (lookup('file', netbird_secret_dir + '/' + netbird_automation_token_file) | from_json).fields.personal_access_token }}"
+  no_log: true
+  when: netbird_at_stat.stat.exists
+
+# --- Bootstrap (only when no service token exists yet) --------------------------
+- name: "automation-token | Load the bootstrap PAT (human owner, one-time)"
+  ansible.builtin.set_fact:
+    netbird_boot_pat: >-
+      {{ (lookup('file', netbird_secret_dir + '/' + netbird_setup_secret_file, errors='ignore')
+          | default('{}', true) | from_json).fields.personal_access_token | default('') }}
+  no_log: true
+  when: not netbird_at_stat.stat.exists
+
+- name: "automation-token | List users (bootstrap)"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/users"
+    headers: { Authorization: "Token {{ netbird_boot_pat }}" }
+    status_code: [200]
+  register: netbird_at_users
+  no_log: true
+  when:
+    - not netbird_at_stat.stat.exists
+    - netbird_boot_pat | default('') | length > 0
+
+- name: "automation-token | Create the service user (admin) if absent"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/users"
+    method: POST
+    headers: { Authorization: "Token {{ netbird_boot_pat }}" }
+    body_format: json
+    body: { name: "{{ netbird_automation_user }}", role: "admin", is_service_user: true, auto_groups: [] }
+    status_code: [200, 201]
+  register: netbird_at_new
+  no_log: true
+  when:
+    - not netbird_at_stat.stat.exists
+    - netbird_boot_pat | default('') | length > 0
+    - (netbird_at_users.json | selectattr('name', 'equalto', netbird_automation_user) | list | length) == 0
+
+- name: "automation-token | Resolve the service user id"
+  ansible.builtin.set_fact:
+    netbird_at_uid: >-
+      {{ (netbird_at_users.json | selectattr('name', 'equalto', netbird_automation_user) | map(attribute='id') | first)
+         if (netbird_at_users.json | selectattr('name', 'equalto', netbird_automation_user) | list | length)
+         else netbird_at_new.json.id }}
+  when:
+    - not netbird_at_stat.stat.exists
+    - netbird_boot_pat | default('') | length > 0
+
+- name: "automation-token | Mint the service-user token"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/users/{{ netbird_at_uid }}/tokens"
+    method: POST
+    headers: { Authorization: "Token {{ netbird_boot_pat }}" }
+    body_format: json
+    body: { name: "ansible-automation", expires_in: "{{ netbird_pat_expire_days | int }}" }
+    status_code: [200, 201]
+  register: netbird_at_tok
+  no_log: true
+  when:
+    - not netbird_at_stat.stat.exists
+    - netbird_boot_pat | default('') | length > 0
+
+- name: "automation-token | Persist the service token (0600)"
+  ansible.builtin.copy:
+    dest: "{{ netbird_secret_dir }}/{{ netbird_automation_token_file }}"
+    mode: "0600"
+    content: >-
+      {{ {'fields': {'service_user': netbird_automation_user,
+                     'user_id': netbird_at_uid,
+                     'personal_access_token': netbird_at_tok.json.plain_token}}
+         | to_nice_json }}
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when:
+    - not netbird_at_stat.stat.exists
+    - netbird_at_tok is defined and netbird_at_tok.json is defined
+
+- name: "automation-token | Use the freshly-minted service token"
+  ansible.builtin.set_fact:
+    netbird_pat: "{{ netbird_at_tok.json.plain_token }}"
+  no_log: true
+  when:
+    - not netbird_at_stat.stat.exists
+    - netbird_at_tok is defined and netbird_at_tok.json is defined
+
+- name: "automation-token | Summary"
+  ansible.builtin.debug:
+    msg: >-
+      automation token: {{ 'service user ' + netbird_automation_user + ' (reused)'
+        if netbird_at_stat.stat.exists
+        else ('minted for ' + netbird_automation_user if (netbird_pat is defined)
+        else 'UNAVAILABLE — drop a bootstrap PAT in ' + netbird_setup_secret_file) }}

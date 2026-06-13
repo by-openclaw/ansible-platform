@@ -1,0 +1,18 @@
+{# Managed by Ansible role `netbird`. Do NOT edit by hand.
+   Active directives from NetBird's official infrastructure_files/turnserver.conf.tmpl.
+   coturn handles plain STUN/TURN over UDP/TCP directly (NOT via Traefik), so the
+   TLS listener + cert/pkey lines are omitted (no cert is mounted). #}
+listening-port={{ netbird_stun_port }}
+{% if netbird_turn_external_ip | length > 0 %}
+external-ip={{ netbird_turn_external_ip }}
+{% endif %}
+min-port={{ netbird_turn_min_port }}
+max-port={{ netbird_turn_max_port }}
+fingerprint
+lt-cred-mech
+user={{ netbird_turn_user }}:{{ netbird_core.turn_password }}
+realm={{ netbird_mgmt_dns_domain }}
+log-file=stdout
+no-software-attribute
+pidfile="/var/tmp/turnserver.pid"
+no-cli

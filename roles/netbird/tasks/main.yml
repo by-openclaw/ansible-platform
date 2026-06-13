@@ -1,0 +1,61 @@
+---
+# ==============================================================================
+# Role: netbird — dispatcher (multi-container / Authentik-direct, Ansible-only).
+#   secrets -> oidc-discovery (live Authentik endpoints) -> containers (5-svc
+#   stack) -> Traefik route. Then PHASE 2 (gated on a NetBird PAT existing):
+#   routing peer + VPN tiers. The PAT is created by the owner AFTER the first
+#   Authentik login (no local owner in this model), then dropped into
+#   netbird-setup.json to unlock phase 2.
+# ==============================================================================
+- name: Resolve NetBird secrets (core + Authentik OIDC client + service account)
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [netbird, secrets]
+
+- name: Derive Authentik OIDC endpoints from live discovery
+  ansible.builtin.import_tasks: oidc-discovery.yml
+  tags: [netbird, oidc]
+
+- name: Run the NetBird multi-container stack
+  ansible.builtin.import_tasks: containers.yml
+  tags: [netbird, container]
+
+- name: Publish NetBird via Traefik (file provider, split backends, h2c gRPC)
+  ansible.builtin.import_tasks: route.yml
+  tags: [netbird, route]
+
+# --- Phase 2: routing peer + tiers (driven by a DEDICATED service token) ---------
+- name: Ensure the automation service user + token (sets netbird_pat)
+  ansible.builtin.import_tasks: automation-token.yml
+  tags: [netbird, routing, tiers]
+
+- name: Enroll this host as a routing peer (advertise internal LAN + AdGuard DNS)
+  ansible.builtin.import_tasks: routing-peer.yml
+  when:
+    - netbird_routing_peer_enabled | default(true) | bool
+    - netbird_pat is defined
+  tags: [netbird, routing]
+
+- name: Configure VPN access tiers (web baseline on All, full on vpn-full)
+  ansible.builtin.import_tasks: vpn-tiers.yml
+  when:
+    - netbird_vpn_tiers_enabled | default(true) | bool
+    - netbird_pat is defined
+  tags: [netbird, tiers]
+
+- name: Apply account session policy (NIS2 — peer login expiration)
+  ansible.builtin.import_tasks: account-settings.yml
+  when:
+    - netbird_account_settings_enabled | default(true) | bool
+    - netbird_pat is defined
+  tags: [netbird, tiers, session]
+
+- name: Note when phase 2 is skipped (no automation token yet)
+  ansible.builtin.debug:
+    msg: >-
+      NetBird stack deployed. PHASE 2 (routing peer + VPN tiers) skipped — no
+      automation token. Log in once at https://{{ netbird_fqdn }} (first login =
+      owner), create a Personal Access Token in the dashboard, write it to
+      {{ netbird_setup_secret_file }} (fields.personal_access_token), then re-run —
+      the role mints a dedicated service-user token and you can revoke the human PAT.
+  when: netbird_pat is not defined
+  tags: [netbird, routing, tiers]

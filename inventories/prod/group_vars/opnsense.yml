@@ -231,7 +231,8 @@ opn_aliases:
 - {name: port_netbox, type: port, content: ['8080'], description: 'NetBox web (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_vaultwarden, type: port, content: ['80'], description: 'Vaultwarden web (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_nextcloud, type: port, content: ['80'], description: 'Nextcloud web (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: port_defguard, type: port, content: ['8000'], description: 'Defguard core web/enrollment (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: port_netbird, type: port, content: ['80', '8081', '10000', '33073', '33080'], description: 'NetBird multi-container Traefik backends: dashboard:80, signal-ws:8081, signal-grpc:10000, management:33073, relay:33080', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: port_stun, type: port, content: ['3478'], description: 'NetBird STUN (coturn, UDP)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - name: port_dns
   type: port
   content: '53'
@@ -643,8 +644,8 @@ opn_aliases:
 - {name: host6_vaultwarden, type: host, content: ['fd01:3::160'], description: 'Vaultwarden (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host4_nextcloud, type: host, content: ['10.1.3.170'], description: 'Nextcloud (SVC) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host6_nextcloud, type: host, content: ['fd01:3::170'], description: 'Nextcloud (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: host4_defguard, type: host, content: ['10.1.3.180'], description: 'Defguard VPN (SVC) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: host6_defguard, type: host, content: ['fd01:3::180'], description: 'Defguard VPN (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: host4_netbird, type: host, content: ['10.1.3.181'], description: 'NetBird VPN server (SVC) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: host6_netbird, type: host, content: ['fd01:3::181'], description: 'NetBird VPN server (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 # Neutral firewall public WAN IP aliases (the Telenet /29 endpoint) — service-agnostic,
 # shared by any WAN ingress port-forward (Defguard WG, etc.). NOT named after Traefik.
 - {name: host4_wan_pub, type: host, content: ['213.214.47.222'], description: 'Firewall public WAN IPv4 (Telenet /29) - shared ingress', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
@@ -934,21 +935,7 @@ opn_filter_rules:
     adr: infra/0004#§1-row-dmz-reverse-proxy
     lib_manager: FwFilterRuleManager
     ansible_module: by_systems.opnsense.opnsense_fw_filter
-- description: PASS DMZ Traefik→SVC Defguard (reverse proxy)
-  action: pass
-  interface: dmz
-  direction: in
-  ipprotocol: inet
-  protocol: tcp
-  source_net: host4_traefik
-  destination_net: host4_defguard
-  destination_port: port_defguard
-  sequence: 1062
-  state: present
-  ref:
-    adr: infra/0004#§1-row-dmz-reverse-proxy
-    lib_manager: FwFilterRuleManager
-    ansible_module: by_systems.opnsense.opnsense_fw_filter
+- {description: 'PASS DMZ Traefik→SVC NetBird (reverse proxy)', action: pass, interface: dmz, direction: in, ipprotocol: inet, protocol: tcp, source_net: host4_traefik, destination_net: host4_netbird, destination_port: port_netbird, sequence: 1064, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 # IPv6 reverse-proxy pairs (Traefik DMZ → SVC backends) — dual-stack for ALL svc.
 # Odd sequences interleave with the v4 even sequences, all before BLOCK (1100).
 - {description: 'PASS DMZ Traefik→SVC pgAdmin (reverse proxy v6)',     action: pass, interface: dmz, direction: in, ipprotocol: inet6, protocol: tcp, source_net: host6_traefik, destination_net: host6_pgadmin,     destination_port: port_pgadmin,     sequence: 1051, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
@@ -957,7 +944,7 @@ opn_filter_rules:
 - {description: 'PASS DMZ Traefik→SVC NetBox (reverse proxy v6)',      action: pass, interface: dmz, direction: in, ipprotocol: inet6, protocol: tcp, source_net: host6_traefik, destination_net: host6_netbox,      destination_port: port_netbox,      sequence: 1057, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - {description: 'PASS DMZ Traefik→SVC Vaultwarden (reverse proxy v6)', action: pass, interface: dmz, direction: in, ipprotocol: inet6, protocol: tcp, source_net: host6_traefik, destination_net: host6_vaultwarden, destination_port: port_vaultwarden, sequence: 1059, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - {description: 'PASS DMZ Traefik→SVC Nextcloud (reverse proxy v6)',   action: pass, interface: dmz, direction: in, ipprotocol: inet6, protocol: tcp, source_net: host6_traefik, destination_net: host6_nextcloud,   destination_port: port_nextcloud,   sequence: 1061, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
-- {description: 'PASS DMZ Traefik→SVC Defguard (reverse proxy v6)',    action: pass, interface: dmz, direction: in, ipprotocol: inet6, protocol: tcp, source_net: host6_traefik, destination_net: host6_defguard,    destination_port: port_defguard,    sequence: 1063, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+- {description: 'PASS DMZ Traefik→SVC NetBird (reverse proxy v6)',     action: pass, interface: dmz, direction: in, ipprotocol: inet6, protocol: tcp, source_net: host6_traefik, destination_net: host6_netbird,     destination_port: port_netbird,     sequence: 1065, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - description: BLOCK DMZ→internal default
   action: block
   interface: dmz
@@ -2115,8 +2102,13 @@ opn_filter_rules:
   ref: {adr: 'security/0001#ntp-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
 - {description: 'PASS Telenet WAN → Traefik web (v4)', action: pass, interface: opt13, direction: in, ipprotocol: inet,  protocol: TCP, source_net: any, destination_net: host4_traefik, destination_port: port_web, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - {description: 'PASS Telenet WAN → Traefik web (v6)', action: pass, interface: opt13, direction: in, ipprotocol: inet6, protocol: TCP, source_net: any, destination_net: host6_traefik, destination_port: port_web, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
-- {description: 'PASS Telenet WAN → Defguard WireGuard (v4)', action: pass, interface: opt13, direction: in, ipprotocol: inet,  protocol: UDP, source_net: any, destination_net: host4_defguard, destination_port: port_wg, quick: '1', enabled: '1', state: present, ref: {adr: 'infra/0004#§8-wireguard-endpoint', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
-- {description: 'PASS Telenet WAN → Defguard WireGuard (v6)', action: pass, interface: opt13, direction: in, ipprotocol: inet6, protocol: UDP, source_net: any, destination_net: host6_defguard, destination_port: port_wg, quick: '1', enabled: '1', state: present, ref: {adr: 'infra/0004#§8-wireguard-endpoint', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+# NetBird ingress — STUN (3478/udp) on BOTH WANs; Traefik web (443) added on Proximus
+# so NetBird's control plane is reachable via either ISP (dual-WAN). Telenet already
+# passes web via the Traefik rules above.
+- {description: 'PASS Telenet WAN → NetBird STUN (v4)',  action: pass, interface: opt13, direction: in, ipprotocol: inet,  protocol: UDP, source_net: any, destination_net: host4_netbird, destination_port: port_stun, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+- {description: 'PASS Telenet WAN → NetBird STUN (v6)',  action: pass, interface: opt13, direction: in, ipprotocol: inet6, protocol: UDP, source_net: any, destination_net: host6_netbird, destination_port: port_stun, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+- {description: 'PASS Proximus WAN → Traefik web (v4)',  action: pass, interface: opt12,   direction: in, ipprotocol: inet,  protocol: TCP, source_net: any, destination_net: host4_traefik, destination_port: port_web,  quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+- {description: 'PASS Proximus WAN → NetBird STUN (v4)', action: pass, interface: opt12,   direction: in, ipprotocol: inet,  protocol: UDP, source_net: any, destination_net: host4_netbird, destination_port: port_stun, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 opn_snat_rules: []
 opn_dnat_rules:
 # Public ingress: Telenet WAN (opt13) :80/:443 → Traefik (dual-stack port-forward).
@@ -2124,11 +2116,15 @@ opn_dnat_rules:
 - {descr: 'DNAT Telenet→Traefik HTTPS (v4)', interface: opt13, protocol: TCP, ipprotocol: inet,  destination: {network: host4_wan_pub, port: port_https}, target: host4_traefik, local-port: port_https, state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
 - {descr: 'DNAT Telenet→Traefik HTTP (v6)',  interface: opt13, protocol: TCP, ipprotocol: inet6, destination: {network: host6_wan_pub, port: port_http},  target: host6_traefik, local-port: port_http,  state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
 - {descr: 'DNAT Telenet→Traefik HTTPS (v6)', interface: opt13, protocol: TCP, ipprotocol: inet6, destination: {network: host6_wan_pub, port: port_https}, target: host6_traefik, local-port: port_https, state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
-# WireGuard ingress: Telenet WAN (opt13) udp/51820 → Defguard (SVC). Pure port-forward.
-# Every field is an alias (no raw IP/port anywhere): public IP = host{4,6}_wan_pub,
-# port = port_wg, redirect target = host{4,6}_defguard. Dual-stack.
-- {descr: 'DNAT Telenet→Defguard WireGuard (v4)', interface: opt13, protocol: UDP, ipprotocol: inet,  destination: {network: host4_wan_pub, port: port_wg}, target: host4_defguard, local-port: port_wg, state: present, ref: {adr: 'infra/0004#§8-wireguard-endpoint', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
-- {descr: 'DNAT Telenet→Defguard WireGuard (v6)', interface: opt13, protocol: UDP, ipprotocol: inet6, destination: {network: host6_wan_pub, port: port_wg}, target: host6_defguard, local-port: port_wg, state: present, ref: {adr: 'infra/0004#§8-wireguard-endpoint', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
+# NetBird STUN ingress (3478/udp) → netbird-server. Telenet uses the static /29 IP
+# aliases; Proximus (WAN1, DYNAMIC IP) uses `opt12ip` = the live interface address.
+- {descr: 'DNAT Telenet→NetBird STUN (v4)',  interface: opt13, protocol: UDP, ipprotocol: inet,  destination: {network: host4_wan_pub, port: port_stun}, target: host4_netbird, local-port: port_stun, state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
+- {descr: 'DNAT Telenet→NetBird STUN (v6)',  interface: opt13, protocol: UDP, ipprotocol: inet6, destination: {network: host6_wan_pub, port: port_stun}, target: host6_netbird, local-port: port_stun, state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
+# Proximus (WAN1) dual-WAN ingress — dynamic interface address (opt12ip). IPv4 only
+# until Proximus IPv6 (GUA) is confirmed; no v6 invented.
+- {descr: 'DNAT Proximus→Traefik HTTP (v4)',  interface: opt12, protocol: TCP, ipprotocol: inet, destination: {network: opt12ip, port: port_http},  target: host4_traefik, local-port: port_http,  state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
+- {descr: 'DNAT Proximus→Traefik HTTPS (v4)', interface: opt12, protocol: TCP, ipprotocol: inet, destination: {network: opt12ip, port: port_https}, target: host4_traefik, local-port: port_https, state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
+- {descr: 'DNAT Proximus→NetBird STUN (v4)',  interface: opt12, protocol: UDP, ipprotocol: inet, destination: {network: opt12ip, port: port_stun}, target: host4_netbird, local-port: port_stun, state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
 opn_unbound:
   enabled: true
   domain: by-research.be
@@ -2175,11 +2171,11 @@ opn_unbound:
   # Service name → Traefik (internal split-horizon; Nextcloud is published via Traefik).
   - {hostname: nextcloud, domain: by-research.be, rr: A,    server: 10.1.2.110}
   - {hostname: nextcloud, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
-  - {hostname: vm-defguard-01, domain: by-research.be, rr: A, server: 10.1.3.180}
-  - {hostname: vm-defguard-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::180'}
-  # Service name → Traefik (internal split-horizon; Defguard web/enrollment via Traefik).
-  - {hostname: defguard, domain: by-research.be, rr: A, server: 10.1.2.110}
-  - {hostname: defguard, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: lxc-netbird-01, domain: by-research.be, rr: A,    server: 10.1.3.181}
+  - {hostname: lxc-netbird-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::181'}
+  # Service name → Traefik (internal split-horizon; NetBird dashboard/API via Traefik).
+  - {hostname: netbird, domain: by-research.be, rr: A,    server: 10.1.2.110}
+  - {hostname: netbird, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
   # (20 stale probe-fleet overrides pruned 2026-06-06 — never-built hosts.)
   # Query Forwarding — chain step: Unbound → dnscrypt-proxy on loopback.
   # Empty domain = catch-all → Unbound creates a `forward-zone "."` from these entries.

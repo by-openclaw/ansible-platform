@@ -45,6 +45,8 @@ authentik_blueprints_dir: "/opt/authentik/blueprints"
 # service here to wire its SSO — same pattern for every svc.
 authentik_oidc_apps:
   - slug: vault
+    launch_url: "https://vault.by-research.be"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/hashicorp-vault.svg"
     name: "Vault"
     group: "vault-admins"
     secret_file: "app-oidc-vault.json"
@@ -52,12 +54,16 @@ authentik_oidc_apps:
       - "https://vault.by-research.be/ui/vault/auth/oidc/oidc/callback"
       - "http://localhost:8250/oidc/callback"
   - slug: pgadmin
+    launch_url: "https://pgadmin.by-research.be"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/pgadmin.svg"
     name: "pgAdmin"
     group: "pgadmin-admins"
     secret_file: "app-oidc-pgadmin.json"
     redirect_uris:
       - "https://pgadmin.by-research.be/oauth2/authorize"
   - slug: netbox
+    launch_url: "https://netbox.by-research.be"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/netbox.svg"
     name: "NetBox"
     group: "netbox-admins"
     secret_file: "app-oidc-netbox.json"
@@ -65,6 +71,8 @@ authentik_oidc_apps:
     redirect_uris:
       - "https://netbox.by-research.be/oauth/complete/oidc/"
   - slug: vaultwarden
+    launch_url: "https://vaultwarden.by-research.be"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/vaultwarden.svg"
     name: "Vaultwarden"
     group: "vaultwarden-admins"
     secret_file: "app-oidc-vaultwarden.json"
@@ -74,6 +82,8 @@ authentik_oidc_apps:
     redirect_uris:
       - "https://vaultwarden.by-research.be/identity/connect/oidc-signin"
   - slug: nextcloud
+    launch_url: "https://nextcloud.by-research.be"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/nextcloud.svg"
     name: "Nextcloud"
     group: "nextcloud-users"    # ACCESS group — any member may log into Nextcloud
     admin_source_group: "nextcloud-admins"  # members of THIS group also get NC admin
@@ -84,16 +94,28 @@ authentik_oidc_apps:
       - "https://nextcloud.by-research.be/apps/user_oidc/code"
     logout_uris:                                # post_logout_redirect_uri (type=logout)
       - "https://nextcloud.by-research.be/"
-  - slug: defguard
-    name: "Defguard"
-    group: "defguard-admins"
-    secret_file: "defguard-oidc.json"
-    # defguard external OIDC login (open-source/core). The provider is registered
-    # in defguard's admin (Settings > OpenID Connect) using these client creds.
-    # Dashboard callback per defguard docs. (No restrict_to_group: defguard maps
-    # its own roles; keep the group available for later.)
+  - slug: netbird
+    launch_url: "https://vpn.by-research.be"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/netbird.svg"
+    name: "NetBird"
+    group: "netbird-users"        # ACCESS group — only members may authenticate
+    secret_file: "app-oidc-netbird.json"
+    restrict_to_group: true       # IdP-enforced: only netbird-users can log in
+    # Multi-container NetBird logs in against Authentik DIRECTLY (no Dex), per the
+    # goauthentik.io NetBird guide. The dashboard is a PUBLIC SPA doing PKCE; the
+    # CLI/mobile use the device-code grant; the IdP manager uses client_credentials.
+    client_type: public
+    extra_grant_types:
+      - client_credentials
+      - "urn:ietf:params:oauth:grant-type:device_code"
+    offline_access: true          # refresh tokens (NetBird requests offline_access)
+    entitlements: true            # per the guide's Selected Scopes
+    api_access: true              # goauthentik.io/api — IdP-manager directory reads
+    # PKCE loopback (CLI/mobile) + the dashboard's /auth and /silent-auth callbacks.
     redirect_uris:
-      - "https://defguard.by-research.be/auth/callback"
+      - "http://localhost:53000"
+    redirect_uris_regex:
+      - "https://vpn\\.by-research\\.be/.*"
 
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
@@ -120,7 +142,8 @@ authentik_groups:
   - nextcloud-users     # access group — any member can use Nextcloud (OneDrive-like)
   - nextcloud-admins    # subset of users that additionally get NC admin rights
   - traefik-admins      # forwardAuth gate for the Traefik dashboard (admin-only svc)
-  - defguard-admins
+  - netbird-users       # access group — only members may authenticate to NetBird VPN
+  - netbird-admins      # NetBird admins (NetBird's own owner/admin role set in-app)
   - infra-admins
   - dev
 # Groups whose members are Authentik superusers (can manage Authentik itself).
