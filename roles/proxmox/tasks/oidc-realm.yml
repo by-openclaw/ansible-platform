@@ -1,0 +1,77 @@
+---
+# Create/converge the Proxmox VE OpenID Connect realm pointing at Authentik.
+# Idempotent: GET the realms, POST to create when absent, else PUT to converge.
+# Mirrors `pveum realm add authentik --type openid ...` but over the API (no shell).
+- name: "proxmox-oidc | Load PVE admin token + the OIDC client creds (controller)"
+  ansible.builtin.set_fact:
+    _pve: "{{ (lookup('file', proxmox_secret_dir + '/' + proxmox_admin_token_file) | from_json).fields }}"
+    _oidc: "{{ (lookup('file', proxmox_secret_dir + '/' + proxmox_oidc_app_secret_file) | from_json).fields }}"
+  no_log: true
+
+- name: "proxmox-oidc | Get existing realms"
+  ansible.builtin.uri:
+    url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/access/domains"
+    method: GET
+    headers:
+      Authorization: "PVEAPIToken={{ _pve.admin_token_id }}={{ _pve.admin_token_secret }}"
+    validate_certs: false
+    status_code: [200]
+  register: pve_realms
+  changed_when: false        # read-only
+  no_log: true
+
+- name: "proxmox-oidc | Decide create vs update"
+  ansible.builtin.set_fact:
+    _realm_exists: "{{ proxmox_oidc_realm in (pve_realms.json.data | map(attribute='realm') | list) }}"
+
+- name: "proxmox-oidc | Create the Authentik OIDC realm (absent)"
+  ansible.builtin.uri:
+    url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/access/domains"
+    method: POST
+    headers:
+      Authorization: "PVEAPIToken={{ _pve.admin_token_id }}={{ _pve.admin_token_secret }}"
+    body_format: form-urlencoded
+    body:
+      realm: "{{ proxmox_oidc_realm }}"
+      type: "openid"
+      issuer-url: "{{ proxmox_oidc_issuer_url }}"
+      client-id: "{{ _oidc.client_id }}"
+      client-key: "{{ _oidc.client_secret }}"
+      username-claim: "{{ proxmox_oidc_username_claim }}"
+      scopes: "{{ proxmox_oidc_scopes }}"
+      autocreate: "{{ proxmox_oidc_autocreate }}"
+      default: "{{ proxmox_oidc_default }}"
+      comment: "{{ proxmox_oidc_comment }}"
+    validate_certs: false
+    status_code: [200]
+  when: not _realm_exists
+  no_log: true
+
+- name: "proxmox-oidc | Update the Authentik OIDC realm (present → converge)"
+  ansible.builtin.uri:
+    url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/access/domains/{{ proxmox_oidc_realm }}"
+    method: PUT
+    headers:
+      Authorization: "PVEAPIToken={{ _pve.admin_token_id }}={{ _pve.admin_token_secret }}"
+    body_format: form-urlencoded
+    body:
+      issuer-url: "{{ proxmox_oidc_issuer_url }}"
+      client-id: "{{ _oidc.client_id }}"
+      client-key: "{{ _oidc.client_secret }}"
+      username-claim: "{{ proxmox_oidc_username_claim }}"
+      scopes: "{{ proxmox_oidc_scopes }}"
+      autocreate: "{{ proxmox_oidc_autocreate }}"
+      comment: "{{ proxmox_oidc_comment }}"
+    validate_certs: false
+    status_code: [200]
+  when: _realm_exists
+  no_log: true
+
+- name: "proxmox-oidc | Summary"
+  ansible.builtin.debug:
+    msg: >-
+      Proxmox OIDC realm '{{ proxmox_oidc_realm }}'
+      {{ 'updated' if _realm_exists else 'created' }} —
+      issuer={{ proxmox_oidc_issuer_url }}, username-claim={{ proxmox_oidc_username_claim }},
+      autocreate={{ proxmox_oidc_autocreate }}. Log in at
+      https://{{ proxmox_api_host }}:{{ proxmox_api_port }} → realm '{{ proxmox_oidc_realm }}'.

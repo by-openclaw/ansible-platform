@@ -1,0 +1,28 @@
+---
+# ==============================================================================
+# Role: proxmox — configure Proxmox VE via the PVE API (Ansible-only).
+#
+# Node SSH is closed on the PVE hosts, so everything here goes through the PVE
+# REST API using a high-priv admin API token (uri module — no pveum shell, no
+# helper script). First concern: the Authentik OIDC realm (SSO web login).
+# ==============================================================================
+proxmox_api_host: "10.6.224.105"          # srv-proxmox-poc-01 (OOB/mgmt) — the live platform node
+proxmox_api_port: 8006
+proxmox_secret_dir: "~/.openclaw/workspace/infra/secrets"
+# fields.admin_token_id / fields.admin_token_secret (PVEAPIToken= user@realm!tokenid = secret)
+proxmox_admin_token_file: "infra-proxmox-poc.json"
+
+# --- Authentik OIDC realm -------------------------------------------------------
+# client_id/secret come from the SAME app-oidc-proxmox.json the authentik blueprint
+# uses, so both sides stay in sync (run the authentik role first — it generates the
+# file + creates the provider).
+proxmox_oidc_enabled: true
+proxmox_oidc_realm: "authentik"
+proxmox_oidc_app_secret_file: "app-oidc-proxmox.json"
+proxmox_oidc_issuer_url: "https://authentik.by-research.be/application/o/proxmox/"
+# Provider sub_mode is user_email → the user's identity claim is the email.
+proxmox_oidc_username_claim: "email"
+proxmox_oidc_scopes: "openid profile email"
+proxmox_oidc_autocreate: 1                # auto-create the PVE user on first login
+proxmox_oidc_default: 0                    # not the default realm (PAM stays default)
+proxmox_oidc_comment: "Authentik SSO (managed by ansible — #145)"
