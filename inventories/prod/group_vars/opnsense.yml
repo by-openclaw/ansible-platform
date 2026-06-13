@@ -90,29 +90,6 @@ opn_aliases:
     adr: infra/0004#§4-row-1040
     lib_manager: FwAliasManager
     ansible_module: by_systems.opnsense.opnsense_fw_alias
-# Defguard WireGuard client pool = the dedicated VPN zone net4_vpn (10.1.4.0/24).
-# Per-role WG client groups (access is GROUP-based, never per-person — no-drift
-# rule). Kept minimal/empty-ready: populate with the WG-assigned client IPs that
-# Defguard hands out per role, then the group→VLAN PASS rules below take effect.
-# Defguard issues each enrolled device a fixed IP from this pool by role.
-- name: wg_admins
-  type: network
-  content: []      # e.g. ['10.1.4.10/32', '10.1.4.11/32'] — admin WG client IPs
-  description: WG client group — admins (full internal access)
-  state: present
-  ref:
-    adr: infra/0004#§8-wireguard-endpoint
-    lib_manager: FwAliasManager
-    ansible_module: by_systems.opnsense.opnsense_fw_alias
-- name: wg_devs
-  type: network
-  content: []      # e.g. ['10.1.4.50/32'] — developer WG client IPs
-  description: WG client group — developers (scoped internal access)
-  state: present
-  ref:
-    adr: infra/0004#§8-wireguard-endpoint
-    lib_manager: FwAliasManager
-    ansible_module: by_systems.opnsense.opnsense_fw_alias
 - name: net4_iot
   type: network
   content: 10.1.10.0/24
@@ -626,7 +603,7 @@ opn_aliases:
 - {name: host4_traefik, type: host, content: ['10.1.2.110'], description: 'Traefik ingress (DMZ) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host6_traefik, type: host, content: ['fd01:2::110'], description: 'Traefik ingress (DMZ) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 # Admin break-glass desktop on the OOB plane — allowed to reach Traefik (web UIs)
-# until the Defguard VPN replaces this path. See reference_offnet_desktop_access_model.
+# until the NetBird VPN fully replaces this path. See reference_offnet_desktop_access_model.
 - {name: host4_bydesk03, type: host, content: ['10.6.239.113'], description: 'BY-DESK-03 admin desktop (OOB) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host4_pgsql, type: host, content: ['10.1.3.110'], description: 'PostgreSQL (SVC) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host6_pgsql, type: host, content: ['fd01:3::110'], description: 'PostgreSQL (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
@@ -647,7 +624,7 @@ opn_aliases:
 - {name: host4_netbird, type: host, content: ['10.1.3.181'], description: 'NetBird VPN server (SVC) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host6_netbird, type: host, content: ['fd01:3::181'], description: 'NetBird VPN server (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 # Neutral firewall public WAN IP aliases (the Telenet /29 endpoint) — service-agnostic,
-# shared by any WAN ingress port-forward (Defguard WG, etc.). NOT named after Traefik.
+# shared by any WAN ingress port-forward (NetBird, etc.). NOT named after Traefik.
 - {name: host4_wan_pub, type: host, content: ['213.214.47.222'], description: 'Firewall public WAN IPv4 (Telenet /29) - shared ingress', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host6_wan_pub, type: host, content: ['2a02:1802:21::5'], description: 'Firewall public WAN IPv6 GUA (Telenet) - shared ingress', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - name: port_dot
@@ -692,7 +669,7 @@ opn_aliases:
   ref: {adr: 'naming/0003#§1-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}
 opn_filter_rules:
 # Admin break-glass: BY-DESK-03 (OOB) → Traefik web UIs (Vault/Authentik/etc.).
-# Interim until the Defguard VPN is the access path. See offnet-desktop access model.
+# Interim until the NetBird VPN is the access path. See offnet-desktop access model.
 - description: PASS OOB BY-DESK-03 -> Traefik (web UIs incl Vault)
   action: pass
   interface: lan
@@ -1021,39 +998,6 @@ opn_filter_rules:
   state: present
   ref:
     adr: infra/0004#§1-row-svc-internet
-    lib_manager: FwFilterRuleManager
-    ansible_module: by_systems.opnsense.opnsense_fw_filter
-# --- Defguard WireGuard per-role group access (group-based, no per-person drift) ---
-# These grant each WG client group its VLANs. They are intentionally MINIMAL and
-# only take effect once the wg_admins / wg_devs aliases are populated with the
-# Defguard-assigned client IPs (empty alias = matches nothing = no access). The
-# broader net4_vpn rules below remain the zone baseline. Expand per role as the
-# Defguard ACL/group policy is populated (separate follow-up).
-- description: PASS WG admins→MGMT SSH (group-based)
-  action: pass
-  interface: vpn
-  direction: in
-  ipprotocol: inet
-  protocol: tcp
-  source_net: wg_admins
-  destination_net: net4_mgmt
-  destination_port: port_ssh
-  state: present
-  ref:
-    adr: infra/0004#§8-vpn-mgmt-ssh
-    lib_manager: FwFilterRuleManager
-    ansible_module: by_systems.opnsense.opnsense_fw_filter
-- description: PASS WG devs→SVC default (group-based)
-  action: pass
-  interface: vpn
-  direction: in
-  ipprotocol: inet
-  protocol: any
-  source_net: wg_devs
-  destination_net: net4_svc
-  state: present
-  ref:
-    adr: infra/0004#§8-vpn-svc-default
     lib_manager: FwFilterRuleManager
     ansible_module: by_systems.opnsense.opnsense_fw_filter
 - description: PASS VPN→MGMT SSH
