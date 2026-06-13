@@ -42,8 +42,17 @@ proxmox_oidc_comment: "Authentik SSO"
 # --- RBAC: map the Authentik admin group → a PVE group with an admin role ---------
 # OIDC users land with no permissions until their synced PVE group is ACL'd. Mirrors
 # by-rune (svc-rune@pve = Administrator on /), but group-based + reproducible.
+#
+# IMPORTANT PVE quirk (pve-access-control OpenId.pm): on login PVE renames every
+# claimed group to "<group>-<realm>" and only adds the user to a PVE group of THAT
+# name that already exists (groups-autocreate stays off so we don't pollute PVE with
+# every Authentik group). So the Authentik group "proxmox-admins" is synced into the
+# PVE group "proxmox-admins-authentik" — that suffixed name is what we must create +
+# ACL. Getting this wrong = overwrite removes the user from all groups and adds none.
 proxmox_rbac_enabled: true
-proxmox_admin_group: "proxmox-admins"      # must match the Authentik group name exactly
+proxmox_admin_group: "proxmox-admins"      # the Authentik group name (= the claim value)
+# The PVE group PVE actually syncs into: <claim group>-<realm>. This is what we ACL.
+proxmox_admin_pve_group: "{{ proxmox_admin_group }}-{{ proxmox_oidc_realm }}"
 proxmox_admin_role: "Administrator"        # same role by-rune has; PVEAdmin = slightly safer
 proxmox_admin_acl_path: "/"
 proxmox_admin_acl_propagate: 1
