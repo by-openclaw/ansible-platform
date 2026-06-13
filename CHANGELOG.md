@@ -6,6 +6,72 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [0.5.0](https://github.com/by-openclaw/ansible-platform/compare/v0.4.0...v0.5.0) (2026-06-13)
+
+
+### Features
+
+* **authentik:** admin-account separation (EntraID-style privileged account) ([6087814](https://github.com/by-openclaw/ansible-platform/commit/6087814458efe688313afa686d9ae37dc55b67e6))
+* **authentik:** support public/M2M OIDC clients; netbird = Authentik-direct provider ([a2acd4d](https://github.com/by-openclaw/ansible-platform/commit/a2acd4d3bea66ad6c7b5e656ed3185eb43c6ad94))
+* **dns:** public exposure model — Telenet static apex + Proximus dyn anchor + service CNAMEs ([17156f2](https://github.com/by-openclaw/ansible-platform/commit/17156f22fb706a68fc93f5b5896ed7d1dc033114)), closes [#136](https://github.com/by-openclaw/ansible-platform/issues/136)
+* **ipv6:** complete dual-stack across cluster (redis v6 publish + daemon-v6 rollout) ([48dab1c](https://github.com/by-openclaw/ansible-platform/commit/48dab1c74a722451cb28807c261c1e691ae5bdd3))
+* **ipv6:** dual-stack the defguard docker network ([7473c65](https://github.com/by-openclaw/ansible-platform/commit/7473c65c72ed3dd5385f13931676076a13087ef1)), closes [#118](https://github.com/by-openclaw/ansible-platform/issues/118)
+* **ipv6:** dual-stack the Defguard docker network ([c6cfe6b](https://github.com/by-openclaw/ansible-platform/commit/c6cfe6b12435dd80a0f33b53a006b25b0db1d490))
+* **ipv6:** publish redis on v6 (dual-stack data svc) ([aa68d61](https://github.com/by-openclaw/ansible-platform/commit/aa68d6191f5dfb56433c392071d8cf3d388e591f)), closes [#125](https://github.com/by-openclaw/ansible-platform/issues/125)
+* **netbird,authentik:** rename public name netbird.* -&gt; vpn.by-research.be ([3b6f709](https://github.com/by-openclaw/ansible-platform/commit/3b6f709515bd1f5d76963b7a0bc3ee001ffc7684))
+* **netbird,fw:** dual-WAN NetBird ingress + DMZ pass + split-horizon DNS (catalog) ([f142a25](https://github.com/by-openclaw/ansible-platform/commit/f142a256c9a9b0bb1f1d54cb0bbf12635679962d)), closes [#135](https://github.com/by-openclaw/ansible-platform/issues/135)
+* **netbird:** codify VPN routing peer (route 10.1.0.0/16 + AdGuard DNS) into the role ([394cfdf](https://github.com/by-openclaw/ansible-platform/commit/394cfdf77460e291ed1b88ae9229402d2df28de4))
+* **netbird:** drive API automation with a dedicated service user, not a human PAT ([80fb880](https://github.com/by-openclaw/ansible-platform/commit/80fb88092c0ff5f6651a5c54b0f364cf4c43f8b3))
+* **netbird:** force Authentik prompt=login (SSO account swap) + NIS2 session policy ([477c7a3](https://github.com/by-openclaw/ansible-platform/commit/477c7a3499b2912526e7dc261082ae56df207730))
+* **netbird:** official combined-model deploy (Ansible-only, no .sh) ([93c21a0](https://github.com/by-openclaw/ansible-platform/commit/93c21a0bd1777699b1e3ffeb4c76516ed7ac0f9c)), closes [#135](https://github.com/by-openclaw/ansible-platform/issues/135)
+* **netbird:** rebuild on official multi-container model (Authentik-direct login) ([75f5346](https://github.com/by-openclaw/ansible-platform/commit/75f5346fc78adc5f7b7b41425fbcd49ecf88c6ea))
+* **netbird:** rebuild on official multi-container model (Authentik-direct) + decommission defguard ([4327a9c](https://github.com/by-openclaw/ansible-platform/commit/4327a9c65e109696f7207029bc1b8108d7f575bb))
+* **netbird:** VPN access tiers — web baseline (All) + full (vpn-full) ([c5524ef](https://github.com/by-openclaw/ansible-platform/commit/c5524effaf46344ef31ce2903a976cc1597cb5aa))
+* **netbox:** OIDC group-&gt;role RBAC (netbox-admins -&gt; superuser) ([c0cf026](https://github.com/by-openclaw/ansible-platform/commit/c0cf026fe389e0395eed2e49e0cca0a45aefc6e7))
+* **netbox:** OIDC group→role RBAC (netbox-admins → superuser) ([7229e2c](https://github.com/by-openclaw/ansible-platform/commit/7229e2c661b0e8164987c7b0da4629caff1b1e42))
+* **netbox:** SMTP (Resend) + ISOLATED_DEPLOYMENT (env-only) ([eb26380](https://github.com/by-openclaw/ansible-platform/commit/eb26380ad83085f2b4348cec21ecc0291d60eb59))
+* **netbox:** SMTP (Resend) + ISOLATED_DEPLOYMENT via env (no .py) ([304d44d](https://github.com/by-openclaw/ansible-platform/commit/304d44da03fc7c19e61c1412236234cc82d3f57a))
+* **nextcloud:** prod hardening — quota, clean instance, trim apps, RBAC access ([237576e](https://github.com/by-openclaw/ansible-platform/commit/237576e2caf2b777910f56419f76d6e9ee290322))
+* **nextcloud:** SMTP (Resend) + share policy (expiry/password/email) ([0eab540](https://github.com/by-openclaw/ansible-platform/commit/0eab5404bc83615390b48e74974f8f398a1071a5))
+* **opnsense:** DynDNS dual-stack — publish apex AAAA (Proximus GUA) via checkip if6 ([c58259b](https://github.com/by-openclaw/ansible-platform/commit/c58259b85d02334e682f2514a4f45a467015e4c6)), closes [#136](https://github.com/by-openclaw/ansible-platform/issues/136)
+* **opnsense:** os-ddclient DynDNS -&gt; Cloudflare apex anchor (active-WAN, failover-ready) ([08f1ce7](https://github.com/by-openclaw/ansible-platform/commit/08f1ce75d90aac479198be3ff8553795fb3e9863)), closes [#136](https://github.com/by-openclaw/ansible-platform/issues/136)
+* **opnsense:** os-ddclient DynDNS → Cloudflare apex anchor (active-WAN) ([4b26d04](https://github.com/by-openclaw/ansible-platform/commit/4b26d043f56804f55187b0f42f560a2a6c5edf31))
+* **sso:** Authentik OIDC SSO + RBAC for vaultwarden & nextcloud ([60ead08](https://github.com/by-openclaw/ansible-platform/commit/60ead08eeb39dad233419ec855c647f3c8040850)), closes [#127](https://github.com/by-openclaw/ansible-platform/issues/127)
+* **sso:** NetBox Authentik OIDC SSO + group RBAC (netbox-admins) ([3bf4610](https://github.com/by-openclaw/ansible-platform/commit/3bf4610acb99215552d1d25c041f2834aada40cf))
+* **sso:** NetBox Authentik OIDC SSO + group RBAC (netbox-admins) ([c0cef14](https://github.com/by-openclaw/ansible-platform/commit/c0cef14db2f76db4d685e2c1aecc7f1013ae60c0))
+* **sso:** Nextcloud closed end-to-end — SSO + RBAC + admin-separation + hardening ([7447431](https://github.com/by-openclaw/ansible-platform/commit/744743173bb4c80062a4cce3ab6c26adc3fe7af7))
+* **sso:** nextcloud-admins -&gt; NC admin via groups claim (admin_group_alias) ([3d9f15c](https://github.com/by-openclaw/ansible-platform/commit/3d9f15c4ae3f8b395c475b0ae55e1b7a9170a0cb)), closes [#127](https://github.com/by-openclaw/ansible-platform/issues/127)
+* **sso:** re-add defguard Authentik OIDC app (external OIDC is open-source) ([16efc86](https://github.com/by-openclaw/ansible-platform/commit/16efc86b2d6edac7b81d20d7be4b401e5834faec)), closes [#127](https://github.com/by-openclaw/ansible-platform/issues/127)
+* **traefik,authentik:** gate the Traefik dashboard behind Authentik SSO ([87497cb](https://github.com/by-openclaw/ansible-platform/commit/87497cb90373dfbba783c0f809f698d4b6d74bfb))
+* **traefik,authentik:** gate the Traefik dashboard behind Authentik SSO ([6ae854c](https://github.com/by-openclaw/ansible-platform/commit/6ae854ce38f0932e3291063d6dca43581fc95cd3)), closes [#133](https://github.com/by-openclaw/ansible-platform/issues/133)
+* **traefik:** global HSTS on the websecure entrypoint ([46b1cf3](https://github.com/by-openclaw/ansible-platform/commit/46b1cf3b6202addceb893180519666ebf7b49fde))
+* **traefik:** global HSTS on websecure entrypoint ([8ed9886](https://github.com/by-openclaw/ansible-platform/commit/8ed98868840f73fb7dc13fde9fdc11f4df7c18b5))
+
+
+### Bug Fixes
+
+* **authentik:** explicit meta_launch_url per app (netbird tile -&gt; https://vpn.by-research.be) ([ce11768](https://github.com/by-openclaw/ansible-platform/commit/ce11768b90b733c9f5b0488ce84cecde6b421202))
+* **authentik:** netbird OIDC redirect regex /oauth2/callback.* (Dex callback has no connector-id suffix) ([3bffe8d](https://github.com/by-openclaw/ansible-platform/commit/3bffe8df0de0fc6d3c53a610d021424ad6498c78))
+* **fw:** open DMZ Traefik→SVC NetBird backend ports for the multi-container stack ([f561457](https://github.com/by-openclaw/ansible-platform/commit/f5614570e41040be2c6c4f2fbd11ba52ead7d7ea))
+* **fw:** Proximus WAN interface is opt12 (pppoe0) not wan; dynamic addr opt12ip ([9087269](https://github.com/by-openclaw/ansible-platform/commit/90872690e7e689806d75cc925fbbc7ddad18dd73)), closes [#135](https://github.com/by-openclaw/ansible-platform/issues/135)
+* **ipv6:** static-only addressing on adguard + defguard VMs (disable RA/SLAAC) ([0b18b87](https://github.com/by-openclaw/ansible-platform/commit/0b18b87e98bb7d550f9fde40d3393d98346c7931)), closes [#125](https://github.com/by-openclaw/ansible-platform/issues/125)
+* **netbird,authentik:** refresh NetBird IdP after rename + add Authentik app icons ([1c6bf2a](https://github.com/by-openclaw/ansible-platform/commit/1c6bf2a6496abd53a21e1bc413526515fc531898))
+* **netbird:** auto-join netbird-users (disable user approval) + revert prompt=login ([6990734](https://github.com/by-openclaw/ansible-platform/commit/699073421a3f8513a8ce8b1d436608d706ad098a))
+* **netbox:** correct OIDC pipeline function import path ([b09a653](https://github.com/by-openclaw/ansible-platform/commit/b09a653d2f19be851bcdb54ac7c33ac63451e684))
+* **netbox:** correct OIDC pipeline function path ([4172b2c](https://github.com/by-openclaw/ansible-platform/commit/4172b2cf324c80235e3c110c79f448219722e887))
+* **netbox:** SSO login crash on is_staff (NetBox 4.6) + restart handler ([dc6c731](https://github.com/by-openclaw/ansible-platform/commit/dc6c731dedf6cc0be9ea9304298f3ac599039686))
+* **netbox:** SSO login crash on is_staff + restart handler + re-enable feed ([7f652cc](https://github.com/by-openclaw/ansible-platform/commit/7f652cc82d4f65f55d59b32b0b78145c716e6b51))
+* **nextcloud:** clear setup-check warnings (phone region, maint window, serverid) ([b8a34ab](https://github.com/by-openclaw/ansible-platform/commit/b8a34ab6f0a2853b0b19da974bbda93655cadaed))
+* **nextcloud:** trusted_proxies (docker bridge) + keep 2FA provider ([e127951](https://github.com/by-openclaw/ansible-platform/commit/e12795184735b4bb47d40b73dffb2f55bfcb1de3))
+* **opnsense:** Proximus IPv6 gateway false-down — reachable v6 monitor + dynamic-gw apply ([f6f7264](https://github.com/by-openclaw/ansible-platform/commit/f6f72641fc71540888212190ce0bd5d90942de02)), closes [#138](https://github.com/by-openclaw/ansible-platform/issues/138)
+* **opnsense:** Proximus IPv6 gateway false-down (reachable v6 monitor) — restores LAN v6 ([79e721f](https://github.com/by-openclaw/ansible-platform/commit/79e721f28989cd6b790ac524973f67cc659ffd77))
+* **sso:** nextcloud allow_local_remote_servers + vaultwarden scopes per authentik guide ([1964a5b](https://github.com/by-openclaw/ansible-platform/commit/1964a5bec3ed66a2d6a44ffa88c56fb70c5d3f5a)), closes [#127](https://github.com/by-openclaw/ansible-platform/issues/127)
+* **sso:** nextcloud logout Bad Request — send id_token_hint on end-session ([50c06ff](https://github.com/by-openclaw/ansible-platform/commit/50c06ff2cacd92623574c484b5650b3f49c3500a)), closes [#127](https://github.com/by-openclaw/ansible-platform/issues/127)
+* **sso:** register nextcloud post-logout redirect URI in Authentik ([0ef17d5](https://github.com/by-openclaw/ansible-platform/commit/0ef17d57296db956e471a8cc362c22a51c9eed7e)), closes [#127](https://github.com/by-openclaw/ansible-platform/issues/127)
+* **sso:** vaultwarden accept IdP-verified email (FW blocks outbound SMTP) ([8efaf97](https://github.com/by-openclaw/ansible-platform/commit/8efaf97e69e04c09758f1b19889e85a2309308fa)), closes [#127](https://github.com/by-openclaw/ansible-platform/issues/127)
+* **sso:** vaultwarden email_verified=True + offline_access mappings (per Authentik guide) ([0dd642a](https://github.com/by-openclaw/ansible-platform/commit/0dd642ae32f3daeb200d1b058b27cccdbdb537ec)), closes [#127](https://github.com/by-openclaw/ansible-platform/issues/127)
+* **sso:** vaultwarden SSO_ONLY=false (complete Authentik guide env) ([74063b9](https://github.com/by-openclaw/ansible-platform/commit/74063b9bb0a7235118ecb35409c9466952427d83)), closes [#127](https://github.com/by-openclaw/ansible-platform/issues/127)
+
 ## [0.4.0](https://github.com/by-openclaw/ansible-platform/compare/v0.3.0...v0.4.0) (2026-06-07)
 
 
