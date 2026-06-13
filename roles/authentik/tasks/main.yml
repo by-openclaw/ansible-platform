@@ -22,6 +22,11 @@
   ansible.builtin.import_tasks: blueprints.yml
   tags: [authentik, blueprints, sso]
 
+- name: Provision the LDAP outpost (OPNsense WebGUI SSO)
+  ansible.builtin.import_tasks: ldap.yml
+  when: authentik_ldap_enabled | default(false) | bool
+  tags: [authentik, ldap, sso]
+
 - name: Publish Authentik via Traefik (public + rate-limit)
   ansible.builtin.include_role:
     name: traefik_route

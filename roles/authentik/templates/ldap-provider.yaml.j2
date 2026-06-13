@@ -1,0 +1,53 @@
+{# Managed by Ansible role `authentik`. Do not edit by hand.
+   LDAP provider + application + bind/search service account, so OPNsense (which
+   cannot speak OIDC) can authenticate WebGUI users against Authentik through the
+   LDAP outpost. The outpost INSTANCE and its token are managed imperatively in
+   ldap.yml (the token must be read back + fed to the outpost container). #}
+version: 1
+metadata:
+  name: ldap-{{ authentik_ldap_slug }}
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  # Bind/search service account OPNsense uses. In the LDAP tree this is
+  # cn={{ authentik_ldap_bind_account }},ou=users,{{ authentik_ldap_base_dn }}.
+  # Password is set via the API in ldap.yml (blueprints can't set passwords).
+  - model: authentik_core.user
+    id: user-ldap-bind
+    identifiers:
+      username: "{{ authentik_ldap_bind_account }}"
+    attrs:
+      username: "{{ authentik_ldap_bind_account }}"
+      name: "OPNsense LDAP bind/search service account"
+      type: service_account
+      path: users
+
+  # The LDAP provider. authorization_flow = the bind flow (standard authentication);
+  # invalidation_flow = the unbind flow. The LDAPS certificate is NOT set here — it is
+  # the platform wildcard *.by-research.be cert, imported into Authentik + assigned to
+  # this provider via the API in ldap.yml (a keypair must exist before it can be
+  # referenced, and we never write a private key into a world-readable blueprint file).
+  - model: authentik_providers_ldap.ldapprovider
+    id: provider-ldap
+    identifiers:
+      name: "{{ authentik_ldap_slug }}"
+    attrs:
+      name: "{{ authentik_ldap_slug }}"
+      base_dn: "{{ authentik_ldap_base_dn }}"
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
+      bind_mode: cached
+      search_mode: cached
+      mfa_support: false
+
+  # Application bound to the provider. No group restriction yet — OPNsense maps
+  # privileges by LDAP group membership; tighten with a restrict-to-group policy
+  # when RBAC is revised. Any Authentik user may bind; OPNsense decides authorization.
+  - model: authentik_core.application
+    id: app-ldap
+    identifiers:
+      slug: "{{ authentik_ldap_slug }}"
+    attrs:
+      name: "{{ authentik_ldap_name }}"
+      slug: "{{ authentik_ldap_slug }}"
+      provider: !KeyOf provider-ldap
