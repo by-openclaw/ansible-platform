@@ -42,6 +42,11 @@
   ansible.builtin.include_tasks: dns.yml
   tags: [dns, unbound]
 
+- name: Include Dynamic DNS (os-ddclient) tasks
+  ansible.builtin.include_tasks: dyndns.yml
+  tags: [dyndns, dns]
+  when: opnsense_dyndns_accounts | default([]) | length > 0
+
 - name: Include DHCP tasks
   ansible.builtin.include_tasks: dhcp.yml
   tags: [dhcp]
