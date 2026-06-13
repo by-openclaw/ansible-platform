@@ -1,0 +1,38 @@
+---
+# RBAC layer 2/3 — GROUPS. Ensure each declared PVE group exists. The SSO group is the
+# realm-suffixed name PVE syncs Authentik members into (see oidc-realm.yml / the PVE
+# OpenId.pm group-rename quirk). Idempotent: create only when absent.
+- name: "proxmox-groups | Load PVE admin token (controller)"
+  ansible.builtin.set_fact:
+    _pve: "{{ (lookup('file', proxmox_secret_dir + '/' + proxmox_admin_token_file) | from_json).fields }}"
+  no_log: true
+
+- name: "proxmox-groups | Get existing groups"
+  ansible.builtin.uri:
+    url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/access/groups"
+    method: GET
+    headers:
+      Authorization: "PVEAPIToken={{ _pve.admin_token_id }}={{ _pve.admin_token_secret }}"
+    validate_certs: false
+    status_code: [200]
+  register: pve_groups_get
+  changed_when: false        # read-only
+  no_log: true
+
+- name: "proxmox-groups | Create groups (absent)"
+  ansible.builtin.uri:
+    url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/access/groups"
+    method: POST
+    headers:
+      Authorization: "PVEAPIToken={{ _pve.admin_token_id }}={{ _pve.admin_token_secret }}"
+    body_format: form-urlencoded
+    body:
+      groupid: "{{ item.groupid }}"
+      comment: "{{ item.comment | default(omit) }}"
+    validate_certs: false
+    status_code: [200]
+  loop: "{{ proxmox_groups }}"
+  loop_control:
+    label: "{{ item.groupid }}"
+  when: item.groupid not in (pve_groups_get.json.data | map(attribute='groupid') | list)
+  no_log: true

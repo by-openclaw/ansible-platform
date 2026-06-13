@@ -1,12 +1,26 @@
 ---
 # Proxmox VE config via the PVE API. Runs on the controller (connection: local) —
 # the PVE nodes have no SSH for us, so we use the admin API token over HTTPS.
+
+# SSO: the Authentik OIDC realm (web login).
 - name: Configure the Authentik OIDC realm
   ansible.builtin.import_tasks: oidc-realm.yml
   when: proxmox_oidc_enabled | default(true) | bool
   tags: [proxmox, oidc, sso]
 
-- name: Map the Authentik admin group to a PVE role (RBAC)
-  ansible.builtin.import_tasks: rbac.yml
+# RBAC applied as a 3-layer flow — roles → groups → ACL — the same model as the
+# svc-rune / svc-opus automation accounts, codified + reproducible.
+- name: "RBAC 1/3 — custom roles (TerraformRole, …)"
+  ansible.builtin.import_tasks: roles.yml
   when: proxmox_rbac_enabled | default(true) | bool
-  tags: [proxmox, rbac, sso]
+  tags: [proxmox, rbac, roles, sso]
+
+- name: "RBAC 2/3 — groups"
+  ansible.builtin.import_tasks: groups.yml
+  when: proxmox_rbac_enabled | default(true) | bool
+  tags: [proxmox, rbac, groups, sso]
+
+- name: "RBAC 3/3 — ACL bindings (group + svc accounts → roles)"
+  ansible.builtin.import_tasks: acl.yml
+  when: proxmox_rbac_enabled | default(true) | bool
+  tags: [proxmox, rbac, acl, sso]

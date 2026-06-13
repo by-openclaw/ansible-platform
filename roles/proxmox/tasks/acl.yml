@@ -1,0 +1,54 @@
+---
+# RBAC layer 3/3 — ACL. Bind each principal (user | group | token) to a role on a path.
+# Codifies the full live authz layer: the SSO admin group + the svc-* automation
+# accounts/tokens. The svc users/tokens themselves are NOT created here (secrets managed
+# out-of-band) — only their bindings, so a token secret is never rotated. Idempotent:
+# PUT only the bindings that are not already present (matched on path+type+ugid+role).
+- name: "proxmox-acl | Load PVE admin token (controller)"
+  ansible.builtin.set_fact:
+    _pve: "{{ (lookup('file', proxmox_secret_dir + '/' + proxmox_admin_token_file) | from_json).fields }}"
+  no_log: true
+
+- name: "proxmox-acl | Get existing ACLs"
+  ansible.builtin.uri:
+    url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/access/acl"
+    method: GET
+    headers:
+      Authorization: "PVEAPIToken={{ _pve.admin_token_id }}={{ _pve.admin_token_secret }}"
+    validate_certs: false
+    status_code: [200]
+  register: pve_acl_get
+  changed_when: false        # read-only
+  no_log: true
+
+- name: "proxmox-acl | Apply ACL bindings (absent)"
+  ansible.builtin.uri:
+    url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/access/acl"
+    method: PUT
+    headers:
+      Authorization: "PVEAPIToken={{ _pve.admin_token_id }}={{ _pve.admin_token_secret }}"
+    body_format: form-urlencoded
+    body: >-
+      {{ {'path': item.path, 'roles': item.role, 'propagate': item.propagate | default(1)}
+         | combine({proxmox_acl_principal_key[item.type]: item.id}) }}
+    validate_certs: false
+    status_code: [200]
+  loop: "{{ proxmox_acls }}"
+  loop_control:
+    label: "{{ item.type }}:{{ item.id }} -> {{ item.role }} on {{ item.path }}"
+  when: >-
+    pve_acl_get.json.data
+    | selectattr('path', 'equalto', item.path)
+    | selectattr('type', 'equalto', item.type)
+    | selectattr('ugid', 'equalto', item.id)
+    | selectattr('roleid', 'equalto', item.role)
+    | list | length == 0
+  no_log: true
+
+- name: "proxmox-acl | Summary"
+  ansible.builtin.debug:
+    msg: >-
+      RBAC applied: {{ proxmox_roles | map(attribute='roleid') | list }} custom role(s),
+      {{ proxmox_groups | map(attribute='groupid') | list }} group(s),
+      {{ proxmox_acls | length }} ACL binding(s). SSO admins ('{{ proxmox_admin_group }}'
+      in Authentik) → PVE group '{{ proxmox_admin_pve_group }}' → {{ proxmox_admin_role }}.

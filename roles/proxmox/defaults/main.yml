@@ -53,6 +53,33 @@ proxmox_rbac_enabled: true
 proxmox_admin_group: "proxmox-admins"      # the Authentik group name (= the claim value)
 # The PVE group PVE actually syncs into: <claim group>-<realm>. This is what we ACL.
 proxmox_admin_pve_group: "{{ proxmox_admin_group }}-{{ proxmox_oidc_realm }}"
-proxmox_admin_role: "Administrator"        # same role by-rune has; PVEAdmin = slightly safer
-proxmox_admin_acl_path: "/"
-proxmox_admin_acl_propagate: 1
+proxmox_admin_role: "Administrator"        # role for SSO human admins (PVEAdmin = safer)
+
+# RBAC is applied as a 3-layer flow — roles → groups → ACL — the same model as the
+# svc-rune / svc-opus automation accounts, just data-driven + reproducible here.
+# principal-type → PVE /access/acl body key:
+proxmox_acl_principal_key: { user: users, group: groups, token: tokens }
+
+# 1. ROLES. Custom roles only — built-ins (Administrator, PVEAdmin, PVEAuditor, …) are
+#    PVE-provided and not declared. TerraformRole = infra-automation role used by the
+#    svc-rune!terraform token: full VM/storage/SDN lifecycle + Sys.Audit/Modify, but NO
+#    permission/realm/user modify (that stays with Administrator). Privs captured live.
+proxmox_roles:
+  - roleid: TerraformRole
+    privs: "Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,SDN.Allocate,SDN.Audit,SDN.Use,Sys.Audit,Sys.Modify,VM.Allocate,VM.Audit,VM.Clone,VM.Config.CDROM,VM.Config.CPU,VM.Config.Cloudinit,VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.GuestAgent.Audit,VM.GuestAgent.Unrestricted,VM.Migrate,VM.PowerMgmt"
+
+# 2. GROUPS. The SSO group-sync target (PVE renames the Authentik claim to <group>-<realm>).
+proxmox_groups:
+  - groupid: "{{ proxmox_admin_pve_group }}"
+    comment: "Authentik '{{ proxmox_admin_group }}' (realm {{ proxmox_oidc_realm }}) — OIDC group sync target"
+
+# 3. ACL. principal (user|group|token) → role on a path. Codifies the whole live authz
+#    layer: the SSO admin group + the svc-* automation accounts/tokens. The svc users and
+#    their API tokens are NOT created here (their secrets are managed out-of-band) — only
+#    their role bindings, so this never rotates a token secret.
+proxmox_acls:
+  - { path: "/", type: group, id: "{{ proxmox_admin_pve_group }}", role: "{{ proxmox_admin_role }}", propagate: 1 }
+  - { path: "/", type: user,  id: "svc-rune@pve",          role: "Administrator", propagate: 1 }
+  - { path: "/", type: token, id: "svc-rune@pve!admin",     role: "Administrator", propagate: 1 }
+  - { path: "/", type: token, id: "svc-rune@pve!terraform", role: "TerraformRole", propagate: 1 }
+  - { path: "/", type: token, id: "svc-opus@pve!audit",     role: "PVEAdmin",      propagate: 1 }

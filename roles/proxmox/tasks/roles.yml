@@ -1,0 +1,64 @@
+---
+# RBAC layer 1/3 — ROLES. Declaratively manage our custom PVE roles (e.g. TerraformRole).
+# Built-in roles (Administrator, PVEAdmin, PVEAuditor, …) are PVE-provided and never
+# touched. Idempotent: create absent roles, and update a role only when its privilege
+# set actually drifts from the desired set. All via the PVE API (no pveum shell).
+- name: "proxmox-roles | Load PVE admin token (controller)"
+  ansible.builtin.set_fact:
+    _pve: "{{ (lookup('file', proxmox_secret_dir + '/' + proxmox_admin_token_file) | from_json).fields }}"
+  no_log: true
+
+- name: "proxmox-roles | Get existing roles"
+  ansible.builtin.uri:
+    url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/access/roles"
+    method: GET
+    headers:
+      Authorization: "PVEAPIToken={{ _pve.admin_token_id }}={{ _pve.admin_token_secret }}"
+    validate_certs: false
+    status_code: [200]
+  register: pve_roles_get
+  changed_when: false        # read-only
+  no_log: true
+
+- name: "proxmox-roles | Build existing role → privs map"
+  ansible.builtin.set_fact:
+    _existing_roles: >-
+      {{ dict(pve_roles_get.json.data | map(attribute='roleid')
+              | zip(pve_roles_get.json.data | map(attribute='privs', default=''))) }}
+
+- name: "proxmox-roles | Create custom roles (absent)"
+  ansible.builtin.uri:
+    url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/access/roles"
+    method: POST
+    headers:
+      Authorization: "PVEAPIToken={{ _pve.admin_token_id }}={{ _pve.admin_token_secret }}"
+    body_format: form-urlencoded
+    body:
+      roleid: "{{ item.roleid }}"
+      privs: "{{ item.privs }}"
+    validate_certs: false
+    status_code: [200]
+  loop: "{{ proxmox_roles }}"
+  loop_control:
+    label: "{{ item.roleid }}"
+  when: item.roleid not in _existing_roles
+  no_log: true
+
+- name: "proxmox-roles | Update custom roles (privs drift)"
+  ansible.builtin.uri:
+    url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/access/roles/{{ item.roleid }}"
+    method: PUT
+    headers:
+      Authorization: "PVEAPIToken={{ _pve.admin_token_id }}={{ _pve.admin_token_secret }}"
+    body_format: form-urlencoded
+    body:
+      privs: "{{ item.privs }}"
+    validate_certs: false
+    status_code: [200]
+  loop: "{{ proxmox_roles }}"
+  loop_control:
+    label: "{{ item.roleid }}"
+  when:
+    - item.roleid in _existing_roles
+    - (item.privs.split(',') | map('trim') | sort) != (_existing_roles[item.roleid].split(',') | map('trim') | reject('equalto', '') | sort)
+  no_log: true
