@@ -1,4 +1,15 @@
-{# Managed by Ansible role `traefik_route` (delegated from {{ inventory_hostname }}). Do not edit by hand. #}
+{# Managed by Ansible role `traefik_route`. Do not edit by hand.
+   internal_only=true  -> ipAllowList (LAN + VPN).
+   internal_only=false -> public: per-client rateLimit (brute-force throttle).
+   FW CrowdSec/Suricata + the app login + host fail2ban are the other layers;
+   a Traefik CrowdSec bouncer (HTTP-layer bans) is the next hardening add. #}
+{% if traefik_route_internal_only | bool %}
+{%   set _mw = traefik_route_name ~ '-internal' %}
+{% elif traefik_route_public_hardening | bool %}
+{%   set _mw = traefik_route_name ~ '-ratelimit' %}
+{% else %}
+{%   set _mw = '' %}
+{% endif %}
 http:
   routers:
     {{ traefik_route_name }}:
@@ -6,9 +17,9 @@ http:
       entryPoints:
         - websecure
       service: {{ traefik_route_name }}
-{% if traefik_route_internal_only | bool %}
+{% if _mw %}
       middlewares:
-        - {{ traefik_route_name }}-internal
+        - {{ _mw }}
 {% endif %}
       tls: {}
 
@@ -17,9 +28,10 @@ http:
       loadBalancer:
         servers:
           - url: "{{ traefik_route_backend_url }}"
-{% if traefik_route_internal_only | bool %}
+{% if _mw %}
 
   middlewares:
+{% if traefik_route_internal_only | bool %}
     {{ traefik_route_name }}-internal:
       ipAllowList:
         sourceRange:
@@ -29,4 +41,10 @@ http:
 {% for cidr in traefik_route_admin_cidrs %}
           - "{{ cidr }}"
 {% endfor %}
+{% else %}
+    {{ traefik_route_name }}-ratelimit:
+      rateLimit:
+        average: {{ traefik_route_ratelimit_average }}
+        burst: {{ traefik_route_ratelimit_burst }}
+{% endif %}
 {% endif %}

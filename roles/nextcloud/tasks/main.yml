@@ -22,12 +22,14 @@
   ansible.builtin.import_tasks: post-install.yml
   tags: [nextcloud, post]
 
-- name: Publish Nextcloud via Traefik (internal-only)
+- name: Publish Nextcloud via Traefik (public + rate-limit)
   ansible.builtin.include_role:
     name: traefik_route
+    apply:
+      tags: [route]
   vars:
     traefik_route_name: nextcloud
     traefik_route_fqdn: "{{ nextcloud_fqdn }}"
     traefik_route_backend_url: "http://{{ nextcloud_listen_ip }}:{{ nextcloud_host_port }}"
-    traefik_route_internal_only: true
+    traefik_route_internal_only: false
   tags: [nextcloud, route]
