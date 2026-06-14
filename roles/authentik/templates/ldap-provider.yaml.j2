@@ -34,11 +34,19 @@ entries:
     attrs:
       name: "{{ authentik_ldap_slug }}"
       base_dn: "{{ authentik_ldap_base_dn }}"
-      authorization_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      # Dedicated LDAP bind flow = the default authentication flow MINUS the MFA
+      # stage (identification + password + login). Per the official goauthentik
+      # OPNsense doc, LDAP cannot carry MFA — a password-only bind is the supported
+      # model. The platform's default-authentication-flow HAS an MFA stage (for web
+      # SSO), which LDAP can't satisfy ("no compatible authenticator class found").
+      # Web/OIDC SSO keeps full MFA; only LDAP binds are password-only.
+      # TODO(codify): this flow `ldap-authentication` is currently created via API,
+      # not yet in a blueprint — add a flow+stage-bindings blueprint.
+      authorization_flow: !Find [authentik_flows.flow, [slug, ldap-authentication]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
       bind_mode: cached
       search_mode: cached
-      mfa_support: false
+      mfa_support: false   # MUST be false with a no-MFA flow (else it strips 6 digits off the password)
 
   # Application bound to the provider. No group restriction yet — OPNsense maps
   # privileges by LDAP group membership; tighten with a restrict-to-group policy
