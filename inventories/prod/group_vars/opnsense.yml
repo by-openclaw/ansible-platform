@@ -2414,3 +2414,45 @@ opnsense_wan2:
   description: WAN_TELENET
   block_private: true
   block_bogons: true
+
+# ── Local auth — WebGUI admin users + group hygiene ────────────────────────────
+# OPNsense WebGUI cannot speak OIDC/SAML, so admins authenticate against the
+# Authentik LDAP authserver (system/webgui/authmode). But OPNsense attaches
+# *privileges* to a LOCAL user object matched by username — an LDAP-only login
+# lands with "No page assigned" until that shadow user exists. So every
+# LDAP-authenticated admin needs a local user that is a MEMBER of an admin group
+# holding page-all. This mirrors how `by-rune` (automation) and `oob-admin`
+# (break-glass) already work — both are local users in admin groups.
+#
+# Access is GROUP-BASED: membership in the built-in `admins` group (gid 1999,
+# which holds page-all — the same group by-rune is in), never a per-person
+# privilege assignment (feedback_no_manual_fw_drift / identity ADR-0001).
+#
+# Applied by: scripts/fw_apply_direct.py --env prod --only auth
+# (AuthUserManager / AuthGroupManager — auth changes apply immediately, no
+# reconfigure). group_memberships is the GID *string* of the admin group; the
+# user has no local password — it authenticates via Authentik LDAP, not the
+# Local Database.
+opn_auth:
+  users:
+    - name: adm_yboujraf
+      group_memberships: '1999'          # built-in `admins` (gid 1999, page-all)
+      # OPNsense requires a password even for LDAP-authenticated accounts. No
+      # secret in the catalog: the dispatch reads/bootstraps a random local
+      # password from this secret file (basename, fields.webgui_password). The
+      # account logs in via Authentik LDAP — this password is never used.
+      password_ref: net-opnsense-prod-adm-yboujraf
+      state: present
+      ref:
+        adr: identity/0001
+        lib_manager: AuthUserManager
+        ansible_module: null
+        note: "Platform admin — Authentik-LDAP authenticated; local shadow carries WebGUI privilege"
+  # Group hygiene: the mis-gid'd `platform-admins` (gid 2000, collides with
+  # `oob-admins`) is a LEGACY ghost group — it was created by a direct config.xml
+  # edit, so it has no stable MVC UUID (auth/group/get returns [] and the UUID is
+  # re-fabricated on every search) and therefore CANNOT be deleted via the MVC
+  # auth/group API. It is harmless (oob-admin still unions page-all from gid 2000
+  # via oob-admins), so it is NOT auto-applied here. Remove it once via the WebGUI
+  # (System: Access: Groups → delete) or a config.xml edit. Tracked as hygiene.
+  groups: []

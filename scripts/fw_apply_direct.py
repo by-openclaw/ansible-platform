@@ -25,7 +25,6 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 import sys
 import time
 from pathlib import Path
@@ -35,6 +34,8 @@ import yaml
 
 from opnsense.client import OpnsenseClient
 from opnsense.exceptions import OpnsenseError
+from opnsense.managers.auth.group import AuthGroupManager
+from opnsense.managers.auth.user import AuthUserManager
 from opnsense.managers.firewall.alias import FwAliasManager
 from opnsense.managers.firewall.dnat import FwDnatManager
 from opnsense.managers.firewall.filter import FwFilterManager
@@ -65,7 +66,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #   kea     -> opn_kea_dhcp4 / opn_kea_dhcp6
 #   dnsmasq -> opn_dnsmasq
 #   radvd   -> opn_radvd
-SECTION_GROUPS = {"fw", "dns", "kea", "dnsmasq", "radvd"}
+#   auth    -> opn_auth (local WebGUI admin users + group hygiene)
+SECTION_GROUPS = {"fw", "dns", "kea", "dnsmasq", "radvd", "auth"}
 
 log = logging.getLogger("fw_apply_direct")
 
@@ -125,6 +127,47 @@ def strip_ref(entry: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     state = entry.get("state", "present")
     ref = entry.get("ref", {})
     return payload, {"state": state, "ref": ref}
+
+
+def resolve_user_password(entry: dict[str, Any]) -> dict[str, Any]:
+    """Inject a WebGUI password for an opn_auth user that declares `password_ref`.
+
+    OPNsense requires a non-empty password on auth/user/add even for accounts that
+    authenticate via the Authentik LDAP authserver. We never put a secret in the
+    committed catalog, so the user declares `password_ref` = the basename of a
+    secret file under the workspace secret folder; the password lives there only.
+
+    Self-bootstrapping + idempotent: if the secret file is absent, generate a
+    strong random password (the account authenticates via LDAP, so this local
+    password is effectively never used for login) and write it 0600; reuse the
+    same stored value on every run so ensure() converges to noop (bcrypt compare).
+    The secret is read silently and never printed to the terminal.
+    """
+    ref = entry.get("password_ref")
+    if not ref:
+        return entry
+    out = {k: v for k, v in entry.items() if k != "password_ref"}
+    sf = WORKSPACE_SECRETS / f"{ref}.json"
+    if sf.exists():
+        fields = json.loads(sf.read_text()).get("fields", {})
+        pw = fields.get("webgui_password")
+        if not pw:
+            raise SystemExit(f"Secret file {sf} missing field 'fields.webgui_password'")
+    else:
+        import secrets as _secrets
+        import string as _string
+        alphabet = _string.ascii_letters + _string.digits
+        pw = "".join(_secrets.choice(alphabet) for _ in range(32))
+        sf.write_text(json.dumps({"fields": {
+            "webgui_password": pw,
+            "note": ("Random local WebGUI password for the LDAP-shadow admin. Login is "
+                     "via the Authentik LDAP authserver; this only satisfies OPNsense's "
+                     "required-password field and is not used for interactive login."),
+        }}, indent=2) + "\n")
+        sf.chmod(0o600)
+        log.info("[AUTH_USR] bootstrapped random local password -> %s (0600)", sf)
+    out["password"] = pw
+    return out
 
 
 def normalize_alias(payload: dict[str, Any]) -> dict[str, Any]:
@@ -502,6 +545,15 @@ async def main_async(args: argparse.Namespace) -> int:
                         "adr_ref": "infra/0004", "lib_manager": "RadvdServiceManager",
                         "ansible_module": None,
                     })
+
+        # Local auth — WebGUI admin users + group hygiene. Auth changes apply
+        # immediately (no reconfigure). Groups first (e.g. delete a stray group),
+        # then users (membership carried by group_memberships = admin gid).
+        auth = catalog.get("opn_auth", {})
+        if want("auth") and auth:
+            await apply_section(AuthGroupManager, client, auth.get("groups", []), "AUTH_GRP", args.check, results)
+            users = [resolve_user_password(u) for u in auth.get("users", [])]
+            await apply_section(AuthUserManager,  client, users,             "AUTH_USR", args.check, results)
 
     summarize(results)
     return 1 if any(r["outcome"] == "error" for r in results) else 0
