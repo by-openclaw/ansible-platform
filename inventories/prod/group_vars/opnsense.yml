@@ -2076,6 +2076,13 @@ opn_unbound:
   - grp_net4_internal
   - grp_net6_internal
   host_overrides:
+  # --- The firewall itself: fw.by-research.be (WebGUI + ACME LE cert) ---
+  # Dual-stack on the OOB interface (vtnet1): v4 10.6.239.196 + ULA v6 fd06:224::1.
+  # The FW listens on this interface for both families; reached from the OOB mgmt
+  # subnet. Codified here so a from-scratch deploy reproduces it (was applied live
+  # last session, never in the catalog). AAAA is safe — the FW serves its own v6.
+  - {hostname: fw, domain: by-research.be, rr: A,    server: 10.6.239.196}
+  - {hostname: fw, domain: by-research.be, rr: AAAA, server: 'fd06:224::1'}
   # --- Real cluster hosts (present) — split-horizon internal records ---
   - {hostname: vm-adguard-01, domain: by-research.be, rr: A,    server: 10.1.3.101}
   - {hostname: vm-adguard-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::101'}
@@ -2098,7 +2105,13 @@ opn_unbound:
   - {hostname: authentik, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
   # LDAP outpost — resolves DIRECT to the authentik host (LDAPS :636 is not HTTP, so it
   # does NOT go via Traefik). The wildcard *.by-research.be cert matches this name, so
-  # OPNsense's WebGUI LDAP auth validates the chain. v4 only (outpost publishes on v4).
+  # OPNsense's WebGUI LDAP auth validates the chain.
+  # v4 ONLY — VERIFIED 2026-06-15 on lxc-authentik-01: the outpost's docker-proxy binds
+  # 0.0.0.0:636 / 0.0.0.0:389 only (no `[::]`); `docker port` = 6636/tcp->0.0.0.0:636.
+  # An AAAA here would advertise a dead v6 port (DNS/service mismatch). To make ldap
+  # dual-stack: first publish the outpost on v6 (authentik role `published_ports` →
+  # add `[::]:636:6636` + `[::]:389:3389`, then redeploy the container), THEN add
+  # `{hostname: ldap, rr: AAAA, server: 'fd01:3::130'}` (matches lxc-authentik-01).
   - {hostname: ldap, domain: by-research.be, rr: A,    server: 10.1.3.130}
   - {hostname: lxc-vault-01, domain: by-research.be, rr: A,    server: 10.1.3.150}
   - {hostname: lxc-vault-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::150'}
