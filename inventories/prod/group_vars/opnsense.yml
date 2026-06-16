@@ -2105,14 +2105,12 @@ opn_unbound:
   - {hostname: authentik, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
   # LDAP outpost — resolves DIRECT to the authentik host (LDAPS :636 is not HTTP, so it
   # does NOT go via Traefik). The wildcard *.by-research.be cert matches this name, so
-  # OPNsense's WebGUI LDAP auth validates the chain.
-  # v4 ONLY — VERIFIED 2026-06-15 on lxc-authentik-01: the outpost's docker-proxy binds
-  # 0.0.0.0:636 / 0.0.0.0:389 only (no `[::]`); `docker port` = 6636/tcp->0.0.0.0:636.
-  # An AAAA here would advertise a dead v6 port (DNS/service mismatch). To make ldap
-  # dual-stack: first publish the outpost on v6 (authentik role `published_ports` →
-  # add `[::]:636:6636` + `[::]:389:3389`, then redeploy the container), THEN add
-  # `{hostname: ldap, rr: AAAA, server: 'fd01:3::130'}` (matches lxc-authentik-01).
+  # OPNsense's WebGUI LDAP auth validates the chain. DUAL-STACK (ADR): the outpost
+  # publishes 636/389 on both 0.0.0.0 AND [::] (authentik role `published_ports` — Docker
+  # won't auto-bind v6 even with ip6tables, so both families are listed explicitly).
+  # Verified listening 2026-06-16 on lxc-authentik-01: docker-proxy 0.0.0.0:636 + [::]:636.
   - {hostname: ldap, domain: by-research.be, rr: A,    server: 10.1.3.130}
+  - {hostname: ldap, domain: by-research.be, rr: AAAA, server: 'fd01:3::130'}
   - {hostname: lxc-vault-01, domain: by-research.be, rr: A,    server: 10.1.3.150}
   - {hostname: lxc-vault-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::150'}
   - {hostname: lxc-nbox-01, domain: by-research.be, rr: A,    server: 10.1.3.120}

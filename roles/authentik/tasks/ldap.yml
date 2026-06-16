@@ -300,9 +300,14 @@
     state: started
     restart_policy: unless-stopped
     pull: false
+    # Dual-stack (ADR): bind BOTH families explicitly. Docker does NOT auto-publish
+    # IPv6 for a bare "636:6636" even with daemon ip6tables enabled (verified: it bound
+    # 0.0.0.0 only), so OPNsense's WebGUI LDAP could not reach the outpost over v6.
     published_ports:
-      - "{{ authentik_ldap_host_ldap_port }}:3389"
-      - "{{ authentik_ldap_host_ldaps_port }}:6636"
+      - "0.0.0.0:{{ authentik_ldap_host_ldap_port }}:3389"
+      - "[::]:{{ authentik_ldap_host_ldap_port }}:3389"
+      - "0.0.0.0:{{ authentik_ldap_host_ldaps_port }}:6636"
+      - "[::]:{{ authentik_ldap_host_ldaps_port }}:6636"
     env:
       AUTHENTIK_HOST: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}"
       AUTHENTIK_INSECURE: "true"      # plain HTTP to core over the loopback/SVC host
