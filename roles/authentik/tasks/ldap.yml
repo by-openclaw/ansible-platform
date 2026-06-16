@@ -300,14 +300,19 @@
     state: started
     restart_policy: unless-stopped
     pull: false
-    # Dual-stack (ADR): bind BOTH families explicitly. Docker does NOT auto-publish
-    # IPv6 for a bare "636:6636" even with daemon ip6tables enabled (verified: it bound
-    # 0.0.0.0 only), so OPNsense's WebGUI LDAP could not reach the outpost over v6.
+    # LDAPS ONLY (636) — plain LDAP (389) is NOT published. OPNsense binds over
+    # ldaps:// with strict TLS (REQCERT HARD), so cleartext 389 is never used and must
+    # not be exposed. Dual-stack (ADR): bind BOTH families explicitly — Docker does NOT
+    # auto-publish IPv6 for a bare "636:6636" even with daemon ip6tables enabled
+    # (verified: it bound 0.0.0.0 only).
     published_ports:
-      - "0.0.0.0:{{ authentik_ldap_host_ldap_port }}:3389"
-      - "[::]:{{ authentik_ldap_host_ldap_port }}:3389"
       - "0.0.0.0:{{ authentik_ldap_host_ldaps_port }}:6636"
       - "[::]:{{ authentik_ldap_host_ldaps_port }}:6636"
+    # strict: recreate if the running container has ANY port we no longer publish
+    # (default allows extra ports → a removed 389 would otherwise linger). Ensures the
+    # LDAPS-only posture is enforced, not just additive.
+    comparisons:
+      published_ports: strict
     env:
       AUTHENTIK_HOST: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}"
       AUTHENTIK_INSECURE: "true"      # plain HTTP to core over the loopback/SVC host
