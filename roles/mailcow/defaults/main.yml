@@ -1,0 +1,109 @@
+---
+# ==============================================================================
+# Role: mailcow — defaults (config surface)
+# PROD mailcow-dockerized mail server on vm-mailcow-01 (DMZ vlan1020).
+# All deployment decisions live here. mailcow ships its OWN MariaDB + Redis +
+# Postfix + Dovecot + Rspamd + ClamAV + SOGo (self-contained appliance) — it does
+# NOT use the platform Postgres/Redis. Web UI via Traefik + native Authentik OIDC.
+# ==============================================================================
+
+# --- Source (pinned — no :latest; the git ref pins all image tags in mailcow's
+#     own compose, see CLAUDE.md no-:latest rule) ---------------------------------
+mailcow_git_repo: "https://github.com/mailcow/mailcow-dockerized.git"
+mailcow_git_version: "2026-05c" # latest stable 2026-05-26; bump deliberately
+mailcow_install_dir: "/opt/mailcow-dockerized"
+
+# --- Identity / hostnames ------------------------------------------------------
+# The mail SERVER hostname. Clients of EVERY hosted domain connect here, so this
+# is the only name that needs a TLS cert — covered by the *.by-research.be
+# wildcard (which is why the unowned internal example.com needs no cert).
+mailcow_hostname: "mail.by-research.be"
+mailcow_fqdn: "mail.by-research.be" # web UI / SOGo (behind Traefik)
+mailcow_timezone: "Europe/Brussels"
+
+# --- Reverse-proxy posture (Traefik terminates TLS; mailcow's nginx is HTTP-only
+#     on the VM, bound to the DMZ IP). SKIP_LETS_ENCRYPT=y — we bring our own
+#     wildcard cert via Traefik, mailcow does not run ACME. ----------------------
+mailcow_listen_ip: "10.1.2.120" # bind mailcow nginx to the DMZ IP, not 0.0.0.0
+mailcow_http_port: 8080
+mailcow_https_port: 8443 # unused by Traefik (HTTP backend) but bound for SOGo internals
+mailcow_skip_lets_encrypt: "y"
+mailcow_skip_clamd: "n" # keep ClamAV (8 GB RAM sized for it)
+mailcow_skip_sogo: "n" # keep SOGo webmail
+mailcow_additional_server_names: "" # extra SANs if ever needed
+
+# --- vmail storage: Maildir on the Synology NAS via NFS; indexes stay LOCAL -----
+# Dovecot indexes over NFS are a known perf/locking hazard → only vmail-vol-1
+# (the Maildir) is relocated to NFS; vmail-index-vol-1 stays on the local disk.
+mailcow_vmail_local_mount: "/srv/vmail" # host mountpoint that the override binds
+mailcow_vmail_nfs_server: "CONFIRM_NAS_IP" # DEPLOY-TIME: Synology NAS IP (create export first)
+mailcow_vmail_nfs_export: "/volume1/vmail" # DEPLOY-TIME: NAS export path (lib-synology-dsm)
+mailcow_vmail_nfs_opts: "nfsvers=4.1,hard,noatime,_netdev,rw"
+# Dovecot-over-NFS storage tuning (written to data/conf/dovecot/extra.conf):
+mailcow_dovecot_nfs_tuning: true
+
+# --- Hosted mail domains -------------------------------------------------------
+# by-research.be = PUBLIC (external send/receive). example.com = INTERNAL ONLY
+# (no public MX/SPF/DKIM, no outbound egress) — enforced in postfix (extra.cf).
+mailcow_domains:
+  - domain: "by-research.be"
+    description: "BY-SYSTEMS primary mail domain (public)"
+    internal_only: false
+    defquota_mb: 5120
+    maxquota_mb: 51200
+    quota_mb: 1048576 # total domain quota pool
+    mailboxes: 50
+  - domain: "example.com"
+    description: "Internal/local-only placeholder domain (NOT owned, no external mail)"
+    internal_only: true
+    defquota_mb: 5120
+    maxquota_mb: 10240
+    quota_mb: 102400
+    mailboxes: 25
+
+# --- Default per-user quota (Authentik-provisioned mailboxes) -------------------
+mailcow_default_quota_mb: 5120 # 5 GB/user starting (adjustable per-mailbox)
+
+# --- Mandatory role addresses (RFC 5321 — accept or get penalised) -------------
+mailcow_postmaster_addresses:
+  - { localpart: "postmaster", domain: "by-research.be" }
+  - { localpart: "abuse", domain: "by-research.be" }
+  - { localpart: "postmaster", domain: "example.com" }
+
+# --- Native Authentik OIDC (System > Configuration > Access > Identity Provider)
+# Enables auto-provisioning: on first OIDC login mailcow reads the `mailcow_template`
+# claim → maps to a mailbox template → creates the mailbox with the 5 GB quota.
+mailcow_oidc_enabled: true
+mailcow_oidc_slug: "mailcow" # Authentik application slug
+mailcow_authentik_base: "https://authentik.by-research.be"
+mailcow_oidc_authorization_endpoint: "{{ mailcow_authentik_base }}/application/o/authorize/"
+mailcow_oidc_token_endpoint: "{{ mailcow_authentik_base }}/application/o/token/"
+mailcow_oidc_userinfo_endpoint: "{{ mailcow_authentik_base }}/application/o/userinfo/"
+mailcow_oidc_jwks_endpoint: "{{ mailcow_authentik_base }}/application/o/{{ mailcow_oidc_slug }}/jwks/"
+mailcow_oidc_redirect_url: "https://{{ mailcow_fqdn }}"
+mailcow_oidc_scopes: "openid profile email mailcow_template"
+mailcow_oidc_template_claim_value: "default" # claim value → mapped mailbox template
+mailcow_oidc_secret_file: "app-oidc-mailcow.json"
+
+# --- Web UI exposure (Traefik) — public + rate-limited (SOGo webmail needs
+#     roaming access; mailcow's own OIDC login gates it). Matches nextcloud. -----
+mailcow_traefik_internal_only: false
+
+# --- Backups: mailcow helper-script dump → push to S3 (storage = NAS + S3 only,
+#     no 2nd local disk). vmail itself already lives on the NAS. -----------------
+mailcow_backup_enabled: true
+mailcow_backup_dir: "/var/backups/mailcow" # transient local staging before S3 push
+mailcow_backup_s3_secret_file: "app-s3-mailcow.json" # DEPLOY-TIME: provision S3 bucket+creds
+mailcow_backup_cron_hour: 3
+mailcow_backup_cron_minute: 30
+mailcow_backup_components: "all" # backup_and_restore.sh scope (vmail+mysql+redis+conf+...)
+mailcow_backup_retention_days: 7
+
+# --- Secrets (controller-side, written 0600 to the secret folder) --------------
+mailcow_secret_dir: "~/.openclaw/workspace/infra/secrets"
+mailcow_secret_file: "mailcow.json" # DBROOT/DBPASS/REDISPASS/API key (generated)
+
+# --- Safety gate: the live `docker compose up` only runs when explicitly enabled.
+#     Standing up a PUBLIC mail server is outward-facing → keep false until the
+#     NAS export + DNS + FW prerequisites are in place and the deploy is approved.
+mailcow_deploy_stack: false

@@ -1,0 +1,32 @@
+---
+# ==============================================================================
+# Role: mailcow — config (API-driven). INCREMENT 2 — implemented + tested against
+# the RUNNING stack (gated behind mailcow_deploy_stack). Specified here so the
+# role is whole; each item is grounded in the official mailcow docs.
+#
+# To implement (drive mailcow's REST API with the seeded API key — ansible-only):
+#   1. Seed the API key into mailcow's `api` table (docker exec mariadb) + allow
+#      from the controller, so subsequent steps use uri/POST to /api/v1/...
+#   2. Domains      → POST /api/v1/add/domain for each mailcow_domains entry
+#                     (defquota/maxquota/quota/mailboxes from the var).
+#   3. Mailbox tmpl → create the "default" mailbox template with quota =
+#      mailcow_default_quota_mb (5 GB) so OIDC auto-provisioning sizes mailboxes.
+#   4. OIDC IdP     → System > Configuration > Access > Identity Provider =
+#      Generic-OIDC: authorization/token/userinfo endpoints, client id+secret
+#      (mailcow_oidc.*), redirect mailcow_oidc_redirect_url, scopes
+#      mailcow_oidc_scopes, attribute-mapping mailcow_oidc_template_claim_value
+#      -> "default" template. (Set via DB seed if not API-exposed.)
+#   5. postmaster   → create postmaster@/abuse@ mailbox-or-alias for each
+#      mailcow_postmaster_addresses entry (RFC 5321).
+#   6. example.com internal-only → postfix restriction validated against the live
+#      chain (reject example.com sender -> non-local recipient); do NOT clobber
+#      mailcow's default smtpd_*_restrictions. Primary control = no public MX +
+#      FW egress; this is defense-in-depth.
+# ==============================================================================
+
+- name: "config | INCREMENT 2 not yet implemented — fail loudly if a deploy reaches here"
+  ansible.builtin.fail:
+    msg: >-
+      mailcow stack config (domains/template/OIDC/postmaster/example.com) is the
+      next increment. Implement roles/mailcow/tasks/config.yml before enabling a
+      full deploy, or run with --skip-tags config to bring up the stack only.
