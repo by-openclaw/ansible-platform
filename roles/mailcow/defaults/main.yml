@@ -32,15 +32,13 @@ mailcow_skip_clamd: "n" # keep ClamAV (8 GB RAM sized for it)
 mailcow_skip_sogo: "n" # keep SOGo webmail
 mailcow_additional_server_names: "" # extra SANs if ever needed
 
-# --- vmail storage: Maildir on the Synology NAS via NFS; indexes stay LOCAL -----
-# Dovecot indexes over NFS are a known perf/locking hazard → only vmail-vol-1
-# (the Maildir) is relocated to NFS; vmail-index-vol-1 stays on the local disk.
-mailcow_vmail_local_mount: "/srv/vmail" # host mountpoint that the override binds
-mailcow_vmail_nfs_server: "CONFIRM_NAS_IP" # DEPLOY-TIME: Synology NAS IP (create export first)
-mailcow_vmail_nfs_export: "/volume1/vmail" # DEPLOY-TIME: NAS export path (lib-synology-dsm)
-mailcow_vmail_nfs_opts: "nfsvers=4.1,hard,noatime,_netdev,rw"
-# Dovecot-over-NFS storage tuning (written to data/conf/dovecot/extra.conf):
-mailcow_dovecot_nfs_tuning: true
+# --- vmail storage: LOCAL (the VM's 60 GB disk) for now ------------------------
+# mailcow keeps its default vmail volume on the local disk — no relocation, no
+# extra disk, no NFS. Simple + self-contained.
+# FUTURE (deferred, user 2026-06-16): migrate vmail to the Synology NAS once the
+# NAS is moved onto a VLAN reachable from the DMZ (so it never needs a
+# DMZ->OOB-management path). Backups go to S3 regardless.
+mailcow_vmail_storage: "local"
 
 # --- Hosted mail domains -------------------------------------------------------
 # by-research.be = PUBLIC (external send/receive). example.com = INTERNAL ONLY

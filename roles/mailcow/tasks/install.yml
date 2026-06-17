@@ -1,14 +1,15 @@
 ---
 # ==============================================================================
-# Role: mailcow — install (clone, NFS vmail mount, mailcow.conf, override)
+# Role: mailcow — install (clone + mailcow.conf)
 # Lays down the stack on disk but does NOT start it (see compose.yml, gated).
-# Idempotent + check-mode safe. The NFS mount only runs once a real NAS IP is
-# set (the placeholder is skipped so the scaffold is safe to run/check).
+# vmail stays on the local 60 GB disk via mailcow's default volumes — no NFS,
+# no extra disk, no override (NAS migration is deferred, see defaults).
+# Idempotent + check-mode safe.
 # ==============================================================================
 
-- name: "install | Packages (git for clone, nfs-common for the vmail mount)"
+- name: "install | Git package (for the mailcow clone)"
   ansible.builtin.apt:
-    name: [git, nfs-common]
+    name: [git]
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -21,33 +22,6 @@
     depth: 1
   register: mailcow_clone
 
-# --- vmail Maildir on the Synology NAS (NFS). Indexes stay local (vmail-index). -
-- name: "install | NAS IP must be set before a real deploy"
-  ansible.builtin.assert:
-    that: mailcow_vmail_nfs_server != 'CONFIRM_NAS_IP'
-    fail_msg: >-
-      mailcow_vmail_nfs_server is still the placeholder. Create the Synology NFS
-      export for vmail and set the NAS IP/export before deploying the stack.
-  when: mailcow_deploy_stack | bool
-
-- name: "install | Ensure the vmail mountpoint exists"
-  ansible.builtin.file:
-    path: "{{ mailcow_vmail_local_mount }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: "install | Mount the vmail Maildir from the NAS (NFS, persisted to fstab)"
-  ansible.posix.mount:
-    path: "{{ mailcow_vmail_local_mount }}"
-    src: "{{ mailcow_vmail_nfs_server }}:{{ mailcow_vmail_nfs_export }}"
-    fstype: nfs4
-    opts: "{{ mailcow_vmail_nfs_opts }}"
-    state: "{{ 'mounted' if mailcow_deploy_stack | bool else 'present' }}"
-  when: mailcow_vmail_nfs_server != 'CONFIRM_NAS_IP'
-
-# --- mailcow configuration files ----------------------------------------------
 - name: "install | Render mailcow.conf"
   ansible.builtin.template:
     src: mailcow.conf.j2
@@ -57,38 +31,6 @@
     mode: "0600"
   no_log: true # carries DB/Redis passwords
 
-- name: "install | Render docker-compose.override.yml (vmail NFS bind + RP binds)"
-  ansible.builtin.template:
-    src: docker-compose.override.yml.j2
-    dest: "{{ mailcow_install_dir }}/docker-compose.override.yml"
-    owner: root
-    group: root
-    mode: "0644"
-
-- name: "install | Ensure dovecot conf dir exists"
-  ansible.builtin.file:
-    path: "{{ mailcow_install_dir }}/data/conf/dovecot"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: "install | Dovecot-over-NFS tuning (storage on NFS, indexes local)"
-  ansible.builtin.blockinfile:
-    path: "{{ mailcow_install_dir }}/data/conf/dovecot/extra.conf"
-    create: true
-    owner: root
-    group: root
-    mode: "0644"
-    marker: "# {mark} ANSIBLE MANAGED — NFS vmail tuning"
-    block: |
-      # vmail Maildir is on NFS; keep mmap off and fsync on for safe locking.
-      mmap_disable = yes
-      mail_fsync = always
-      mail_nfs_storage = yes
-      # Indexes remain on the local volume (vmail-index-vol-1) → not NFS.
-  when: mailcow_dovecot_nfs_tuning | bool
-
-# NOTE: example.com internal-only postfix restriction is applied in config.yml
-# (after the domain exists + the stack runs), so it can be validated against the
-# live postfix restriction chain without risking a clobber that breaks mail flow.
+# NOTE: vmail = mailcow's default docker volume on the local disk (no override).
+# example.com internal-only postfix restriction is applied in config.yml (after
+# the domain exists + the stack runs), validated against the live postfix chain.
