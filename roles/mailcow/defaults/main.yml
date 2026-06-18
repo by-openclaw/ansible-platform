@@ -46,6 +46,18 @@ mailcow_vmail_storage: "local"
 # instead of recursing. The DMZ gateway (10.1.2.1) is the resolver. ------------
 mailcow_unbound_forward_to: "10.1.2.1"
 
+# --- Host MTA: Debian ships exim4 listening on :25, which collides with
+# mailcow's postfix. mailcow IS the MTA → purge any host MTA. ------------------
+mailcow_host_mta_packages:
+  - exim4
+  - exim4-base
+  - exim4-config
+  - exim4-daemon-light
+  - postfix
+  - sendmail-bin
+  - nullmailer
+  - opensmtpd
+
 # --- Hosted mail domains -------------------------------------------------------
 # by-research.be = PUBLIC (external send/receive). example.com = INTERNAL ONLY
 # (no public MX/SPF/DKIM, no outbound egress) — enforced in postfix (extra.cf).

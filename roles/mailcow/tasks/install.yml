@@ -7,6 +7,12 @@
 # Idempotent + check-mode safe. Does NOT start the stack (see compose.yml, gated).
 # ==============================================================================
 
+- name: "install | Purge any host MTA (frees :25 for mailcow postfix)"
+  ansible.builtin.apt:
+    name: "{{ mailcow_host_mta_packages }}"
+    state: absent
+    purge: true
+
 - name: "install | Prerequisite packages (Docker repo + git clone)"
   ansible.builtin.apt:
     name: [ca-certificates, curl, gnupg, git]
@@ -59,6 +65,11 @@
     dest: "{{ mailcow_install_dir }}"
     version: "{{ mailcow_git_version }}"
     depth: 1
+    # Clone once; never pull/reset on re-runs. mailcow's data/conf/* are tracked
+    # files that we (unbound.conf) and mailcow's runtime modify, so a git update
+    # would fail on "local modifications" / wipe live config. Version bumps are
+    # done out-of-band via mailcow's own update.sh, not git pull.
+    update: false
   register: mailcow_clone
 
 - name: "install | Render mailcow.conf"
