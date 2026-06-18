@@ -5,13 +5,16 @@
 # for the web UI to answer on the HTTP listener.
 # ==============================================================================
 
-- name: "compose | Pull the pinned mailcow images"
+- name: "compose | Pull + start the mailcow stack"
   community.docker.docker_compose_v2:
     project_src: "{{ mailcow_install_dir }}"
+    # mailcow interpolates ${VAR} from mailcow.conf (not .env) → point compose at it.
+    env_files:
+      - "{{ mailcow_install_dir }}/mailcow.conf"
     pull: always
     state: present
-    # `present` + no build → create/start containers using the pinned tags from
-    # mailcow's compose (the git ref pins them). No :latest anywhere.
+    # `present` → create/start containers using the pinned tags from mailcow's
+    # compose (the git ref pins them). No :latest anywhere.
   register: mailcow_compose
   environment:
     COMPOSE_HTTP_TIMEOUT: "300"
