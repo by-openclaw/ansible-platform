@@ -70,6 +70,20 @@
     mode: "0600"
   no_log: true # carries DB/Redis passwords
 
+# mailcow's unbound recurses to root servers on :53, which the platform blocks
+# (force DNS through the chain). Make it FORWARD to the platform resolver and
+# drop local DNSSEC validation (the chain validates upstream) so it stays healthy.
+- name: "install | Point mailcow unbound at the platform DNS chain (forward, no recurse)"
+  ansible.builtin.blockinfile:
+    path: "{{ mailcow_install_dir }}/data/conf/unbound/unbound.conf"
+    marker: "# {mark} ANSIBLE MANAGED — forward to platform DNS chain"
+    block: |
+      server:
+        module-config: "iterator"
+      forward-zone:
+        name: "."
+        forward-addr: {{ mailcow_unbound_forward_to }}
+
 # NOTE: vmail = mailcow's default docker volume on the local disk (no override).
 # example.com internal-only postfix restriction is applied in config.yml (after
 # the domain exists + the stack runs), validated against the live postfix chain.
