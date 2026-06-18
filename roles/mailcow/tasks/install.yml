@@ -81,6 +81,26 @@
     mode: "0600"
   no_log: true # carries DB/Redis passwords
 
+# generate_config.sh (which we skip — we template mailcow.conf) also creates the
+# initial self-signed cert; without it nginx crash-loops. Traefik terminates the
+# real TLS (wildcard), so mailcow's internal cert only needs to EXIST.
+- name: "install | Ensure mailcow ssl assets dir"
+  ansible.builtin.file:
+    path: "{{ mailcow_install_dir }}/data/assets/ssl"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "install | Generate mailcow internal self-signed cert (Traefik does real TLS)"
+  ansible.builtin.command:
+    cmd: >-
+      openssl req -x509 -newkey rsa:2048
+      -keyout {{ mailcow_install_dir }}/data/assets/ssl/key.pem
+      -out {{ mailcow_install_dir }}/data/assets/ssl/cert.pem
+      -days 3650 -subj "/CN={{ mailcow_hostname }}/O=mailcow/C=BE" -sha256 -nodes
+    creates: "{{ mailcow_install_dir }}/data/assets/ssl/cert.pem"
+
 # mailcow's unbound recurses to root servers on :53, which the platform blocks
 # (force DNS through the chain). Make it FORWARD to the platform resolver and
 # drop local DNSSEC validation (the chain validates upstream) so it stays healthy.
