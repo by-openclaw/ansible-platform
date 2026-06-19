@@ -99,9 +99,50 @@ mailcow_oidc_authorization_endpoint: "{{ mailcow_authentik_base }}/application/o
 mailcow_oidc_token_endpoint: "{{ mailcow_authentik_base }}/application/o/token/"
 mailcow_oidc_userinfo_endpoint: "{{ mailcow_authentik_base }}/application/o/userinfo/"
 mailcow_oidc_jwks_endpoint: "{{ mailcow_authentik_base }}/application/o/{{ mailcow_oidc_slug }}/jwks/"
-mailcow_oidc_redirect_url: "https://{{ mailcow_fqdn }}"
-mailcow_oidc_scopes: "openid profile email mailcow_template"
-mailcow_oidc_template_claim_value: "default" # claim value → mapped mailbox template
+# Authentik per-application OIDC issuer. mailcow stores this as `server_url` and uses
+# it as the token issuer / discovery base. Trailing slash matches Authentik's `iss`.
+mailcow_oidc_issuer: "{{ mailcow_authentik_base }}/application/o/{{ mailcow_oidc_slug }}/"
+mailcow_oidc_redirect_url: "https://{{ mailcow_fqdn }}/"
+mailcow_oidc_scopes: "openid profile email"
+# mailcow auto-provisions every OIDC user from this mailbox template (`default_template`
+# in mailcow's identity_provider settings). Name is UNIQUE (not "default") so it can
+# never collide with mailcow's built-in "Default" template under MySQL's
+# case-insensitive collation — provisioning looks the template up by name.
+mailcow_oidc_default_template: "oidc-5gb"
+# Full attribute set so OIDC-provisioned mailboxes are immediately usable (IMAP/SMTP/
+# SOGo/sieve enabled), with the 5 GB quota. Mirrors mailcow's built-in mailbox
+# template; quota is in MB (matches the add/mailbox API used for the seed mailboxes).
+mailcow_oidc_template_attributes:
+  tags: []
+  quota: "{{ mailcow_default_quota_mb }}"
+  quarantine_notification: "hourly"
+  quarantine_category: "reject"
+  rl_frame: "s"
+  rl_value: ""
+  force_pw_update: "0"
+  force_tfa: "0"
+  sogo_access: "1"
+  active: "1"
+  tls_enforce_in: "0"
+  tls_enforce_out: "0"
+  imap_access: "1"
+  pop3_access: "1"
+  smtp_access: "1"
+  sieve_access: "1"
+  acl_spam_alias: "1"
+  acl_tls_policy: "1"
+  acl_spam_score: "1"
+  acl_spam_policy: "1"
+  acl_delimiter_action: "1"
+  acl_syncjobs: "0"
+  acl_eas_reset: "1"
+  acl_sogo_profile_reset: "0"
+  acl_pushover: "1"
+  acl_quarantine: "1"
+  acl_quarantine_attachments: "1"
+  acl_quarantine_notification: "1"
+  acl_quarantine_category: "1"
+  acl_app_passwds: "1"
 mailcow_oidc_secret_file: "app-oidc-mailcow.json"
 
 # --- Web UI exposure (Traefik) — public + rate-limited (SOGo webmail needs
