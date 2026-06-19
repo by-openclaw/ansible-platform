@@ -77,13 +77,12 @@
         "log-driver": "json-file",
         "log-opts": {"max-size": "10m", "max-file": "3"}
       }
-  register: mailcow_daemon_json
+  notify: Restart docker for mailcow
 
-- name: "install | Restart docker to apply IPv6 (only when daemon.json changed)"
-  ansible.builtin.service:
-    name: docker
-    state: restarted
-  when: mailcow_daemon_json.changed
+# Apply the docker restart NOW (before clone/compose) rather than at play end,
+# so the stack's network is created dual-stack on first `compose up`.
+- name: "install | Apply pending docker restart before the stack starts"
+  ansible.builtin.meta: flush_handlers
 
 - name: "install | Clone mailcow-dockerized at the pinned tag"
   ansible.builtin.git:
