@@ -59,6 +59,32 @@
     state: started
     enabled: true
 
+# mailcow's containers must reach the platform DNS chain. On this network the
+# IPv4 resolver (10.1.2.1) is dead; only IPv6 (fd01:2::1) answers — so the Docker
+# network must be dual-stack or unbound (and thus the whole stack) can't resolve.
+- name: "install | Configure Docker IPv6 (dual-stack) daemon.json"
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      {
+        "ipv6": true,
+        "ip6tables": true,
+        "experimental": true,
+        "fixed-cidr-v6": "fd00:d0c6:1::/64",
+        "log-driver": "json-file",
+        "log-opts": {"max-size": "10m", "max-file": "3"}
+      }
+  register: mailcow_daemon_json
+
+- name: "install | Restart docker to apply IPv6 (only when daemon.json changed)"
+  ansible.builtin.service:
+    name: docker
+    state: restarted
+  when: mailcow_daemon_json.changed
+
 - name: "install | Clone mailcow-dockerized at the pinned tag"
   ansible.builtin.git:
     repo: "{{ mailcow_git_repo }}"
@@ -100,6 +126,11 @@
       -out {{ mailcow_install_dir }}/data/assets/ssl/cert.pem
       -days 3650 -subj "/CN={{ mailcow_hostname }}/O=mailcow/C=BE" -sha256 -nodes
     creates: "{{ mailcow_install_dir }}/data/assets/ssl/cert.pem"
+
+- name: "install | Generate mailcow dhparams.pem (dovecot fatals without it)"
+  ansible.builtin.command:
+    cmd: openssl dhparam -out {{ mailcow_install_dir }}/data/assets/ssl/dhparams.pem 2048
+    creates: "{{ mailcow_install_dir }}/data/assets/ssl/dhparams.pem"
 
 # mailcow's unbound recurses to root servers on :53, which the platform blocks
 # (force DNS through the chain). Make it FORWARD to the platform resolver and

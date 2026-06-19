@@ -42,9 +42,11 @@ mailcow_vmail_storage: "local"
 
 # --- DNS: mailcow's bundled unbound is recursive (queries root servers on :53),
 # but the platform blocks direct internal->non-FW :53 (forces the local
-# AdGuard->Unbound->dnscrypt chain). So point mailcow's unbound at the chain
-# instead of recursing. The DMZ gateway (10.1.2.1) is the resolver. ------------
-mailcow_unbound_forward_to: "10.1.2.1"
+# AdGuard->Unbound->dnscrypt chain). So point mailcow's unbound at the chain.
+# NOTE: the IPv4 resolver 10.1.2.1 is currently DEAD on this network — only the
+# IPv6 resolver fd01:2::1 answers. Hence Docker IPv6 (install.yml) + this v6
+# forwarder. Switch back to 10.1.2.1 if/when the v4 resolver is fixed. ----------
+mailcow_unbound_forward_to: "fd01:2::1"
 
 # --- Host MTA: Debian ships exim4 listening on :25, which collides with
 # mailcow's postfix. mailcow IS the MTA → purge any host MTA. ------------------
