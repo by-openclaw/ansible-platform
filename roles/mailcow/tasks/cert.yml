@@ -1,0 +1,154 @@
+---
+# ==============================================================================
+# Role: mailcow — wildcard TLS for the mail ports via Cloudflare DNS-01 (lego)
+# Mirrors roles/traefik + roles/adguard. mailcow runs SKIP_LETS_ENCRYPT=y (acme
+# container off) and serves whatever sits in data/assets/ssl, so we issue the
+# *.by-research.be wildcard here and drop it in, then reload the mail daemons.
+# DNS-01 needs only outbound Cloudflare API — independent of WAN/public exposure.
+# ==============================================================================
+
+- name: "cert | Ensure base dependencies present"
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, tar, cron]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "cert | Ensure /etc/lego directories exist"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - /etc/lego
+    - /etc/lego/cert
+
+# --- lego (pinned) ------------------------------------------------------------
+- name: "cert | Detect installed lego version"
+  ansible.builtin.command: /usr/local/bin/lego --version
+  register: mailcow_lego_check
+  changed_when: false
+  failed_when: false
+
+- name: "cert | Determine whether the pinned lego version needs (re)install"
+  ansible.builtin.set_fact:
+    mailcow_lego_needs_install: >-
+      {{ mailcow_lego_check.rc != 0
+         or mailcow_lego_version not in mailcow_lego_check.stdout }}
+
+- name: "cert | Download + install lego (pinned)"
+  when: mailcow_lego_needs_install | bool
+  block:
+    - name: "cert | Download lego release tarball"
+      ansible.builtin.get_url:
+        url: "{{ mailcow_lego_url }}"
+        dest: /tmp/lego_linux_amd64.tar.gz
+        mode: "0644"
+    - name: "cert | Extract lego to /usr/local/bin"
+      ansible.builtin.unarchive:
+        src: /tmp/lego_linux_amd64.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        include: [lego]
+        owner: root
+        group: root
+        mode: "0755"
+
+- name: "cert | Template Cloudflare API credentials (root, 0600)"
+  ansible.builtin.template:
+    src: cloudflare.env.j2
+    dest: /etc/lego/cloudflare.env
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+# --- issue / renew the wildcard ----------------------------------------------
+- name: "cert | Check for an existing wildcard certificate"
+  ansible.builtin.stat:
+    path: "{{ mailcow_cert_crt }}"
+  register: mailcow_cert_stat
+
+- name: "cert | Issue wildcard certificate (first run)"
+  ansible.builtin.command:
+    cmd: >-
+      /usr/local/bin/lego
+      --email {{ mailcow_acme_email }}
+      --accept-tos
+      --dns cloudflare
+      --dns.propagation-wait 60s
+      --domains "*.{{ mailcow_domain }}"
+      --domains "{{ mailcow_domain }}"
+      run
+    creates: "{{ mailcow_cert_crt }}"
+  environment:
+    CF_DNS_API_TOKEN: "{{ mailcow_cf_token }}"
+    CF_ZONE_API_TOKEN: "{{ mailcow_cf_token }}"
+    LEGO_PATH: /etc/lego/cert
+  when: not mailcow_cert_stat.stat.exists
+  no_log: true
+
+- name: "cert | Renew wildcard certificate (subsequent runs, tolerant)"
+  ansible.builtin.command:
+    cmd: >-
+      /usr/local/bin/lego
+      --dns cloudflare
+      --dns.propagation-wait 60s
+      --domains "*.{{ mailcow_domain }}"
+      --domains "{{ mailcow_domain }}"
+      renew
+      --days {{ mailcow_renew_days }}
+    chdir: /etc/lego
+  environment:
+    CF_DNS_API_TOKEN: "{{ mailcow_cf_token }}"
+    CF_ZONE_API_TOKEN: "{{ mailcow_cf_token }}"
+    LEGO_PATH: /etc/lego/cert
+  when: mailcow_cert_stat.stat.exists
+  register: mailcow_renew
+  changed_when: "'no renewal' not in (mailcow_renew.stdout | lower) and 'is not due' not in (mailcow_renew.stdout | lower)"
+  failed_when: false
+  no_log: true
+
+# --- deploy into mailcow's bring-your-own cert path (idempotent on content) ----
+- name: "cert | Ensure mailcow ssl dir exists"
+  ansible.builtin.file:
+    path: "{{ mailcow_ssl_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: "cert | Install the wildcard fullchain as mailcow cert.pem"
+  ansible.builtin.copy:
+    src: "{{ mailcow_cert_crt }}"
+    dest: "{{ mailcow_ssl_dir }}/cert.pem"
+    remote_src: true
+    mode: "0644"
+  notify: Reload mailcow mail TLS
+
+- name: "cert | Install the wildcard private key as mailcow key.pem"
+  ansible.builtin.copy:
+    src: "{{ mailcow_cert_key }}"
+    dest: "{{ mailcow_ssl_dir }}/key.pem"
+    remote_src: true
+    mode: "0600"
+  no_log: true
+  notify: Reload mailcow mail TLS
+
+# --- renewal automation (cron + script) --------------------------------------
+- name: "cert | Deploy the renewal script /etc/lego/renew-mailcow-cert.sh"
+  ansible.builtin.template:
+    src: renew-mailcow-cert.sh.j2
+    dest: /etc/lego/renew-mailcow-cert.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "cert | Install daily renewal cron (03:41)"
+  ansible.builtin.cron:
+    name: "lego-renew-mailcow"
+    cron_file: lego-renew-mailcow
+    user: root
+    minute: "41"
+    hour: "3"
+    job: "/etc/lego/renew-mailcow-cert.sh >> /var/log/lego-renew.log 2>&1"

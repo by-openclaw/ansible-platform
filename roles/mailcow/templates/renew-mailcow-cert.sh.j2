@@ -1,0 +1,30 @@
+#!/bin/bash
+# Copyright (c) BY-SYSTEMS SRL
+# SPDX-License-Identifier: Apache-2.0
+# Source: https://github.com/by-openclaw/ansible-platform
+#
+# Managed by Ansible role `mailcow` (tasks/cert.yml). Do not edit by hand.
+# Renews the wildcard *.{{ mailcow_domain }} cert via Cloudflare DNS-01, copies it
+# into mailcow's bring-your-own cert path, then reloads the mail daemons so the
+# refreshed cert is served on 25/465/587/993/995 (mailcow's acme container is off).
+set -euo pipefail
+
+set -a
+. /etc/lego/cloudflare.env
+set +a
+export LEGO_PATH=/etc/lego/cert
+
+/usr/local/bin/lego \
+  --dns cloudflare \
+  --dns.propagation-wait 60s \
+  --domains "*.{{ mailcow_domain }}" \
+  --domains "{{ mailcow_domain }}" \
+  renew --days {{ mailcow_renew_days }}
+
+# Deploy into mailcow only if the cert actually changed (compare content).
+if ! cmp -s "{{ mailcow_cert_crt }}" "{{ mailcow_ssl_dir }}/cert.pem"; then
+  install -m 0644 "{{ mailcow_cert_crt }}" "{{ mailcow_ssl_dir }}/cert.pem"
+  install -m 0600 "{{ mailcow_cert_key }}" "{{ mailcow_ssl_dir }}/key.pem"
+  cd {{ mailcow_install_dir }}
+  docker compose restart postfix-mailcow dovecot-mailcow nginx-mailcow
+fi

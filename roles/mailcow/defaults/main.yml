@@ -149,6 +149,24 @@ mailcow_oidc_secret_file: "app-oidc-mailcow.json"
 #     roaming access; mailcow's own OIDC login gates it). Matches nextcloud. -----
 mailcow_traefik_internal_only: false
 
+# --- Mail-port TLS: the real *.by-research.be wildcard (NOT mailcow's self-signed).
+# The web UI already gets the wildcard via Traefik; the mail ports (25 STARTTLS,
+# 465 SMTPS, 587 submission, 993 IMAPS, 995 POP3S) must present it too so remote
+# MTAs + mail clients see a valid cert. Same canonical lego DNS-01 flow as the
+# traefik/adguard roles: issue on this host, drop into mailcow's bring-your-own
+# cert path (SKIP_LETS_ENCRYPT=y), reload the mail daemons, renew via cron. -------
+mailcow_tls_wildcard: true
+mailcow_domain: "by-research.be"
+mailcow_acme_email: "postmaster@by-research.be"
+mailcow_lego_version: "4.21.0" # pin (matches traefik/adguard)
+mailcow_lego_url: "https://github.com/go-acme/lego/releases/download/v{{ mailcow_lego_version }}/lego_v{{ mailcow_lego_version }}_linux_amd64.tar.gz"
+mailcow_renew_days: 30
+mailcow_cert_crt: "/etc/lego/cert/certificates/_.{{ mailcow_domain }}.crt"
+mailcow_cert_key: "/etc/lego/cert/certificates/_.{{ mailcow_domain }}.key"
+mailcow_cf_secret: "~/.openclaw/workspace/infra/secrets/app-cloudflare-by-research-be.json"
+# mailcow reads its server cert/key from here (bring-your-own; acme container off).
+mailcow_ssl_dir: "{{ mailcow_install_dir }}/data/assets/ssl"
+
 # --- Backups: mailcow helper-script dump → push to S3 (storage = NAS + S3 only,
 #     no 2nd local disk). vmail itself already lives on the NAS. -----------------
 mailcow_backup_enabled: true
