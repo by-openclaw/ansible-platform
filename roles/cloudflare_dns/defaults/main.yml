@@ -8,6 +8,15 @@
 #   dyn.by-research.be     = Proximus DYNAMIC (os-ddclient; see opnsense role)
 # Public services CNAME to the apex by default; Proximus-bound services CNAME to
 # `dyn` (+ outbound PBR). No ISP identity in any public name (ISO 27001 / NIS2).
+#
+# SCOPE / OWNERSHIP: this role is ADDITIVE — it manages only the records listed in
+# `cloudflare_dns_records` and never prunes the zone. The `resend.by-research.be`
+# subtree (SES bounce MX, send.* SPF, resend._domainkey DKIM) is provisioned and
+# owned by RESEND's own domain-setup flow — it is OUT OF SCOPE here. Do NOT add
+# those names, and never put a `solo`/`absent` entry on a name that overlaps them.
+# This repo owns the apex + mailcow (mail/MX/SPF/DKIM/DMARC) records; Resend owns
+# its subdomain. The two senders are deliberately separate (apex=mailcow,
+# resend.by-research.be=Resend), each with its own SPF/DKIM.
 cloudflare_dns_secret: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/app-cloudflare-by-research-be.json"
 cloudflare_dns_zone: "by-research.be"
 
