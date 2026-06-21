@@ -116,6 +116,23 @@ authentik_oidc_apps:
       - "http://localhost:53000"
     redirect_uris_regex:
       - "https://vpn\\.by-research\\.be/.*"
+  - slug: mailcow
+    launch_url: "https://mail.by-research.be"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/mailcow.svg"
+    name: "Mailcow"
+    group: "mailcow-users"          # ACCESS group — only members may log into mail
+    secret_file: "app-oidc-mailcow.json"
+    restrict_to_group: true         # IdP-enforced: only mailcow-users can log in
+    # mailcow's native Generic-OIDC. On first login it reads the `mailcow_template`
+    # claim and auto-provisions the mailbox from that template (the 5 GB "default").
+    # The Authentik email IS already <user>@by-research.be (matches the hosted
+    # domain), so the mailbox address = the email claim — no domain rewrite needed.
+    mailcow_template: true          # emit the static mailcow_template="default" scope
+    redirect_uris:
+      - "https://mail.by-research.be/"
+      - "https://mail.by-research.be"
+    redirect_uris_regex:
+      - "https://mail\\.by-research\\.be/.*"
 
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
@@ -144,6 +161,7 @@ authentik_groups:
   - traefik-admins      # forwardAuth gate for the Traefik dashboard (admin-only svc)
   - netbird-users       # access group — only members may authenticate to NetBird VPN
   - netbird-admins      # NetBird admins (NetBird's own owner/admin role set in-app)
+  - mailcow-users       # access group — only members may SSO into mailcow webmail
   - infra-admins
   - dev
 # Groups whose members are Authentik superusers (can manage Authentik itself).

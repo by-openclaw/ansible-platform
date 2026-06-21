@@ -1,0 +1,59 @@
+---
+# ==============================================================================
+# Role: mailcow — dispatcher
+# Phases: secrets -> install (clone/NFS/conf/override/compose) -> config (API:
+# domains/template/OIDC/postmaster/example.com) -> traefik route -> backup.
+# Config/route/backup require the stack to be running, so they are gated behind
+# `mailcow_deploy_stack` (default false). Install is safe to run/check anytime.
+# ==============================================================================
+
+- name: Resolve / generate mailcow stack secrets
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [mailcow, secrets]
+
+- name: Install the mailcow stack (clone, NFS vmail, mailcow.conf, override)
+  ansible.builtin.import_tasks: install.yml
+  tags: [mailcow, install]
+
+- name: Bring the mailcow stack up (gated)
+  ansible.builtin.include_tasks: compose.yml
+  when: mailcow_deploy_stack | bool
+  tags: [mailcow, compose]
+
+- name: Issue + deploy the wildcard TLS cert for the mail ports (gated)
+  ansible.builtin.include_tasks:
+    file: cert.yml
+    apply:
+      tags: [mailcow, cert]
+  when:
+    - mailcow_deploy_stack | bool
+    - mailcow_tls_wildcard | bool
+  tags: [mailcow, cert]
+
+- name: Configure mailcow domains/template/OIDC/postmaster/example.com (API)
+  ansible.builtin.include_tasks:
+    file: config.yml
+    apply:
+      tags: [mailcow, config]
+  when: mailcow_deploy_stack | bool
+  tags: [mailcow, config]
+
+- name: Publish the mailcow web UI via Traefik (public + rate-limit)
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: mailcow
+    traefik_route_fqdn: "{{ mailcow_fqdn }}"
+    traefik_route_backend_url: "http://{{ mailcow_listen_ip }}:{{ mailcow_http_port }}"
+    traefik_route_internal_only: "{{ mailcow_traefik_internal_only }}"
+  when: mailcow_deploy_stack | bool
+  tags: [mailcow, route]
+
+- name: Configure mailcow backups (dump -> S3)
+  ansible.builtin.include_tasks: backup.yml
+  when:
+    - mailcow_deploy_stack | bool
+    - mailcow_backup_enabled | bool
+  tags: [mailcow, backup]

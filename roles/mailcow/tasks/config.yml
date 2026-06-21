@@ -1,0 +1,170 @@
+---
+# ==============================================================================
+# Role: mailcow — config (post-deploy). Idempotent. Runs against the live stack.
+# - admin password (DB, mailcow {SSHA256} hash from the secret)
+# - mailcow REST API key seeded so the uri tasks can authenticate
+# - domains + DKIM + mailboxes (postmaster/abuse + the personal user) via the API
+# - Authentik OIDC IdP + 5 GB template (DB) — only when the OIDC secret exists
+# Secrets are READ from the controller secret store (generated out-of-band); the
+# playbook never computes hashes inline.
+# ==============================================================================
+
+- name: "config | Load mailcow secrets"
+  ansible.builtin.set_fact:
+    mailcow_sec: "{{ (lookup('file', mailcow_secret_dir + '/' + mailcow_secret_file) | from_json).fields }}"
+  no_log: true
+
+- name: "config | Build the mailbox provisioning list (from the secret)"
+  ansible.builtin.set_fact:
+    mailcow_provision_mailboxes:
+      - local_part: "postmaster"
+        domain: "by-research.be"
+        name: "Postmaster"
+        password: "{{ mailcow_sec.postmaster_password }}"
+        quota: 5120
+      - local_part: "{{ mailcow_sec.user_local_part }}"
+        domain: "by-research.be"
+        name: "Youssef Boujraf"
+        password: "{{ mailcow_sec.user_password }}"
+        quota: 5120
+  no_log: true
+
+- name: "config | Read DBROOT from mailcow.conf"
+  ansible.builtin.slurp:
+    src: "{{ mailcow_install_dir }}/mailcow.conf"
+  register: mailcow_conf_raw
+  no_log: true
+
+- name: "config | Extract DBROOT"
+  ansible.builtin.set_fact:
+    mailcow_dbroot: "{{ (mailcow_conf_raw.content | b64decode).split('\n') | select('match', '^DBROOT=') | first | regex_replace('^DBROOT=', '') }}"
+  no_log: true
+
+# --- mailcow REST API key (seed so the uri tasks below can authenticate) -------
+- name: "config | Seed the mailcow REST API key (rw)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -e
+      - "MYSQL_PWD={{ mailcow_dbroot }}"
+      - "{{ mailcow_mysql_container }}"
+      - mysql
+      - -uroot
+      - mailcow
+      - -e
+      - >-
+        INSERT INTO api (api_key, allow_from, skip_ip_check, access, active, created, modified)
+        VALUES ('{{ mailcow_sec.api_key }}', '0.0.0.0/0', 1, 'rw', 1, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE active = 1, skip_ip_check = 1;
+  changed_when: false
+  no_log: true
+
+# --- admin password (idempotent: only update if the stored hash differs) -------
+- name: "config | Current admin password hash"
+  ansible.builtin.command:
+    argv: [docker, exec, -e, "MYSQL_PWD={{ mailcow_dbroot }}", "{{ mailcow_mysql_container }}",
+           mysql, -uroot, mailcow, -N, -e, "SELECT password FROM admin WHERE username='admin';"]
+  register: mailcow_admin_hash
+  changed_when: false
+  no_log: true
+
+- name: "config | Set the mailcow admin password"
+  ansible.builtin.command:
+    argv: [docker, exec, -e, "MYSQL_PWD={{ mailcow_dbroot }}", "{{ mailcow_mysql_container }}",
+           mysql, -uroot, mailcow, -e,
+           "UPDATE admin SET password='{{ mailcow_sec.admin_password_hash }}', active=1 WHERE username='admin';"]
+  when: mailcow_admin_hash.stdout | trim != mailcow_sec.admin_password_hash
+  changed_when: true
+  no_log: true
+
+# --- domains + DKIM (mailcow REST API) ----------------------------------------
+- name: "config | Set API endpoint + auth header"
+  ansible.builtin.set_fact:
+    mailcow_api: "https://{{ mailcow_listen_ip }}:{{ mailcow_https_port }}/api/v1"
+    mailcow_api_hdr: { "X-API-Key": "{{ mailcow_sec.api_key }}", "Content-Type": "application/json" }
+  no_log: true
+
+- name: "config | Add hosted domains"
+  ansible.builtin.uri:
+    url: "{{ mailcow_api }}/add/domain"
+    method: POST
+    headers: "{{ mailcow_api_hdr }}"
+    body_format: json
+    body:
+      domain: "{{ item.domain }}"
+      description: "{{ item.description }}"
+      aliases: 400
+      mailboxes: "{{ item.mailboxes }}"
+      defquota: "{{ item.defquota_mb }}"
+      maxquota: "{{ item.maxquota_mb }}"
+      quota: "{{ item.quota_mb }}"
+      active: "1"
+    validate_certs: false
+    status_code: [200]
+  loop: "{{ mailcow_domains }}"
+  loop_control: { label: "{{ item.domain }}" }
+  register: mailcow_dom_add
+  changed_when: "'domain_added' in (mailcow_dom_add.json | default([]) | string)"
+  failed_when: >-
+    mailcow_dom_add.json is defined and
+    (mailcow_dom_add.json | string is search('danger')) and
+    not (mailcow_dom_add.json | string is search('domain_exists'))
+  no_log: true
+
+- name: "config | Generate DKIM keys (2048) per domain"
+  ansible.builtin.uri:
+    url: "{{ mailcow_api }}/add/dkim"
+    method: POST
+    headers: "{{ mailcow_api_hdr }}"
+    body_format: json
+    body: { domains: "{{ item.domain }}", dkim_selector: "dkim", key_size: 2048 }
+    validate_certs: false
+    status_code: [200]
+  loop: "{{ mailcow_domains }}"
+  loop_control: { label: "{{ item.domain }}" }
+  register: mailcow_dkim_add
+  changed_when: "'dkim_added' in (mailcow_dkim_add.json | default([]) | string)"
+  failed_when: false
+  no_log: true
+
+# --- mailboxes: postmaster/abuse (RFC) + the personal user --------------------
+- name: "config | Create mailboxes (postmaster/abuse + personal user)"
+  ansible.builtin.uri:
+    url: "{{ mailcow_api }}/add/mailbox"
+    method: POST
+    headers: "{{ mailcow_api_hdr }}"
+    body_format: json
+    body:
+      local_part: "{{ item.local_part }}"
+      domain: "{{ item.domain }}"
+      name: "{{ item.name }}"
+      password: "{{ item.password }}"
+      password2: "{{ item.password }}"
+      quota: "{{ item.quota | default(mailcow_default_quota_mb) }}"
+      active: "1"
+    validate_certs: false
+    status_code: [200]
+  loop: "{{ mailcow_provision_mailboxes }}"
+  loop_control: { label: "{{ item.local_part }}@{{ item.domain }}" }
+  register: mailcow_mbox_add
+  changed_when: "'mailbox_added' in (mailcow_mbox_add.json | default([]) | string)"
+  failed_when: >-
+    mailcow_mbox_add.json is defined and
+    (mailcow_mbox_add.json | string is search('danger')) and
+    not (mailcow_mbox_add.json | string is search('object_exists'))
+  no_log: true
+
+# --- Authentik OIDC (only once the authentik role wrote the client secret) -----
+- name: "config | Stat the OIDC client secret"
+  ansible.builtin.stat:
+    path: "{{ mailcow_secret_dir }}/{{ mailcow_oidc_secret_file }}"
+  delegate_to: localhost
+  become: false
+  register: mailcow_oidc_stat
+
+- name: "config | Wire Authentik OIDC IdP + 5 GB template"
+  ansible.builtin.include_tasks: oidc.yml
+  when:
+    - mailcow_oidc_enabled | bool
+    - mailcow_oidc_stat.stat.exists

@@ -1,0 +1,90 @@
+---
+# ==============================================================================
+# Role: mailcow — oidc.yml — wire Generic-OIDC to Authentik + the 5 GB template.
+# Included by config.yml only when app-oidc-mailcow.json exists (authentik role
+# created the provider). DB-driven: mailcow exposes no REST endpoint for the IdP.
+# ==============================================================================
+
+- name: "oidc | Load the Authentik OIDC client (id + secret)"
+  ansible.builtin.set_fact:
+    mailcow_oidc_client: "{{ (lookup('file', mailcow_secret_dir + '/' + mailcow_oidc_secret_file) | from_json).fields }}"
+  no_log: true
+
+- name: "oidc | Generic-OIDC identity_provider settings"
+  ansible.builtin.set_fact:
+    mailcow_oidc_kv:
+      authsource: "generic-oidc"
+      server_url: "{{ mailcow_oidc_issuer }}"
+      client_id: "{{ mailcow_oidc_client.client_id }}"
+      client_secret: "{{ mailcow_oidc_client.client_secret }}"
+      authorize_url: "{{ mailcow_oidc_authorization_endpoint }}"
+      token_url: "{{ mailcow_oidc_token_endpoint }}"
+      userinfo_url: "{{ mailcow_oidc_userinfo_endpoint }}"
+      redirect_url: "{{ mailcow_oidc_redirect_url }}"
+      client_scopes: "{{ mailcow_oidc_scopes }}"
+      # Auto-provision every OIDC user from this mailbox template (the 5 GB
+      # "default" created below) — mailcow's reliable provisioning path.
+      default_template: "{{ mailcow_oidc_default_template }}"
+      login_provisioning: "1"
+      mailpassword_flow: "0"
+      periodic_sync: "0"
+      import_users: "0"
+      sync_interval: "15"
+      ignore_ssl_error: "0"
+  no_log: true
+
+- name: "oidc | Remove the legacy lowercase 'default' template (case-sensitive)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -e
+      - "MYSQL_PWD={{ mailcow_dbroot }}"
+      - "{{ mailcow_mysql_container }}"
+      - mysql
+      - -uroot
+      - mailcow
+      - -e
+      # BINARY keeps this case-sensitive so mailcow's built-in "Default" is untouched.
+      - "DELETE FROM templates WHERE BINARY template = 'default' AND type = 'mailbox';"
+  changed_when: false
+  no_log: true
+
+- name: "oidc | Create the 5 GB auto-provisioning mailbox template"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -e
+      - "MYSQL_PWD={{ mailcow_dbroot }}"
+      - "{{ mailcow_mysql_container }}"
+      - mysql
+      - -uroot
+      - mailcow
+      - -e
+      - >-
+        INSERT INTO templates (template, type, attributes)
+        VALUES ('{{ mailcow_oidc_default_template }}', 'mailbox', '{{ mailcow_oidc_template_attributes | to_json }}')
+        ON DUPLICATE KEY UPDATE attributes = VALUES(attributes);
+  changed_when: false
+  no_log: true
+
+- name: "oidc | Apply the identity_provider settings (key/value)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -e
+      - "MYSQL_PWD={{ mailcow_dbroot }}"
+      - "{{ mailcow_mysql_container }}"
+      - mysql
+      - -uroot
+      - mailcow
+      - -e
+      - >-
+        INSERT INTO identity_provider (`key`, `value`) VALUES ('{{ item.key }}', '{{ item.value }}')
+        ON DUPLICATE KEY UPDATE value = VALUES(value);
+  loop: "{{ mailcow_oidc_kv | dict2items }}"
+  loop_control: { label: "{{ item.key }}" }
+  changed_when: false
+  no_log: true

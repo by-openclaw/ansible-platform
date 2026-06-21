@@ -1,0 +1,16 @@
+---
+# ==============================================================================
+# Role: mailcow — handlers
+# ==============================================================================
+- name: Restart docker for mailcow
+  ansible.builtin.service:
+    name: docker
+    state: restarted
+
+# Reload the mail daemons so the refreshed wildcard cert is served on the mail
+# ports (25 STARTTLS / 465 SMTPS / 587 submission / 993 IMAPS / 995 POP3S).
+- name: Reload mailcow mail TLS
+  ansible.builtin.command:
+    cmd: docker compose restart postfix-mailcow dovecot-mailcow nginx-mailcow
+    chdir: "{{ mailcow_install_dir }}"
+  changed_when: true

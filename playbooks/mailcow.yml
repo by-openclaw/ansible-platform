@@ -1,0 +1,16 @@
+---
+# ==============================================================================
+# Playbook: mailcow.yml — PROD mailcow mail server (vm-mailcow-01, DMZ vlan1020)
+# Self-contained mailcow-dockerized stack; vmail on Synology NFS; web UI via
+# Traefik + native Authentik OIDC; mail bound to the Telenet static WAN.
+#
+# The live `docker compose up` is gated behind `mailcow_deploy_stack` (default
+# false) — set it true only once the NAS export + public DNS + FW DNAT are in
+# place and the deploy is approved (standing up a public MX is outward-facing).
+# ==============================================================================
+- name: Configure PROD mailcow
+  hosts: mailcow
+  become: true
+  gather_facts: true
+  roles:
+    - mailcow

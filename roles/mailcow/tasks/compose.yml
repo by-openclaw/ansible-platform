@@ -1,0 +1,32 @@
+---
+# ==============================================================================
+# Role: mailcow — compose (bring the stack up). Gated behind mailcow_deploy_stack.
+# Pulls the pinned images then starts the full mailcow-dockerized stack and waits
+# for the web UI to answer on the HTTP listener.
+# ==============================================================================
+
+- name: "compose | Pull + start the mailcow stack"
+  community.docker.docker_compose_v2:
+    project_src: "{{ mailcow_install_dir }}"
+    # mailcow interpolates ${VAR} from mailcow.conf (not .env) → point compose at it.
+    env_files:
+      - "{{ mailcow_install_dir }}/mailcow.conf"
+    pull: always
+    state: present
+    # `present` → create/start containers using the pinned tags from mailcow's
+    # compose (the git ref pins them). No :latest anywhere.
+  register: mailcow_compose
+  environment:
+    COMPOSE_HTTP_TIMEOUT: "300"
+
+- name: "compose | Wait for the mailcow UI to answer (HTTP listener)"
+  ansible.builtin.uri:
+    url: "http://{{ mailcow_listen_ip }}:{{ mailcow_http_port }}/"
+    method: GET
+    status_code: [200, 301, 302]
+    validate_certs: false
+  register: mailcow_ui_probe
+  retries: 30
+  delay: 10
+  until: mailcow_ui_probe.status in [200, 301, 302]
+  changed_when: false

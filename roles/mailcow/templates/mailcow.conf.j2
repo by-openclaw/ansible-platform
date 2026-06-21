@@ -1,0 +1,84 @@
+{{ ansible_managed | comment }}
+# mailcow.conf — rendered by the mailcow role. Carries secrets (0600). Do not edit
+# on the host; change roles/mailcow/defaults + re-run the role.
+
+# ------------------------------------------------------------------------------
+# Identity
+# ------------------------------------------------------------------------------
+MAILCOW_HOSTNAME={{ mailcow_hostname }}
+MAILCOW_PASS_SCHEME=BLF-CRYPT
+TZ={{ mailcow_timezone }}
+COMPOSE_PROJECT_NAME=mailcowdockerized
+DOCKER_COMPOSE_VERSION=native
+MAILCOW_TZ={{ mailcow_timezone }}
+
+# ------------------------------------------------------------------------------
+# Database / cache (mailcow's OWN bundled MariaDB + Redis — not the platform DBs)
+# ------------------------------------------------------------------------------
+DBNAME=mailcow
+DBUSER=mailcow
+DBPASS={{ mailcow_secrets.db_password }}
+DBROOT={{ mailcow_secrets.db_root_password }}
+REDISPASS={{ mailcow_secrets.redis_password }}
+
+# ------------------------------------------------------------------------------
+# HTTP/S — reverse-proxy mode. Traefik (10.1.2.110) terminates TLS with the
+# *.by-research.be wildcard and proxies to the HTTP listener below. mailcow runs
+# no ACME (SKIP_LETS_ENCRYPT=y); it brings no public cert of its own.
+# ------------------------------------------------------------------------------
+HTTP_PORT={{ mailcow_http_port }}
+HTTP_BIND={{ mailcow_listen_ip }}
+HTTPS_PORT={{ mailcow_https_port }}
+HTTPS_BIND={{ mailcow_listen_ip }}
+
+# ------------------------------------------------------------------------------
+# Mail ports — bound to all interfaces on the VM; the OPNsense FW DNATs the
+# Telenet static WAN to these (25/465/587/993/995). No cleartext POP3/IMAP exposed
+# publicly (the FW only forwards the TLS ports); they remain open on the LAN side.
+# ------------------------------------------------------------------------------
+SMTP_PORT=25
+SMTPS_PORT=465
+SUBMISSION_PORT=587
+IMAP_PORT=143
+IMAPS_PORT=993
+POP_PORT=110
+POPS_PORT=995
+SIEVE_PORT=4190
+
+# ------------------------------------------------------------------------------
+# Internal docker networks
+# ------------------------------------------------------------------------------
+IPV4_NETWORK=172.22.1
+IPV6_NETWORK=fd4d:6169:6c63:6f77::/64
+
+# ------------------------------------------------------------------------------
+# TLS / ACME
+# ------------------------------------------------------------------------------
+SKIP_LETS_ENCRYPT={{ mailcow_skip_lets_encrypt }}
+ENABLE_SSL_SNI=y
+SKIP_IP_CHECK=n
+ADDITIONAL_SAN={{ mailcow_additional_server_names }}
+ADDITIONAL_SERVER_NAMES={{ mailcow_additional_server_names }}
+
+# ------------------------------------------------------------------------------
+# Optional components
+# ------------------------------------------------------------------------------
+SKIP_CLAMD={{ mailcow_skip_clamd }}
+SKIP_SOGO={{ mailcow_skip_sogo }}
+SKIP_SOLR=y
+USE_WATCHDOG=y
+WATCHDOG_NOTIFY_EMAIL=postmaster@by-research.be
+WATCHDOG_NOTIFY_BAN=n
+
+# ------------------------------------------------------------------------------
+# Misc hardening / housekeeping
+# ------------------------------------------------------------------------------
+MAILDIR_GC_TIME=1440
+MAILDIR_SUB=Maildir
+ACL_ANYONE=disallow
+FaceID_RESTRICTION=n
+LOG_LINES=9999
+SNAT_TO_SOURCE=n
+SNAT6_TO_SOURCE=n
+DISABLE_NETFILTER_ISOLATION_RULE=n
+WEBAUTHN_ONLY_TRUSTED_VENDORS=n
