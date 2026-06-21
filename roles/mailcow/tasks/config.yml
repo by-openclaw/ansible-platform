@@ -27,6 +27,15 @@
         name: "Youssef Boujraf"
         password: "{{ mailcow_sec.user_password }}"
         quota: 5120
+      # Privileged admin identity (adm_yboujraf) — separate mailbox, matches the
+      # Authentik account email (adm_yboujraf@by-research.be) so SSO maps 1:1. SSO
+      # is the login path; this just pre-creates the mailbox (don't wait for first
+      # OIDC login). Password = break-glass only (held in the secret store).
+      - local_part: "{{ mailcow_sec.adm_user_local_part }}"
+        domain: "by-research.be"
+        name: "Youssef Boujraf (admin)"
+        password: "{{ mailcow_sec.adm_user_password }}"
+        quota: 5120
   no_log: true
 
 - name: "config | Read DBROOT from mailcow.conf"
