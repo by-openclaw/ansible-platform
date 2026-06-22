@@ -1,0 +1,44 @@
+---
+# CrowdSec install via the official packagecloud apt repo (vendor-recommended).
+
+- name: "install | Base dependencies"
+  ansible.builtin.apt:
+    name: [curl, gnupg, ca-certificates, apt-transport-https]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "install | Ensure keyrings dir"
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: "install | CrowdSec apt signing key (ASCII-armored)"
+  ansible.builtin.get_url:
+    url: "{{ crowdsec_apt_key_url }}"
+    dest: "{{ crowdsec_apt_key_path }}"
+    mode: "0644"
+
+- name: "install | CrowdSec apt repository (written deterministically)"
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/crowdsec.list
+    mode: "0644"
+    content: "{{ crowdsec_apt_repo }}\n"
+  register: crowdsec_repo_file
+
+- name: "install | Refresh apt cache after repo change"
+  ansible.builtin.apt:
+    update_cache: true
+  when: crowdsec_repo_file.changed
+
+- name: "install | Install crowdsec engine"
+  ansible.builtin.apt:
+    name: crowdsec
+    state: present
+
+- name: "install | Enable + start the crowdsec daemon"
+  ansible.builtin.systemd:
+    name: crowdsec
+    enabled: true
+    state: started
