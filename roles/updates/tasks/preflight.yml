@@ -1,0 +1,57 @@
+---
+# ==============================================================================
+# updates | preflight — record what is running BEFORE we touch anything.
+# verify.yml compares against this. Also surfaces the pending-package list so
+# a --check run shows the operator exactly what an apply would change.
+# ==============================================================================
+
+- name: "updates | preflight | Refresh the package index"
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 600
+  changed_when: false
+  check_mode: false
+
+- name: "updates | preflight | List pending upgrades"
+  ansible.builtin.command:
+    cmd: apt-get --simulate --quiet dist-upgrade
+  register: updates_pending_raw
+  changed_when: false
+  check_mode: false
+
+- name: "updates | preflight | Extract the package names"
+  ansible.builtin.set_fact:
+    updates_pending: >-
+      {{ updates_pending_raw.stdout_lines
+         | select('match', '^Inst ')
+         | map('regex_replace', '^Inst (\S+).*$', '\1')
+         | list }}
+
+- name: "updates | preflight | Show the pending upgrades (the diff)"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ updates_pending | length }} package(s) pending
+      {{ '— ' ~ (updates_pending | join(' ')) if updates_pending | length > 0 else '' }}
+
+- name: "updates | preflight | Record running systemd services"
+  ansible.builtin.command:
+    cmd: systemctl list-units --type=service --state=running --no-legend --no-pager
+  register: updates_units_before
+  changed_when: false
+  check_mode: false
+
+- name: "updates | preflight | Record running containers"
+  ansible.builtin.command:
+    cmd: docker ps --format '{% raw %}{{.Names}}{% endraw %}'
+  register: updates_containers_before
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "updates | preflight | Store the baseline"
+  ansible.builtin.set_fact:
+    updates_services_before: >-
+      {{ updates_units_before.stdout_lines
+         | map('regex_replace', '^\s*(\S+)\.service.*$', '\1')
+         | list | sort }}
+    updates_docker_before: "{{ (updates_containers_before.stdout_lines | default([])) | sort }}"

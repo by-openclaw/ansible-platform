@@ -1,0 +1,52 @@
+---
+# ==============================================================================
+# updates | verify — an upgrade that leaves a service down is a failed upgrade.
+# Compares the running set against the preflight baseline and FAILS the play on
+# any regression, so a staged rollout stops at the first broken host instead of
+# marching through the fleet.
+# ==============================================================================
+
+- name: "updates | verify | Re-read running systemd services"
+  ansible.builtin.command:
+    cmd: systemctl list-units --type=service --state=running --no-legend --no-pager
+  register: updates_units_after
+  changed_when: false
+  check_mode: false
+
+- name: "updates | verify | Re-read running containers"
+  ansible.builtin.command:
+    cmd: docker ps --format '{% raw %}{{.Names}}{% endraw %}'
+  register: updates_containers_after
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "updates | verify | Diff against the baseline"
+  ansible.builtin.set_fact:
+    updates_services_after: >-
+      {{ updates_units_after.stdout_lines
+         | map('regex_replace', '^\s*(\S+)\.service.*$', '\1')
+         | list | sort }}
+    updates_docker_after: "{{ (updates_containers_after.stdout_lines | default([])) | sort }}"
+
+- name: "updates | verify | Identify anything that did not come back"
+  ansible.builtin.set_fact:
+    updates_lost_services: "{{ updates_services_before | difference(updates_services_after) }}"
+    updates_lost_containers: "{{ updates_docker_before | difference(updates_docker_after) }}"
+
+- name: "updates | verify | Report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      services {{ updates_services_after | length }}/{{ updates_services_before | length }} up,
+      containers {{ updates_docker_after | length }}/{{ updates_docker_before | length }} up
+      {{ '— OK' if (updates_lost_services | length == 0 and updates_lost_containers | length == 0)
+         else '— REGRESSION' }}
+
+- name: "updates | verify | Fail on a service regression"
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} lost service(s)
+      {{ updates_lost_services | join(', ') }}{{ ' and container(s) ' ~ (updates_lost_containers | join(', ')) if updates_lost_containers | length > 0 else '' }}
+      after patching. Investigate before continuing the rollout.
+  when: (updates_lost_services | length > 0) or (updates_lost_containers | length > 0)

@@ -1,0 +1,82 @@
+---
+# ==============================================================================
+# updates | apt — apply the pending upgrades.
+# Held back behind `updates_apply` so importing this role never patches by
+# accident. dpkg options keep the run non-interactive and preserve any config
+# file we manage from Ansible (confold) instead of prompting.
+# ==============================================================================
+
+- name: "updates | apt | Upgrade packages ({{ updates_upgrade_type }})"
+  ansible.builtin.apt:
+    upgrade: "{{ updates_upgrade_type }}"
+    update_cache: true
+    cache_valid_time: 600
+    dpkg_options: "force-confold,force-confdef"
+    autoremove: "{{ updates_autoremove | bool }}"
+    autoclean: "{{ updates_autoclean | bool }}"
+  register: updates_apt_result
+  retries: 2
+  delay: 10
+  until: updates_apt_result is succeeded
+
+- name: "updates | apt | Install needrestart"
+  ansible.builtin.apt:
+    name: needrestart
+    state: present
+  when: updates_needrestart | bool
+
+- name: "updates | apt | Protect the container runtime from auto-restart"
+  ansible.builtin.template:
+    src: 99-ansible-blacklist.conf.j2
+    dest: /etc/needrestart/conf.d/99-ansible-blacklist.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: updates_needrestart | bool
+
+# Services keep the OLD libc/libssl mapped until they are restarted, so a host
+# can read as "patched" while still running the vulnerable code.
+#
+# Fire-and-forget (async/poll:0) on purpose: needrestart restarts sshd, and on
+# the canary that dropped Ansible's own connection mid-task and failed the play
+# even though the upgrade had succeeded. Detaching it and then reconnecting
+# makes the restart survivable instead of fatal.
+- name: "updates | apt | Restart services linked against upgraded libraries"
+  ansible.builtin.command:
+    cmd: needrestart -r a -q
+  register: updates_needrestart_result
+  async: 120
+  poll: 0
+  changed_when: false
+  failed_when: false
+  when:
+    - updates_needrestart | bool
+    - updates_apt_result is changed
+
+- name: "updates | apt | Wait for the host to come back after the restarts"
+  ansible.builtin.wait_for_connection:
+    delay: 10
+    timeout: 180
+  when:
+    - updates_needrestart | bool
+    - updates_apt_result is changed
+
+- name: "updates | apt | Check whether a reboot is required"
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: updates_reboot_required
+
+- name: "updates | apt | Report a pending reboot"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} requests a reboot
+      ({{ 'rebooting now' if updates_reboot | bool else 'NOT rebooting — updates_reboot=false' }})
+  when: updates_reboot_required.stat.exists
+
+- name: "updates | apt | Reboot"
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ updates_reboot_timeout }}"
+    msg: "Reboot after OS patching (ansible updates role)"
+  when:
+    - updates_reboot_required.stat.exists
+    - updates_reboot | bool
