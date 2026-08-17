@@ -6,7 +6,7 @@
 # file we manage from Ansible (confold) instead of prompting.
 # ==============================================================================
 
-- name: "updates | apt | Upgrade packages ({{ updates_upgrade_type }})"
+- name: "Updates | apt | Upgrade packages ({{ updates_upgrade_type }})"
   ansible.builtin.apt:
     upgrade: "{{ updates_upgrade_type }}"
     update_cache: true
@@ -19,13 +19,13 @@
   delay: 10
   until: updates_apt_result is succeeded
 
-- name: "updates | apt | Install needrestart"
+- name: "Updates | apt | Install needrestart"
   ansible.builtin.apt:
     name: needrestart
     state: present
   when: updates_needrestart | bool
 
-- name: "updates | apt | Protect the container runtime from auto-restart"
+- name: "Updates | apt | Protect the container runtime from auto-restart"
   ansible.builtin.template:
     src: 99-ansible-blacklist.conf.j2
     dest: /etc/needrestart/conf.d/99-ansible-blacklist.conf
@@ -41,7 +41,7 @@
 # the canary that dropped Ansible's own connection mid-task and failed the play
 # even though the upgrade had succeeded. Detaching it and then reconnecting
 # makes the restart survivable instead of fatal.
-- name: "updates | apt | Restart services linked against upgraded libraries"
+- name: "Updates | apt | Restart services linked against upgraded libraries"
   ansible.builtin.command:
     cmd: needrestart -r a -q
   register: updates_needrestart_result
@@ -53,7 +53,7 @@
     - updates_needrestart | bool
     - updates_apt_result is changed
 
-- name: "updates | apt | Wait for the host to come back after the restarts"
+- name: "Updates | apt | Wait for the host to come back after the restarts"
   ansible.builtin.wait_for_connection:
     delay: 10
     timeout: 180
@@ -61,19 +61,19 @@
     - updates_needrestart | bool
     - updates_apt_result is changed
 
-- name: "updates | apt | Check whether a reboot is required"
+- name: "Updates | apt | Check whether a reboot is required"
   ansible.builtin.stat:
     path: /var/run/reboot-required
   register: updates_reboot_required
 
-- name: "updates | apt | Report a pending reboot"
+- name: "Updates | apt | Report a pending reboot"
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }} requests a reboot
       ({{ 'rebooting now' if updates_reboot | bool else 'NOT rebooting — updates_reboot=false' }})
   when: updates_reboot_required.stat.exists
 
-- name: "updates | apt | Reboot"
+- name: "Updates | apt | Reboot"
   ansible.builtin.reboot:
     reboot_timeout: "{{ updates_reboot_timeout }}"
     msg: "Reboot after OS patching (ansible updates role)"

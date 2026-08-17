@@ -6,7 +6,7 @@
 # gated behind an explicit run of this role.
 # ==============================================================================
 
-- name: "updates | unattended | Install unattended-upgrades"
+- name: "Updates | unattended | Install unattended-upgrades"
   ansible.builtin.apt:
     name:
       - unattended-upgrades
@@ -15,7 +15,7 @@
     update_cache: true
     cache_valid_time: 3600
 
-- name: "updates | unattended | Configure the upgrade policy"
+- name: "Updates | unattended | Configure the upgrade policy"
   ansible.builtin.template:
     src: 50unattended-upgrades.j2
     dest: /etc/apt/apt.conf.d/50unattended-upgrades
@@ -24,7 +24,7 @@
     mode: "0644"
   notify: Restart unattended-upgrades
 
-- name: "updates | unattended | Enable the periodic timers"
+- name: "Updates | unattended | Enable the periodic timers"
   ansible.builtin.template:
     src: 20auto-upgrades.j2
     dest: /etc/apt/apt.conf.d/20auto-upgrades
@@ -34,14 +34,14 @@
 
 # Skipped under --check: the package install above was only simulated, so the
 # unit does not exist yet and systemd_service would fail on a clean host.
-- name: "updates | unattended | Ensure the service is enabled"
+- name: "Updates | unattended | Ensure the service is enabled"
   ansible.builtin.systemd_service:
     name: unattended-upgrades
     enabled: true
     state: started
   when: not ansible_check_mode
 
-- name: "updates | unattended | Ensure the apt timers are enabled"
+- name: "Updates | unattended | Ensure the apt timers are enabled"
   ansible.builtin.systemd_service:
     name: "{{ item }}"
     enabled: true
@@ -50,7 +50,7 @@
     - apt-daily.timer
     - apt-daily-upgrade.timer
 
-- name: "updates | unattended | Validate the config parses"
+- name: "Updates | unattended | Validate the config parses"
   ansible.builtin.command:
     cmd: unattended-upgrades --dry-run --debug
   register: updates_unattended_check
