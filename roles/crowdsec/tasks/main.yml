@@ -1,0 +1,23 @@
+---
+# ==============================================================================
+# Role: crowdsec — dispatcher (central LAPI / engine)
+#   install (apt repo + crowdsec) -> LAPI listen config -> collections
+#   -> AppSec acquis -> bouncer keys -> agent registration token -> service
+# Idempotent. The per-host AGENT rollout is a separate role (crowdsec_agent).
+# ==============================================================================
+
+- name: Install CrowdSec (official apt repo)
+  ansible.builtin.import_tasks: install.yml
+  tags: [crowdsec, install]
+
+- name: Install detection collections (parsers + scenarios)
+  ansible.builtin.import_tasks: collections.yml
+  tags: [crowdsec, collections]
+
+- name: Configure the central LAPI (listen on the LAN)
+  ansible.builtin.import_tasks: config.yml
+  tags: [crowdsec, config]
+
+- name: Generate bouncer API keys + agent registration token
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [crowdsec, secrets]

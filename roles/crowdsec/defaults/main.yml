@@ -1,0 +1,65 @@
+---
+# ==============================================================================
+# Role: crowdsec — defaults (central LAPI / detection engine on lxc-crowdsec-01)
+# Decision A (services/0006): this host is the platform's central CrowdSec LAPI.
+# Every other host (LXC/VM/Windows) runs an AGENT that ships events here; the
+# OPNsense firewall bouncer (+ a Traefik bouncer later) enforces the decisions.
+# Native crowdsec daemon (apt, NOT Docker).
+# ==============================================================================
+
+# --- Install (official CrowdSec apt repo — packagecloud) ----------------------
+crowdsec_apt_key_url: "https://packagecloud.io/crowdsec/crowdsec/gpgkey"
+crowdsec_apt_key_path: "/etc/apt/keyrings/crowdsec.asc"
+# packagecloud has no Debian 13 (trixie) repo yet → use the bookworm (Debian 12)
+# repo, whose CrowdSec Go binary runs fine on 13. Other codenames map 1:1.
+crowdsec_apt_codename: "{{ 'bookworm' if ansible_distribution_release == 'trixie' else ansible_distribution_release }}"
+crowdsec_apt_repo: "deb [signed-by={{ crowdsec_apt_key_path }}] https://packagecloud.io/crowdsec/crowdsec/debian/ {{ crowdsec_apt_codename }} main"
+
+# --- LAPI: listen on the SVC IP so remote agents/bouncers can reach it ---------
+# (default crowdsec listens 127.0.0.1:8080 = local only — that's what made .196
+# "BASIC".) Central = reachable on the LAN. FW rules gate who may connect.
+crowdsec_lapi_listen_ip: "0.0.0.0"
+crowdsec_lapi_port: 8080
+crowdsec_lapi_listen_uri: "{{ crowdsec_lapi_listen_ip }}:{{ crowdsec_lapi_port }}"
+# The SVC IP agents + bouncers actually connect to (saved into their secrets).
+crowdsec_lapi_host: "10.1.3.190"
+# AppSec (WAF) component — the in-band rules the Traefik reverse proxy feeds.
+# Deferred to the Traefik phase (no point running the AppSec source until a
+# Traefik CrowdSec bouncer forwards requests to it). Enable there.
+crowdsec_appsec_enabled: false
+crowdsec_appsec_port: 7422
+
+# --- Collections (the central engine's parser/scenario set) -------------------
+# Base detection for the LXC itself + the HTTP/AppSec rules that protect the
+# reverse-proxied web apps (Traefik agent feeds these). Per-service collections
+# (postfix/dovecot/nginx/proxmox/…) are installed on each AGENT host, not here.
+crowdsec_collections:
+  - crowdsecurity/linux
+  - crowdsecurity/sshd
+  - crowdsecurity/base-http-scenarios
+  - crowdsecurity/whitelist-good-actors
+  - crowdsecurity/http-cve
+# AppSec rule collections — installed in the Traefik phase together with the
+# Traefik bouncer + appsec acquis (crowdsec_appsec_enabled).
+crowdsec_appsec_collections:
+  - crowdsecurity/appsec-virtual-patching
+  - crowdsecurity/appsec-generic-rules
+
+# --- Bouncers that pull decisions from this LAPI (API keys generated here) -----
+# The OPNsense firewall bouncer is the minimum enforcer. Add the Traefik bouncer
+# in the Traefik phase. Each entry → `cscli bouncers add` → key saved to the
+# secret store (consumed by the OPNsense crowdsec/general MVC config + Traefik).
+crowdsec_bouncers:
+  - name: "opnsense-firewall"
+    secret_file: "app-crowdsec-bouncer-opnsense.json"
+
+# --- Agent auto-enrollment token (so every LXC/VM/Windows agent can register to
+#     this LAPI non-interactively in the agent phase). Generated + persisted. ---
+crowdsec_registration_token_file: "app-crowdsec-registration-token.json"
+
+# --- Controller secret store --------------------------------------------------
+crowdsec_secret_dir: "~/.openclaw/workspace/infra/secrets"
+
+# --- Console / CAPI enrollment (community blocklist) — optional, off by default
+#     (enroll later with a console key if desired). -----------------------------
+crowdsec_capi_enabled: true
