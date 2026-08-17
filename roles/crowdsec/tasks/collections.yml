@@ -1,0 +1,15 @@
+---
+# Install the central engine's collections (parsers + scenarios + AppSec rules).
+
+- name: "collections | Update the hub index"
+  ansible.builtin.command: cscli hub update
+  changed_when: false
+
+- name: "collections | Install collections (idempotent)"
+  ansible.builtin.command: "cscli collections install {{ item }}"
+  loop: "{{ crowdsec_collections }}"
+  register: crowdsec_coll
+  changed_when: >-
+    'already' not in (crowdsec_coll.stdout | default('') | lower)
+    and 'nothing to do' not in (crowdsec_coll.stdout | default('') | lower)
+  notify: Restart crowdsec

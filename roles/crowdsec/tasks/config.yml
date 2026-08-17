@@ -1,0 +1,44 @@
+---
+# Make the LAPI central (listen on the LAN, not just loopback) + wire AppSec.
+
+- name: "config | LAPI listens on the LAN (not 127.0.0.1) so agents/bouncers reach it"
+  ansible.builtin.replace:
+    path: /etc/crowdsec/config.yaml
+    # default is `listen_uri: 127.0.0.1:8080`; only the LAPI uses that pair.
+    regexp: '(listen_uri:\s*)127\.0\.0\.1:8080'
+    replace: '\g<1>{{ crowdsec_lapi_listen_uri }}'
+  notify: Restart crowdsec
+
+- name: "config | AppSec acquisition (the WAF the Traefik bouncer feeds)"
+  ansible.builtin.copy:
+    dest: /etc/crowdsec/acquis.d/appsec.yaml
+    mode: "0644"
+    content: |
+      # Managed by Ansible role `crowdsec`. AppSec (WAF) component — the Traefik
+      # CrowdSec bouncer forwards requests here for in-band inspection.
+      appsec_config: crowdsecurity/appsec-default
+      labels:
+        type: appsec
+      source: appsec
+      listen_addr: 0.0.0.0:{{ crowdsec_appsec_port }}
+  when: crowdsec_appsec_enabled | bool
+  notify: Restart crowdsec
+
+- name: "config | Remove AppSec acquisition when disabled (no crash on missing config)"
+  ansible.builtin.file:
+    path: /etc/crowdsec/acquis.d/appsec.yaml
+    state: absent
+  when: not (crowdsec_appsec_enabled | bool)
+  notify: Restart crowdsec
+
+- name: "config | Apply LAPI/AppSec config now"
+  ansible.builtin.meta: flush_handlers
+
+- name: "config | Wait for the LAPI to answer on the LAN"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ crowdsec_lapi_port }}/health"
+    status_code: [200, 401, 403]
+  register: crowdsec_lapi_health
+  retries: 12
+  delay: 5
+  until: crowdsec_lapi_health.status in [200, 401, 403]
