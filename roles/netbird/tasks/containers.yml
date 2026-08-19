@@ -127,6 +127,15 @@
             ' port=' ~ netbird_pg.port)
            if netbird_store_engine == 'postgres' else '' }}
       NETBIRD_STORE_ENGINE_MYSQL_DSN: ""
+      # The activity/audit event store is a SEPARATE store with its own engine —
+      # setting the management engine alone leaves audit events on local SQLite,
+      # outside services/0004 and outside the backup path the database gets.
+      NB_ACTIVITY_EVENT_STORE_ENGINE: "{{ netbird_store_engine }}"
+      NB_ACTIVITY_EVENT_POSTGRES_DSN: >-
+        {{ ('host=' ~ netbird_pg.host ~ ' user=' ~ netbird_pg.user ~
+            ' password=' ~ netbird_pg.password ~ ' dbname=' ~ netbird_pg.database ~
+            ' port=' ~ netbird_pg.port)
+           if netbird_store_engine == 'postgres' else '' }}
     log_options: { max-size: "500m", max-file: "2" }
     log_driver: json-file
 
