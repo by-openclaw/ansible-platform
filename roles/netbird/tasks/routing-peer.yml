@@ -132,14 +132,39 @@
   no_log: true
   when: "'Management: Connected' not in (netbird_rp_status.stdout | default(''))"
 
+# `netbird up` does NOT return while the client is still negotiating — it blocks
+# indefinitely and stalls the play past any timeout, which is what forced manual
+# API calls previously. Fire it detached, then wait for the daemon to report
+# Connected. The task now finishes deterministically either way.
 - name: "routing-peer | Enroll this host as a routing peer (netbird up)"
   ansible.builtin.command: >-
     netbird up
     --management-url {{ netbird_http_protocol }}://{{ netbird_fqdn }}
     --setup-key {{ netbird_rp_key_slurp.content | b64decode | trim }}
   register: netbird_rp_up
+  async: 120
+  poll: 0
   changed_when: true
   no_log: true
+  when: "'Management: Connected' not in (netbird_rp_status.stdout | default(''))"
+
+- name: "routing-peer | Wait for the client to report Connected"
+  ansible.builtin.shell:
+    cmd: "set -o pipefail; netbird status 2>/dev/null | grep -E 'Management: Connected'"
+  args:
+    executable: /bin/bash
+  register: netbird_rp_conn
+  until: netbird_rp_conn.rc == 0
+  retries: 24
+  delay: 5
+  changed_when: false
+  failed_when: false
+  when: "'Management: Connected' not in (netbird_rp_status.stdout | default(''))"
+
+- name: "routing-peer | Report the enrolment result"
+  ansible.builtin.debug:
+    msg: >-
+      routing peer {{ 'CONNECTED' if netbird_rp_conn.rc == 0 else 'NOT connected after 120s — check netbird status' }}
   when: "'Management: Connected' not in (netbird_rp_status.stdout | default(''))"
 
 # --- Server-side: route + DNS (after the peer exists) ---------------------------
