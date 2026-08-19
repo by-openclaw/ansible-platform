@@ -86,7 +86,20 @@ netbird_single_account_mode_domain: "by-research.be"
 netbird_mgmt_dns_domain: "netbird.selfhosted"
 netbird_disable_anonymous_metrics: true
 netbird_disable_default_policy: false
-netbird_store_engine: "sqlite"
+# Store engine. services/0004-database-strategy puts every platform service on
+# the centralised PostgreSQL with its own database and scoped user — SQLite in a
+# container volume was outside that contract, and NetBird's own docs call
+# PostgreSQL "recommended for production deployments".
+#
+# NOTE: NetBird ships NO sqlite->postgres migration (the binary only offers
+# `sqlite-migration`, which is JSON->SQLite). Switching engines therefore starts
+# from an EMPTY store: peers must re-enrol. The SQLite store is left in place in
+# the netbird-mgmt volume so the change is reversible.
+netbird_store_engine: "postgres"
+
+# Credentials come from the same secret-file pattern every other service uses;
+# the `netbird` database and its scoped user already exist.
+netbird_pg_secret_file: "db-pgsql-netbird.json"
 
 # --- TURN -----------------------------------------------------------------------
 netbird_turn_domain: "{{ netbird_fqdn }}"

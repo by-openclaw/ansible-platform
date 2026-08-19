@@ -120,7 +120,12 @@
       - "--single-account-mode-domain={{ netbird_single_account_mode_domain }}"
       - "--dns-domain={{ netbird_mgmt_dns_domain }}"
     env:
-      NETBIRD_STORE_ENGINE_POSTGRES_DSN: ""
+      # Populated only when the store engine is postgres; empty keeps SQLite.
+      NETBIRD_STORE_ENGINE_POSTGRES_DSN: >-
+        {{ ('host=' ~ netbird_pg.host ~ ' user=' ~ netbird_pg.user ~
+            ' password=' ~ netbird_pg.password ~ ' dbname=' ~ netbird_pg.database ~
+            ' port=' ~ netbird_pg.port)
+           if netbird_store_engine == 'postgres' else '' }}
       NETBIRD_STORE_ENGINE_MYSQL_DSN: ""
     log_options: { max-size: "500m", max-file: "2" }
     log_driver: json-file
