@@ -30,14 +30,8 @@
 # NetBird ships its compose with EMPTY tags, which resolve to :latest for every
 # component — upstream publishes no pinned matrix. These are the current release
 # of each component, recorded here so a redeploy is reproducible.
-# PINNED BACK to v2.91.1's predecessor on purpose. v2.9x is built for NetBird's
-# COMBINED architecture (config.yaml + embedded IdP + /setup onboarding) and has
-# dropped the /auth and /silent-auth OIDC callback routes that this deployment
-# needs — we run the multi-container model with Authentik as an external IdP.
-# Verified: on v2.91.1, /peers and /setup return 200 while /auth returns 404, so
-# the browser login can never complete. Moving past this requires migrating to
-# the combined architecture, not a tag bump.
-netbird_dashboard_image: "netbirdio/dashboard:v2.39.0"
+# Current release, paired with management 0.77.0.
+netbird_dashboard_image: "netbirdio/dashboard:v2.91.1"
 netbird_management_image: "netbirdio/management:0.77.0"
 netbird_signal_image: "netbirdio/signal:0.77.0"
 netbird_relay_image: "netbirdio/relay:0.77.0"
@@ -203,3 +197,40 @@ netbird_approval_smtp_user: "{{ netbird_resend.smtp_username | default('resend')
 netbird_approval_smtp_pass: "{{ netbird_resend.smtp_api_key | default('') }}"
 netbird_approval_mail_from: "{{ netbird_resend.from_address | default('') }}"
 netbird_approval_mail_to: "{{ netbird_resend.to_address | default('') }}"
+
+# --- combined architecture -------------------------------------------------------
+# Upstream superseded the multi-container model. The combined server runs
+# management + signal + relay + STUN in one process, and the current dashboard is
+# built against it. Toggle: true = combined, false = legacy five-container.
+netbird_combined_enabled: true
+netbird_server_image: "netbirdio/netbird-server:0.77.0"
+netbird_config_dir: "/opt/netbird"
+netbird_server_port: 33073
+netbird_stun_port: 3478
+netbird_metrics_port: 9090
+netbird_health_port: 9000
+netbird_log_level: "info"
+
+# Local users stay ENABLED: they are the way in before any external IdP is
+# attached, and the break-glass path if Authentik is ever unavailable.
+netbird_local_auth_disabled: false
+
+# Traefik fronts the server; trust it for client IPs and the auth flow.
+# Reuse the relay auth secret already persisted in netbird-core.json rather than
+# minting a second one — the combined server uses it for relay authentication.
+netbird_auth_secret: "{{ netbird_core.relay_auth_secret }}"
+
+# The store encryption key protects sensitive columns at rest.
+netbird_store_encryption_key: "{{ netbird_core.datastore_enc_key }}"
+
+# The embedded-IdP store driver verifies the server cert strictly (libpq only
+# 'prefer's TLS), so sslmode is explicit for all three stores. Postgres presents
+# a cert chaining to the system bundle, which is mounted into the container.
+# Connect by FQDN, never the IP: the Postgres certificate carries a DNS SAN and
+# no IP SAN, so verify-full against 10.1.3.110 fails by definition.
+netbird_pg_host: "lxc-pgsql-01.by-research.be"
+netbird_pg_sslmode: "verify-full"
+netbird_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"
+
+netbird_trusted_proxy_cidr: "10.1.2.0/24"
+netbird_peer_cidr: "100.64.0.0/10"

@@ -15,9 +15,17 @@
   ansible.builtin.import_tasks: oidc-discovery.yml
   tags: [netbird, oidc]
 
-- name: Run the NetBird multi-container stack
+# Upstream superseded the multi-container model; the current dashboard is built
+# against the combined server and ignores the legacy external-IdP env vars.
+- name: Deploy the combined NetBird server (upstream architecture)
+  ansible.builtin.import_tasks: combined.yml
+  when: netbird_combined_enabled | bool
+  tags: [netbird, container, combined]
+
+- name: Run the legacy NetBird multi-container stack
   ansible.builtin.import_tasks: containers.yml
-  tags: [netbird, container]
+  when: not (netbird_combined_enabled | bool)
+  tags: [netbird, container, legacy]
 
 - name: Publish NetBird via Traefik (file provider, split backends, h2c gRPC)
   ansible.builtin.import_tasks: route.yml

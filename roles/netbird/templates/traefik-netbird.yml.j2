@@ -4,7 +4,8 @@
    separate host and reaches each container by its published port on the SVC IP.
    gRPC routers use the h2c scheme. PUBLIC — NO ipAllowList: remote peers must
    reach /api, the gRPC services, /relay from the internet (the WAN DNAT forwards
-   :443 here). There is NO /oauth2 route — login goes straight to Authentik. #}
+   :443 here). /oauth2 is the combined server's embedded IdP and MUST reach the
+   server, not the dashboard — the dashboard authenticates against it. #}
 http:
   routers:
     # --- gRPC (h2c backends) ----------------------------------------------------
@@ -22,7 +23,7 @@ http:
       tls: {}
     # --- REST / WebSocket backends ----------------------------------------------
     netbird-api:
-      rule: "Host(`{{ netbird_fqdn }}`) && (PathPrefix(`/api`) || PathPrefix(`/ws-proxy/management`))"
+      rule: "Host(`{{ netbird_fqdn }}`) && (PathPrefix(`/api`) || PathPrefix(`/oauth2`) || PathPrefix(`/ws-proxy/management`))"
       entryPoints: [websecure]
       service: netbird-mgmt
       priority: 90
