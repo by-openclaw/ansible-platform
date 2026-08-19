@@ -68,6 +68,13 @@
   when: netbird_pat is not defined
   tags: [netbird, routing, tiers]
 
+- name: Register Authentik as an external identity provider
+  ansible.builtin.import_tasks: external-idp.yml
+  when:
+    - netbird_external_idp_enabled | bool
+    - netbird_pat is defined
+  tags: [netbird, idp, tiers, oidc]
+
 - name: Notify admins about users awaiting approval
   ansible.builtin.import_tasks: approval-notify.yml
   when:
