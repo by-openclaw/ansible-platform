@@ -59,3 +59,10 @@
       the role mints a dedicated service-user token and you can revoke the human PAT.
   when: netbird_pat is not defined
   tags: [netbird, routing, tiers]
+
+- name: Notify admins about users awaiting approval
+  ansible.builtin.import_tasks: approval-notify.yml
+  when:
+    - netbird_approval_notify_enabled | bool
+    - netbird_pat is defined
+  tags: [netbird, approval, tiers]

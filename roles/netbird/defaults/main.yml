@@ -30,7 +30,14 @@
 # NetBird ships its compose with EMPTY tags, which resolve to :latest for every
 # component — upstream publishes no pinned matrix. These are the current release
 # of each component, recorded here so a redeploy is reproducible.
-netbird_dashboard_image: "netbirdio/dashboard:v2.91.1"
+# PINNED BACK to v2.91.1's predecessor on purpose. v2.9x is built for NetBird's
+# COMBINED architecture (config.yaml + embedded IdP + /setup onboarding) and has
+# dropped the /auth and /silent-auth OIDC callback routes that this deployment
+# needs — we run the multi-container model with Authentik as an external IdP.
+# Verified: on v2.91.1, /peers and /setup return 200 while /auth returns 404, so
+# the browser login can never complete. Moving past this requires migrating to
+# the combined architecture, not a tag bump.
+netbird_dashboard_image: "netbirdio/dashboard:v2.39.0"
 netbird_management_image: "netbirdio/management:0.77.0"
 netbird_signal_image: "netbirdio/signal:0.77.0"
 netbird_relay_image: "netbirdio/relay:0.77.0"
@@ -175,3 +182,24 @@ netbird_peer_login_expiration: 86400             # seconds (24h baseline; tune f
 # "user pending approval cannot add peers". Authentik's netbird-users group is already
 # the access gate, so disable NetBird's redundant user approval → members auto-join.
 netbird_user_approval_required: false
+
+# --- approval notification ------------------------------------------------------
+# NetBird holds a new user's first login for admin approval but notifies nobody,
+# so the user just fails to connect. This mails the admins instead, which is what
+# makes leaving approval ENABLED a safe choice.
+netbird_approval_notify_enabled: true
+netbird_approval_api: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}"
+netbird_approval_dashboard_url: "https://{{ netbird_fqdn }}"
+netbird_approval_interval: "5min"
+netbird_approval_script_path: "/usr/local/bin/netbird-approval-notify"
+netbird_approval_token_path: "/etc/netbird/automation-token.json"
+netbird_approval_state_path: "/var/lib/netbird-approval-notified.json"
+
+# Mail via the same Resend relay the rest of the platform uses.
+netbird_approval_smtp_secret_file: "app-resend-by-research.json"
+netbird_approval_smtp_host: "{{ netbird_resend.smtp_host | default('smtp.resend.com') }}"
+netbird_approval_smtp_port: "{{ netbird_resend.smtp_port | default(465) }}"
+netbird_approval_smtp_user: "{{ netbird_resend.smtp_username | default('resend') }}"
+netbird_approval_smtp_pass: "{{ netbird_resend.smtp_api_key | default('') }}"
+netbird_approval_mail_from: "{{ netbird_resend.from_address | default('') }}"
+netbird_approval_mail_to: "{{ netbird_resend.to_address | default('') }}"
