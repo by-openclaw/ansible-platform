@@ -25,6 +25,14 @@
       # Auto-provision every OIDC user from this mailbox template (the 5 GB
       # "default" created below) — mailcow's reliable provisioning path.
       default_template: "{{ mailcow_oidc_default_template }}"
+      # mailcow's SSO callback does array_search($user_template, $iam_settings['mappers'])
+      # in identity_provider('verify-sso'). Omitting these leaves 'mappers' NULL, which
+      # throws a TypeError in PHP 8 and returns an EMPTY page after a successful
+      # Authentik login — a blank screen with no error shown to the user.
+      # We provision everyone from default_template, so no attribute mapping is
+      # needed; the keys must simply exist as arrays.
+      mappers: []
+      templates: []
       login_provisioning: "1"
       mailpassword_flow: "0"
       periodic_sync: "0"
