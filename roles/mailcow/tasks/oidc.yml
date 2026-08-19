@@ -41,6 +41,34 @@
       ignore_ssl_error: "0"
   no_log: true
 
+# A mailbox created BEFORE SSO carries authsource='mailcow'. mailcow then refuses
+# the OIDC login outright — "The user's authentication source is not of type
+# OIDC" — which surfaces only as a generic login_failed, with the SSO round trip
+# otherwise looking healthy. Mailboxes listed here are marked OIDC-sourced.
+# NOTE: doing so means the local UI password no longer works for them; keep
+# postmaster@ (and the separate `admin` UI account) local as break-glass.
+- name: "oidc | Mark SSO mailboxes as OIDC-sourced"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -e
+      - "MYSQL_PWD={{ mailcow_dbroot }}"
+      - "{{ mailcow_mysql_container }}"
+      - mysql
+      - -uroot
+      - mailcow
+      - -N
+      - -B
+      - -e
+      - >-
+        UPDATE mailbox SET authsource='generic-oidc'
+        WHERE username IN ({{ mailcow_oidc_sso_mailboxes | map('regex_replace', '^(.*)$', "'\\1'") | join(',') }})
+        AND authsource <> 'generic-oidc';
+  register: mailcow_oidc_authsrc
+  changed_when: false
+  when: mailcow_oidc_sso_mailboxes | length > 0
+
 - name: "oidc | Remove the legacy lowercase 'default' template (case-sensitive)"
   ansible.builtin.command:
     argv:
