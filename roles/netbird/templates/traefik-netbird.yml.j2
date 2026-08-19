@@ -1,46 +1,31 @@
 {# Managed by Ansible role `netbird` (delegated to the Traefik host). Do NOT edit.
-   File-provider translation of NetBird's OFFICIAL multi-container Traefik labels
-   (infrastructure_files/docker-compose.yml.tmpl.traefik). Our Traefik runs on a
-   separate host and reaches each container by its published port on the SVC IP.
-   gRPC routers use the h2c scheme. PUBLIC — NO ipAllowList: remote peers must
-   reach /api, the gRPC services, /relay from the internet (the WAN DNAT forwards
-   :443 here). /oauth2 is the combined server's embedded IdP and MUST reach the
-   server, not the dashboard — the dashboard authenticates against it. #}
+   COMBINED architecture: management, signal, relay and STUN are ONE process on a
+   single port, so every backend path targets the same server. The previous
+   version pointed signal/relay at the old per-container ports (:10000, :8081,
+   :33080), which no longer exist — peers could enrol but never complete the
+   control-plane connection.
+   Mirrors NetBird's own labels: gRPC via h2c, /oauth2 to the server's embedded
+   IdP, dashboard as the lowest-priority catch-all. PUBLIC — no ipAllowList:
+   remote peers must reach these from the internet. #}
 http:
   routers:
-    # --- gRPC (h2c backends) ----------------------------------------------------
-    netbird-mgmt-grpc:
-      rule: "Host(`{{ netbird_fqdn }}`) && (PathPrefix(`/management.ManagementService/`) || PathPrefix(`/management.ProxyService/`))"
+    # gRPC — management AND signal, both on the combined server (h2c).
+    netbird-grpc:
+      rule: "Host(`{{ netbird_fqdn }}`) && (PathPrefix(`/management.ManagementService/`) || PathPrefix(`/management.ProxyService/`) || PathPrefix(`/signalexchange.SignalExchange/`))"
       entryPoints: [websecure]
-      service: netbird-mgmt-h2c
+      service: netbird-server-h2c
       priority: 100
       tls: {}
-    netbird-signal-grpc:
-      rule: "Host(`{{ netbird_fqdn }}`) && PathPrefix(`/signalexchange.SignalExchange/`)"
+
+    # REST, websocket proxy, relay and the embedded IdP — same server.
+    netbird-backend:
+      rule: "Host(`{{ netbird_fqdn }}`) && (PathPrefix(`/api`) || PathPrefix(`/oauth2`) || PathPrefix(`/relay`) || PathPrefix(`/ws-proxy/`))"
       entryPoints: [websecure]
-      service: netbird-signal-h2c
-      priority: 100
-      tls: {}
-    # --- REST / WebSocket backends ----------------------------------------------
-    netbird-api:
-      rule: "Host(`{{ netbird_fqdn }}`) && (PathPrefix(`/api`) || PathPrefix(`/oauth2`) || PathPrefix(`/ws-proxy/management`))"
-      entryPoints: [websecure]
-      service: netbird-mgmt
+      service: netbird-server
       priority: 90
       tls: {}
-    netbird-signal-ws:
-      rule: "Host(`{{ netbird_fqdn }}`) && PathPrefix(`/ws-proxy/signal`)"
-      entryPoints: [websecure]
-      service: netbird-signal-ws
-      priority: 90
-      tls: {}
-    netbird-relay:
-      rule: "Host(`{{ netbird_fqdn }}`) && PathPrefix(`/relay`)"
-      entryPoints: [websecure]
-      service: netbird-relay
-      priority: 90
-      tls: {}
-    # --- Dashboard catch-all (lowest priority, per the official label) ----------
+
+    # Dashboard catch-all (lowest priority, per the official label).
     netbird-dashboard:
       rule: "Host(`{{ netbird_fqdn }}`)"
       entryPoints: [websecure]
@@ -49,27 +34,15 @@ http:
       tls: {}
 
   services:
-    netbird-mgmt:
+    netbird-server:
       loadBalancer:
         servers:
-          - url: "http://{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}"
-    netbird-mgmt-h2c:
+          - url: "http://{{ netbird_listen_ip }}:{{ netbird_server_port }}"
+    netbird-server-h2c:
       loadBalancer:
         servers:
-          - url: "h2c://{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}"
-    netbird-signal-ws:
-      loadBalancer:
-        servers:
-          - url: "http://{{ netbird_listen_ip }}:{{ netbird_signal_ws_host_port }}"
-    netbird-signal-h2c:
-      loadBalancer:
-        servers:
-          - url: "h2c://{{ netbird_listen_ip }}:{{ netbird_signal_grpc_port }}"
-    netbird-relay:
-      loadBalancer:
-        servers:
-          - url: "http://{{ netbird_listen_ip }}:{{ netbird_relay_port }}"
+          - url: "h2c://{{ netbird_listen_ip }}:{{ netbird_server_port }}"
     netbird-dashboard:
       loadBalancer:
         servers:
-          - url: "http://{{ netbird_listen_ip }}:{{ netbird_dashboard_port }}"
+          - url: "http://{{ netbird_listen_ip }}:80"
