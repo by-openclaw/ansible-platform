@@ -928,9 +928,15 @@ opn_filter_rules:
 - {description: 'PASS DMZ Traefik→SVC NetBird (reverse proxy)', action: pass, interface: dmz, direction: in, ipprotocol: inet, protocol: tcp, source_net: host4_traefik, destination_net: host4_netbird, destination_port: port_netbird, sequence: 1064, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 # CrowdSec log processors talk to the central LAPI on 8080. Ten of the twelve
 # guests sit in SVC and reach it directly; traefik (10.1.2.110) and mailcow
-# (10.1.2.120) are the only two in DMZ, so each needs a hole. Scoped to one host
-# and one port each, sequenced before BLOCK DMZ→internal (1100).
-- {description: 'PASS DMZ mailcow→SVC CrowdSec LAPI (agent)', action: pass, interface: dmz, direction: in, ipprotocol: inet, protocol: tcp, source_net: host4_mailcow, destination_net: host4_crowdsec, destination_port: port_crowdsec_lapi, sequence: 1066, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+# (10.1.2.120) are the only two in DMZ, so each needs a hole.
+#
+# The mailcow rule MUST sit at sequence 1. 'PASS DMZ mailcow egress via Telenet'
+# is a policy route at sequence 2 with destination=any, so it captures every
+# mailcow packet — including internal ones — and pushes them out the WAN
+# gateway. A rule placed after it never matches: the agent times out reaching
+# the LAPI even though the pass rule exists. Traefik has no such policy route,
+# so 1067 (before BLOCK DMZ→internal at 1100) is sufficient there.
+- {description: 'PASS DMZ mailcow→SVC CrowdSec LAPI (agent)', action: pass, interface: dmz, direction: in, ipprotocol: inet, protocol: tcp, source_net: host4_mailcow, destination_net: host4_crowdsec, destination_port: port_crowdsec_lapi, sequence: 1, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - {description: 'PASS DMZ Traefik→SVC CrowdSec LAPI (agent)', action: pass, interface: dmz, direction: in, ipprotocol: inet, protocol: tcp, source_net: host4_traefik, destination_net: host4_crowdsec, destination_port: port_crowdsec_lapi, sequence: 1067, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 # IPv6 reverse-proxy pairs (Traefik DMZ → SVC backends) — dual-stack for ALL svc.
 # Odd sequences interleave with the v4 even sequences, all before BLOCK (1100).
