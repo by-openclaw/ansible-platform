@@ -1,0 +1,224 @@
+---
+# ==============================================================================
+# crowdsec_agent — install the log processor and point it at the central LAPI.
+# ==============================================================================
+
+- name: "Crowdsec_agent | Load the LAPI registration token"
+  ansible.builtin.set_fact:
+    crowdsec_agent_token: >-
+      {{ (lookup('file', crowdsec_agent_secret_dir + '/' + crowdsec_agent_registration_token_file)
+          | from_json).fields.token }}
+  no_log: true
+
+- name: "Crowdsec_agent | Install the packagecloud signing key"
+  ansible.builtin.get_url:
+    url: "{{ crowdsec_agent_apt_key_url }}"
+    dest: "{{ crowdsec_agent_apt_key_path }}"
+    mode: "0644"
+
+- name: "Crowdsec_agent | Add the CrowdSec apt repository"
+  ansible.builtin.apt_repository:
+    repo: "{{ crowdsec_agent_apt_repo }}"
+    filename: crowdsec
+    state: present
+    update_cache: true
+
+- name: "Crowdsec_agent | Install crowdsec"
+  ansible.builtin.apt:
+    name: crowdsec
+    state: present
+
+# A fresh install starts its OWN LAPI and registers against localhost. Left
+# alone, the host reports "You can successfully interact with Local API",
+# builds a private decision set, and no bouncer ever reads it — so a plain
+# `cscli lapi status` check is NOT proof of enrolment. What matters is which
+# URL the credentials point at, which is what is compared below.
+#
+# Enrolment is a `cscli lapi register` call, NOT a hand-written credentials
+# file: local_api_credentials.yaml has no registration_token field (the schema
+# is url/login/password), and cscli is what exchanges the token for the
+# machine password the agent then logs in with.
+- name: "Crowdsec_agent | Read the LAPI URL the agent currently points at"
+  ansible.builtin.command:
+    cmd: awk '/^url:/{print $2}' /etc/crowdsec/local_api_credentials.yaml
+  register: crowdsec_agent_current_url
+  changed_when: false
+  failed_when: false
+
+- name: "Crowdsec_agent | Check whether the agent can reach that LAPI"
+  ansible.builtin.command: cscli lapi status
+  register: crowdsec_agent_status
+  changed_when: false
+  failed_when: false
+
+# Enrol when the agent is pointed anywhere other than the central LAPI (a fresh
+# install points at 127.0.0.1), or when it cannot authenticate to it.
+- name: "Crowdsec_agent | Decide whether this host needs enrolling"
+  ansible.builtin.set_fact:
+    crowdsec_agent_needs_enrol: >-
+      {{ (crowdsec_agent_current_url.stdout | default('') | trim) != crowdsec_agent_lapi_url
+         or crowdsec_agent_status.rc != 0 }}
+
+- name: "Crowdsec_agent | Report the enrolment decision"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: currently pointed at
+      '{{ crowdsec_agent_current_url.stdout | default('none') | trim }}' →
+      {{ 'will enrol against ' ~ crowdsec_agent_lapi_url
+         if crowdsec_agent_needs_enrol | bool else 'already enrolled centrally' }}
+
+# cscli lapi register refuses to run when the credentials file is missing or
+# unparseable (crowdsecurity/crowdsec#4237), so lay down a schema-valid stub
+# first. Guarded so a working central registration is never clobbered.
+- name: "Crowdsec_agent | Stub the credentials file so cscli can enrol"
+  ansible.builtin.copy:
+    dest: /etc/crowdsec/local_api_credentials.yaml
+    owner: root
+    group: root
+    mode: "0600"
+    backup: true
+    content: |
+      # Managed by ansible (crowdsec_agent role) — filled in by 'cscli lapi register'.
+      url: {{ crowdsec_agent_lapi_url }}
+  when: crowdsec_agent_needs_enrol | bool
+
+- name: "Crowdsec_agent | Enrol with the central LAPI (auto-registration token)"
+  ansible.builtin.command: >-
+    cscli lapi register
+      --machine {{ inventory_hostname }}
+      --url {{ crowdsec_agent_lapi_url }}
+      --token {{ crowdsec_agent_token }}
+  when: crowdsec_agent_needs_enrol | bool
+  changed_when: true
+  no_log: true
+  notify: Restart crowdsec agent
+
+# ------------------------------------------------------------------------------
+# Retire this host's own LAPI. Per the CrowdSec multi-server guide the whole
+# api.server section is removed; the helper deletes exactly that block and
+# leaves every other line, comments included, untouched.
+# ------------------------------------------------------------------------------
+- name: "Crowdsec_agent | Install the local-LAPI removal helper"
+  ansible.builtin.copy:
+    src: crowdsec-disable-local-lapi.py
+    dest: /usr/local/sbin/crowdsec-disable-local-lapi
+    owner: root
+    group: root
+    mode: "0755"
+  when: crowdsec_agent_disable_local_lapi | bool
+
+- name: "Crowdsec_agent | Back up config.yaml before removing api.server"
+  ansible.builtin.copy:
+    src: /etc/crowdsec/config.yaml
+    dest: /etc/crowdsec/config.yaml.before-agent-role
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+    force: false
+  when: crowdsec_agent_disable_local_lapi | bool
+
+- name: "Crowdsec_agent | Remove the api.server block (processor, not a LAPI)"
+  ansible.builtin.command:
+    cmd: /usr/local/sbin/crowdsec-disable-local-lapi /etc/crowdsec/config.yaml
+  register: crowdsec_agent_lapi_removed
+  changed_when: "(crowdsec_agent_lapi_removed.stdout | trim) == 'CHANGED'"
+  when:
+    - crowdsec_agent_disable_local_lapi | bool
+    - not ansible_check_mode
+  notify: Restart crowdsec agent
+
+# Never restart onto a config that will not parse — that is how a LAPI ends up
+# dead with "yaml: unmarshal errors". Validate first; restore the backup if the
+# edit produced something crowdsec refuses to load.
+- name: "Crowdsec_agent | Validate the edited config before restarting"
+  ansible.builtin.command:
+    cmd: crowdsec -t -c /etc/crowdsec/config.yaml
+  register: crowdsec_agent_cfg_test
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: "Crowdsec_agent | Restore the backup if the edited config is invalid"
+  when:
+    - not ansible_check_mode
+    - crowdsec_agent_cfg_test.rc != 0
+  block:
+    - name: "Crowdsec_agent | Put the pre-edit config back"
+      ansible.builtin.copy:
+        src: /etc/crowdsec/config.yaml.before-agent-role
+        dest: /etc/crowdsec/config.yaml
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: "Crowdsec_agent | Fail loudly — config edit rejected"
+      ansible.builtin.fail:
+        msg: >-
+          crowdsec refused the edited config on {{ inventory_hostname }};
+          the pre-edit config has been restored. stderr:
+          {{ crowdsec_agent_cfg_test.stderr | default('') | trim }}
+
+- name: "Crowdsec_agent | Install detection collections"
+  ansible.builtin.command:
+    cmd: "cscli collections install {{ item }} --error"
+  register: crowdsec_agent_coll
+  changed_when: "'Enabled' in (crowdsec_agent_coll.stdout | default(''))"
+  failed_when:
+    - crowdsec_agent_coll.rc != 0
+    - "'already' not in (crowdsec_agent_coll.stderr | default('') ~ crowdsec_agent_coll.stdout | default(''))"
+  loop: "{{ crowdsec_agent_collections + crowdsec_agent_extra_collections }}"
+  notify: Restart crowdsec agent
+
+- name: "Crowdsec_agent | Ensure the service is enabled and running"
+  ansible.builtin.systemd_service:
+    name: crowdsec
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: "Crowdsec_agent | Flush handlers before verifying"
+  ansible.builtin.meta: flush_handlers
+
+# An agent that installed cleanly but never reached the CENTRAL LAPI is the
+# failure mode worth catching, and it is invisible to `cscli lapi status` alone:
+# a host still bound to its own 127.0.0.1 LAPI answers "success" too. So assert
+# BOTH that the credentials point at the central LAPI and that it authenticates.
+- name: "Crowdsec_agent | Re-read the LAPI URL after enrolment"
+  ansible.builtin.command:
+    cmd: awk '/^url:/{print $2}' /etc/crowdsec/local_api_credentials.yaml
+  register: crowdsec_agent_final_url
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: "Crowdsec_agent | Verify the agent authenticates to the central LAPI"
+  ansible.builtin.command:
+    cmd: cscli lapi status
+  register: crowdsec_agent_lapi_status
+  changed_when: false
+  failed_when: false
+  retries: 6
+  delay: 5
+  until: crowdsec_agent_lapi_status.rc == 0
+  when: not ansible_check_mode
+
+- name: "Crowdsec_agent | Fail if this host is not bound to the central LAPI"
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} is not a central log processor:
+      credentials point at '{{ crowdsec_agent_final_url.stdout | default('none') | trim }}'
+      (expected {{ crowdsec_agent_lapi_url }}),
+      lapi status rc={{ crowdsec_agent_lapi_status.rc | default('n/a') }}.
+  when:
+    - not ansible_check_mode
+    - ((crowdsec_agent_final_url.stdout | default('') | trim) != crowdsec_agent_lapi_url)
+      or crowdsec_agent_lapi_status.rc != 0
+
+- name: "Crowdsec_agent | Report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: crowdsec log processor CONNECTED to
+      {{ crowdsec_agent_lapi_url }} (machine registered as {{ inventory_hostname }})
+  when: not ansible_check_mode
