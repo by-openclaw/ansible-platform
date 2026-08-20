@@ -69,6 +69,23 @@
   tags: [services, lldpd]
   when: opnsense_lldpd_enabled | default(true) | bool
 
+# An unscoped run converges the ENTIRE catalog (96 aliases / 119 rules), which
+# on a live firewall means creating everything the catalog declares and that the
+# FW does not yet have. That is legitimate for a deliberate full converge and
+# dangerous as an accident, so it has to be asked for explicitly.
+- name: "Firewall | Refuse an unscoped catalog converge unless confirmed"
+  ansible.builtin.fail:
+    msg: >-
+      Refusing to converge the ENTIRE firewall catalog against a live firewall.
+      Scope the change with -e '{"opn_fw_only": ["<alias or rule description>", ...]}',
+      or, if a full converge is genuinely intended, re-run with
+      -e opn_fw_confirm_full=true after inspecting `--check --diff`.
+  when:
+    - (opnsense_manage_aliases | default(true) | bool) or (opnsense_manage_rules | default(true) | bool)
+    - not (opn_fw_only | default([]))
+    - not (opn_fw_confirm_full | default(false) | bool)
+  tags: [firewall, aliases, rules]
+
 - name: Include firewall alias tasks
   ansible.builtin.include_tasks: aliases.yml
   tags: [firewall, aliases]
