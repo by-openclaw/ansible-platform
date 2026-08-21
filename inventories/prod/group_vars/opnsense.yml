@@ -203,6 +203,7 @@ opn_aliases:
 - {name: port_pgsql, type: port, content: ['5432'], description: 'PostgreSQL (TLS)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_redis, type: port, content: ['6379'], description: 'Redis (TLS)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_pgadmin, type: port, content: ['8080'], description: 'pgAdmin container (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: port_crowdsec_lapi, type: port, content: ['8080'], description: 'CrowdSec Local API (agents + bouncers)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_authentik, type: port, content: ['9000'], description: 'Authentik server (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_vault, type: port, content: ['8200'], description: 'Vault API (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_netbox, type: port, content: ['8080'], description: 'NetBox web (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
@@ -610,6 +611,7 @@ opn_aliases:
 - {name: host4_redis, type: host, content: ['10.1.3.117'], description: 'Redis (SVC) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host6_redis, type: host, content: ['fd01:3::117'], description: 'Redis (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host4_pgadmin, type: host, content: ['10.1.3.140'], description: 'pgAdmin (SVC) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: host4_crowdsec, type: host, content: ['10.1.3.190'], description: 'CrowdSec LAPI (SVC) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host6_pgadmin, type: host, content: ['fd01:3::140'], description: 'pgAdmin (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host4_authentik, type: host, content: ['10.1.3.130'], description: 'Authentik (SVC) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host6_authentik, type: host, content: ['fd01:3::130'], description: 'Authentik (SVC) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
@@ -629,11 +631,37 @@ opn_aliases:
 - {name: host4_mailcow, type: host, content: ['10.1.2.120'],  description: 'mailcow mail server (DMZ) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases',    lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host6_mailcow, type: host, content: ['fd01:2::120'], description: 'mailcow mail server (DMZ) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_smtp,        type: port, content: ['25'],  description: 'SMTP (MX inbound / outbound delivery, STARTTLS)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: port_submission,  type: port, content: ['587'], description: 'Mail submission (STARTTLS)',                     state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: port_smtps,       type: port, content: ['465'], description: 'SMTPS (implicit-TLS submission)',                 state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: port_imaps,       type: port, content: ['993'], description: 'IMAPS',                                           state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: port_pop3s,       type: port, content: ['995'], description: 'POP3S',                                           state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: port_mail_client, type: port, content: ['465', '587', '993', '995'], description: 'Mail client submission + retrieval (SMTPS/submission/IMAPS/POP3S)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+# ------------------------------------------------------------------------------
+# DECIDED AGAINST (2026-08-20): public mail CLIENT ports on mailcow.
+#
+# port_smtps(465) / port_submission(587) / port_imaps(993) / port_pop3s(995) /
+# port_mail_client, the two "Telenet WAN → mailcow client ports" filter rules and
+# the eight matching DNAT entries were declared here but NEVER existed on the
+# firewall — the catalog claimed an exposure the FW did not have.
+#
+# They are removed rather than left as dead declarations, because config-as-code
+# that describes ports which are not open is worse than no declaration at all
+# (NIS2: the record must match what is enforced). Full definitions remain in git
+# history if this is ever revisited.
+#
+# Rationale: mailcow is reached over HTTPS through Traefik (mail.by-research.be)
+# and receives mail on port 25; neither needs these. Opening 587/465 in
+# particular means authenticated relay — a single cracked mailbox turns the
+# server into a spam relay and gets the sending IP blacklisted. Today nothing
+# would catch that early: the OPNsense CrowdSec bouncer has never pulled, and
+# the agent on mailcow has no mail log source (postfix/dovecot log inside Docker,
+# not to /var/log/mail.log), so its postfix collection is inert. Mail auth is
+# guarded only by mailcow's own netfilter container.
+#
+# If native mail clients are ever needed, prefer widening the VPN routes to
+# mailcow over re-exposing these ports to the internet.
+#
+# NOTE (unrelated, still open): 'PASS Telenet WAN → mailcow SMTP/MX (v4)' below
+# duplicates a LIVE rule with a different description
+# ('PASS Telenet WAN -> mailcow SMTP 25 (inbound mail)', seq 10). Applying the
+# catalog unscoped would create a second, overlapping port-25 rule. Reconciling
+# those two names is separate work.
+# ------------------------------------------------------------------------------
 # Neutral firewall public WAN IP aliases (the Telenet /29 endpoint) — service-agnostic,
 # shared by any WAN ingress port-forward (NetBird, etc.). NOT named after Traefik.
 - {name: host4_wan_pub, type: host, content: ['213.214.47.222'], description: 'Firewall public WAN IPv4 (Telenet /29) - shared ingress', state: present, ref: {adr: 'naming/0003#§2-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
@@ -924,6 +952,18 @@ opn_filter_rules:
     lib_manager: FwFilterRuleManager
     ansible_module: by_systems.opnsense.opnsense_fw_filter
 - {description: 'PASS DMZ Traefik→SVC NetBird (reverse proxy)', action: pass, interface: dmz, direction: in, ipprotocol: inet, protocol: tcp, source_net: host4_traefik, destination_net: host4_netbird, destination_port: port_netbird, sequence: 1064, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+# CrowdSec log processors talk to the central LAPI on 8080. Ten of the twelve
+# guests sit in SVC and reach it directly; traefik (10.1.2.110) and mailcow
+# (10.1.2.120) are the only two in DMZ, so each needs a hole.
+#
+# The mailcow rule MUST sit at sequence 1. 'PASS DMZ mailcow egress via Telenet'
+# is a policy route at sequence 2 with destination=any, so it captures every
+# mailcow packet — including internal ones — and pushes them out the WAN
+# gateway. A rule placed after it never matches: the agent times out reaching
+# the LAPI even though the pass rule exists. Traefik has no such policy route,
+# so 1067 (before BLOCK DMZ→internal at 1100) is sufficient there.
+- {description: 'PASS DMZ mailcow→SVC CrowdSec LAPI (agent)', action: pass, interface: dmz, direction: in, ipprotocol: inet, protocol: tcp, source_net: host4_mailcow, destination_net: host4_crowdsec, destination_port: port_crowdsec_lapi, sequence: 1, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+- {description: 'PASS DMZ Traefik→SVC CrowdSec LAPI (agent)', action: pass, interface: dmz, direction: in, ipprotocol: inet, protocol: tcp, source_net: host4_traefik, destination_net: host4_crowdsec, destination_port: port_crowdsec_lapi, sequence: 1067, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 # IPv6 reverse-proxy pairs (Traefik DMZ → SVC backends) — dual-stack for ALL svc.
 # Odd sequences interleave with the v4 even sequences, all before BLOCK (1100).
 - {description: 'PASS DMZ Traefik→SVC pgAdmin (reverse proxy v6)',     action: pass, interface: dmz, direction: in, ipprotocol: inet6, protocol: tcp, source_net: host6_traefik, destination_net: host6_pgadmin,     destination_port: port_pgadmin,     sequence: 1051, state: present, ref: {adr: 'infra/0004#§1-row-dmz-reverse-proxy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
@@ -2076,8 +2116,6 @@ opn_filter_rules:
 # host_mailcow alias target. Matches the Telenet→Traefik/STUN ingress pattern.
 - {description: 'PASS Telenet WAN → mailcow SMTP/MX (v4)',     action: pass, interface: opt13, direction: in, ipprotocol: inet,  protocol: TCP, source_net: any, destination_net: host4_mailcow, destination_port: port_smtp,        quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - {description: 'PASS Telenet WAN → mailcow SMTP/MX (v6)',     action: pass, interface: opt13, direction: in, ipprotocol: inet6, protocol: TCP, source_net: any, destination_net: host6_mailcow, destination_port: port_smtp,        quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
-- {description: 'PASS Telenet WAN → mailcow client ports (v4)', action: pass, interface: opt13, direction: in, ipprotocol: inet,  protocol: TCP, source_net: any, destination_net: host4_mailcow, destination_port: port_mail_client, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
-- {description: 'PASS Telenet WAN → mailcow client ports (v6)', action: pass, interface: opt13, direction: in, ipprotocol: inet6, protocol: TCP, source_net: any, destination_net: host6_mailcow, destination_port: port_mail_client, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 opn_snat_rules: []
 opn_dnat_rules:
 # Public ingress: Telenet WAN (opt13) :80/:443 → Traefik (dual-stack port-forward).
@@ -2101,14 +2139,6 @@ opn_dnat_rules:
 # WAN forward). Telenet only (mail egress/ingress is Telenet; Proximus blocks :25).
 - {descr: 'DNAT Telenet→mailcow SMTP/MX (v4)',  interface: opt13, protocol: TCP, ipprotocol: inet,  destination: {network: host4_wan_pub, port: port_smtp},       target: host4_mailcow, local-port: port_smtp,       state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
 - {descr: 'DNAT Telenet→mailcow SMTP/MX (v6)',  interface: opt13, protocol: TCP, ipprotocol: inet6, destination: {network: host6_wan_pub, port: port_smtp},       target: host6_mailcow, local-port: port_smtp,       state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
-- {descr: 'DNAT Telenet→mailcow SMTPS (v4)',    interface: opt13, protocol: TCP, ipprotocol: inet,  destination: {network: host4_wan_pub, port: port_smtps},      target: host4_mailcow, local-port: port_smtps,      state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
-- {descr: 'DNAT Telenet→mailcow SMTPS (v6)',    interface: opt13, protocol: TCP, ipprotocol: inet6, destination: {network: host6_wan_pub, port: port_smtps},      target: host6_mailcow, local-port: port_smtps,      state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
-- {descr: 'DNAT Telenet→mailcow submission (v4)', interface: opt13, protocol: TCP, ipprotocol: inet,  destination: {network: host4_wan_pub, port: port_submission}, target: host4_mailcow, local-port: port_submission, state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
-- {descr: 'DNAT Telenet→mailcow submission (v6)', interface: opt13, protocol: TCP, ipprotocol: inet6, destination: {network: host6_wan_pub, port: port_submission}, target: host6_mailcow, local-port: port_submission, state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
-- {descr: 'DNAT Telenet→mailcow IMAPS (v4)',    interface: opt13, protocol: TCP, ipprotocol: inet,  destination: {network: host4_wan_pub, port: port_imaps},      target: host4_mailcow, local-port: port_imaps,      state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
-- {descr: 'DNAT Telenet→mailcow IMAPS (v6)',    interface: opt13, protocol: TCP, ipprotocol: inet6, destination: {network: host6_wan_pub, port: port_imaps},      target: host6_mailcow, local-port: port_imaps,      state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
-- {descr: 'DNAT Telenet→mailcow POP3S (v4)',    interface: opt13, protocol: TCP, ipprotocol: inet,  destination: {network: host4_wan_pub, port: port_pop3s},      target: host4_mailcow, local-port: port_pop3s,      state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
-- {descr: 'DNAT Telenet→mailcow POP3S (v6)',    interface: opt13, protocol: TCP, ipprotocol: inet6, destination: {network: host6_wan_pub, port: port_pop3s},      target: host6_mailcow, local-port: port_pop3s,      state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
 opn_unbound:
   enabled: true
   domain: by-research.be

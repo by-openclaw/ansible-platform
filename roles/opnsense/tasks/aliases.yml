@@ -1,10 +1,41 @@
 ---
-# Firewall aliases — idempotent via ansibleguy.opnsense collection
-# All rules reference named aliases — never hardcoded IPs/ports (ADR-0015)
-# Routing: Rune VM → Proxmox SSH tunnel → OPNsense API
-# Collection: ansibleguy.opnsense v1.2.16 | connection: local | no become
+# Firewall aliases — idempotent via ansibleguy.opnsense collection.
+# Authoritative source: ADR services/0001-opnsense §Phase 2 (Ansible owns
+# everything; collection ansibleguy.opnsense; role ansible-platform/roles/opnsense).
+# Naming: ADR naming/0003-firewall.
+#
+# Data comes from the CATALOG (`opn_aliases` in group_vars/opnsense.yml), which is
+# the single source of truth for every alias. It is NOT a standalone list in the
+# role — ADR Phase 2: "Every task file reads its data from a cross-referenced ADR
+# or NetBox — no standalone truth in Ansible vars".
+#
+# Scope a single concern with:
+#   -e '{"opn_fw_only": ["port_crowdsec_lapi", "host4_crowdsec"]}'
+# so one change never drags unrelated catalog drift onto the live firewall.
+# Empty (default) = converge the entire catalog.
 
-- name: Aliases | Ensure firewall aliases exist
+- name: "Aliases | Select the aliases in scope"
+  ansible.builtin.set_fact:
+    opnsense_aliases_scoped: >-
+      {{ opn_aliases
+         if not (opn_fw_only | default([]))
+         else (opn_aliases | selectattr('name', 'in', opn_fw_only) | list) }}
+  delegate_to: localhost
+  become: false
+  tags: [firewall, aliases]
+
+- name: "Aliases | Report scope"
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('FULL catalog: ' ~ (opnsense_aliases_scoped | length) ~ ' aliases')
+         if not (opn_fw_only | default([]))
+         else ('SCOPED: ' ~ (opnsense_aliases_scoped | map(attribute='name') | join(', ')
+               if opnsense_aliases_scoped else 'nothing matched ' ~ (opn_fw_only | join(', ')))) }}
+  delegate_to: localhost
+  become: false
+  tags: [firewall, aliases]
+
+- name: "Aliases | Ensure firewall aliases exist"
   ansibleguy.opnsense.alias:
     firewall: "{{ opnsense_firewall }}"
     api_port: "{{ opnsense_api_port }}"
@@ -14,9 +45,9 @@
     name: "{{ item.name }}"
     type: "{{ item.type }}"
     content: "{{ item.content }}"
-    description: "{{ item.description }}"
-    state: present
-  loop: "{{ opnsense_aliases }}"
+    description: "{{ item.description | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opnsense_aliases_scoped }}"
   loop_control:
     label: "{{ item.name }}"
   delegate_to: localhost

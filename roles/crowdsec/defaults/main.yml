@@ -56,6 +56,11 @@ crowdsec_bouncers:
 # --- Agent auto-enrollment token (so every LXC/VM/Windows agent can register to
 #     this LAPI non-interactively in the agent phase). Generated + persisted. ---
 crowdsec_registration_token_file: "app-crowdsec-registration-token.json"
+# Resolved straight from the secret file: config.yml runs BEFORE secrets.yml in
+# the dispatcher, so a set_fact there would be too late.
+crowdsec_registration_token: >-
+  {{ (lookup('file', crowdsec_secret_dir + '/' + crowdsec_registration_token_file)
+      | from_json).fields.token }}
 
 # --- Controller secret store --------------------------------------------------
 crowdsec_secret_dir: "~/.openclaw/workspace/infra/secrets"
@@ -63,3 +68,24 @@ crowdsec_secret_dir: "~/.openclaw/workspace/infra/secrets"
 # --- Console / CAPI enrollment (community blocklist) — optional, off by default
 #     (enroll later with a console key if desired). -----------------------------
 crowdsec_capi_enabled: true
+
+# --- log-processor onboarding (multi-server guide) --------------------------------
+# Agents self-register with this token. Restricted to the platform ranges: a log
+# processor can push arbitrary alerts to the LAPI, so a wide range would let a
+# compromised host ban the whole estate.
+crowdsec_registration_allowed_ranges:
+  - "10.1.0.0/16"      # SVC / DMZ — the cluster LXCs and VMs
+  - "10.6.224.0/20"    # OOB — Proxmox nodes and the firewall
+
+# Rendered as a single string so the YAML block scalar and the Jinja loop do not
+# fight over indentation. NOTE the 4-space indent: this block nests under
+# api.server alongside listen_uri — at any other level crowdsec fails to start
+# with "yaml: unmarshal errors".
+crowdsec_auto_registration_block: |
+  {{ '    auto_registration:' }}
+  {{ '      enabled: true' }}
+  {{ '      token: "' ~ crowdsec_registration_token ~ '"' }}
+  {{ '      allowed_ranges:' }}
+  {% for r in crowdsec_registration_allowed_ranges %}
+  {{ '      - ' ~ r }}
+  {% endfor %}

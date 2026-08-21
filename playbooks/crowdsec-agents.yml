@@ -1,0 +1,31 @@
+---
+# ==============================================================================
+# Playbook: crowdsec-agents.yml — a CrowdSec log processor on every guest.
+#
+# Standing rule: every LXC/VM runs an agent. Per the CrowdSec multi-server
+# guide, these hosts are LOG PROCESSORS — they parse local logs and ship alerts
+# to the central LAPI on lxc-crowdsec-01, which turns them into decisions the
+# OPNsense firewall bouncer enforces.
+#
+# Collections live HERE, not on the LAPI. The LAPI needs none.
+#
+#   Dry run : ansible-playbook -i inventories/prod/hosts.yml playbooks/crowdsec-agents.yml --check
+#   Apply   : ansible-playbook -i inventories/prod/hosts.yml playbooks/crowdsec-agents.yml
+#
+# serial:1 so a broken agent stops the rollout instead of marching through.
+# ==============================================================================
+
+- name: "CrowdSec log processors on every guest"
+  hosts: "{{ target | default('cluster:adguard:mailcow:!crowdsec') }}"
+  become: true
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+  roles:
+    - role: crowdsec_agent
+      vars:
+        # Service-specific parsers, added on top of the linux/sshd baseline.
+        crowdsec_agent_extra_collections: >-
+          {{ ['crowdsecurity/nginx'] if 'traefik' in group_names
+             else ['crowdsecurity/postfix'] if 'mailcow' in group_names
+             else [] }}

@@ -1,82 +1,70 @@
 ---
-# Firewall rules — idempotent via OPNsense REST API (uri module)
-# NOTE: ansibleguy.opnsense.rule has a known OPNsense 25.1 compat bug (icmp_type
-#       field translation failure). Using uri module until collection is patched.
-# Track: https://github.com/ansibleguy/collection_opnsense/issues
+# Firewall rules — idempotent via ansibleguy.opnsense collection.
+# Authoritative source: ADR services/0001-opnsense §Phase 2 (Ansible owns
+# everything; collection ansibleguy.opnsense; role ansible-platform/roles/opnsense).
+# Naming: ADR naming/0003-firewall.
 #
-# Default policy: deny all. Rules below are explicit allows.
-# All rules reference named aliases (ADR-0015) — never hardcoded IPs/ports.
-# Routing: Rune VM → Proxmox SSH tunnel → localhost:8443 → OPNsense API
+# Data comes from the CATALOG (`opn_filter_rules` in group_vars/opnsense.yml).
+# Previously this file drove the raw `uri` module against the OPNsense REST API
+# and looped a stale six-rule list in role defaults; both are replaced here so
+# the ADR-mandated collection owns the rules and the catalog is the only truth.
+#
+# `description` is the match key (rule identity), matching how the catalog and
+# lib-opnsense FwFilterManager both identify rules.
+#
+# Scope a single concern with:
+#   -e '{"opn_fw_only": ["PASS DMZ Traefik→SVC CrowdSec LAPI (agent)"]}'
+# Empty (default) = converge the entire catalog.
 
-- name: Rules | Fetch existing firewall rules
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/firewall/filter/searchRule"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: 200
-  register: opnsense_existing_rules
-  delegate_to: localhost
-  become: false
-  tags: [firewall, rules]
-
-- name: Rules | Build existing rule description map
+- name: "Rules | Select the rules in scope"
   ansible.builtin.set_fact:
-    opnsense_rule_map: >-
-      {{ opnsense_existing_rules.json.rows
-         | items2dict(key_name='description', value_name='uuid') }}
+    opnsense_rules_scoped: >-
+      {{ opn_filter_rules
+         if not (opn_fw_only | default([]))
+         else (opn_filter_rules | selectattr('description', 'in', opn_fw_only) | list) }}
   delegate_to: localhost
   become: false
   tags: [firewall, rules]
 
-- name: Rules | Create missing firewall rules
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/firewall/filter/addRule"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body:
-      rule:
-        enabled: "{{ item.enabled | default('1') }}"
-        action: "{{ item.action }}"
-        interface: "{{ item.interface }}"
-        direction: "{{ item.direction | default('in') }}"
-        ipprotocol: "{{ item.ipprotocol | default('inet') }}"
-        protocol: "{{ item.protocol | default('any') }}"
-        source_net: "{{ item.source | default('any') }}"
-        destination_net: "{{ item.destination | default('any') }}"
-        destination_port: "{{ item.destination_port | default('') }}"
-        description: "{{ item.description }}"
-        log: "{{ item.log | default('0') }}"
-    status_code: 200
-  loop: "{{ opnsense_firewall_rules }}"
+- name: "Rules | Report scope"
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('FULL catalog: ' ~ (opnsense_rules_scoped | length) ~ ' rules')
+         if not (opn_fw_only | default([]))
+         else ('SCOPED: ' ~ (opnsense_rules_scoped | map(attribute='description') | join(' | ')
+               if opnsense_rules_scoped else 'nothing matched ' ~ (opn_fw_only | join(', ')))) }}
+  delegate_to: localhost
+  become: false
+  tags: [firewall, rules]
+
+# Interface names in the catalog are logical zone names (dmz, svc, ...); OPNsense
+# addresses them by slot (opt3, opt4, ...). opn_interface_map is the translation,
+# the same one the catalog's own tooling applies.
+- name: "Rules | Ensure firewall rules match the catalog"
+  ansibleguy.opnsense.rule:
+    firewall: "{{ opnsense_firewall }}"
+    api_port: "{{ opnsense_api_port }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: false
+    description: "{{ item.description }}"
+    match_fields: ['description']
+    sequence: "{{ item.sequence | default(1) }}"
+    action: "{{ item.action | default('pass') }}"
+    interface: "{{ [opn_interface_map[item.interface] | default(item.interface)] }}"
+    direction: "{{ item.direction | default('in') }}"
+    ip_protocol: "{{ item.ipprotocol | default('inet') }}"
+    protocol: "{{ 'any' if (item.protocol | default('any')) == 'any' else (item.protocol | upper) }}"
+    source_net: "{{ item.source_net | default('any') }}"
+    source_port: "{{ item.source_port | default(omit) }}"
+    destination_net: "{{ item.destination_net | default('any') }}"
+    destination_port: "{{ item.destination_port | default(omit) }}"
+    enabled: "{{ item.enabled | default(true) | bool }}"
+    log: "{{ item.log | default(false) | bool }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opnsense_rules_scoped }}"
   loop_control:
     label: "{{ item.description }}"
-  when: item.description not in opnsense_rule_map
-  register: opnsense_rules_created
-  delegate_to: localhost
-  become: false
-  tags: [firewall, rules]
-
-- name: Rules | Apply firewall rule changes
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/firewall/filter/apply"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: 200
-  when: opnsense_rules_created.changed | default(false)
   delegate_to: localhost
   become: false
   tags: [firewall, rules]

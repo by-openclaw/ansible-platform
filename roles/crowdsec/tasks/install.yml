@@ -27,7 +27,9 @@
     content: "{{ crowdsec_apt_repo }}\n"
   register: crowdsec_repo_file
 
-- name: "install | Refresh apt cache after repo change"
+# noqa: no-handler — deliberately NOT a handler: the cache refresh has to run
+# before the install task below, and handlers only fire at the end of the play.
+- name: "install | Refresh apt cache after repo change"  # noqa: no-handler
   ansible.builtin.apt:
     update_cache: true
   when: crowdsec_repo_file.changed
