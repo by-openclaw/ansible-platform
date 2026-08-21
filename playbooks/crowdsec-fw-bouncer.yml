@@ -36,6 +36,10 @@
       ansible.builtin.import_role:
         name: crowdsec_fw_bouncer
         tasks_from: load_creds
+    - name: Enrol the firewall agent to the central LAPI
+      ansible.builtin.import_role:
+        name: crowdsec_fw_bouncer
+        tasks_from: agent_enrol
     - name: Write the bouncer api_key
       ansible.builtin.import_role:
         name: crowdsec_fw_bouncer
@@ -51,7 +55,16 @@
       ansible.builtin.import_role:
         name: crowdsec_fw_bouncer
         tasks_from: load_creds
-    - name: Reconfigure and verify
+    - name: Reconfigure
       ansible.builtin.import_role:
         name: crowdsec_fw_bouncer
-        tasks_from: reconfigure_verify
+        tasks_from: reconfigure
+
+- name: "CrowdSec FW bouncer — verify on the central LAPI"
+  hosts: lxc-crowdsec-01
+  gather_facts: false
+  tasks:
+    - name: Load role defaults for the machine name
+      ansible.builtin.import_role:
+        name: crowdsec_fw_bouncer
+        tasks_from: verify_lapi

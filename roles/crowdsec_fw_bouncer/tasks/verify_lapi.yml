@@ -1,0 +1,26 @@
+---
+- name: "Verify | Bouncer + agent state on the central LAPI"
+  ansible.builtin.command: "/usr/bin/cscli {{ item }} list -o json"
+  loop:
+    - bouncers
+    - machines
+  changed_when: false
+  register: crowdsec_fw_bouncer_lapi_check
+
+- name: "Verify | Extract firewall participation facts"
+  vars:
+    _bouncers: "{{ crowdsec_fw_bouncer_lapi_check.results[0].stdout | from_json }}"
+    _machines: "{{ crowdsec_fw_bouncer_lapi_check.results[1].stdout | from_json }}"
+  ansible.builtin.set_fact:
+    crowdsec_fw_bouncer_pull: >-
+      {{ (_bouncers | selectattr('name', 'equalto', 'opnsense-firewall')
+          | map(attribute='last_pull') | list | first) | default('NEVER') }}
+    crowdsec_fw_bouncer_agent_ok: >-
+      {{ (_machines | selectattr('machineId', 'equalto', crowdsec_fw_bouncer_machine_name)
+          | list | length) > 0 }}
+
+- name: "Verify | Report firewall participation"
+  ansible.builtin.debug:
+    msg:
+      - "bouncer opnsense-firewall last_pull: {{ crowdsec_fw_bouncer_pull }}"
+      - "agent {{ crowdsec_fw_bouncer_machine_name }} registered: {{ crowdsec_fw_bouncer_agent_ok }}"

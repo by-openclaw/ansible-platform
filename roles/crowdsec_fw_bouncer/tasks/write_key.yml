@@ -10,3 +10,8 @@
     mode: "0600"
     backup: true
   no_log: true
+  register: crowdsec_fw_bouncer_key_res
+
+- name: "Bouncer | Flag reconfigure if the api_key changed"
+  ansible.builtin.set_fact:
+    crowdsec_fw_bouncer_dirty: "{{ crowdsec_fw_bouncer_dirty | default(false) or (crowdsec_fw_bouncer_key_res is changed) }}"
