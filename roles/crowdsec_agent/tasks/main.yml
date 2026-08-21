@@ -160,6 +160,22 @@
           the pre-edit config has been restored. stderr:
           {{ crowdsec_agent_cfg_test.stderr | default('') | trim }}
 
+# A collection with no matching log source is installed and inert — the exact
+# state mailcow was in: crowdsecurity/postfix present, zero mail lines read,
+# because postfix logs to Docker stdout and never to /var/log/mail.log.
+- name: "Crowdsec_agent | Acquire container logs via the docker datasource"
+  ansible.builtin.template:
+    src: acquis-docker.yaml.j2
+    dest: "/etc/crowdsec/acquis.d/{{ item.name }}.yaml"
+    owner: root
+    group: root
+    mode: "0640"
+  loop: "{{ crowdsec_agent_docker_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: crowdsec_agent_docker_sources | length > 0
+  notify: Restart crowdsec agent
+
 - name: "Crowdsec_agent | Install detection collections"
   ansible.builtin.command:
     cmd: "cscli collections install {{ item }} --error"
