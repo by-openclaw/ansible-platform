@@ -1,0 +1,25 @@
+---
+# ==============================================================================
+# Role: crowdsec_fw_bouncer — point the OPNsense firewall bouncer at the central
+# CrowdSec LAPI so decisions are ENFORCED at the edge (not just collected).
+#
+# The plugin settings + service are driven through the by_systems.opnsense API
+# modules (lib-first). The one thing the API cannot express is the bouncer's
+# api_key — it lives in a root-owned file on the firewall — so exactly one task
+# writes it over SSH with become. Everything else is API.
+# ==============================================================================
+
+# Central LAPI (lxc-crowdsec-01, SVC).
+crowdsec_fw_bouncer_lapi_host: "10.1.3.190"
+crowdsec_fw_bouncer_lapi_port: "8080"
+
+# Controller-side secrets.
+crowdsec_fw_bouncer_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
+# Bouncer api_key registered on the LXC LAPI (name 'opnsense-firewall').
+crowdsec_fw_bouncer_key_file: "app-crowdsec-bouncer-opnsense.json"
+# FW API + become credentials (canonical, corrected names).
+crowdsec_fw_bouncer_creds_file: "net-opnsense-prod-vm-opns-01.json"
+crowdsec_fw_bouncer_api_file: "net-opnsense-prod-poc.json"
+
+# The bouncer config file the plugin manages.
+crowdsec_fw_bouncer_config_path: "/usr/local/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml"

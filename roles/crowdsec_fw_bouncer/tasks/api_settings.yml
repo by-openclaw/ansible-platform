@@ -1,0 +1,24 @@
+---
+# API-driven plugin settings (local connection). firewall_bouncer_enabled turns
+# the bouncer on; lapi_manual_configuration=0 lets the plugin's reconfigure
+# rewrite the bouncer api_url from the listen address/port.
+# The firewall becomes a PURE bouncer against the central LAPI:
+#   - agent_enabled=0 / lapi_enabled=0: the FW stops running its own agent and
+#     LAPI (detection is done by the 12 guest agents feeding the LXC LAPI; the
+#     FW's job is enforcement).
+#   - firewall_bouncer_enabled=1: the bouncer runs.
+#   - lapi_manual_configuration=0: the plugin's reconfigure rewrites the bouncer
+#     api_url from the listen address/port below (get_new_url), so pointing the
+#     listen address at the central LAPI points the bouncer there too.
+- name: "Settings | Firewall as a bouncer for the central LAPI"
+  by_systems.opnsense.opnsense_crowdsec_settings:
+    host: "{{ crowdsec_fw_bouncer_api.host }}"
+    key: "{{ crowdsec_fw_bouncer_api.key }}"
+    secret: "{{ crowdsec_fw_bouncer_api.secret }}"
+    verify_ssl: false
+    agent_enabled: false
+    lapi_enabled: false
+    firewall_bouncer_enabled: true
+    lapi_manual_configuration: false
+    lapi_listen_address: "{{ crowdsec_fw_bouncer_lapi_host }}"
+    lapi_listen_port: "{{ crowdsec_fw_bouncer_lapi_port }}"

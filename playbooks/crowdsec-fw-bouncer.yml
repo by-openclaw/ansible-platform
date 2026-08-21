@@ -1,0 +1,57 @@
+---
+# Point the OPNsense firewall bouncer at the central CrowdSec LAPI.
+# Three plays, one connection mode each, so no task-level connection switching:
+#   1. local  — plugin settings + reconfigure/verify (API via by_systems.opnsense)
+#   2. ssh    — write the bouncer api_key (the one thing with no API), become root
+
+- name: "CrowdSec FW bouncer — plugin settings via API"
+  hosts: vm-opns-01
+  gather_facts: false
+  connection: local
+  become: false
+  tasks:
+    - name: Load credentials
+      ansible.builtin.import_role:
+        name: crowdsec_fw_bouncer
+        tasks_from: load_creds
+    - name: Apply plugin settings
+      ansible.builtin.import_role:
+        name: crowdsec_fw_bouncer
+        tasks_from: api_settings
+
+- name: "CrowdSec FW bouncer — write api_key (SSH + become)"
+  hosts: vm-opns-01
+  gather_facts: false
+  vars:
+    _creds: "{{ (lookup('file', lookup('env','HOME') + '/.openclaw/workspace/infra/secrets/net-opnsense-prod-vm-opns-01.json') | from_json).fields }}"
+    ansible_connection: ssh
+    ansible_user: "{{ _creds.ssh_user }}"
+    ansible_ssh_private_key_file: "{{ _creds.ssh_key }}"
+    ansible_become: true
+    ansible_become_method: sudo
+    ansible_become_password: "{{ _creds.byrune_become_password }}"
+    ansible_python_interpreter: /usr/local/bin/python3
+  tasks:
+    - name: Load credentials
+      ansible.builtin.import_role:
+        name: crowdsec_fw_bouncer
+        tasks_from: load_creds
+    - name: Write the bouncer api_key
+      ansible.builtin.import_role:
+        name: crowdsec_fw_bouncer
+        tasks_from: write_key
+
+- name: "CrowdSec FW bouncer — reconfigure + verify"
+  hosts: vm-opns-01
+  gather_facts: false
+  connection: local
+  become: false
+  tasks:
+    - name: Load credentials
+      ansible.builtin.import_role:
+        name: crowdsec_fw_bouncer
+        tasks_from: load_creds
+    - name: Reconfigure and verify
+      ansible.builtin.import_role:
+        name: crowdsec_fw_bouncer
+        tasks_from: reconfigure_verify
