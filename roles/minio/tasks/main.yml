@@ -101,21 +101,37 @@
   no_log: true
   changed_when: false
 
-- name: "MinIO | Create buckets"
-  ansible.builtin.command: "/usr/local/bin/mc mb --ignore-existing localminio/{{ item }}"
+- name: "MinIO | Check which buckets already exist"
+  ansible.builtin.command: "/usr/local/bin/mc stat localminio/{{ item }}"
   loop: "{{ minio_buckets }}"
-  register: minio_mb
-  changed_when: "'created' in (minio_mb.stdout | default('') | lower)"
+  register: minio_bkt_check
+  changed_when: false
+  failed_when: false
 
-- name: "MinIO | Create service access keys (rune, opus)"
+- name: "MinIO | Create missing buckets"
+  ansible.builtin.command: "/usr/local/bin/mc mb localminio/{{ item.item }}"
+  loop: "{{ minio_bkt_check.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.rc != 0
+  changed_when: true
+
+- name: "MinIO | Check which service access keys already exist"
+  ansible.builtin.command: "/usr/local/bin/mc admin accesskey info localminio {{ minio_creds[item + '_access_key'] }}"
+  loop: [rune, opus]
+  register: minio_ak_check
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: "MinIO | Create missing service access keys (rune, opus)"
   ansible.builtin.command: >-
     /usr/local/bin/mc admin accesskey create localminio
-      --access-key {{ minio_creds[item + '_access_key'] }}
-      --secret-key {{ minio_creds[item + '_secret_key'] }}
-  loop: [rune, opus]
+      --access-key {{ minio_creds[item.item + '_access_key'] }}
+      --secret-key {{ minio_creds[item.item + '_secret_key'] }}
+  loop: "{{ minio_ak_check.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.rc != 0
   no_log: true
-  register: minio_ak
-  changed_when: "'created' in (minio_ak.stdout | default('') | lower)"
-  failed_when:
-    - minio_ak.rc != 0
-    - "'already exists' not in (minio_ak.stderr | default('') ~ minio_ak.stdout | default(''))"
+  changed_when: true
