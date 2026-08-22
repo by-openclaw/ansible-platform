@@ -170,3 +170,41 @@
         traefik_route_internal_only: true
         traefik_route_forward_auth: true
       tags: [seaweedfs, route]
+
+# --- Tier 3: offsite backup to Contabo (weed filer.backup) -----------------------
+- name: "SeaweedFS | Offsite backup to Contabo"
+  when: seaweedfs_offsite_enabled | bool
+  block:
+    - name: "SeaweedFS | Load offsite (Contabo) credentials"
+      ansible.builtin.set_fact:
+        seaweedfs_offsite: "{{ (lookup('file', seaweedfs_secret_dir + '/' + seaweedfs_offsite_secret_file) | from_json).fields }}"
+      no_log: true
+
+    - name: "SeaweedFS | Render replication.toml (S3 sink)"
+      ansible.builtin.template:
+        src: replication.toml.j2
+        dest: "{{ seaweedfs_config_dir }}/replication.toml"
+        owner: root
+        group: "{{ seaweedfs_group }}"
+        mode: "0640"
+      no_log: true
+      notify: Restart seaweedfs-backup
+
+    - name: "SeaweedFS | Render offsite backup systemd unit"
+      ansible.builtin.template:
+        src: seaweedfs-backup.service.j2
+        dest: /etc/systemd/system/seaweedfs-backup.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart seaweedfs-backup
+
+    - name: "SeaweedFS | Enable + start offsite backup"
+      ansible.builtin.systemd_service:
+        name: seaweedfs-backup
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: "SeaweedFS | Apply pending backup restart now"
+      ansible.builtin.meta: flush_handlers

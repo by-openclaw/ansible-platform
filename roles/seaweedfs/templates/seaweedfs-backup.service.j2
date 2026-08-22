@@ -1,0 +1,18 @@
+# Managed by ansible (seaweedfs role) — do not edit by hand.
+# Continuous one-way offsite backup of {{ seaweedfs_offsite_filer_path }} -> Contabo S3.
+[Unit]
+Description=SeaweedFS offsite backup (filer.backup -> Contabo S3)
+After=seaweedfs.service network-online.target
+Wants=seaweedfs.service
+
+[Service]
+Type=simple
+User={{ seaweedfs_user }}
+Group={{ seaweedfs_group }}
+WorkingDirectory={{ seaweedfs_config_dir }}
+ExecStart={{ seaweedfs_bin }} filer.backup -filer=localhost:{{ seaweedfs_filer_port }} -filerPath={{ seaweedfs_offsite_filer_path }}
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

@@ -50,3 +50,12 @@ seaweedfs_secret_file: "fabric/infra-seaweedfs.json"
 # provisions its OWN bucket + scoped S3 identity at install time via the reusable
 # `seaweedfs_bucket` role (weed shell: s3.bucket.create + s3.configure -apply,
 # dynamic, no restart). This role only stands up the S3 service + an admin identity.
+
+# --- Tier 3: offsite backup to Contabo S3 (weed filer.backup, one-way) -----------
+# Local ZFS stays authoritative; a continuous incremental copy of /buckets is
+# pushed to Contabo (survives site loss). NOT tiering — remote is never in the
+# read/write path. Synology (tier 2) is added once SVC->NAS routing exists.
+seaweedfs_offsite_enabled: true
+seaweedfs_offsite_secret_file: "fabric/infra-seaweedfs-offsite.json"
+seaweedfs_offsite_filer_path: "/buckets"
+seaweedfs_offsite_is_incremental: false
