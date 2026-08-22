@@ -50,6 +50,23 @@
   loop: "{{ opnsense_aliases_scoped }}"
   loop_control:
     label: "{{ item.name }}"
+  register: opnsense_alias_apply
+  delegate_to: localhost
+  become: false
+  tags: [firewall, aliases]
+
+- name: "Aliases | Reconfigure aliases (reload pf tables) when any changed"
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/firewall/alias/reconfigure"
+    method: POST
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body: {}
+    status_code: 200
+  when: opnsense_alias_apply is defined and (opnsense_alias_apply.changed | default(false))
   delegate_to: localhost
   become: false
   tags: [firewall, aliases]

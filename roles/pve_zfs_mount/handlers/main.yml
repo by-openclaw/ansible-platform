@@ -1,0 +1,8 @@
+---
+- name: PVE ZFS restart cts
+  ansible.builtin.command:
+    cmd: "pct reboot {{ item.vmid }}"
+  changed_when: true
+  loop: "{{ pve_zfs_mount_items | unique(attribute='vmid') }}"
+  loop_control:
+    label: "reboot ct {{ item.vmid }}"

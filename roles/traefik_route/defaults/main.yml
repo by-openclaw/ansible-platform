@@ -36,3 +36,10 @@ traefik_route_public_hardening: true
 # CrowdSec bouncer, follow-up). Tune per-route via these vars if needed.
 traefik_route_ratelimit_average: 300   # req/s per client IP (sustained)
 traefik_route_ratelimit_burst: 600     # short burst allowance
+
+# forwardAuth (Authentik SSO gate) for apps with no native OIDC (e.g. weed admin,
+# the Traefik dashboard). true -> the route carries the global `authentik` forwardAuth
+# middleware + a per-host /outpost.goauthentik.io/ sub-router (login callback/assets).
+# Access is IdP-gated by the app's proxy-provider group (authentik_proxy_apps).
+# Combine with internal_only=true so it's also network-gated (VPN/LAN).
+traefik_route_forward_auth: false

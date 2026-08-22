@@ -1,0 +1,89 @@
+---
+- name: "SeaweedFS bucket | Validate inputs"
+  ansible.builtin.assert:
+    that:
+      - seaweedfs_bucket_identity | length > 0
+      - seaweedfs_bucket_names | length > 0
+      - seaweedfs_bucket_secret_file | length > 0
+    fail_msg: "seaweedfs_bucket requires identity, names, and secret_file"
+
+- name: "SeaweedFS bucket | Stat the consumer secret on the controller"
+  ansible.builtin.stat:
+    path: "{{ seaweedfs_bucket_secret_dir }}/{{ seaweedfs_bucket_secret_file }}"
+  register: seaweedfs_bucket_secret_stat
+  delegate_to: localhost
+  become: false
+
+- name: "SeaweedFS bucket | Load existing access key"
+  ansible.builtin.set_fact:
+    seaweedfs_bucket_key: "{{ (lookup('file', seaweedfs_bucket_secret_dir + '/' + seaweedfs_bucket_secret_file) | from_json).fields }}"
+  when: seaweedfs_bucket_secret_stat.stat.exists
+  no_log: true
+
+- name: "SeaweedFS bucket | Generate a scoped access key"
+  ansible.builtin.set_fact:
+    seaweedfs_bucket_key:
+      access_key: "{{ lookup('community.general.random_string', length=20, special=false, upper=true, numbers=true) }}"
+      secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+      endpoint: "https://s3.by-research.be"
+      buckets: "{{ seaweedfs_bucket_names }}"
+      identity: "{{ seaweedfs_bucket_identity }}"
+  when: not seaweedfs_bucket_secret_stat.stat.exists
+  no_log: true
+
+- name: "SeaweedFS bucket | Persist the consumer secret (0600)"
+  ansible.builtin.copy:
+    dest: "{{ seaweedfs_bucket_secret_dir }}/{{ seaweedfs_bucket_secret_file }}"
+    content: "{{ {'fields': seaweedfs_bucket_key} | to_nice_json }}\n"
+    mode: "0600"
+  when: not seaweedfs_bucket_secret_stat.stat.exists
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: "SeaweedFS bucket | List existing buckets"
+  ansible.builtin.shell: >-
+    set -o pipefail; echo 's3.bucket.list' | {{ seaweedfs_bucket_bin }} shell -master {{ seaweedfs_bucket_master }} 2>/dev/null
+  args:
+    executable: /bin/bash
+  register: seaweedfs_bucket_existing
+  changed_when: false
+  delegate_to: "{{ seaweedfs_bucket_host }}"
+  become: true
+
+- name: "SeaweedFS bucket | Create missing buckets"
+  ansible.builtin.shell: >-
+    set -o pipefail; echo 's3.bucket.create -name {{ item }}' | {{ seaweedfs_bucket_bin }} shell -master {{ seaweedfs_bucket_master }}
+  args:
+    executable: /bin/bash
+  when: item not in seaweedfs_bucket_existing.stdout
+  loop: "{{ seaweedfs_bucket_names }}"
+  changed_when: true
+  delegate_to: "{{ seaweedfs_bucket_host }}"
+  become: true
+
+- name: "SeaweedFS bucket | Read current S3 identity config"
+  ansible.builtin.shell: >-
+    set -o pipefail; echo 's3.configure' | {{ seaweedfs_bucket_bin }} shell -master {{ seaweedfs_bucket_master }} 2>/dev/null
+  args:
+    executable: /bin/bash
+  register: seaweedfs_bucket_cfg
+  changed_when: false
+  delegate_to: "{{ seaweedfs_bucket_host }}"
+  become: true
+  no_log: true
+
+- name: "SeaweedFS bucket | Configure the scoped identity (dynamic, no restart)"
+  ansible.builtin.shell: >-
+    set -o pipefail; echo 's3.configure -user {{ seaweedfs_bucket_identity }}
+    -access_key {{ seaweedfs_bucket_key.access_key }}
+    -secret_key {{ seaweedfs_bucket_key.secret_key }}
+    -actions {{ seaweedfs_bucket_names | product(seaweedfs_bucket_actions) | map("reverse") | map("join", ":") | join(",") }}
+    -apply' | {{ seaweedfs_bucket_bin }} shell -master {{ seaweedfs_bucket_master }}
+  args:
+    executable: /bin/bash
+  when: seaweedfs_bucket_key.access_key not in (seaweedfs_bucket_cfg.stdout | default(''))
+  changed_when: true
+  delegate_to: "{{ seaweedfs_bucket_host }}"
+  become: true
+  no_log: true

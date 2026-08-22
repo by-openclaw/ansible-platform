@@ -26,9 +26,9 @@ authentik_redis_port: 6379
 
 # Controller secret store.
 authentik_secret_dir: "~/.openclaw/workspace/infra/secrets"
-authentik_secret_file: "authentik.json"               # secret_key + bootstrap
-authentik_pg_secret_file: "db-pgsql-authentik.json"   # written by postgres_db
-authentik_redis_secret_file: "db-redis.json"
+authentik_secret_file: "fabric/authentik.json"               # secret_key + bootstrap
+authentik_pg_secret_file: "fabric/db-pgsql-authentik.json"   # written by postgres_db
+authentik_redis_secret_file: "fabric/db-redis.json"
 
 # Initial admin (akadmin).
 authentik_bootstrap_email: "admin@by-research.be"
@@ -49,7 +49,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/hashicorp-vault.svg"
     name: "Vault"
     group: "vault-admins"
-    secret_file: "app-oidc-vault.json"
+    secret_file: "fabric/app-oidc-vault.json"
     redirect_uris:
       - "https://vault.by-research.be/ui/vault/auth/oidc/oidc/callback"
       - "http://localhost:8250/oidc/callback"
@@ -58,7 +58,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/pgadmin.svg"
     name: "pgAdmin"
     group: "pgadmin-admins"
-    secret_file: "app-oidc-pgadmin.json"
+    secret_file: "fabric/app-oidc-pgadmin.json"
     redirect_uris:
       - "https://pgadmin.by-research.be/oauth2/authorize"
   - slug: netbox
@@ -66,7 +66,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/netbox.svg"
     name: "NetBox"
     group: "netbox-admins"
-    secret_file: "app-oidc-netbox.json"
+    secret_file: "fabric/app-oidc-netbox.json"
     restrict_to_group: true     # IdP-enforced: only netbox-admins can log in
     redirect_uris:
       - "https://netbox.by-research.be/oauth/complete/oidc/"
@@ -75,7 +75,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/vaultwarden.svg"
     name: "Vaultwarden"
     group: "vaultwarden-admins"
-    secret_file: "app-oidc-vaultwarden.json"
+    secret_file: "fabric/app-oidc-vaultwarden.json"
     restrict_to_group: true     # IdP-enforced: only vaultwarden-admins can log in
     force_email_verified: true  # vaultwarden rejects email_verified=False (authentik default)
     offline_access: true        # vaultwarden requests offline_access → needs refresh_token
@@ -87,7 +87,7 @@ authentik_oidc_apps:
     name: "Nextcloud"
     group: "nextcloud-users"    # ACCESS group — any member may log into Nextcloud
     admin_source_group: "nextcloud-admins"  # members of THIS group also get NC admin
-    secret_file: "app-oidc-nextcloud.json"
+    secret_file: "fabric/app-oidc-nextcloud.json"
     restrict_to_group: true     # IdP-enforced: only nextcloud-users can log in
     admin_group_alias: "admin"  # admin_source_group members → NC "admin" group
     redirect_uris:
@@ -99,7 +99,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/netbird.svg"
     name: "NetBird"
     group: "netbird-users"        # ACCESS group — only members may authenticate
-    secret_file: "app-oidc-netbird.json"
+    secret_file: "fabric/app-oidc-netbird.json"
     restrict_to_group: true       # IdP-enforced: only netbird-users can log in
     # Multi-container NetBird logs in against Authentik DIRECTLY (no Dex), per the
     # goauthentik.io NetBird guide. The dashboard is a PUBLIC SPA doing PKCE; the
@@ -121,7 +121,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/mailcow.svg"
     name: "Mailcow"
     group: "mailcow-users"          # ACCESS group — only members may log into mail
-    secret_file: "app-oidc-mailcow.json"
+    secret_file: "fabric/app-oidc-mailcow.json"
     restrict_to_group: true         # IdP-enforced: only mailcow-users can log in
     # mailcow's native Generic-OIDC. On first login it reads the `mailcow_template`
     # claim and auto-provisions the mailbox from that template (the 5 GB "default").
@@ -146,6 +146,10 @@ authentik_proxy_apps:
     name: "Traefik Dashboard"
     group: "traefik-admins"                       # only this group passes forwardAuth
     external_host: "https://traefik.by-research.be"
+  - slug: seaweedfs
+    name: "SeaweedFS Admin"
+    group: "seaweedfs-admins"                     # only this group passes forwardAuth
+    external_host: "https://seaweedfs.by-research.be"
 
 # --- Identity: groups + human users (declarative) -------------------------------
 # Passwords set via API from app-user-<username>.json after the blueprint creates
@@ -159,6 +163,7 @@ authentik_groups:
   - nextcloud-users     # access group — any member can use Nextcloud (OneDrive-like)
   - nextcloud-admins    # subset of users that additionally get NC admin rights
   - traefik-admins      # forwardAuth gate for the Traefik dashboard (admin-only svc)
+  - seaweedfs-admins    # forwardAuth gate for the SeaweedFS admin console (admin-only svc)
   - netbird-users       # access group — only members may authenticate to NetBird VPN
   - netbird-admins      # NetBird admins (NetBird's own owner/admin role set in-app)
   - mailcow-users       # access group — only members may SSO into mailcow webmail
@@ -175,16 +180,16 @@ authentik_superuser_groups:
 # (bootstrap) + each app's local admin.
 authentik_users:
   - username: yboujraf
-    secret_file: "app-user-yboujraf.json"      # regular user (nextcloud-users)
+    secret_file: "fabric/app-user-yboujraf.json"      # regular user (nextcloud-users)
   - username: adm_yboujraf
-    secret_file: "app-user-adm_yboujraf.json"  # PRIVILEGED admin account
+    secret_file: "fabric/app-user-adm_yboujraf.json"  # PRIVILEGED admin account
   # Dedicated example.com mail identity. mailcow OIDC maps email->mailbox, so this
   # carries the @example.com email (in mailcow-users) to SSO into the example.com
   # inbox — the @by-research.be account above can't reach a second-domain mailbox.
   # NOTE: there is no adm_*_example identity — adm_yboujraf is ADMIN-ONLY (no mailbox
   # on any domain); mailcow admin = the local admin account (no SSO-admin in mailcow).
   - username: yboujraf_example
-    secret_file: "app-user-yboujraf_example.json"      # -> yboujraf@example.com mailbox
+    secret_file: "fabric/app-user-yboujraf_example.json"      # -> yboujraf@example.com mailbox
 
 # Outbound email (password resets / MFA / notifications) via Resend (by-research).
-authentik_resend_secret_file: "app-resend-by-research.json"
+authentik_resend_secret_file: "shared/app-resend-by-research.json"

@@ -10,6 +10,13 @@
           | from_json).fields.token }}
   no_log: true
 
+- name: "Crowdsec_agent | Ensure repo prerequisites (gpg, curl, ca-certs)"
+  ansible.builtin.apt:
+    name: [gnupg, curl, ca-certificates, apt-transport-https]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: "Crowdsec_agent | Install the packagecloud signing key"
   ansible.builtin.get_url:
     url: "{{ crowdsec_agent_apt_key_url }}"

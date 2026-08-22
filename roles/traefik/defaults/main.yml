@@ -69,8 +69,21 @@ traefik_lego_url: "https://github.com/go-acme/lego/releases/download/v{{ traefik
 traefik_renew_days: 30
 
 # Cloudflare secret (controller-side) — same file roles/adguard uses
-traefik_cf_secret: "~/.openclaw/workspace/infra/secrets/app-cloudflare-by-research-be.json"
+traefik_cf_secret: "~/.openclaw/workspace/infra/secrets/shared/app-cloudflare-by-research-be.json"
 
 # lego cert output (wildcard) — Traefik reads these via the file provider
 traefik_cert_crt: "/etc/lego/cert/certificates/_.{{ traefik_domain }}.crt"
 traefik_cert_key: "/etc/lego/cert/certificates/_.{{ traefik_domain }}.key"
+
+# --- CrowdSec Traefik bouncer (Layer-7 IP remediation) --------------------------
+# Blocks IPs with an active CrowdSec decision at the HTTP layer, before requests
+# reach the web apps. Complements the OPNsense firewall bouncer (L3/4). Plugin:
+# github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin (Yaegi, downloaded at
+# startup). Applied globally via the websecure entrypoint, so every app is covered.
+traefik_crowdsec_enabled: true
+traefik_crowdsec_plugin_version: "v1.7.1"
+traefik_crowdsec_lapi_scheme: "http"
+traefik_crowdsec_lapi_host: "10.1.3.190:8080"        # central LAPI (lxc-crowdsec-01)
+traefik_crowdsec_mode: "stream"                       # cache decisions locally; resilient
+traefik_crowdsec_keyfile: "/etc/traefik/crowdsec-lapi.key"
+traefik_crowdsec_secret: "~/.openclaw/workspace/infra/secrets/fabric/app-crowdsec-bouncer-traefik.json"
