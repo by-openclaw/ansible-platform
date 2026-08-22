@@ -209,7 +209,7 @@ opn_aliases:
 - {name: port_netbox, type: port, content: ['8080'], description: 'NetBox web (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_vaultwarden, type: port, content: ['80'], description: 'Vaultwarden web (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_nextcloud, type: port, content: ['80'], description: 'Nextcloud web (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: port_seaweedfs, type: port, content: ['8333'], description: 'SeaweedFS S3 API (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: port_seaweedfs, type: port, content: ['8333', '23646'], description: 'SeaweedFS Traefik backends: S3 API:8333, admin UI:23646', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_netbird, type: port, content: ['80', '8081', '10000', '33073', '33080'], description: 'NetBird multi-container Traefik backends: dashboard:80, signal-ws:8081, signal-grpc:10000, management:33073, relay:33080', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_stun, type: port, content: ['3478'], description: 'NetBird STUN (coturn, UDP)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - name: port_dns
@@ -2200,6 +2200,8 @@ opn_unbound:
   # Service name → Traefik (internal split-horizon; SeaweedFS S3 API via Traefik).
   - {hostname: s3, domain: by-research.be, rr: A,    server: 10.1.2.110}
   - {hostname: s3, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: seaweedfs, domain: by-research.be, rr: A,    server: 10.1.2.110}
+  - {hostname: seaweedfs, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
   # (20 stale probe-fleet overrides pruned 2026-06-06 — never-built hosts.)
   # Query Forwarding — chain step: Unbound → dnscrypt-proxy on loopback.
   # Empty domain = catch-all → Unbound creates a `forward-zone "."` from these entries.

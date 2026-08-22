@@ -134,3 +134,56 @@
     traefik_route_backend_url: "http://{{ seaweedfs_ip }}:{{ seaweedfs_s3_port }}"
     traefik_route_internal_only: true
   tags: [seaweedfs, route]
+
+# --- weed admin dashboard (Authentik-gated via Traefik forwardAuth) -------------
+- name: "SeaweedFS | Admin dashboard"
+  when: seaweedfs_admin_enabled | bool
+  block:
+    - name: "SeaweedFS | Admin data dir"
+      ansible.builtin.file:
+        path: "{{ seaweedfs_admin_data_dir }}"
+        state: directory
+        owner: "{{ seaweedfs_user }}"
+        group: "{{ seaweedfs_group }}"
+        mode: "0750"
+
+    - name: "SeaweedFS | Render admin systemd unit"
+      ansible.builtin.template:
+        src: seaweedfs-admin.service.j2
+        dest: /etc/systemd/system/seaweedfs-admin.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart seaweedfs-admin
+
+    - name: "SeaweedFS | Enable + start admin dashboard"
+      ansible.builtin.systemd_service:
+        name: seaweedfs-admin
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: "SeaweedFS | Apply pending admin restart now"
+      ansible.builtin.meta: flush_handlers
+
+    - name: "SeaweedFS | Wait for the admin dashboard to answer"
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seaweedfs_admin_port }}/"
+        status_code: [200, 302, 401, 403]
+      register: seaweedfs_admin_ready
+      until: seaweedfs_admin_ready.status in [200, 302, 401, 403]
+      retries: 15
+      delay: 3
+
+    - name: "SeaweedFS | Publish the admin UI via Traefik (Authentik SSO + internal)"
+      ansible.builtin.include_role:
+        name: traefik_route
+        apply:
+          tags: [route]
+      vars:
+        traefik_route_name: seaweedfs-admin
+        traefik_route_fqdn: "{{ seaweedfs_admin_fqdn }}"
+        traefik_route_backend_url: "http://{{ seaweedfs_ip }}:{{ seaweedfs_admin_port }}"
+        traefik_route_internal_only: true
+        traefik_route_forward_auth: true
+      tags: [seaweedfs, route]
