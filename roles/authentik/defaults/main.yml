@@ -133,6 +133,20 @@ authentik_oidc_apps:
       - "https://mail.by-research.be"
     redirect_uris_regex:
       - "https://mail\\.by-research\\.be/.*"
+  - slug: gitlab
+    launch_url: "https://gitlab.by-research.be"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/gitlab.svg"
+    name: "GitLab"
+    group: "gitlab-users"           # ACCESS group — only members may authenticate
+    secret_file: "fabric/app-oidc-gitlab.json"
+    restrict_to_group: true         # IdP-enforced: only gitlab-users can log in
+    offline_access: true            # GitLab omniauth requests refresh tokens
+    # GitLab CE reads the `groups` claim natively (emitted by scope-groups-<slug>):
+    #   required_groups=[gitlab-users] gates login, admin_groups=[gitlab-admins]
+    #   grants admin — configured on the GitLab side (roles/gitlab). gitlab-admins
+    #   members MUST also be in gitlab-users to pass this IdP access policy.
+    redirect_uris:
+      - "https://gitlab.by-research.be/users/auth/openid_connect/callback"
 
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
@@ -167,6 +181,8 @@ authentik_groups:
   - netbird-users       # access group — only members may authenticate to NetBird VPN
   - netbird-admins      # NetBird admins (NetBird's own owner/admin role set in-app)
   - mailcow-users       # access group — only members may SSO into mailcow webmail
+  - gitlab-users        # access group — only members may SSO into GitLab
+  - gitlab-admins       # subset of gitlab-users → GitLab instance admins (admin_groups)
   - infra-admins
   - dev
 # Groups whose members are Authentik superusers (can manage Authentik itself).

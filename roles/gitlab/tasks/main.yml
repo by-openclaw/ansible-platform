@@ -1,0 +1,163 @@
+---
+# ==============================================================================
+# GitLab CE (Omnibus) — install + wire to the shared cluster services.
+# Pre-req: Play 1 (pve_zfs_mount) has attached the ZFS git-data bind-mount, and
+# the gitlab DB / S3 bucket+key / OIDC client have been provisioned (playbook).
+# ==============================================================================
+
+- name: "GitLab | Prereq packages (repo tooling + CA)"
+  ansible.builtin.apt:
+    name: [curl, ca-certificates, gnupg, apt-transport-https]
+    state: present
+    update_cache: true
+
+- name: "GitLab | Ensure apt keyring dir"
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: "GitLab | Add GitLab CE apt signing key"
+  ansible.builtin.get_url:
+    url: "{{ gitlab_apt_repo_url }}/gpgkey"
+    dest: /etc/apt/keyrings/gitlab-ce.asc
+    mode: "0644"
+
+- name: "GitLab | Add GitLab CE apt repository"
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/gitlab-ce.asc] {{ gitlab_apt_repo_url }}/debian/ {{ ansible_distribution_release }} main"
+    filename: gitlab_gitlab-ce
+    state: present
+    update_cache: true
+
+# --- Secrets from the controller store (no_log; nothing lands in the repo) -----
+- name: "GitLab | Load PostgreSQL password"
+  ansible.builtin.set_fact:
+    gitlab_pg_password: "{{ (lookup('file', gitlab_secret_dir ~ '/' ~ gitlab_pg_secret_file) | from_json).fields.password }}"
+  no_log: true
+
+- name: "GitLab | Load Redis password"
+  ansible.builtin.set_fact:
+    gitlab_redis_password: "{{ (lookup('file', gitlab_secret_dir ~ '/' ~ gitlab_redis_secret_file) | from_json).fields.password }}"
+  no_log: true
+
+- name: "GitLab | Load S3 scoped key (SeaweedFS)"
+  ansible.builtin.set_fact:
+    gitlab_s3_key: "{{ (lookup('file', gitlab_secret_dir ~ '/' ~ gitlab_s3_secret_file) | from_json).fields }}"
+  no_log: true
+
+- name: "GitLab | Load OIDC client creds (Authentik)"
+  ansible.builtin.set_fact:
+    gitlab_oidc: "{{ (lookup('file', gitlab_secret_dir ~ '/' ~ gitlab_oidc_secret_file) | from_json).fields }}"
+  no_log: true
+
+- name: "GitLab | Stat optional SMTP secret (mailcow)"
+  ansible.builtin.stat:
+    path: "{{ gitlab_secret_dir }}/{{ gitlab_smtp_secret_file }}"
+  delegate_to: localhost
+  become: false
+  register: gitlab_smtp_stat
+
+- name: "GitLab | Load SMTP creds when present"
+  ansible.builtin.set_fact:
+    gitlab_smtp: "{{ (lookup('file', gitlab_secret_dir ~ '/' ~ gitlab_smtp_secret_file) | from_json).fields }}"
+    gitlab_smtp_configured: true
+  no_log: true
+  when: gitlab_smtp_stat.stat.exists
+
+# --- Persistent git storage must be the ZFS bind-mount BEFORE install ----------
+- name: "GitLab | Verify git-data is a mountpoint (ZFS bind-mount)"
+  ansible.builtin.command: "mountpoint -q {{ gitlab_git_data_dir }}"
+  register: gitlab_gitdata_mp
+  changed_when: false
+  failed_when: false
+
+- name: "GitLab | Fail if the git-data ZFS bind-mount is missing"
+  ansible.builtin.fail:
+    msg: >-
+      {{ gitlab_git_data_dir }} is not a mountpoint. Run Play 1 (pve_zfs_mount) so
+      git repositories land on tank/data/gitlab and survive `terraform destroy`.
+  when: gitlab_gitdata_mp.rc != 0
+
+# --- Install (pinned; EXTERNAL_URL avoids a wrong first-boot auto-config) ------
+- name: "GitLab | Install GitLab CE (pinned {{ gitlab_version }})"
+  ansible.builtin.apt:
+    name: "gitlab-ce={{ gitlab_version }}"
+    state: present
+    update_cache: true
+  environment:
+    EXTERNAL_URL: "{{ gitlab_external_url }}"
+
+- name: "GitLab | Render /etc/gitlab/gitlab.rb"
+  ansible.builtin.template:
+    src: gitlab.rb.j2
+    dest: /etc/gitlab/gitlab.rb
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Reconfigure GitLab
+
+- name: "GitLab | Apply config now (flush handlers)"
+  ansible.builtin.meta: flush_handlers
+
+# --- Verify the daemon is actually healthy (API 'ok' != running; read status) --
+- name: "GitLab | gitlab-ctl status"
+  ansible.builtin.command: gitlab-ctl status
+  register: gitlab_status
+  changed_when: false
+
+- name: "GitLab | Assert no service is down"
+  ansible.builtin.assert:
+    that: "'down:' not in gitlab_status.stdout"
+    fail_msg: "A GitLab service is down:\n{{ gitlab_status.stdout }}"
+    success_msg: "All GitLab services up."
+
+- name: "GitLab | Wait for the web endpoint to answer"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ gitlab_http_backend_port }}/-/readiness"
+    status_code: [200, 401]
+    validate_certs: false
+  register: gitlab_ready
+  retries: 20
+  delay: 15
+  until: gitlab_ready.status in [200, 401]
+
+# --- Capture GitLab's OWN generated secrets → controller store (DR + vaulting) --
+# gitlab-secrets.json holds secret_key_base / db_key_base / otp_key_base: a backup
+# restored WITHOUT it cannot decrypt 2FA/CI tokens. Pull it to the controller so
+# vault-kv-sync mirrors it to Vault (fabric/gitlab-secrets).
+- name: "GitLab | Slurp GitLab-generated secrets (DR-critical)"
+  ansible.builtin.slurp:
+    src: /etc/gitlab/gitlab-secrets.json
+  register: gitlab_secrets_raw
+  no_log: true
+
+- name: "GitLab | Slurp initial root password (exists ~24h post-install)"
+  ansible.builtin.slurp:
+    src: /etc/gitlab/initial_root_password
+  register: gitlab_initial_root_raw
+  failed_when: false
+  no_log: true
+
+- name: "GitLab | Persist GitLab secrets to the controller store (0600)"
+  ansible.builtin.copy:
+    dest: "{{ gitlab_secret_dir }}/fabric/gitlab-secrets.json"
+    mode: "0600"
+    content: >-
+      {{ {'fields': {
+        'gitlab_secrets': (gitlab_secrets_raw.content | b64decode | from_json),
+        'initial_root_password_file': (gitlab_initial_root_raw.content | default('') | b64decode)
+      }} | to_nice_json }}
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+# --- Nightly backup → SeaweedFS gitlab-backups (pure gitlab command, no .sh) ---
+- name: "GitLab | Schedule nightly backup to S3"
+  ansible.builtin.cron:
+    name: "gitlab-backup-to-s3"
+    minute: "{{ gitlab_backup_cron.split()[0] }}"
+    hour: "{{ gitlab_backup_cron.split()[1] }}"
+    job: "/opt/gitlab/bin/gitlab-backup create CRON=1 >> /var/log/gitlab/backup.log 2>&1"
+    user: root
+  when: gitlab_backup_enabled

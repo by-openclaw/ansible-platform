@@ -19,6 +19,14 @@
       - { file: "fabric/infra-seaweedfs.json", path: "fabric/infra-seaweedfs" }
       - { file: "fabric/app-s3-mailcow.json", path: "fabric/app-s3-mailcow" }
       - { file: "fabric/infra-seaweedfs-offsite.json", path: "fabric/infra-seaweedfs-offsite" }
+      # GitLab CE (#8) — consumed creds + GitLab's own generated secrets. Run
+      # playbooks/gitlab.yml FIRST (it provisions these + captures gitlab-secrets),
+      # then this sync. app-smtp-gitlab is added once the mailcow mailbox exists.
+      - { file: "fabric/db-pgsql-gitlab.json", path: "fabric/db-pgsql-gitlab" }
+      - { file: "fabric/infra-seaweedfs-gitlab.json", path: "fabric/infra-seaweedfs-gitlab" }
+      - { file: "fabric/app-oidc-gitlab.json", path: "fabric/app-oidc-gitlab" }
+      # DR-critical: without gitlab-secrets.json a GitLab backup is UNRESTORABLE.
+      - { file: "fabric/gitlab-secrets.json", path: "fabric/gitlab-secrets" }
   tasks:
     - name: "Vault | Load root token"
       ansible.builtin.set_fact:
