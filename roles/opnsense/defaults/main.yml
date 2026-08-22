@@ -177,14 +177,6 @@ opnsense_aliases:
     type: "network"
     content: ["10.1.3.0/24"]
     description: "SVC zone — VLAN 330"
-  - name: "net_vpn"
-    type: "network"
-    content: ["10.99.0.0/24"]
-    description: "WireGuard VPN tunnel peers"
-  - name: "port_wireguard"
-    type: "port"
-    content: ["51820"]
-    description: "WireGuard UDP"
   - name: "port_https"
     type: "port"
     content: ["443"]
@@ -246,39 +238,6 @@ opnsense_firewall_rules:
     destination: "any"
     destination_port: "port_https"
     protocol: "TCP"
-
-  # WAN — WireGuard inbound
-  - description: "WireGuard VPN inbound (wg-byresearch-01)"
-    action: "pass"
-    interface: "wan"
-    direction: "in"
-    protocol: "UDP"
-    destination_port: "port_wireguard"
-
-# WireGuard — tunnel wg-byresearch-01 (issue #88)
-# OFF by default: the peer/server keys below resolve from vault (vault_opnsense_wg_*)
-# which is NOT yet provisioned, and WireGuard is not in the prod catalog. An untagged
-# run with this on would fail on the missing vault keys. Flip true (and provide the
-# vault keys) only on a FW where WireGuard is actually catalogued. See issue #51.
-opnsense_wireguard_enabled: false
-opnsense_wireguard_instance_name: "wg-byresearch-01"
-opnsense_wireguard_port: 51820
-opnsense_wireguard_tunnel_network: "10.99.0.0/24"
-opnsense_wireguard_server_ip: "10.99.0.1"
-# Server keys — set in vault (never in plaintext)
-opnsense_wireguard_private_key: "{{ vault_opnsense_wg_byresearch01_server_privkey }}"
-opnsense_wireguard_public_key: "{{ vault_opnsense_wg_byresearch01_server_pubkey }}"
-
-opnsense_wireguard_peers:
-  - name: "peer-yboujraf-desk03"
-    tunnel_ip: "10.99.0.2/32"
-    public_key: "{{ vault_opnsense_wg_peer_desk03_pubkey }}"
-  - name: "peer-yboujraf-mobile"
-    tunnel_ip: "10.99.0.3/32"
-    public_key: "{{ vault_opnsense_wg_peer_mobile_pubkey }}"
-  - name: "peer-rune-vm"
-    tunnel_ip: "10.99.0.4/32"
-    public_key: "{{ vault_opnsense_wg_peer_rune_pubkey }}"
 
 # WAN gateway monitor IPs (Proximus PPPoE peer doesn't answer ICMP — monitor
 # external hosts, like pfSense01 did with 1.1.1.1). Telenet monitors its own gw.
