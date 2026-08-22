@@ -171,11 +171,13 @@ mailcow_ssl_dir: "{{ mailcow_install_dir }}/data/assets/ssl"
 #     no 2nd local disk). vmail itself already lives on the NAS. -----------------
 mailcow_backup_enabled: true
 mailcow_backup_dir: "/var/backups/mailcow" # transient local staging before S3 push
-mailcow_backup_s3_secret_file: "app-s3-mailcow.json" # DEPLOY-TIME: provision S3 bucket+creds
+mailcow_backup_s3_secret_file: "fabric/app-s3-mailcow.json"  # SeaweedFS backup bucket+key (seaweedfs_bucket)
 mailcow_backup_cron_hour: 3
 mailcow_backup_cron_minute: 30
 mailcow_backup_components: "all" # backup_and_restore.sh scope (vmail+mysql+redis+conf+...)
 mailcow_backup_retention_days: 7
+mailcow_backup_schedule_enabled: true   # nightly ansible-triggered run (cron -> ansible-playbook --tags backup on the control node; migrates to GitLab CI)
+mailcow_repo_dir: "{{ lookup('env', 'HOME') }}/repos/ansible-platform"  # control-node path for the scheduled backup run
 
 # --- Secrets (controller-side, written 0600 to the secret folder) --------------
 mailcow_secret_dir: "~/.openclaw/workspace/infra/secrets"
