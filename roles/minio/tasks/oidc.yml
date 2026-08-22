@@ -1,0 +1,54 @@
+---
+# ==============================================================================
+# MinIO — Authentik OIDC SSO for the Console (named provider → console SSO button).
+# role_policy=consoleAdmin: every user who passes the IdP gate (minio-admins group,
+# enforced in the Authentik blueprint) is mapped to the built-in consoleAdmin policy.
+# Idempotent: read the current config, only (re)set + restart when it drifts.
+# Skipped when the client secret is absent.
+# ==============================================================================
+- name: "MinIO | Load OIDC client creds"
+  ansible.builtin.set_fact:
+    minio_oidc: "{{ (lookup('file', minio_secret_dir + '/' + minio_oidc_secret_file) | from_json).fields }}"
+  no_log: true
+
+- name: "MinIO | Read current OIDC provider config"
+  ansible.builtin.command: "/usr/local/bin/mc admin config get localminio identity_openid:{{ minio_oidc_provider_name }}"
+  register: minio_oidc_current
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: "MinIO | Decide whether OIDC needs (re)configuring"
+  ansible.builtin.set_fact:
+    minio_oidc_needs_set: >-
+      {{ ('client_id=' + minio_oidc.client_id) not in (minio_oidc_current.stdout | default(''))
+         or (minio_oidc_config_url not in (minio_oidc_current.stdout | default('')))
+         or ('role_policy=' + minio_oidc_role_policy) not in (minio_oidc_current.stdout | default('')) }}
+
+- name: "MinIO | Configure the Authentik OIDC provider"
+  ansible.builtin.command: >-
+    /usr/local/bin/mc admin config set localminio identity_openid:{{ minio_oidc_provider_name }}
+      config_url="{{ minio_oidc_config_url }}"
+      client_id="{{ minio_oidc.client_id }}"
+      client_secret="{{ minio_oidc.client_secret }}"
+      role_policy="{{ minio_oidc_role_policy }}"
+      display_name="{{ minio_oidc_display_name }}"
+      scopes="{{ minio_oidc_scopes }}"
+      redirect_uri="{{ minio_oidc_redirect_uri }}"
+  when: minio_oidc_needs_set | bool
+  no_log: true
+  changed_when: true
+  notify: Restart minio
+
+- name: "MinIO | Apply pending restart so OIDC goes live"
+  ansible.builtin.meta: flush_handlers
+
+- name: "MinIO | Wait for the S3 API to be healthy again after restart"
+  ansible.builtin.uri:
+    url: "http://{{ minio_listen_ip }}:{{ minio_api_port }}/minio/health/live"
+    status_code: 200
+  register: minio_oidc_health
+  until: minio_oidc_health.status == 200
+  retries: 10
+  delay: 2
+  when: minio_oidc_needs_set | bool

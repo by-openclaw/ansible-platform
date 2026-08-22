@@ -20,6 +20,7 @@ minio_fqdn: "minio.by-research.be"        # S3 API (via Traefik)
 minio_console_fqdn: "minio-console.by-research.be"   # single-level: covered by *.by-research.be wildcard cert
 
 # Controller secret (root + rune/opus access keys), Vault-mirrored.
+minio_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
 minio_secret: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric/infra-minio-poc.json"
 
 # Buckets to create on first run (GitLab + backups + generic).
@@ -29,3 +30,18 @@ minio_buckets:
   - gitlab-registry
   - gitlab-backups
   - backup-staging
+
+# --- Authentik OIDC SSO (console login) -----------------------------------------
+# Wired only when the client secret file exists (authentik role auto-generates it).
+# Access is IdP-gated by the minio-admins group (restrict_to_group in the Authentik
+# blueprint); every user who passes the gate is mapped to the built-in consoleAdmin
+# policy (role_policy). Fine-grained per-user MinIO RBAC is a later step.
+minio_oidc_secret_file: "fabric/app-oidc-minio.json"     # client_id + client_secret
+minio_authentik_base: "https://authentik.by-research.be"
+minio_oidc_slug: "minio"
+minio_oidc_config_url: "{{ minio_authentik_base }}/application/o/{{ minio_oidc_slug }}/.well-known/openid-configuration"
+minio_oidc_redirect_uri: "https://{{ minio_console_fqdn }}/oauth_callback"
+minio_oidc_role_policy: "consoleAdmin"        # built-in full-admin policy
+minio_oidc_provider_name: "authentik"        # named provider → surfaced as a console SSO button
+minio_oidc_display_name: "Authentik SSO"
+minio_oidc_scopes: "openid,profile,email,groups"

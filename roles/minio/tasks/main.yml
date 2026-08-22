@@ -159,3 +159,14 @@
     traefik_route_backend_url: "http://{{ minio_listen_ip }}:{{ minio_console_port }}"
     traefik_route_internal_only: true
   tags: [minio, route]
+
+- name: "MinIO | Stat the OIDC client secret (SSO opt-in)"
+  ansible.builtin.stat:
+    path: "{{ (minio_secret_dir + '/' + minio_oidc_secret_file) | expanduser }}"
+  register: minio_oidc_secret_stat
+  delegate_to: localhost
+  become: false
+
+- name: "MinIO | Configure Authentik OIDC SSO (when the secret exists)"
+  ansible.builtin.import_tasks: oidc.yml
+  when: minio_oidc_secret_stat.stat.exists
