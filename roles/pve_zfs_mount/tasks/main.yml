@@ -1,0 +1,77 @@
+---
+- name: "PVE ZFS | Check which datasets already exist"
+  ansible.builtin.command:
+    cmd: "zfs list -H -o name {{ item.dataset }}"
+  register: pve_zfs_mount_exists
+  changed_when: false
+  failed_when: false
+  loop: "{{ pve_zfs_mount_items }}"
+  loop_control:
+    label: "{{ item.dataset }}"
+
+- name: "PVE ZFS | Create dataset when absent (with quota)"
+  ansible.builtin.command:
+    cmd: "zfs create -p -o quota={{ item.quota }} {{ item.dataset }}"
+  changed_when: true
+  when: pve_zfs_mount_exists.results[idx].rc != 0
+  loop: "{{ pve_zfs_mount_items }}"
+  loop_control:
+    label: "{{ item.dataset }}"
+    index_var: idx
+
+- name: "PVE ZFS | Enforce quota (declared value; no-op if unchanged)"
+  ansible.builtin.command:
+    cmd: "zfs set quota={{ item.quota }} {{ item.dataset }}"
+  changed_when: false
+  loop: "{{ pve_zfs_mount_items }}"
+  loop_control:
+    label: "{{ item.dataset }}"
+
+- name: "PVE ZFS | Resolve each dataset mountpoint"
+  ansible.builtin.command:
+    cmd: "zfs get -H -o value mountpoint {{ item.dataset }}"
+  register: pve_zfs_mount_mp
+  changed_when: false
+  loop: "{{ pve_zfs_mount_items }}"
+  loop_control:
+    label: "{{ item.dataset }}"
+
+# Only on first creation: hand the empty mount to the container's root (unpriv map
+# = host 100000) so the guest can chown it to its service user. NOT enforced on
+# re-runs, or it would fight the in-container ownership set by the app role.
+- name: "PVE ZFS | Seed ownership for the container (first create only)"
+  ansible.builtin.file:
+    path: "{{ pve_zfs_mount_mp.results[idx].stdout }}"
+    state: directory
+    owner: "{{ item.uid | default(100000) }}"
+    group: "{{ item.gid | default(100000) }}"
+    mode: "0750"
+  when: pve_zfs_mount_exists.results[idx].rc != 0
+  loop: "{{ pve_zfs_mount_items }}"
+  loop_control:
+    label: "{{ item.dataset }}"
+    index_var: idx
+
+- name: "PVE ZFS | Read current container configs"
+  ansible.builtin.command:
+    cmd: "pct config {{ item.vmid }}"
+  register: pve_zfs_mount_cfg
+  changed_when: false
+  loop: "{{ pve_zfs_mount_items }}"
+  loop_control:
+    label: "ct {{ item.vmid }}"
+
+- name: "PVE ZFS | Attach the bind-mount to the container (if absent)"
+  ansible.builtin.command:
+    cmd: "pct set {{ item.vmid }} -mp{{ item.mp_index | default(0) }} {{ pve_zfs_mount_mp.results[idx].stdout }},mp={{ item.mount_path }},backup=0"
+  register: pve_zfs_mount_set
+  changed_when: pve_zfs_mount_set.rc == 0
+  when: "('mp=' ~ item.mount_path) not in pve_zfs_mount_cfg.results[idx].stdout"
+  loop: "{{ pve_zfs_mount_items }}"
+  loop_control:
+    label: "ct {{ item.vmid }} -> {{ item.mount_path }}"
+    index_var: idx
+  notify: PVE ZFS restart cts
+
+- name: "PVE ZFS | Flush handlers (apply mounts now)"
+  ansible.builtin.meta: flush_handlers

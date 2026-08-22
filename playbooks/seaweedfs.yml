@@ -1,0 +1,31 @@
+---
+# ==============================================================================
+# SeaweedFS — S3 object-storage backend (replaces EOL MinIO).
+# Play 1 (PVE host): persistent ZFS dataset tank/data/seaweedfs + bind-mount into
+#   lxc-seaweedfs-01 at /data — DATA survives `terraform destroy` of the LXC.
+# Play 2 (LXC): install SeaweedFS (weed server -s3) + S3 access keys + buckets.
+# ==============================================================================
+- name: "SeaweedFS — persistent ZFS data volume (PVE host)"
+  hosts: srv-proxmox-poc-01
+  gather_facts: false
+  vars:
+    ansible_user: root
+    ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_rune_automation"
+    ansible_become: false
+    pve_zfs_mount_items:
+      - dataset: "tank/data/seaweedfs"
+        quota: "250G"
+        vmid: 550
+        mp_index: 0
+        mount_path: "/data"
+        uid: 100000
+        gid: 100000
+  roles:
+    - role: pve_zfs_mount
+
+- name: "SeaweedFS — install + configure the S3 backend (LXC)"
+  hosts: lxc-seaweedfs-01
+  become: true
+  gather_facts: true
+  roles:
+    - role: seaweedfs

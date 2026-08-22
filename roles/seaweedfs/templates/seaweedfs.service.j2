@@ -1,0 +1,27 @@
+# Managed by ansible (seaweedfs role) — do not edit by hand.
+[Unit]
+Description=SeaweedFS combined server (master+volume+filer+S3)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ seaweedfs_user }}
+Group={{ seaweedfs_group }}
+ExecStart={{ seaweedfs_bin }} server \
+  -dir={{ seaweedfs_data_dir }} \
+  -ip={{ seaweedfs_ip }} \
+  -ip.bind={{ seaweedfs_bind }} \
+  -master.port={{ seaweedfs_master_port }} \
+  -volume.port={{ seaweedfs_volume_port }} \
+  -filer -filer.port={{ seaweedfs_filer_port }} \
+  -s3 -s3.port={{ seaweedfs_s3_port }} -s3.config={{ seaweedfs_config_dir }}/s3.json \
+  -master.volumeSizeLimitMB={{ seaweedfs_volume_size_mb }} \
+  -volume.max={{ seaweedfs_volume_max }} \
+  -metricsPort={{ seaweedfs_metrics_port }}
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

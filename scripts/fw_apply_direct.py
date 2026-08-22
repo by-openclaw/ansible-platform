@@ -422,14 +422,14 @@ async def main_async(args: argparse.Namespace) -> int:
         if unbound.get("enabled"):
             # Host overrides are match-keyed on hostname+domain and re-apply cleanly.
             if want("dns") or want("dns-ho"):
-                host_overrides = [{"state": "present", **{k: v for k, v in h.items() if k != "ref"}} for h in unbound.get("host_overrides", [])]
+                host_overrides = [{**{k: v for k, v in h.items() if k != "ref"}, "state": h.get("state", "present")} for h in unbound.get("host_overrides", [])]
                 await apply_section(UbHostOverrideManager, client, host_overrides, "DNS_HO", args.check, results)
             # Forwarders use an empty-domain catch-all whose primary match key is
             # blank; the lib IdentityResolver returns None for it, so a re-apply
             # DUPLICATES the loopback forwards. Only touch them when explicitly asked
             # (dns-fw), never as a side effect of a host-override apply (dns-ho).
             if want("dns") or want("dns-fw"):
-                forwarders = [{"state": "present", **{k: v for k, v in f.items() if k != "ref"}} for f in unbound.get("forwarders", [])]
+                forwarders = [{**{k: v for k, v in f.items() if k != "ref"}, "state": f.get("state", "present")} for f in unbound.get("forwarders", [])]
                 await apply_section(UbForwardManager,      client, forwarders,     "DNS_FW", args.check, results)
 
         # Reconfigure Unbound once if any host-override/forwarder actually changed
