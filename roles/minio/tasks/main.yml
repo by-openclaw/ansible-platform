@@ -135,3 +135,27 @@
   when: item.rc != 0
   no_log: true
   changed_when: true
+
+- name: "MinIO | Publish S3 API via Traefik (internal-only)"
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: minio
+    traefik_route_fqdn: "{{ minio_fqdn }}"
+    traefik_route_backend_url: "http://{{ minio_listen_ip }}:{{ minio_api_port }}"
+    traefik_route_internal_only: true
+  tags: [minio, route]
+
+- name: "MinIO | Publish Console UI via Traefik (internal-only)"
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: minio-console
+    traefik_route_fqdn: "{{ minio_console_fqdn }}"
+    traefik_route_backend_url: "http://{{ minio_listen_ip }}:{{ minio_console_port }}"
+    traefik_route_internal_only: true
+  tags: [minio, route]

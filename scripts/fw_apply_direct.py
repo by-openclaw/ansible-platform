@@ -62,10 +62,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # roadmap step can apply just its slice without touching the others:
 #   fw      -> opn_aliases, opn_filter_rules, opn_snat_rules, opn_dnat_rules
 #   dns     -> opn_unbound (host overrides + forwarders)
+#   dns-ho  -> opn_unbound host overrides ONLY (split DNS; safe to re-apply)
+#   dns-fw  -> opn_unbound forwarders ONLY (⚠ empty-domain catch-all dups on
+#              re-apply until the lib IdentityResolver empty-primary bug is fixed)
 #   kea     -> opn_kea_dhcp4 / opn_kea_dhcp6
 #   dnsmasq -> opn_dnsmasq
 #   radvd   -> opn_radvd
-SECTION_GROUPS = {"fw", "dns", "kea", "dnsmasq", "radvd"}
+SECTION_GROUPS = {"fw", "dns", "dns-ho", "dns-fw", "kea", "dnsmasq", "radvd"}
 
 log = logging.getLogger("fw_apply_direct")
 
@@ -232,6 +235,31 @@ async def apply_kea_general(
     })
 
 
+async def reconfigure_unbound(client: OpnsenseClient, check_mode: bool, results: list[dict[str, Any]]) -> None:
+    """Activate pending Unbound (split-DNS) changes. Host-override/forwarder sets
+    persist to config.xml but are not served until Unbound is reconfigured — the
+    same POST the Ansible dns role fires after a forward change."""
+    start = time.monotonic()
+    try:
+        if check_mode:
+            log.info("[DNS] DRY-RUN would POST unbound/service/reconfigure")
+            outcome, action = "ok", "noop"
+        else:
+            await client.post("unbound/service/reconfigure", {})
+            outcome, action = "ok", "reconfigured"
+        dur_ms = int((time.monotonic() - start) * 1000)
+        log.info("[DNS] %-8s reconfigure (%d ms)", "OK", dur_ms)
+    except Exception as exc:  # noqa: BLE001
+        dur_ms = int((time.monotonic() - start) * 1000)
+        outcome, action = "error", None
+        log.exception("[DNS] FAIL reconfigure: %s (%d ms)", exc, dur_ms)
+    results.append({
+        "section": "DNS", "name": "reconfigure", "outcome": outcome, "action": action,
+        "uuid": None, "changed": None, "duration_ms": dur_ms,
+        "adr_ref": "infra/0004", "lib_manager": "raw_post", "ansible_module": None,
+    })
+
+
 async def reconfigure_kea(client: OpnsenseClient, check_mode: bool, results: list[dict[str, Any]]) -> None:
     start = time.monotonic()
     try:
@@ -391,11 +419,25 @@ async def main_async(args: argparse.Namespace) -> int:
 
         # Unbound (split DNS) — opn_unbound block
         unbound = catalog.get("opn_unbound", {})
-        if want("dns") and unbound.get("enabled"):
-            host_overrides = [{"state": "present", **{k: v for k, v in h.items() if k != "ref"}} for h in unbound.get("host_overrides", [])]
-            forwarders     = [{"state": "present", **{k: v for k, v in f.items() if k != "ref"}} for f in unbound.get("forwarders", [])]
-            await apply_section(UbHostOverrideManager, client, host_overrides, "DNS_HO", args.check, results)
-            await apply_section(UbForwardManager,      client, forwarders,     "DNS_FW", args.check, results)
+        if unbound.get("enabled"):
+            # Host overrides are match-keyed on hostname+domain and re-apply cleanly.
+            if want("dns") or want("dns-ho"):
+                host_overrides = [{"state": "present", **{k: v for k, v in h.items() if k != "ref"}} for h in unbound.get("host_overrides", [])]
+                await apply_section(UbHostOverrideManager, client, host_overrides, "DNS_HO", args.check, results)
+            # Forwarders use an empty-domain catch-all whose primary match key is
+            # blank; the lib IdentityResolver returns None for it, so a re-apply
+            # DUPLICATES the loopback forwards. Only touch them when explicitly asked
+            # (dns-fw), never as a side effect of a host-override apply (dns-ho).
+            if want("dns") or want("dns-fw"):
+                forwarders = [{"state": "present", **{k: v for k, v in f.items() if k != "ref"}} for f in unbound.get("forwarders", [])]
+                await apply_section(UbForwardManager,      client, forwarders,     "DNS_FW", args.check, results)
+
+        # Reconfigure Unbound once if any host-override/forwarder actually changed
+        # (dispatch persists to config.xml but does not auto-activate, unlike Kea).
+        if unbound.get("enabled") and (want("dns") or want("dns-ho") or want("dns-fw")):
+            dns_changed = any(r.get("section") in ("DNS_HO", "DNS_FW") and r.get("changed") for r in results)
+            if dns_changed:
+                await reconfigure_unbound(client, args.check, results)
 
         # Kea DHCPv4 — general settings (enable + interfaces) then subnets
         kea4 = catalog.get("opn_kea_dhcp4", {})
