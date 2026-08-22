@@ -45,12 +45,8 @@ seaweedfs_volume_max: 0
 seaweedfs_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
 seaweedfs_secret_file: "fabric/infra-seaweedfs.json"
 
-# Buckets. GitLab (artifacts/LFS/registry/backups) + backup staging.
-seaweedfs_gitlab_buckets:
-  - gitlab-artifacts
-  - gitlab-lfs
-  - gitlab-registry
-  - gitlab-backups
-seaweedfs_extra_buckets:
-  - backup-staging
-seaweedfs_buckets: "{{ seaweedfs_gitlab_buckets + seaweedfs_extra_buckets }}"
+# NOTE: app buckets + scoped access keys are NOT created here (separation of
+# concerns, same as the postgresql role). Each consuming app (GitLab, backups)
+# provisions its OWN bucket + scoped S3 identity at install time via the reusable
+# `seaweedfs_bucket` role (weed shell: s3.bucket.create + s3.configure -apply,
+# dynamic, no restart). This role only stands up the S3 service + an admin identity.

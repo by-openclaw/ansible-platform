@@ -105,23 +105,6 @@
   retries: 20
   delay: 3
 
-- name: "SeaweedFS | List existing buckets"
-  ansible.builtin.shell: >-
-    set -o pipefail; echo 's3.bucket.list' | {{ seaweedfs_bin }} shell -master 127.0.0.1:{{ seaweedfs_master_port }} 2>/dev/null
-  args:
-    executable: /bin/bash
-  register: seaweedfs_bucket_list
-  changed_when: false
-
-- name: "SeaweedFS | Create missing buckets"
-  ansible.builtin.shell: >-
-    set -o pipefail; echo 's3.bucket.create -name {{ item }}' | {{ seaweedfs_bin }} shell -master 127.0.0.1:{{ seaweedfs_master_port }}
-  args:
-    executable: /bin/bash
-  when: item not in seaweedfs_bucket_list.stdout
-  loop: "{{ seaweedfs_buckets }}"
-  register: seaweedfs_bucket_create
-  changed_when: "'created' in (seaweedfs_bucket_create.stdout | default('') | lower) or seaweedfs_bucket_create.rc == 0"
 
 - name: "SeaweedFS | Publish the S3 API via Traefik (internal-only)"
   ansible.builtin.include_role:
