@@ -1,0 +1,121 @@
+---
+- name: "MinIO | Load credentials from the secret store"
+  ansible.builtin.set_fact:
+    minio_creds: "{{ (lookup('file', minio_secret) | from_json).fields }}"
+  no_log: true
+
+- name: "MinIO | System user + data dir"
+  block:
+    - name: "MinIO | Create service user"
+      ansible.builtin.user:
+        name: "{{ minio_user }}"
+        system: true
+        shell: /usr/sbin/nologin
+        home: "{{ minio_data_dir }}"
+        create_home: false
+    - name: "MinIO | Create data dir (persistent S3 store)"
+      ansible.builtin.file:
+        path: "{{ minio_data_dir }}"
+        state: directory
+        owner: "{{ minio_user }}"
+        group: "{{ minio_user }}"
+        mode: "0750"
+
+# --- binaries (pinned; install-or-upgrade on version change) ------------------
+- name: "MinIO | Detect installed server version"
+  ansible.builtin.command: /usr/local/bin/minio --version
+  register: minio_srv_installed
+  changed_when: false
+  failed_when: false
+
+- name: "MinIO | Download MinIO server (pinned)"
+  ansible.builtin.get_url:
+    url: "{{ minio_url }}"
+    dest: /usr/local/bin/minio
+    owner: root
+    group: root
+    mode: "0755"
+  when: minio_version not in (minio_srv_installed.stdout | default(''))
+  notify: Restart minio
+
+- name: "MinIO | Detect installed mc version"
+  ansible.builtin.command: /usr/local/bin/mc --version
+  register: minio_mc_installed
+  changed_when: false
+  failed_when: false
+
+- name: "MinIO | Download mc client (pinned)"
+  ansible.builtin.get_url:
+    url: "{{ minio_mc_url }}"
+    dest: /usr/local/bin/mc
+    owner: root
+    group: root
+    mode: "0755"
+  when: minio_mc_version not in (minio_mc_installed.stdout | default(''))
+
+# --- config + service ---------------------------------------------------------
+- name: "MinIO | Render environment file"
+  ansible.builtin.template:
+    src: minio.env.j2
+    dest: /etc/default/minio
+    owner: root
+    group: "{{ minio_user }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart minio
+
+- name: "MinIO | Install systemd unit"
+  ansible.builtin.template:
+    src: minio.service.j2
+    dest: /etc/systemd/system/minio.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart minio
+
+- name: "MinIO | Enable + start"
+  ansible.builtin.systemd_service:
+    name: minio
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: "MinIO | Flush handlers before provisioning"
+  ansible.builtin.meta: flush_handlers
+
+- name: "MinIO | Wait for the S3 API"
+  ansible.builtin.uri:
+    url: "http://{{ minio_listen_ip }}:{{ minio_api_port }}/minio/health/ready"
+    status_code: 200
+  register: minio_ready
+  retries: 12
+  delay: 5
+  until: minio_ready.status == 200
+
+# --- provision: alias, buckets, access keys -----------------------------------
+- name: "MinIO | Register mc alias to the local server"
+  ansible.builtin.command: >-
+    /usr/local/bin/mc alias set localminio
+      http://{{ minio_listen_ip }}:{{ minio_api_port }}
+      {{ minio_creds.root_user }} {{ minio_creds.root_password }}
+  no_log: true
+  changed_when: false
+
+- name: "MinIO | Create buckets"
+  ansible.builtin.command: "/usr/local/bin/mc mb --ignore-existing localminio/{{ item }}"
+  loop: "{{ minio_buckets }}"
+  register: minio_mb
+  changed_when: "'created' in (minio_mb.stdout | default('') | lower)"
+
+- name: "MinIO | Create service access keys (rune, opus)"
+  ansible.builtin.command: >-
+    /usr/local/bin/mc admin accesskey create localminio
+      --access-key {{ minio_creds[item + '_access_key'] }}
+      --secret-key {{ minio_creds[item + '_secret_key'] }}
+  loop: [rune, opus]
+  no_log: true
+  register: minio_ak
+  changed_when: "'created' in (minio_ak.stdout | default('') | lower)"
+  failed_when:
+    - minio_ak.rc != 0
+    - "'already exists' not in (minio_ak.stderr | default('') ~ minio_ak.stdout | default(''))"

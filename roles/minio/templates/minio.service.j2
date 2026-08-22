@@ -1,0 +1,17 @@
+# Managed by ansible (minio role) — do not edit by hand.
+[Unit]
+Description=MinIO S3 object storage
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User={{ minio_user }}
+Group={{ minio_user }}
+EnvironmentFile=/etc/default/minio
+ExecStart=/usr/local/bin/minio server $MINIO_OPTS $MINIO_VOLUMES
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
