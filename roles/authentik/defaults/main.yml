@@ -166,10 +166,10 @@ authentik_proxy_apps:
     name: "SeaweedFS Admin"
     group: "seaweedfs-admins"                     # only this group passes forwardAuth
     external_host: "https://seaweedfs.by-research.be"
-  - slug: drawio
-    name: "drawio"
-    group: "diagrams-users"                        # only this group passes forwardAuth
-    external_host: "https://drawio.by-research.be"
+  # NOTE: drawio is intentionally NOT SSO-gated — it's consumed as an iframe embed
+  # by GitLab/Nextcloud (forwardAuth-in-iframe breaks), and is a stateless editor.
+  # Kept internal via VPN + FW instead. (A dormant drawio proxy app + diagrams-users
+  # group may exist in live Authentik from an earlier pass; harmless, can be pruned.)
 
 # --- Identity: groups + human users (declarative) -------------------------------
 # Passwords set via API from app-user-<username>.json after the blueprint creates
@@ -189,7 +189,6 @@ authentik_groups:
   - mailcow-users       # access group — only members may SSO into mailcow webmail
   - gitlab-users        # access group — only members may SSO into GitLab
   - gitlab-admins       # subset of gitlab-users → GitLab instance admins (admin_groups)
-  - diagrams-users      # forwardAuth gate for the drawio editor UI (shared tool)
   - infra-admins
   - dev
 # Groups whose members are Authentik superusers (can manage Authentik itself).

@@ -29,14 +29,15 @@
         traefik_route_fqdn: plantuml.by-research.be
         traefik_route_backend_url: "http://lxc-diagrams-01.by-research.be:8004"
 
-    - name: "Traefik route — drawio (editor, SSO-gated)"
+    - name: "Traefik route — drawio (editor)"
       ansible.builtin.include_role:
         name: traefik_route
       vars:
         traefik_route_name: drawio
         traefik_route_fqdn: drawio.by-research.be
         traefik_route_backend_url: "http://lxc-diagrams-01.by-research.be:8080"
-        # drawio is a human UI → gate behind Authentik forwardAuth (diagrams-users).
-        # kroki/plantuml are server-to-server render APIs → left open (auth would
-        # break machine callers); network access is already VPN + FW restricted.
-        traefik_route_forward_auth: true
+        # NO forwardAuth: drawio is consumed as an IFRAME EMBED by GitLab (edit
+        # .drawio) and Nextcloud (drawio app) — a forwardAuth OAuth redirect inside
+        # an iframe is blocked by browsers and breaks the embed. drawio is a
+        # stateless editor (no server-side data; diagrams are stored in Nextcloud/
+        # GitLab, which ARE SSO'd), so it's kept internal (VPN + FW), like kroki.
