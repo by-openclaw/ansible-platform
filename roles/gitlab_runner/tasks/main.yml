@@ -61,6 +61,45 @@
          else (gitlab_runner_token_get.stdout | from_json).data.data.token }}
   no_log: true
 
+# --- Guest boot hardening (Ansible-owned; Terraform only provisions) -----------
+# This POC node is an old Xeon E5-2640 under a very new QEMU and can intermittently
+# panic a guest on boot. Make the guest auto-reboot on panic so it self-heals in
+# ~10s (no manual power-cycle), and persist the journal so a failed boot is
+# diagnosable (journalctl -b -1) instead of guesswork. Applies to every boot after
+# this run; the sysctl also covers runtime panics immediately.
+- name: "Runner | panic=10 auto-reboot on the kernel cmdline (GRUB drop-in)"
+  ansible.builtin.copy:
+    dest: /etc/default/grub.d/99-panic-reboot.cfg
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT panic=10"
+  notify: Update grub
+
+- name: "Runner | panic sysctl (covers runtime panics immediately)"
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-panic-reboot.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      kernel.panic = 10
+      kernel.panic_on_oops = 1
+  notify: Reload sysctl
+
+- name: "Runner | Persistent journald (boot failures survive the reboot)"
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    owner: root
+    group: systemd-journal
+    mode: "2755"
+  notify: Flush journald
+
+- name: "Runner | Apply guest-hardening handlers now"
+  ansible.builtin.meta: flush_handlers
+
 # --- 2. Docker (executor spawns clean job containers) --------------------------
 # A freshly-booted cloud VM still has cloud-init / apt-daily holding the dpkg lock
 # for the first minute or two → apt fails with "Unable to acquire the dpkg
