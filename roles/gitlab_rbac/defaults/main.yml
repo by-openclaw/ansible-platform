@@ -18,6 +18,15 @@ gitlab_rbac_settings:
   can_create_group: false                            # regular users can't create top-level groups (admins exempt)
   project_export_enabled: true                       # needed for per-project archive/restore
   import_sources: [gitlab_project]                   # ONLY project export/import (no github/bitbucket/etc. external imports)
+  # Diagram rendering — URLs must be BROWSER-reachable (GitLab emits <img src=…>),
+  # so use the Traefik HTTPS names, not the internal SVC URL. Kroki covers
+  # graphviz/ditaa/etc.; ```plantuml routes to the standalone PlantUML server
+  # (Kroki's native-image PlantUML can't run on this old CPU); ```mermaid stays
+  # GitLab-native. Services: roles/diagrams on lxc-diagrams-01.
+  kroki_enabled: true
+  kroki_url: "https://kroki.by-research.be"
+  plantuml_enabled: true
+  plantuml_url: "https://plantuml.by-research.be"
 
 # --- Instance admins (mirror Authentik gitlab-admins) — root always exempt ---
 gitlab_rbac_instance_admins:
