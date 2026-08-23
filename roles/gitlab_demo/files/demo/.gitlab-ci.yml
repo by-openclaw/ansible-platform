@@ -1,0 +1,39 @@
+# BY-SYSTEMS demo pipeline: build an image with Kaniko (rootless, no privileged
+# daemon) → push to THIS project's container registry using the CI job token, then
+# publish a GitLab Pages site. Runs on the linux+kaniko runner (VM-isolated).
+stages:
+  - build
+  - pages
+
+# --- Build + push a container image with Kaniko -------------------------------
+kaniko-build:
+  stage: build
+  tags: [kaniko]
+  image:
+    # gcr.io (not Docker Hub) → no Docker Hub rate limit for the executor itself.
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  before_script:
+    # Kaniko authenticates to the GitLab registry with the per-job token — no
+    # shared/long-lived credential is ever stored (CI_JOB_TOKEN, scoped to this job).
+    - mkdir -p /kaniko/.docker
+    - auth=$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')
+    - printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$auth" > /kaniko/.docker/config.json
+  script:
+    - /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile "$CI_PROJECT_DIR/Dockerfile"
+      --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+      --destination "$CI_REGISTRY_IMAGE:latest"
+
+# --- Publish the static docs site (dokuwiki-style) via GitLab Pages -----------
+pages:
+  stage: pages
+  tags: [linux]
+  image: alpine:3.20
+  script:
+    - echo "Publishing GitLab Pages from public/"
+    - ls -la public
+  artifacts:
+    paths:
+      - public

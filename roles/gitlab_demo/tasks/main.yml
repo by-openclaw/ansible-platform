@@ -1,0 +1,37 @@
+---
+# ==============================================================================
+# gitlab_demo | create the demo project + seed its files (idempotent).
+# ==============================================================================
+- name: "Demo | Stage the demo app files on the GitLab host"
+  ansible.builtin.copy:
+    src: demo/
+    dest: /opt/gitlab-demo/
+    owner: root
+    group: root
+    mode: "0644"
+    directory_mode: "0755"
+
+- name: "Demo | Stage the seeder"
+  ansible.builtin.copy:
+    src: seed.rb
+    dest: /opt/gitlab-demo-seed.rb
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: "Demo | Create the project + commit files (triggers the pipeline)"
+  ansible.builtin.command:
+    argv:
+      - gitlab-rails
+      - runner
+      - /opt/gitlab-demo-seed.rb
+      - /opt/gitlab-demo
+      - "{{ gitlab_demo_path }}"
+      - "{{ gitlab_demo_name }}"
+  register: gitlab_demo_run
+  changed_when: "'commit+' in gitlab_demo_run.stdout or 'project+' in gitlab_demo_run.stdout"
+  failed_when: "'DEMO_DONE' not in gitlab_demo_run.stdout"
+
+- name: "Demo | Result"
+  ansible.builtin.debug:
+    msg: "{{ gitlab_demo_run.stdout_lines }}"
