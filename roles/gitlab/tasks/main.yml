@@ -125,16 +125,41 @@
     state: present
     update_cache: true
 
-# The ZFS git-data mount root was seeded as container-root (uid 100000) at mount
-# time — before the `git` user existed. gitaly runs as `git` and must traverse it
-# to reach repositories/, so it needs git ownership or it crash-loops with
-# "permission denied" (no socket). The install just created the git user; fix it
-# now (idempotent) so the first reconfigure brings gitaly up cleanly.
-- name: "GitLab | Own the git-data mount root as git (gitaly traversal)"
+# gitaly runs as `git` and must own the git-data storage (the ZFS bind-mount +
+# every repo under it) or it crash-loops with "permission denied". On a FRESH
+# install the git user does not exist until `gitlab-ctl reconfigure` runs — but
+# gitaly needs the ownership DURING that reconfigure, so we must create `git`
+# (omnibus idempotently adopts it) and fix ownership BEFORE reconfigure. On a
+# rebuild the preserved repos carry the OLD container's git uid, which may differ
+# from the new one, so the chown is recursive — but only when the root isn't
+# already git-owned (keeps a normal re-run on a big repo set fast + churn-free).
+- name: "GitLab | Ensure the git group exists (omnibus adopts it)"
+  ansible.builtin.group:
+    name: git
+    system: true
+
+- name: "GitLab | Ensure the git user exists before reconfigure (omnibus adopts it)"
+  ansible.builtin.user:
+    name: git
+    group: git
+    system: true
+    home: /var/opt/gitlab
+    create_home: false
+    shell: /bin/sh
+
+- name: "GitLab | Stat the git-data mount root"
+  ansible.builtin.stat:
+    path: "{{ gitlab_git_data_dir }}"
+  register: gitlab_gitdata_owner
+
+- name: "GitLab | Own git-data as git (recursive; only when not already git-owned)"
+  ansible.builtin.command: "chown -R git:git {{ gitlab_git_data_dir }}"
+  when: gitlab_gitdata_owner.stat.pw_name | default('') != 'git'
+  changed_when: true
+
+- name: "GitLab | Ensure git-data mode (setgid dir, group traversal)"
   ansible.builtin.file:
     path: "{{ gitlab_git_data_dir }}"
-    owner: git
-    group: git
     mode: "2770"
 
 # --- DR restore: put GitLab's OWN secrets back BEFORE the first reconfigure -----
