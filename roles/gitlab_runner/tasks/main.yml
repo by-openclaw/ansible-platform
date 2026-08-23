@@ -5,13 +5,23 @@
 # config.toml is templated declaratively (no repeated `gitlab-runner register`).
 # ==============================================================================
 
-# --- 1. Runner authentication token (GitLab 17+ instance runner) ---------------
-- name: "Runner | Stat the auth-token secret on the controller"
-  ansible.builtin.stat:
-    path: "{{ gitlab_runner_secret_dir }}/{{ gitlab_runner_token_file }}"
-  delegate_to: localhost
-  become: false
-  register: gitlab_runner_token_stat
+# --- 1. Runner authentication token (GitLab 17+ instance runner) — Vault store --
+- name: "Runner | Load Vault root token (bootstrap)"
+  ansible.builtin.set_fact:
+    gitlab_runner_vault_token: "{{ (lookup('file', gitlab_runner_vault_bootstrap) | from_json).fields.root_token }}"
+  no_log: true
+
+- name: "Runner | Read the auth token from Vault (if already minted)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ gitlab_runner_vault_token }} vault
+      vault kv get -mount=secret -format=json {{ gitlab_runner_token_vault_path }}
+  delegate_to: "{{ gitlab_runner_vault_host }}"
+  become: true
+  register: gitlab_runner_token_get
+  changed_when: false
+  failed_when: false
+  no_log: true
 
 - name: "Runner | Mint an instance runner + token on the GitLab server (first run)"
   ansible.builtin.command:
@@ -29,21 +39,26 @@
   register: gitlab_runner_mint
   changed_when: true
   no_log: true
-  when: not gitlab_runner_token_stat.stat.exists
+  when: gitlab_runner_token_get.rc != 0
 
-- name: "Runner | Persist the auth token to the controller store (0600)"
-  ansible.builtin.copy:
-    dest: "{{ gitlab_runner_secret_dir }}/{{ gitlab_runner_token_file }}"
-    mode: "0600"
-    content: "{{ {'fields': {'token': (gitlab_runner_mint.stdout_lines | select('match', '^glrt') | first)}} | to_nice_json }}\n"
-  delegate_to: localhost
-  become: false
+- name: "Runner | Store the minted auth token in Vault (stdin, no argv)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -i -e VAULT_TOKEN={{ gitlab_runner_vault_token }} vault
+      vault kv put -mount=secret {{ gitlab_runner_token_vault_path }} -
+    stdin: "{{ {'token': (gitlab_runner_mint.stdout_lines | select('match', '^glrt') | first)} | to_json }}"
+  delegate_to: "{{ gitlab_runner_vault_host }}"
+  become: true
+  changed_when: true
   no_log: true
-  when: not gitlab_runner_token_stat.stat.exists
+  when: gitlab_runner_token_get.rc != 0
 
-- name: "Runner | Load the auth token"
+- name: "Runner | Resolve the auth token (Vault)"
   ansible.builtin.set_fact:
-    gitlab_runner_token: "{{ (lookup('file', gitlab_runner_secret_dir + '/' + gitlab_runner_token_file) | from_json).fields.token }}"
+    gitlab_runner_token: >-
+      {{ (gitlab_runner_mint.stdout_lines | select('match', '^glrt') | first)
+         if (gitlab_runner_token_get.rc != 0)
+         else (gitlab_runner_token_get.stdout | from_json).data.data.token }}
   no_log: true
 
 # --- 2. Docker (executor spawns clean job containers) --------------------------

@@ -138,7 +138,9 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/gitlab.svg"
     name: "GitLab"
     group: "gitlab-users"           # ACCESS group — only members may authenticate
-    secret_file: "fabric/app-oidc-gitlab.json"
+    # Vault-native (GitLab chain): client creds read from Vault, not a local file.
+    # Other apps still carry secret_file until their own Phase-2 migration.
+    vault_path: "fabric/app-oidc-gitlab"
     restrict_to_group: true         # IdP-enforced: only gitlab-users can log in
     offline_access: true            # GitLab omniauth requests refresh tokens
     # GitLab CE reads the `groups` claim natively (emitted by scope-groups-<slug>):

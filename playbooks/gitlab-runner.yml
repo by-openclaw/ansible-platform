@@ -1,10 +1,12 @@
 ---
 # ==============================================================================
 # GitLab CI runner (Linux + Docker + Kaniko) on vm-gitlab-runner-01.
-# Mints an instance-runner auth token on lxc-gitlab-01 (delegated), installs
-# Docker + gitlab-runner, and registers via a declarative config.toml.
+# Mints an instance-runner auth token on lxc-gitlab-01 (delegated), stores it in
+# Vault (get-or-create — no local file), installs Docker + gitlab-runner, and
+# registers via a declarative config.toml.
 #   ansible-playbook -i inventories/prod/hosts.yml playbooks/gitlab-runner.yml
-# After: playbooks/vault-kv-sync.yml (mirror the runner token to Vault).
+# Secrets: Vault IS the store — the role reads/writes the token to Vault directly,
+# so no separate vault-kv-sync step is needed.
 # ==============================================================================
 - name: "GitLab CI runner (Docker + Kaniko)"
   hosts: gitlab_runner
@@ -12,34 +14,3 @@
   gather_facts: true
   roles:
     - role: gitlab_runner
-
-# Vault the runner auth token AS PART OF provisioning (not a separate after-step).
-# Idempotent: read current KV, write only when changed. Token piped via stdin,
-# never in argv; all no_log — the secret never reaches the terminal or a log.
-- name: "Vault | mirror the runner auth token"
-  hosts: lxc-vault-01
-  become: true
-  gather_facts: false
-  vars:
-    vault_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
-    vault_root_token: "{{ (lookup('file', vault_secret_dir + '/vault-init.json') | from_json).fields.root_token }}"
-    vault_item: { file: "fabric/gitlab-runner-token.json", path: "fabric/gitlab-runner-token" }
-  tasks:
-    - name: "Vault | read current runner-token KV (if any)"
-      ansible.builtin.command:
-        cmd: "docker exec -e VAULT_TOKEN={{ vault_root_token }} vault vault kv get -mount=secret -format=json {{ vault_item.path }}"
-      register: vault_get
-      changed_when: false
-      failed_when: false
-      no_log: true
-
-    - name: "Vault | write runner token when new or changed (stdin, no argv)"
-      ansible.builtin.command:
-        cmd: "docker exec -i -e VAULT_TOKEN={{ vault_root_token }} vault vault kv put -mount=secret {{ vault_item.path }} -"
-        stdin: "{{ (lookup('file', vault_secret_dir + '/' + vault_item.file) | from_json).fields | to_json }}"
-      when: >-
-        vault_get.rc != 0 or
-        ((lookup('file', vault_secret_dir + '/' + vault_item.file) | from_json).fields
-         != ((vault_get.stdout | from_json).data.data | default({})))
-      changed_when: true
-      no_log: true

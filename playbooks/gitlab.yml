@@ -4,12 +4,15 @@
 #   Play 1  PVE host    : persistent ZFS git-data bind-mount (survives destroy)
 #   Play 2  authentik   : OIDC application + client creds (SSO, mandatory)
 #   Play 3  gitlab host : DB(+extensions) + S3 buckets/key → install → Traefik routes
-# After a successful run:  ansible-playbook -i inventories/prod/hosts.yml \
-#   playbooks/vault-kv-sync.yml   # mirror the new secrets into Vault KV
+#
+# Secrets: Vault IS the store — no local files. postgres_db / seaweedfs_bucket mint
+# their creds INTO Vault (get-or-create); the gitlab role reads DB/Redis/S3/OIDC/SMTP
+# from Vault and writes GitLab's own generated secrets back to Vault. No post-run
+# vault-kv-sync step is needed for the GitLab chain.
 #
 # Prereqs: lxc-gitlab-01 provisioned (terraform svc-gitlab.tf); shared PG/Redis/
-# SeaweedFS/Authentik/Traefik up; DNS overrides for gitlab/registry applied so the
-# Traefik backends resolve (opnsense catalog host_overrides).
+# SeaweedFS/Authentik/Traefik/Vault up + unsealed; DNS overrides for gitlab/registry
+# applied so the Traefik backends resolve (opnsense catalog host_overrides).
 # ==============================================================================
 
 - name: "GitLab — persistent ZFS git-data (PVE host)"
@@ -51,7 +54,7 @@
       vars:
         postgres_db_name: gitlabhq_production
         postgres_db_user: gitlab
-        postgres_db_secret_file: fabric/db-pgsql-gitlab.json
+        postgres_db_vault_path: fabric/db-pgsql-gitlab
 
     - name: "Enable required Postgres extensions for GitLab (superuser)"
       ansible.builtin.command:
@@ -81,7 +84,7 @@
           - gitlab-pages
           - gitlab-registry
           - gitlab-backups
-        seaweedfs_bucket_secret_file: fabric/infra-seaweedfs-gitlab.json
+        seaweedfs_bucket_vault_path: fabric/infra-seaweedfs-gitlab
 
     - name: "Install + configure GitLab CE"
       ansible.builtin.include_role:
@@ -109,6 +112,9 @@
       vars:
         traefik_route_name: gitlab-pages
         traefik_route_fqdn: pages.by-research.be
-        # apex pages.by-research.be + every <project>.pages.by-research.be
-        traefik_route_rule: 'HostRegexp(`^([a-zA-Z0-9-]+\.)?pages\.by-research\.be$`)'
+        # apex pages.by-research.be + every <project>.pages.by-research.be.
+        # Use [.] (literal-dot char class) NOT \. — a backslash is an invalid YAML
+        # escape in the rendered double-quoted route file and makes Traefik reject
+        # the whole dynamic dir (outage). [.] is backslash-free and YAML-safe.
+        traefik_route_rule: 'HostRegexp(`^([a-zA-Z0-9-]+[.])?pages[.]by-research[.]be$`)'
         traefik_route_backend_url: "http://lxc-gitlab-01.by-research.be:8091"

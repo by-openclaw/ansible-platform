@@ -13,8 +13,16 @@
 #   Repos  → /var/opt/gitlab/git-data  (ZFS bind-mount, survives destroy)
 # ==============================================================================
 
-# Controller secret store (all creds live here; nothing secret in the repo).
-gitlab_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
+# Secrets: Vault IS the store (no local files). Each path below is read from Vault
+# via the vault_secret role; the owning role (postgres_db / seaweedfs_bucket /
+# authentik / mailcow) creates it first. GitLab's OWN generated secrets are written
+# back to Vault after install (DR-critical).
+gitlab_pg_vault_path: "fabric/db-pgsql-gitlab"          # postgres_db creates
+gitlab_redis_vault_path: "fabric/db/redis/prod"         # redis role owns (shared)
+gitlab_s3_vault_path: "fabric/infra-seaweedfs-gitlab"   # seaweedfs_bucket creates
+gitlab_oidc_vault_path: "fabric/app-oidc-gitlab"        # authentik creates
+gitlab_smtp_vault_path: "fabric/app-smtp-gitlab"        # mailcow mailbox (optional)
+gitlab_secrets_vault_path: "fabric/gitlab-secrets"      # GitLab's own secrets (written post-install)
 
 # --- Version pin (NEVER unpinned / :latest) -----------------------------------
 # Verify the exact available string before apply: `apt-cache madison gitlab-ce`.
@@ -49,20 +57,17 @@ gitlab_pg_port: 5432
 gitlab_pg_name: "gitlabhq_production"
 gitlab_pg_user: "gitlab"
 gitlab_pg_sslmode: "require"           # verify-full = hardening follow-up (needs CA path)
-gitlab_pg_secret_file: "fabric/db-pgsql-gitlab.json"   # written by postgres_db
 
 # --- Shared Redis (TLS) -------------------------------------------------------
 gitlab_redis_host: "lxc-redis-01.by-research.be"
 gitlab_redis_port: 6379
 gitlab_redis_ssl: true
-gitlab_redis_secret_file: "fabric/db-redis.json"
 
 # --- S3 object storage (SeaweedFS, direct same-VLAN endpoint) -----------------
 # Host FQDN (same-VLAN direct, no IP, no Traefik hairpin; s3.by-research.be would
 # hairpin via the DMZ Traefik). TLS-direct to SeaweedFS = a hardening follow-up.
 gitlab_s3_endpoint: "http://lxc-seaweedfs-01.by-research.be:8333"
 gitlab_s3_region: "us-east-1"                   # SeaweedFS ignores it; GitLab requires one
-gitlab_s3_secret_file: "fabric/infra-seaweedfs-gitlab.json"  # written by seaweedfs_bucket
 # One scoped key, access to all of these. Consolidated object storage + registry +
 # backups. seaweedfs_bucket creates the buckets and the gitlab-scoped identity.
 gitlab_s3_buckets:
@@ -79,7 +84,6 @@ gitlab_registry_bucket: "gitlab-registry"
 gitlab_backup_bucket: "gitlab-backups"
 
 # --- SSO (Authentik OIDC) -----------------------------------------------------
-gitlab_oidc_secret_file: "fabric/app-oidc-gitlab.json"   # client_id/secret (authentik role)
 gitlab_oidc_issuer: "https://authentik.by-research.be/application/o/gitlab/"
 gitlab_oidc_required_groups: ["gitlab-users"]   # only these may sign in (CE, from claim)
 gitlab_oidc_admin_groups: ["gitlab-admins"]     # these become GitLab admins (CE)
@@ -88,10 +92,8 @@ gitlab_oidc_block_auto_created: false           # auto-provision on first SSO lo
 gitlab_disable_password_login: false
 
 # --- Email (mailcow submission) — optional ------------------------------------
-# If the secret file exists, SMTP is configured; else email is left OFF (create the
-# mailbox in mailcow, drop fabric/app-smtp-gitlab.json, re-run). GitLab runs fine
-# without it, but notifications/resets need it (follow-up).
-gitlab_smtp_secret_file: "fabric/app-smtp-gitlab.json"
+# If the Vault path exists (mailcow mailbox provisioned), SMTP is configured; else
+# email is left OFF. GitLab runs fine without it, but notifications/resets need it.
 
 # --- Pages --------------------------------------------------------------------
 # Pages ENABLED: prerequisites now in place — *.pages.by-research.be wildcard cert

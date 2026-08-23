@@ -17,9 +17,11 @@ gitlab_runner_description: "linux-kaniko"
 gitlab_runner_tags: ["linux", "docker", "kaniko"]
 gitlab_runner_run_untagged: true                     # also pick up untagged jobs (the default lane)
 
-# Persisted auth token (glrt-…). Minted once on the GitLab server, reused after.
-gitlab_runner_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
-gitlab_runner_token_file: "fabric/gitlab-runner-token.json"
+# Auth token (glrt-…). Minted once on the GitLab server, stored in Vault, reused
+# after (no local file). Vault IS the store.
+gitlab_runner_token_vault_path: "fabric/gitlab-runner-token"
+gitlab_runner_vault_host: "lxc-vault-01"
+gitlab_runner_vault_bootstrap: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/vault-init.json"
 
 # --- Version pins (NEVER unpinned / :latest) ----------------------------------
 gitlab_runner_apt_repo_url: "https://packages.gitlab.com/runner/gitlab-runner"
