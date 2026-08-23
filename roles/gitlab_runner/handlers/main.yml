@@ -1,12 +1,19 @@
 ---
-- name: Restart gitlab-runner
-  ansible.builtin.systemd_service:
-    name: gitlab-runner
-    state: restarted
-
+# NOTE: handlers run in the order they are DEFINED here (not notify order), so
+# "Update grub" is listed before "Reboot for panic cmdline" — the reboot always
+# boots into the just-written panic=10 cmdline.
 - name: Update grub
   ansible.builtin.command: update-grub
   changed_when: true
+
+# Reboot into the panic=10 kernel cmdline (only fires when the GRUB drop-in was
+# just added/changed). ansible.builtin.reboot reboots the guest and BLOCKS until
+# it reconnects — and if that boot panics, panic=10 auto-reboots until a clean
+# boot comes up, so the wait self-heals a flaky cold boot with no manual step.
+- name: Reboot for panic cmdline
+  ansible.builtin.reboot:
+    reboot_timeout: 600
+    post_reboot_delay: 15
 
 - name: Reload sysctl
   ansible.builtin.command: sysctl --system
@@ -15,3 +22,8 @@
 - name: Flush journald
   ansible.builtin.command: journalctl --flush
   changed_when: true
+
+- name: Restart gitlab-runner
+  ansible.builtin.systemd_service:
+    name: gitlab-runner
+    state: restarted
