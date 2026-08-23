@@ -211,7 +211,7 @@ opn_aliases:
 - {name: port_nextcloud, type: port, content: ['80'], description: 'Nextcloud web (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_seaweedfs, type: port, content: ['8333', '23646'], description: 'SeaweedFS Traefik backends: S3 API:8333, admin UI:23646', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_netbird, type: port, content: ['80', '8081', '10000', '33073', '33080'], description: 'NetBird multi-container Traefik backends: dashboard:80, signal-ws:8081, signal-grpc:10000, management:33073, relay:33080', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: port_gitlab, type: port, content: ['80', '5050'], description: 'GitLab Traefik backends: web:80, container registry:5050 (git-SSH:22 is direct VPN→SVC, not via Traefik)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: port_gitlab, type: port, content: ['80', '5050', '8091'], description: 'GitLab Traefik backends: web:80, container registry:5050, Pages:8091 (git-SSH:22 is direct VPN→SVC, not via Traefik)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_stun, type: port, content: ['3478'], description: 'NetBird STUN (coturn, UDP)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - name: port_dns
   type: port
@@ -2221,6 +2221,12 @@ opn_unbound:
   # clients). *.by-research.be cert covers this name → STARTTLS verifies.
   - {hostname: vm-mailcow-01, domain: by-research.be, rr: A,    server: 10.1.2.120}
   - {hostname: vm-mailcow-01, domain: by-research.be, rr: AAAA, server: 'fd01:2::120'}
+  # GitLab Pages: apex (pages root) + wildcard (every <project>.pages…) → Traefik
+  # (holds the *.pages wildcard cert + routes to the Pages backend). VPN-only.
+  - {hostname: pages, domain: by-research.be, rr: A,    server: 10.1.2.110}
+  - {hostname: pages, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: '*', domain: pages.by-research.be, rr: A,    server: 10.1.2.110}
+  - {hostname: '*', domain: pages.by-research.be, rr: AAAA, server: 'fd01:2::110'}
   # (20 stale probe-fleet overrides pruned 2026-06-06 — never-built hosts.)
   # Query Forwarding — chain step: Unbound → dnscrypt-proxy on loopback.
   # Empty domain = catch-all → Unbound creates a `forward-zone "."` from these entries.

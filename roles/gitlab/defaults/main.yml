@@ -94,12 +94,12 @@ gitlab_disable_password_login: false
 gitlab_smtp_secret_file: "fabric/app-smtp-gitlab.json"
 
 # --- Pages --------------------------------------------------------------------
-# Pages is in-scope (mandatory) but DEFERRED until its prerequisites exist: a
-# *.pages.by-research.be wildcard cert + a Traefik wildcard route. With an https
-# pages_external_url and no local cert, GitLab's nginx crash-loops trying to load
-# /etc/gitlab/ssl/pages.by-research.be.crt, taking the whole web UI down. Flip to
-# true once the wildcard cert+route are in place (then Pages nginx = HTTP backend).
-gitlab_pages_enabled: false
+# Pages ENABLED: prerequisites now in place — *.pages.by-research.be wildcard cert
+# (on Traefik) + Unbound wildcard override + Traefik wildcard router. Pages nginx
+# runs as a plaintext HTTP backend (Traefik terminates TLS) so it needs no local
+# cert (that was the earlier crash-loop). Backend port below.
+gitlab_pages_enabled: true
+gitlab_pages_backend_port: 8091   # Pages daemon external_http (Traefik target); listen_proxy default 8090 stays localhost
 
 # --- Footprint knobs ----------------------------------------------------------
 gitlab_prometheus_monitoring: false    # bundled prometheus/grafana off (RAM; monitoring stack is separate/parked)

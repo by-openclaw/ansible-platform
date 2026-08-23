@@ -173,6 +173,13 @@ gitlab_rails['smtp_enable'] = false
 pages_external_url '{{ gitlab_pages_external_url }}'
 gitlab_pages['enable'] = true
 gitlab_pages['access_control'] = true
+## Behind Traefik (TLS terminator, holds the *.pages wildcard cert): disable the
+## bundled pages nginx and let the Pages DAEMON serve plaintext HTTP directly on
+## the backend port; Traefik routes *.pages.by-research.be → here. This avoids (a)
+## the main nginx trying to load a local pages cert (the first crash) and (b) a
+## port clash between pages_nginx and the daemon on the same port (the second).
+pages_nginx['enable'] = false
+gitlab_pages['external_http'] = ['0.0.0.0:{{ gitlab_pages_backend_port }}']
 {% else %}
 gitlab_pages['enable'] = false
 {% endif %}
