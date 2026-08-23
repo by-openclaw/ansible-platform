@@ -1,0 +1,171 @@
+---
+# ==============================================================================
+# GitLab — archive (export) + restore (import) ONE project, via the REST API.
+# Proves per-project backup/restore end-to-end. Uses a short-lived admin token
+# (minted + revoked in-run, never stored). The full-instance backup is separate
+# (gitlab-backup create → SeaweedFS, scheduled by roles/gitlab).
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/gitlab-project-archive.yml
+# ==============================================================================
+- name: "GitLab — archive + restore a project"
+  hosts: gitlab
+  become: true
+  gather_facts: false
+  vars:
+    gpa_src: "platform/apps/demo"          # project to archive
+    gpa_namespace: "platform/apps"         # where to restore
+    gpa_restore_path: "demo-restored"      # restored project path
+    gpa_api: "http://127.0.0.1/api/v4"
+    gpa_archive: "/var/opt/gitlab/backups/demo-export.tar.gz"
+  tasks:
+    - name: "Archive | Mint a short-lived admin API token (revoked at the end)"
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - >-
+            u = User.find_by_username('root');
+            u.personal_access_tokens.where(name: 'ansible-archive-temp').find_each(&:revoke!);
+            t = u.personal_access_tokens.create!(
+              name: 'ansible-archive-temp', scopes: ['api'],
+              expires_at: 2.days.from_now);
+            puts t.token
+      register: gpa_tok
+      changed_when: true
+      no_log: true
+
+    - name: "Archive | Register token (extract the glpat- line only)"
+      ansible.builtin.set_fact:
+        gpa_token: "{{ gpa_tok.stdout_lines | select('match', '^glpat-') | first }}"
+      no_log: true
+
+    - name: "Archive | Look up source project id"
+      ansible.builtin.uri:
+        url: "{{ gpa_api }}/projects/{{ gpa_src | replace('/', '%2F') }}"
+        headers: { PRIVATE-TOKEN: "{{ gpa_token }}" }
+      register: gpa_proj
+      no_log: true
+
+    - name: "Archive | Trigger export"
+      ansible.builtin.uri:
+        url: "{{ gpa_api }}/projects/{{ gpa_proj.json.id }}/export"
+        method: POST
+        headers: { PRIVATE-TOKEN: "{{ gpa_token }}" }
+        status_code: [202]
+      no_log: true
+
+    - name: "Archive | Wait for export to finish"
+      ansible.builtin.uri:
+        url: "{{ gpa_api }}/projects/{{ gpa_proj.json.id }}/export"
+        headers: { PRIVATE-TOKEN: "{{ gpa_token }}" }
+      register: gpa_exp
+      until: gpa_exp.json.export_status == 'finished'
+      retries: 30
+      delay: 5
+      no_log: true
+
+    - name: "Archive | Download the export archive"
+      ansible.builtin.get_url:
+        url: "{{ gpa_api }}/projects/{{ gpa_proj.json.id }}/export/download"
+        headers: { PRIVATE-TOKEN: "{{ gpa_token }}" }
+        dest: "{{ gpa_archive }}"
+        mode: "0600"
+        force: true
+      no_log: true
+
+    - name: "Archive | Report the archive"
+      ansible.builtin.stat:
+        path: "{{ gpa_archive }}"
+      register: gpa_arch_stat
+
+    - name: "Archive | Archive created"
+      ansible.builtin.debug:
+        msg: "archive = {{ gpa_archive }} ({{ gpa_arch_stat.stat.size }} bytes)"
+
+    - name: "Restore | Hard-delete any previous restored project (frees the name immediately)"
+      # The REST DELETE uses DELAYED deletion, which keeps the path/name reserved
+      # and makes the re-import fail with "name has already been taken". DestroyService
+      # via rails removes it synchronously, then we wait until it's truly gone.
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - >-
+            u = User.find_by_username('root');
+            p = Project.find_by_full_path('{{ gpa_namespace }}/{{ gpa_restore_path }}');
+            if p; Projects::DestroyService.new(p, u).execute;
+            60.times { break if Project.find_by_full_path('{{ gpa_namespace }}/{{ gpa_restore_path }}').nil?; sleep 2 }; end;
+            puts(Project.find_by_full_path('{{ gpa_namespace }}/{{ gpa_restore_path }}').nil? ? 'gone' : 'still-present')
+      register: gpa_del
+      changed_when: "'gone' in gpa_del.stdout"
+      failed_when: "'still-present' in gpa_del.stdout"
+
+    - name: "Restore | Ensure the gitlab_project import source is enabled (instance policy)"
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - >-
+            s = ApplicationSetting.current;
+            unless s.import_sources.to_a.include?('gitlab_project');
+            s.update!(import_sources: (s.import_sources.to_a + ['gitlab_project']).uniq); end;
+            puts 'import_source_ok'
+      register: gpa_imp_src
+      changed_when: "'updated' in gpa_imp_src.stdout"
+
+    - name: "Restore | Import the archive as a new project (multipart)"
+      ansible.builtin.command:
+        argv:
+          - curl
+          - -sS
+          - --fail
+          - -H
+          - "PRIVATE-TOKEN: {{ gpa_token }}"
+          - -F
+          - "path={{ gpa_restore_path }}"
+          - -F
+          # Explicit name so it doesn't inherit the exported project's name ("Demo")
+          # and collide with the still-existing original in the same namespace.
+          - "name={{ gpa_restore_path }}"
+          - -F
+          - "namespace={{ gpa_namespace }}"
+          - -F
+          - "file=@{{ gpa_archive }}"
+          - "{{ gpa_api }}/projects/import"
+      register: gpa_import
+      changed_when: true
+      no_log: true
+
+    - name: "Restore | Wait for import to finish"
+      ansible.builtin.uri:
+        url: "{{ gpa_api }}/projects/{{ (gpa_namespace ~ '/' ~ gpa_restore_path) | replace('/', '%2F') }}"
+        headers: { PRIVATE-TOKEN: "{{ gpa_token }}" }
+      register: gpa_imp
+      until: gpa_imp.json.import_status == 'finished'
+      retries: 60
+      delay: 5
+      no_log: true
+
+    - name: "Restore | Verify the restored repository has the files"
+      ansible.builtin.uri:
+        url: "{{ gpa_api }}/projects/{{ gpa_imp.json.id }}/repository/tree"
+        headers: { PRIVATE-TOKEN: "{{ gpa_token }}" }
+      register: gpa_tree
+      no_log: true
+
+    - name: "Restore | Result"
+      ansible.builtin.debug:
+        msg: >-
+          restored={{ gpa_imp.json.path_with_namespace }}
+          import_status={{ gpa_imp.json.import_status }}
+          files={{ gpa_tree.json | map(attribute='name') | list }}
+
+    - name: "Cleanup | Revoke the temporary admin token"
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - >-
+            t = PersonalAccessToken.find_by(name: 'ansible-archive-temp');
+            t&.revoke!; puts 'revoked'
+      changed_when: true
+      no_log: true
