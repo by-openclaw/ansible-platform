@@ -12,16 +12,26 @@ package['modify_kernel_parameters'] = false
 
 ## Behind Traefik: nginx serves plaintext HTTP; Traefik terminates TLS. Tell Rails
 ## the external scheme is https so it builds correct URLs / sets secure cookies.
-nginx['listen_port'] = {{ gitlab_http_backend_port }}
-nginx['listen_https'] = false
-nginx['listen_addresses'] = ['0.0.0.0', '[::]']
-nginx['proxy_set_headers'] = {
+## (GitLab 18.x moved these nginx keys under gitlab_rails['nginx'].)
+gitlab_rails['nginx']['listen_port'] = {{ gitlab_http_backend_port }}
+gitlab_rails['nginx']['listen_https'] = false
+gitlab_rails['nginx']['listen_addresses'] = ['0.0.0.0', '[::]']
+gitlab_rails['nginx']['proxy_set_headers'] = {
   'X-Forwarded-Proto' => 'https',
   'X-Forwarded-Ssl' => 'on'
 }
 
 ## Git repositories live on the persistent ZFS bind-mount (survives LXC destroy).
-git_data_dirs({ "default" => { "path" => "{{ gitlab_git_data_dir }}" } })
+## git_data_dirs was removed in 18.0 → use the Gitaly storage config. The path is
+## the repositories dir under the bind-mount (git_data_dirs appended /repositories).
+gitaly['configuration'] = {
+  storage: [
+    {
+      name: 'default',
+      path: '{{ gitlab_git_data_dir }}/repositories',
+    },
+  ],
+}
 
 ## Git-over-SSH: advertise the LXC host directly (gitlab.by-research.be → Traefik,
 ## which is web/registry only; SSH cannot traverse it). VPN→SVC:22 is already allowed.
@@ -77,9 +87,9 @@ gitlab_rails['object_store']['objects']['pages']['bucket'] = '{{ gitlab_s3_bucke
 # Container Registry — S3-backed (own storage block), fronted by Traefik.
 # ------------------------------------------------------------------------------
 registry_external_url '{{ gitlab_registry_external_url }}'
-registry_nginx['listen_port'] = {{ gitlab_registry_backend_port }}
-registry_nginx['listen_https'] = false
-registry_nginx['proxy_set_headers'] = {
+registry['nginx']['listen_port'] = {{ gitlab_registry_backend_port }}
+registry['nginx']['listen_https'] = false
+registry['nginx']['proxy_set_headers'] = {
   'X-Forwarded-Proto' => 'https',
   'X-Forwarded-Ssl' => 'on'
 }
