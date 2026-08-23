@@ -662,11 +662,11 @@ opn_aliases:
 # If native mail clients are ever needed, prefer widening the VPN routes to
 # mailcow over re-exposing these ports to the internet.
 #
-# NOTE (unrelated, still open): 'PASS Telenet WAN → mailcow SMTP/MX (v4)' below
-# duplicates a LIVE rule with a different description
-# ('PASS Telenet WAN -> mailcow SMTP 25 (inbound mail)', seq 10). Applying the
-# catalog unscoped would create a second, overlapping port-25 rule. Reconciling
-# those two names is separate work.
+# RESOLVED 2026-08-23: the catalog 'PASS Telenet WAN → mailcow SMTP/MX' (+ its
+# DNAT) is now the single source of truth. The old manual stopgaps — a port-25
+# PASS rule (seq 10) and a target=IP :25 DNAT — were deleted from vm-opns-01 after
+# the catalog rules were applied, so there is no longer an overlapping port-25
+# rule. Live WAN NAT/filter == this catalog (audited: no leaks/strays).
 # ------------------------------------------------------------------------------
 # Neutral firewall public WAN IP aliases (the Telenet /29 endpoint) — service-agnostic,
 # shared by any WAN ingress port-forward (NetBird, etc.). NOT named after Traefik.
