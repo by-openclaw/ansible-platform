@@ -78,24 +78,15 @@
     executable: /bin/bash
   changed_when: false
 
-- name: "Runner | Install Docker + prereqs (+ qemu-guest-agent)"
+- name: "Runner | Install Docker + prereqs"
   ansible.builtin.apt:
-    # qemu-guest-agent: the debian-12-cloud base image doesn't run it, so Proxmox
-    # can't report the VM's IP/health via the agent (terraform's create-time agent
-    # wait + host-side checks rely on it). Install + enable it here.
-    name: [docker.io, ca-certificates, curl, gnupg, qemu-guest-agent]
+    name: [docker.io, ca-certificates, curl, gnupg]
     state: present
     update_cache: true
   register: gitlab_runner_docker_apt
   retries: 5
   delay: 15
   until: gitlab_runner_docker_apt is succeeded
-
-- name: "Runner | qemu-guest-agent enabled + started"
-  ansible.builtin.systemd_service:
-    name: qemu-guest-agent
-    state: started
-    enabled: true
 
 - name: "Runner | Docker service enabled + started"
   ansible.builtin.systemd_service:
