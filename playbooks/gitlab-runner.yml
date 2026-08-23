@@ -1,15 +1,9 @@
 ---
 # ==============================================================================
 # GitLab CI runner (Linux + Docker + Kaniko) on vm-gitlab-runner-01.
-# Installs Docker + gitlab-runner, mints/reads the auth token from Vault, and
-# registers via a declarative config.toml. Guest hardening (qemu-guest-agent,
-# panic=10 auto-reboot, persistent journald) is applied by the gitlab_runner role.
+# Installs Docker + qemu-guest-agent + gitlab-runner, mints/reads the auth token
+# from Vault, and registers via a declarative config.toml.
 #   ansible-playbook -i inventories/prod/hosts.yml playbooks/gitlab-runner.yml
-#
-# Note: on this old POC node a fresh clone can (rarely) kernel-panic on its first
-# cold boot ("Attempted to kill init"), clearing on a power-cycle — a host/QEMU
-# quirk, not a role bug. panic=10 (applied here) makes every subsequent boot
-# self-heal in ~10s, and persistent journald records any boot failure.
 # ==============================================================================
 - name: "GitLab CI runner (Docker + Kaniko)"
   hosts: gitlab_runner
