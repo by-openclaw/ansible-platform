@@ -1,13 +1,35 @@
-# Reconcile GitLab instance admins, groups, and memberships from desired state.
-# Idempotent: only writes when something differs; prints one line per change.
-# Read via `gitlab-rails runner`; desired state passed as JSON at ARGV[0].
+# Reconcile GitLab instance policy, admins, groups (+ subgroups), memberships,
+# and project cleanup from desired state. Idempotent: writes only on diff, prints
+# one line per change. Run via `gitlab-rails runner reconcile.rb desired.json`.
 require "json"
+require "set"
 
 desired = JSON.parse(File.read(ARGV[0]))
 root = User.find_by_username("root")
 changes = 0
 
-# --- 1. Instance admins -------------------------------------------------------
+VIS = { "private" => 0, "internal" => 10, "public" => 20 }.freeze
+PROJ_CREATE = { "noone" => 0, "maintainer" => 1, "developer" => 2 }.freeze
+SUBGRP_CREATE = { "owner" => 0, "maintainer" => 1 }.freeze
+LEVELS = { "guest" => 10, "reporter" => 20, "developer" => 30, "maintainer" => 40, "owner" => 50 }.freeze
+
+# --- 1. Instance policy (ApplicationSetting) ---------------------------------
+s = ApplicationSetting.current
+(desired["settings"] || {}).each do |k, v|
+  val =
+    case k
+    when "default_project_visibility", "default_group_visibility" then VIS[v]
+    when "restricted_visibility_levels" then v.map { |x| VIS[x] }
+    else v
+    end
+  next if s.public_send(k) == val
+  s.public_send("#{k}=", val)
+  changes += 1
+  puts "setting~ #{k} = #{val.inspect}"
+end
+s.save! if s.changed?
+
+# --- 2. Instance admins ------------------------------------------------------
 admins = desired["instance_admins"] || []
 if desired["enforce_admin_exact"]
   User.where(admin: true).where.not(username: admins + ["root"]).find_each do |u|
@@ -26,33 +48,72 @@ admins.each do |un|
   puts "admin+ promoted #{un}"
 end
 
-# --- 2. Groups ----------------------------------------------------------------
-# GitLab 17+/19 requires an Organization for a new group.
-default_org = Organizations::Organization.default_organization if defined?(Organizations::Organization)
+# --- 3. Groups (+ subgroups) -------------------------------------------------
+default_org = (Organizations::Organization.default_organization if defined?(Organizations::Organization))
 (desired["groups"] || []).each do |g|
-  next if Group.find_by_full_path(g["path"])
-  params = {
-    name: g["name"], path: g["path"], description: g["description"].to_s,
-    visibility_level: Gitlab::VisibilityLevel.const_get(g["visibility"].upcase)
-  }
-  params[:organization_id] = default_org.id if default_org
-  res = Groups::CreateService.new(root, params).execute
-  grp = res.respond_to?(:payload) ? res.payload[:group] : res
-  if grp&.persisted?
-    changes += 1
-    puts "group+ created #{g['path']}"
+  full = g["parent"] ? "#{g['parent']}/#{g['path']}" : g["path"]
+  grp = Group.find_by_full_path(full)
+  if grp.nil?
+    params = {
+      name: g["name"], path: g["path"],
+      visibility_level: VIS[g["visibility"]],
+      project_creation_level: PROJ_CREATE[g["project_creation"]],
+      subgroup_creation_level: SUBGRP_CREATE[g["subgroup_creation"]]
+    }
+    params[:organization_id] = default_org.id if default_org
+    if g["parent"]
+      parent = Group.find_by_full_path(g["parent"])
+      params[:parent_id] = parent&.id
+    end
+    res = Groups::CreateService.new(root, params).execute
+    grp = res.respond_to?(:payload) ? res.payload[:group] : res
+    if grp&.persisted?
+      changes += 1
+      puts "group+ created #{full}"
+    else
+      puts "group! FAILED #{full}: #{(grp&.errors&.full_messages || res).to_a.join(', ')}"
+      next
+    end
   else
-    puts "group! FAILED #{g['path']}: #{(grp&.errors&.full_messages || res).to_a.join(', ')}"
+    upd = {}
+    upd[:visibility_level] = VIS[g["visibility"]] if grp.visibility_level != VIS[g["visibility"]]
+    upd[:project_creation_level] = PROJ_CREATE[g["project_creation"]] if grp.project_creation_level != PROJ_CREATE[g["project_creation"]]
+    upd[:subgroup_creation_level] = SUBGRP_CREATE[g["subgroup_creation"]] if grp.subgroup_creation_level != SUBGRP_CREATE[g["subgroup_creation"]]
+    unless upd.empty?
+      grp.update!(upd)
+      changes += 1
+      puts "group~ #{full}: #{upd.keys.join(',')}"
+    end
   end
 end
 
-# --- 3. Memberships -----------------------------------------------------------
-levels = { "guest" => 10, "reporter" => 20, "developer" => 30, "maintainer" => 40, "owner" => 50 }
+# --- 4. Memberships ----------------------------------------------------------
+# Desired (group_full_path, username) pairs — the exact intended direct members.
+desired_pairs = (desired["members"] || []).map { |m| [m["group"], m["username"]] }.to_set
+managed_paths = (desired["groups"] || []).map { |g| g["parent"] ? "#{g['parent']}/#{g['path']}" : g["path"] }
+
+# Prune first: remove DIRECT human members of a managed group that aren't desired
+# (e.g. a stale platform-level grant that would inherit down and floor a subgroup).
+# Never touches root or inherited memberships. Do this before add so inheritance
+# is clean when a lower direct role is then applied to a subgroup.
+managed_paths.each do |path|
+  grp = Group.find_by_full_path(path)
+  next if grp.nil?
+  grp.members.each do |mem|
+    un = mem.user&.username
+    next if un.nil? || un == "root" || !mem.user.human?
+    next if desired_pairs.include?([path, un])
+    mem.destroy!
+    changes += 1
+    puts "member- removed #{un} from #{path}"
+  end
+end
+
 (desired["members"] || []).each do |m|
   grp = Group.find_by_full_path(m["group"])
   u = User.find_by_username(m["username"])
   (puts "member? skip #{m['username']}/#{m['group']} (missing user or group)"; next) if grp.nil? || u.nil?
-  lvl = levels[m["access"]]
+  lvl = LEVELS[m["access"]]
   existing = grp.members.find_by(user_id: u.id)
   if existing.nil?
     grp.add_member(u, lvl)
@@ -63,6 +124,15 @@ levels = { "guest" => 10, "reporter" => 20, "developer" => 30, "maintainer" => 4
     changes += 1
     puts "member~ #{m['username']} in #{m['group']} -> #{m['access']}"
   end
+end
+
+# --- 5. Project cleanup ------------------------------------------------------
+(desired["delete_projects"] || []).each do |fp|
+  p = Project.find_by_full_path(fp)
+  next if p.nil?
+  Projects::DestroyService.new(p, root).execute
+  changes += 1
+  puts "project- deleted #{fp}"
 end
 
 puts "RBAC_DONE changes=#{changes}"

@@ -1,38 +1,54 @@
 ---
 # ==============================================================================
-# Role: gitlab_rbac — reconcile GitLab groups + policies from desired state.
-# GitLab CE cannot sync group MEMBERSHIP from OIDC (that's Premium), and it only
-# re-evaluates instance-admin at login. So this role FEEDS GitLab the desired
-# state directly (via gitlab-rails on the server — no token needed), idempotently:
-#   - instance admins (the `groups` OIDC claim still gates login; this makes the
-#     admin grant deterministic and login-timing-independent)
-#   - top-level groups (projects live here, not in user namespaces)
-#   - group memberships + access levels (mapped from the same identities/groups
-#     defined once in the authentik role)
-# Re-run any time the desired state below changes — it converges.
+# Role: gitlab_rbac — reconcile GitLab instance policy + groups + memberships
+# from desired state, idempotently, via gitlab-rails (no token). GitLab CE can't
+# sync group membership from OIDC and only re-evaluates admin at login, so this
+# role is the source of truth for GitLab-side RBAC. Re-run to converge.
+# Secure model (per BY-SYSTEMS): nothing public, Owner = adm_* only, only admins
+# create repos/groups, docs = read-only for users, SSO-only signup.
 # ==============================================================================
 
-# Users granted GitLab instance admin. Mirrors the Authentik `gitlab-admins`
-# group. root stays admin regardless (break-glass) and is never touched here.
+# --- Instance policy (ApplicationSetting) — hardening ------------------------
+gitlab_rbac_settings:
+  signup_enabled: false                              # no open registration — Authentik SSO only
+  require_admin_approval_after_user_signup: true     # belt-and-suspenders
+  default_project_visibility: private
+  default_group_visibility: private
+  restricted_visibility_levels: [public]             # NOBODY can make anything public (internal+private ok)
+  can_create_group: false                            # regular users can't create top-level groups (admins exempt)
+  project_export_enabled: true                       # needed for per-project archive/restore
+
+# --- Instance admins (mirror Authentik gitlab-admins) — root always exempt ---
 gitlab_rbac_instance_admins:
   - adm_yboujraf
-
-# When true, SSO-provisioned users NOT in the admin list above are demoted to
-# non-admin (keeps admin the single source of truth). root is always exempt.
 gitlab_rbac_enforce_admin_exact: true
 
-# Top-level GitLab groups (the org structure; projects live here).
+# --- Group tree --------------------------------------------------------------
+# access-creation levels: project_creation = maintainer (only admins create repos);
+# subgroup_creation = owner (only admins create subgroups). docs = internal so any
+# SSO user can READ the Pages "wiki"; code groups = private.
 gitlab_rbac_groups:
-  - path: platform
-    name: "Platform"
-    description: "BY-SYSTEMS platform projects"
-    visibility: private
+  - { path: platform, name: "Platform", visibility: private, project_creation: maintainer, subgroup_creation: owner }
+  - { path: infra, parent: platform, name: "Infra", visibility: private, project_creation: maintainer, subgroup_creation: owner }
+  - { path: apps, parent: platform, name: "Apps", visibility: private, project_creation: maintainer, subgroup_creation: owner }
+  - { path: devops, parent: platform, name: "DevOps", visibility: private, project_creation: maintainer, subgroup_creation: owner }
+  # docs stays private like the parent (GitLab forbids a more-visible subgroup);
+  # "everyone reads the Pages wiki" is done per-project via Pages access control.
+  - { path: docs, parent: platform, name: "Docs", visibility: private, project_creation: maintainer, subgroup_creation: owner }
 
-# Group memberships: access = guest|reporter|developer|maintainer|owner.
-# Members are created only if the user already exists (SSO provisions on first
-# login); missing users are logged and skipped, not failed.
+# --- Memberships: Owner = adm_* only; users = Developer (code) / Reporter (docs) -
+# Not granted at platform level (inheritance would floor docs at Developer); set
+# per-subgroup so docs stays read-only for regular users.
 gitlab_rbac_members:
-  - { group: platform, username: adm_yboujraf, access: owner }
-  - { group: platform, username: yboujraf, access: developer }
+  - { group: platform, username: adm_yboujraf, access: owner }   # inherits Owner to all subgroups
+  - { group: platform/infra, username: yboujraf, access: developer }
+  - { group: platform/apps, username: yboujraf, access: developer }
+  - { group: platform/devops, username: yboujraf, access: developer }
+  - { group: platform/docs, username: yboujraf, access: reporter }   # viewer — reads Pages only
+
+# --- Cleanup: throwaway projects created during CI bring-up -------------------
+gitlab_rbac_delete_projects:
+  - root/smoke
+  - root/gtest
 
 gitlab_rbac_host: lxc-gitlab-01
