@@ -4,6 +4,12 @@
 
 external_url '{{ gitlab_external_url }}'
 
+## Unprivileged LXC: the Proxmox host owns kernel parameters. Omnibus must NOT try
+## to set sysctls (kernel.shmmax, vm.max_map_count, …) — the container can't, and
+## the attempt fails `gitlab-ctl reconfigure`. Safe here: bundled Postgres (the
+## main consumer of those tunables) is disabled; we use the external cluster PG.
+package['modify_kernel_parameters'] = false
+
 ## Behind Traefik: nginx serves plaintext HTTP; Traefik terminates TLS. Tell Rails
 ## the external scheme is https so it builds correct URLs / sets secure cookies.
 nginx['listen_port'] = {{ gitlab_http_backend_port }}

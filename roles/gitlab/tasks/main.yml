@@ -79,14 +79,16 @@
       git repositories land on tank/data/gitlab and survive `terraform destroy`.
   when: gitlab_gitdata_mp.rc != 0
 
-# --- Install (pinned; EXTERNAL_URL avoids a wrong first-boot auto-config) ------
+# --- Install (pinned) ---------------------------------------------------------
+# Do NOT set EXTERNAL_URL here: it makes the Omnibus postinst auto-run
+# `gitlab-ctl reconfigure` BEFORE our gitlab.rb exists, which in an unprivileged
+# LXC dies trying to set kernel sysctls. We install the package only, then render
+# gitlab.rb (with modify_kernel_parameters=false) and reconfigure explicitly.
 - name: "GitLab | Install GitLab CE (pinned {{ gitlab_version }})"
   ansible.builtin.apt:
     name: "gitlab-ce={{ gitlab_version }}"
     state: present
     update_cache: true
-  environment:
-    EXTERNAL_URL: "{{ gitlab_external_url }}"
 
 - name: "GitLab | Render /etc/gitlab/gitlab.rb"
   ansible.builtin.template:
