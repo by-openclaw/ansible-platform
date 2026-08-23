@@ -1,0 +1,105 @@
+---
+# ==============================================================================
+# GitLab CI runner (Docker executor) — install + register to lxc-gitlab-01.
+# Idempotent: the auth token is minted ONCE on the GitLab server and reused;
+# config.toml is templated declaratively (no repeated `gitlab-runner register`).
+# ==============================================================================
+
+# --- 1. Runner authentication token (GitLab 17+ instance runner) ---------------
+- name: "Runner | Stat the auth-token secret on the controller"
+  ansible.builtin.stat:
+    path: "{{ gitlab_runner_secret_dir }}/{{ gitlab_runner_token_file }}"
+  delegate_to: localhost
+  become: false
+  register: gitlab_runner_token_stat
+
+- name: "Runner | Mint an instance runner + token on the GitLab server (first run)"
+  ansible.builtin.command:
+    # Ruby word-array (%w[]) for tags — avoids double-quotes inside the double-quoted
+    # gitlab-rails string (which broke shell/ruby parsing).
+    cmd: >-
+      gitlab-rails runner
+      "r = Ci::Runner.create!(runner_type: 'instance_type',
+      description: '{{ gitlab_runner_description }}',
+      tag_list: %w[{{ gitlab_runner_tags | join(' ') }}],
+      run_untagged: {{ gitlab_runner_run_untagged | lower }});
+      puts r.token"
+  delegate_to: "{{ gitlab_runner_gitlab_host }}"
+  become: true
+  register: gitlab_runner_mint
+  changed_when: true
+  no_log: true
+  when: not gitlab_runner_token_stat.stat.exists
+
+- name: "Runner | Persist the auth token to the controller store (0600)"
+  ansible.builtin.copy:
+    dest: "{{ gitlab_runner_secret_dir }}/{{ gitlab_runner_token_file }}"
+    mode: "0600"
+    content: "{{ {'fields': {'token': (gitlab_runner_mint.stdout_lines | select('match', '^glrt') | first)}} | to_nice_json }}\n"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: not gitlab_runner_token_stat.stat.exists
+
+- name: "Runner | Load the auth token"
+  ansible.builtin.set_fact:
+    gitlab_runner_token: "{{ (lookup('file', gitlab_runner_secret_dir + '/' + gitlab_runner_token_file) | from_json).fields.token }}"
+  no_log: true
+
+# --- 2. Docker (executor spawns clean job containers) --------------------------
+- name: "Runner | Install Docker + prereqs"
+  ansible.builtin.apt:
+    name: [docker.io, ca-certificates, curl, gnupg]
+    state: present
+    update_cache: true
+
+- name: "Runner | Docker service enabled + started"
+  ansible.builtin.systemd_service:
+    name: docker
+    state: started
+    enabled: true
+
+# --- 3. gitlab-runner package -------------------------------------------------
+- name: "Runner | Add gitlab-runner apt signing key"
+  ansible.builtin.get_url:
+    url: "{{ gitlab_runner_apt_repo_url }}/gpgkey"
+    dest: /etc/apt/keyrings/gitlab-runner.asc
+    mode: "0644"
+
+- name: "Runner | Add gitlab-runner apt repository"
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/gitlab-runner.asc] {{ gitlab_runner_apt_repo_url }}/debian/ {{ ansible_distribution_release }} main"
+    filename: gitlab-runner
+    state: present
+    update_cache: true
+
+- name: "Runner | Install gitlab-runner"
+  ansible.builtin.apt:
+    name: "gitlab-runner{{ ('=' + gitlab_runner_version) if gitlab_runner_version else '' }}"
+    state: present
+
+# --- 4. config.toml (declarative; no repeated register) -----------------------
+- name: "Runner | Render /etc/gitlab-runner/config.toml"
+  ansible.builtin.template:
+    src: config.toml.j2
+    dest: /etc/gitlab-runner/config.toml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart gitlab-runner
+
+- name: "Runner | Apply config now (flush handlers)"
+  ansible.builtin.meta: flush_handlers
+
+# --- 5. Service + verify it registered/online --------------------------------
+- name: "Runner | gitlab-runner enabled + started"
+  ansible.builtin.systemd_service:
+    name: gitlab-runner
+    state: started
+    enabled: true
+
+- name: "Runner | Verify the runner is registered/verified against GitLab"
+  ansible.builtin.command: gitlab-runner verify
+  register: gitlab_runner_verify
+  changed_when: false
+  failed_when: "'is alive' not in gitlab_runner_verify.stdout and 'Verifying' not in gitlab_runner_verify.stdout and gitlab_runner_verify.rc != 0"
