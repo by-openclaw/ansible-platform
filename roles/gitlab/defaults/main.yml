@@ -33,8 +33,12 @@ gitlab_registry_backend_port: 5050
 
 # Git-over-SSH: gitlab-shell manages the git user's authorized_keys on the host
 # sshd. Current LXC sshd = port 22 (not yet hardened to 22222). If hardening moves
-# it, bump this AND the FW DNAT together.
+# it, bump this too.
 gitlab_ssh_port: 22
+# Clone URLs advertise this SSH host. gitlab.by-research.be resolves to Traefik
+# (web/registry over 443 only) — SSH can't traverse Traefik, so SSH must target the
+# LXC directly. lxc-gitlab-01.by-research.be → 10.1.3.210 (VPN→SVC:22 already allowed).
+gitlab_ssh_host: "lxc-gitlab-01.by-research.be"
 
 # --- Persistent git storage (the ZFS bind-mount target) -----------------------
 gitlab_git_data_dir: "/var/opt/gitlab/git-data"

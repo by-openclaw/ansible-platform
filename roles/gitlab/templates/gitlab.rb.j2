@@ -17,7 +17,9 @@ nginx['proxy_set_headers'] = {
 ## Git repositories live on the persistent ZFS bind-mount (survives LXC destroy).
 git_data_dirs({ "default" => { "path" => "{{ gitlab_git_data_dir }}" } })
 
-## Git-over-SSH advertised port (must match the host sshd git clients hit).
+## Git-over-SSH: advertise the LXC host directly (gitlab.by-research.be → Traefik,
+## which is web/registry only; SSH cannot traverse it). VPN→SVC:22 is already allowed.
+gitlab_rails['gitlab_ssh_host'] = '{{ gitlab_ssh_host }}'
 gitlab_rails['gitlab_shell_ssh_port'] = {{ gitlab_ssh_port }}
 
 # ------------------------------------------------------------------------------
