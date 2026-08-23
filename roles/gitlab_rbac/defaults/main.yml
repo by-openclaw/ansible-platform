@@ -1,0 +1,38 @@
+---
+# ==============================================================================
+# Role: gitlab_rbac — reconcile GitLab groups + policies from desired state.
+# GitLab CE cannot sync group MEMBERSHIP from OIDC (that's Premium), and it only
+# re-evaluates instance-admin at login. So this role FEEDS GitLab the desired
+# state directly (via gitlab-rails on the server — no token needed), idempotently:
+#   - instance admins (the `groups` OIDC claim still gates login; this makes the
+#     admin grant deterministic and login-timing-independent)
+#   - top-level groups (projects live here, not in user namespaces)
+#   - group memberships + access levels (mapped from the same identities/groups
+#     defined once in the authentik role)
+# Re-run any time the desired state below changes — it converges.
+# ==============================================================================
+
+# Users granted GitLab instance admin. Mirrors the Authentik `gitlab-admins`
+# group. root stays admin regardless (break-glass) and is never touched here.
+gitlab_rbac_instance_admins:
+  - adm_yboujraf
+
+# When true, SSO-provisioned users NOT in the admin list above are demoted to
+# non-admin (keeps admin the single source of truth). root is always exempt.
+gitlab_rbac_enforce_admin_exact: true
+
+# Top-level GitLab groups (the org structure; projects live here).
+gitlab_rbac_groups:
+  - path: platform
+    name: "Platform"
+    description: "BY-SYSTEMS platform projects"
+    visibility: private
+
+# Group memberships: access = guest|reporter|developer|maintainer|owner.
+# Members are created only if the user already exists (SSO provisions on first
+# login); missing users are logged and skipped, not failed.
+gitlab_rbac_members:
+  - { group: platform, username: adm_yboujraf, access: owner }
+  - { group: platform, username: yboujraf, access: developer }
+
+gitlab_rbac_host: lxc-gitlab-01
