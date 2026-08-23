@@ -62,11 +62,31 @@
   no_log: true
 
 # --- 2. Docker (executor spawns clean job containers) --------------------------
+# A freshly-booted cloud VM still has cloud-init / apt-daily holding the dpkg lock
+# for the first minute or two → apt fails with "Unable to acquire the dpkg
+# frontend lock". Wait for cloud-init to finish and the lock to clear first, so a
+# rebuild needs no manual retry.
+- name: "Runner | Wait for cloud-init + apt/dpkg locks to settle (fresh boot)"
+  ansible.builtin.shell: |
+    command -v cloud-init >/dev/null 2>&1 && cloud-init status --wait >/dev/null 2>&1 || true
+    for _ in $(seq 1 60); do
+      fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1 || exit 0
+      sleep 5
+    done
+    exit 0
+  args:
+    executable: /bin/bash
+  changed_when: false
+
 - name: "Runner | Install Docker + prereqs"
   ansible.builtin.apt:
     name: [docker.io, ca-certificates, curl, gnupg]
     state: present
     update_cache: true
+  register: gitlab_runner_docker_apt
+  retries: 5
+  delay: 15
+  until: gitlab_runner_docker_apt is succeeded
 
 - name: "Runner | Docker service enabled + started"
   ansible.builtin.systemd_service:
@@ -92,6 +112,10 @@
   ansible.builtin.apt:
     name: "gitlab-runner{{ ('=' + gitlab_runner_version) if gitlab_runner_version else '' }}"
     state: present
+  register: gitlab_runner_pkg_apt
+  retries: 5
+  delay: 15
+  until: gitlab_runner_pkg_apt is succeeded
 
 # --- 4. config.toml (declarative; no repeated register) -----------------------
 - name: "Runner | Render /etc/gitlab-runner/config.toml"
