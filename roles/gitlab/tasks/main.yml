@@ -31,6 +31,11 @@
     update_cache: true
 
 # --- Secrets from Vault (no local files; owning roles created each path) --------
+- name: "GitLab | Load Vault root token (bootstrap — the one allowed local secret)"
+  ansible.builtin.set_fact:
+    gitlab_vault_token: "{{ (lookup('file', lookup('env', 'HOME') + '/.openclaw/workspace/infra/secrets/vault-init.json') | from_json).fields.root_token }}"
+  no_log: true
+
 - name: "GitLab | Read PostgreSQL creds from Vault"
   ansible.builtin.include_role:
     name: vault_secret
@@ -79,7 +84,7 @@
 - name: "GitLab | Probe optional SMTP creds in Vault (mailcow)"
   ansible.builtin.command:
     cmd: >-
-      docker exec -e VAULT_TOKEN={{ _gitlab_vault_token }} vault
+      docker exec -e VAULT_TOKEN={{ gitlab_vault_token }} vault
       vault kv get -mount=secret -format=json {{ gitlab_smtp_vault_path }}
   delegate_to: lxc-vault-01
   become: true
@@ -87,8 +92,6 @@
   changed_when: false
   failed_when: false
   no_log: true
-  vars:
-    _gitlab_vault_token: "{{ (lookup('file', lookup('env', 'HOME') + '/.openclaw/workspace/infra/secrets/vault-init.json') | from_json).fields.root_token }}"
 
 - name: "GitLab | Adopt SMTP creds when present"
   ansible.builtin.set_fact:
@@ -133,6 +136,47 @@
     owner: git
     group: git
     mode: "2770"
+
+# --- DR restore: put GitLab's OWN secrets back BEFORE the first reconfigure -----
+# On a fresh install GitLab would generate NEW secret_key_base/db_key_base, which
+# cannot decrypt the PRESERVED database (CI variables, 2FA, runner tokens, PATs are
+# encrypted with these keys). The DB + git-data survive a destroy; the encryption
+# keys live only in Vault. Restore them here so reconfigure adopts them and the
+# rebuilt instance reconnects to its data cleanly. First-ever install: Vault path
+# is absent → skip, GitLab generates fresh (captured back to Vault post-install).
+# Only when the file is ABSENT (i.e. a fresh install / rebuild). On an existing
+# install the file is present → skip, so a normal re-run never churns it.
+- name: "GitLab | Check whether gitlab-secrets.json already exists"
+  ansible.builtin.stat:
+    path: /etc/gitlab/gitlab-secrets.json
+  register: gitlab_secrets_local
+
+- name: "GitLab | Read GitLab's own secrets from Vault (for DR restore)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ gitlab_vault_token }} vault
+      vault kv get -mount=secret -format=json {{ gitlab_secrets_vault_path }}
+  delegate_to: lxc-vault-01
+  become: true
+  register: gitlab_secrets_restore
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: not gitlab_secrets_local.stat.exists
+
+- name: "GitLab | Restore /etc/gitlab/gitlab-secrets.json from Vault (before reconfigure)"
+  ansible.builtin.copy:
+    dest: /etc/gitlab/gitlab-secrets.json
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ (gitlab_secrets_restore.stdout | from_json).data.data.gitlab_secrets | to_nice_json }}"
+  when:
+    - not gitlab_secrets_local.stat.exists
+    - gitlab_secrets_restore.rc | default(1) == 0
+    - (gitlab_secrets_restore.stdout | default('{}') | from_json).data.data.gitlab_secrets | default({}) | length > 0
+  no_log: true
+  notify: Reconfigure GitLab
 
 - name: "GitLab | Render /etc/gitlab/gitlab.rb"
   ansible.builtin.template:
@@ -183,11 +227,6 @@
     src: /etc/gitlab/initial_root_password
   register: gitlab_initial_root_raw
   failed_when: false
-  no_log: true
-
-- name: "GitLab | Load Vault root token (bootstrap)"
-  ansible.builtin.set_fact:
-    gitlab_vault_token: "{{ (lookup('file', lookup('env', 'HOME') + '/.openclaw/workspace/infra/secrets/vault-init.json') | from_json).fields.root_token }}"
   no_log: true
 
 - name: "GitLab | Write GitLab-generated secrets to Vault ({{ gitlab_secrets_vault_path }})"
