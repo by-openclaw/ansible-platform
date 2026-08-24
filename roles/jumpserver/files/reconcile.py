@@ -110,7 +110,14 @@ perm, p_created = AssetPermission.objects.get_or_create(
     defaults={"accounts": ["@ALL"], "protocols": ["all"], "actions": ALL_ACTIONS},
 )
 perm.user_groups.add(grp)
-perm.nodes.add(root)
+# Grant the SPECIFIC child nodes the assets live in (SVC/DMZ/…), NOT the org
+# root: granting the org root puts the user in "has-all" mode, which the v4
+# Workbench renders as an EMPTY tree. Child-node grants materialise per-node
+# relations so assets actually show. node_cache holds every node we placed an
+# asset in this run.
+for _child in node_cache.values():
+    perm.nodes.add(_child)
+perm.nodes.remove(root)  # idempotent: undo any prior root grant
 # Make the Workbench reflect the grant immediately: expire AND rebuild the perm
 # tree for the granted group's members. Expiring alone only marks it stale — the
 # Workbench reads the BUILT tree, and the lazy rebuild doesn't reliably fire — so

@@ -81,7 +81,10 @@
       AUTH_OPENID_PROVIDER_TOKEN_ENDPOINT: "{{ jumpserver_oidc_token_endpoint }}"
       AUTH_OPENID_PROVIDER_JWKS_ENDPOINT: "{{ jumpserver_oidc_jwks_endpoint }}"
       AUTH_OPENID_PROVIDER_USERINFO_ENDPOINT: "{{ jumpserver_oidc_userinfo_endpoint }}"
-      AUTH_OPENID_PROVIDER_END_SESSION_ENDPOINT: "{{ jumpserver_oidc_end_session_endpoint }}"
+      # No END_SESSION endpoint: RP-initiated logout to Authentik returns
+      # "Bad Request — malformed" (JumpServer doesn't send id_token_hint / a
+      # registered post_logout_redirect_uri). Log out LOCALLY instead (clears the
+      # JumpServer session; the Authentik SSO session persists — normal for SSO).
       AUTH_OPENID_PROVIDER_SIGNATURE_ALG: "RS256"
       AUTH_OPENID_SCOPES: "openid profile email"
       AUTH_OPENID_SHARE_SESSION: "true"
