@@ -14,7 +14,8 @@ import json
 from orgs.models import Organization
 from orgs.utils import set_current_org
 
-set_current_org(Organization.default())
+org = Organization.default()
+set_current_org(org)
 
 from assets.models import Host, Node, Protocol           # noqa: E402
 from accounts.models import Account                       # noqa: E402
@@ -110,15 +111,20 @@ perm, p_created = AssetPermission.objects.get_or_create(
 )
 perm.user_groups.add(grp)
 perm.nodes.add(root)
-# Expire the cached permission tree so the Workbench reflects grants immediately
-# (creating the perm via the ORM doesn't rebuild the per-user Redis tree).
+# Make the Workbench reflect the grant immediately: expire AND rebuild the perm
+# tree for the granted group's members. Expiring alone only marks it stale — the
+# Workbench reads the BUILT tree, and the lazy rebuild doesn't reliably fire — so
+# force the refresh per user here.
 try:
-    from perms.utils.user_perm_tree import UserPermTreeExpireUtil
+    from perms.utils.user_perm_tree import UserPermTreeExpireUtil, UserPermTreeRefreshUtil
 
-    UserPermTreeExpireUtil().expire_perm_tree_for_all_user()
-    _pt = "cache expired"
+    _member_ids = list(grp.users.values_list("id", flat=True))
+    UserPermTreeExpireUtil().expire_perm_tree_for_users_orgs(_member_ids, [org.id])
+    for _uu in User.objects.filter(id__in=_member_ids):
+        UserPermTreeRefreshUtil(_uu).refresh_if_need(True)
+    _pt = f"rebuilt for {len(_member_ids)} user(s)"
 except Exception as _e:  # noqa: BLE001
-    _pt = f"cache-expire skipped ({type(_e).__name__})"
+    _pt = f"tree-rebuild skipped ({type(_e).__name__})"
 summary.append(f"permission={perm.name} created={p_created} -> group {grp.name}, all nodes; perm-tree {_pt}")
 
 # --- (5) replay storage -> SeaweedFS S3 -------------------------------------
