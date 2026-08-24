@@ -50,10 +50,19 @@ jumpserver_db_engine: "postgresql"
 # db_password, redis_password. no special chars (JumpServer rule) + no quotes.
 jumpserver_vault_path: "fabric/app-jumpserver"
 
-# --- OIDC (Phase 2) — client creds minted by the authentik role into Vault ---
-jumpserver_oidc_enabled: false                               # flipped on in Phase 2
+# --- OIDC (Authentik) — client creds minted by the authentik role into Vault -
+# JumpServer's OIDC backend does not auto-discover Authentik, so feed the explicit
+# endpoints. In Authentik authorize/token/userinfo are GLOBAL; issuer + jwks +
+# end-session are per-application (slug `jumpserver`).
+jumpserver_oidc_enabled: false                               # flip true in group_vars to enable
 jumpserver_oidc_vault_path: "fabric/app-oidc-jumpserver"
-jumpserver_oidc_provider_endpoint: "https://authentik.by-research.be/application/o/jumpserver/"
+jumpserver_authentik_base: "https://authentik.by-research.be"
+jumpserver_oidc_provider_endpoint: "{{ jumpserver_authentik_base }}/application/o/jumpserver/"
+jumpserver_oidc_authorization_endpoint: "{{ jumpserver_authentik_base }}/application/o/authorize/"
+jumpserver_oidc_token_endpoint: "{{ jumpserver_authentik_base }}/application/o/token/"
+jumpserver_oidc_jwks_endpoint: "{{ jumpserver_authentik_base }}/application/o/jumpserver/jwks/"
+jumpserver_oidc_userinfo_endpoint: "{{ jumpserver_authentik_base }}/application/o/userinfo/"
+jumpserver_oidc_end_session_endpoint: "{{ jumpserver_authentik_base }}/application/o/jumpserver/end-session/"
 
 # --- Locale / misc -----------------------------------------------------------
 jumpserver_tz: "Europe/Brussels"
