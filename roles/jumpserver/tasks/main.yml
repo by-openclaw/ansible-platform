@@ -81,10 +81,12 @@
       AUTH_OPENID_PROVIDER_TOKEN_ENDPOINT: "{{ jumpserver_oidc_token_endpoint }}"
       AUTH_OPENID_PROVIDER_JWKS_ENDPOINT: "{{ jumpserver_oidc_jwks_endpoint }}"
       AUTH_OPENID_PROVIDER_USERINFO_ENDPOINT: "{{ jumpserver_oidc_userinfo_endpoint }}"
-      # No END_SESSION endpoint: RP-initiated logout to Authentik returns
-      # "Bad Request — malformed" (JumpServer doesn't send id_token_hint / a
-      # registered post_logout_redirect_uri). Log out LOCALLY instead (clears the
-      # JumpServer session; the Authentik SSO session persists — normal for SSO).
+      # Explicit EMPTY end-session -> LOCAL logout only. RP-initiated logout to
+      # Authentik returns "Bad Request — malformed" (JumpServer sends no
+      # id_token_hint / registered post_logout_redirect_uri). Empty (not removed:
+      # removal falls back to conf.py's example.com default + docker_container
+      # won't recreate on a mere removal) disables it. SSO session persists.
+      AUTH_OPENID_PROVIDER_END_SESSION_ENDPOINT: ""
       AUTH_OPENID_PROVIDER_SIGNATURE_ALG: "RS256"
       AUTH_OPENID_SCOPES: "openid profile email"
       AUTH_OPENID_SHARE_SESSION: "true"
