@@ -110,7 +110,16 @@ perm, p_created = AssetPermission.objects.get_or_create(
 )
 perm.user_groups.add(grp)
 perm.nodes.add(root)
-summary.append(f"permission={perm.name} created={p_created} -> group {grp.name}, all nodes")
+# Expire the cached permission tree so the Workbench reflects grants immediately
+# (creating the perm via the ORM doesn't rebuild the per-user Redis tree).
+try:
+    from perms.utils.user_perm_tree import UserPermTreeExpireUtil
+
+    UserPermTreeExpireUtil().expire_perm_tree_for_all_user()
+    _pt = "cache expired"
+except Exception as _e:  # noqa: BLE001
+    _pt = f"cache-expire skipped ({type(_e).__name__})"
+summary.append(f"permission={perm.name} created={p_created} -> group {grp.name}, all nodes; perm-tree {_pt}")
 
 # --- (5) replay storage -> SeaweedFS S3 -------------------------------------
 s3 = CFG.get("s3")
