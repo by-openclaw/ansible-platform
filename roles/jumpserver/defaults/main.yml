@@ -82,6 +82,13 @@ jumpserver_s3_storage_name: "seaweedfs"
 jumpserver_s3_vault_path: "fabric/infra-seaweedfs-jumpserver"
 jumpserver_s3_bucket: "jumpserver-replays"
 
+# JumpServer dynamic feature settings reconciled into the DB (idempotent).
+# ANSIBLE_DOCKER_ENABLED=false -> asset connectivity/account tasks run inside the
+# celery container (we don't mount docker.sock, so the per-task ansible-executor
+# Docker container can't spawn — the default would fail every connectivity test).
+jumpserver_settings:
+  ANSIBLE_DOCKER_ENABLED: false
+
 # The single automation key JumpServer vaults as each asset's account (encrypted
 # in JumpServer's own store — the "one credential, root on all" pattern).
 jumpserver_rune_key_path: "~/.ssh/id_ed25519_rune_nopass"

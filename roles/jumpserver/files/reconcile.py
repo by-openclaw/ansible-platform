@@ -136,6 +136,20 @@ if s3:
         st.save(update_fields=["is_default"])
     summary.append(f"replay_storage={st.name} type=s3 created={s_created} default=True")
 
+# --- (6) JumpServer feature settings (bastion) ------------------------------
+# e.g. ANSIBLE_DOCKER_ENABLED=false: run asset connectivity / account tasks in
+# the celery container (we deliberately don't mount docker.sock, so the default
+# per-task ansible-executor Docker container can't spawn). Idempotent.
+from settings.models import Setting  # noqa: E402
+
+for _name, _val in CFG.get("settings", {}).items():
+    Setting.objects.update_or_create(
+        name=_name,
+        defaults={"value": json.dumps(_val), "category": "terminal", "encrypted": False},
+    )
+if CFG.get("settings"):
+    summary.append(f"settings: {', '.join(f'{k}={v}' for k, v in CFG['settings'].items())}")
+
 print("RECONCILE_OK")
 for line in summary:
     print("  -", line)
