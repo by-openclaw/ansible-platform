@@ -1,0 +1,23 @@
+---
+# ==============================================================================
+# JumpServer CE bastion/PAM on lxc-jumpserver-01. Self-contained (bundled
+# Postgres + Redis), NON-privileged, Vault-native secrets. Browser SSH/RDP to
+# infra; VPN-only via Traefik. JumpServer speaks OIDC to Authentik natively, so
+# the Traefik route is PLAIN (no forwardAuth — that would double-auth / break
+# the API + browser terminal websockets).
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/jumpserver.yml
+# ==============================================================================
+- name: "JumpServer CE bastion"
+  hosts: jumpserver
+  become: true
+  gather_facts: true
+  roles:
+    - role: jumpserver
+  tasks:
+    - name: "Traefik route — JumpServer web front (VPN-only, native OIDC)"
+      ansible.builtin.include_role:
+        name: traefik_route
+      vars:
+        traefik_route_name: jumpserver
+        traefik_route_fqdn: "{{ jumpserver_fqdn }}"
+        traefik_route_backend_url: "http://lxc-jumpserver-01.by-research.be:{{ jumpserver_web_host_port }}"

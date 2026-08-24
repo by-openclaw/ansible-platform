@@ -1,0 +1,378 @@
+---
+# ==============================================================================
+# jumpserver | Self-contained JumpServer CE bastion — per-container (no compose
+# plugin; matches roles/diagrams). Bundled Postgres 16 + Redis 7, NON-privileged.
+# Topology assembled from the official installer compose (tag v4.10.19): nginx
+# `web` resolves upstreams by the hostnames core:8080 / koko:5000 / lion:8081, so
+# those network ALIASES are load-bearing. eBPF SLB + privileged + FUSE-SFTP
+# dropped (unusable in an unprivileged LXC); docker.sock NOT mounted (pure
+# SSH/RDP bastion). All secrets Vault-native; injected as env with no_log.
+# ==============================================================================
+
+# --- Secrets: get-or-create in Vault (minted once) ---------------------------
+- name: "JumpServer | Get/create app secrets in Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ jumpserver_vault_path }}"
+    vault_secret_init:
+      # JumpServer rule: SECRET_KEY >=50, BOOTSTRAP_TOKEN >=24, no special chars;
+      # DB/Redis passwords must not contain quotes -> alnum only (special=false).
+      secret_key: "{{ lookup('community.general.random_string', length=50, special=false) }}"
+      bootstrap_token: "{{ lookup('community.general.random_string', length=24, special=false) }}"
+      db_password: "{{ lookup('community.general.random_string', length=28, special=false) }}"
+      redis_password: "{{ lookup('community.general.random_string', length=28, special=false) }}"
+
+- name: "JumpServer | Bind secret fields"
+  ansible.builtin.set_fact:
+    jumpserver_secret: "{{ vault_secret_result }}"
+  no_log: true
+
+# --- OIDC creds (Phase 2): read-only from Vault when enabled -----------------
+- name: "JumpServer | Read OIDC client creds from Vault (when enabled)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ jumpserver_oidc_vault_path }}"
+    vault_secret_init: {}          # read-only: authentik role mints these
+  when: jumpserver_oidc_enabled | bool
+
+- name: "JumpServer | Bind OIDC fields"
+  ansible.builtin.set_fact:
+    jumpserver_oidc_creds: "{{ vault_secret_result }}"
+  no_log: true
+  when: jumpserver_oidc_enabled | bool
+
+# --- Env blocks (mirror the official CONFIG_FILE vs CONFIG_SAFE_FILE split) ---
+- name: "JumpServer | Build env blocks"
+  ansible.builtin.set_fact:
+    # SAFE set (no DB creds) — shared by every component incl. koko/lion.
+    jumpserver_env_safe:
+      SECRET_KEY: "{{ jumpserver_secret.secret_key }}"
+      BOOTSTRAP_TOKEN: "{{ jumpserver_secret.bootstrap_token }}"
+      LOG_LEVEL: "{{ jumpserver_log_level }}"
+      DOMAINS: "{{ jumpserver_domains }}"
+      TZ: "{{ jumpserver_tz }}"
+      LANGUAGE_CODE: "en"
+      CORE_HOST: "http://core:8080"
+      REDIS_HOST: "jms-redis"
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: "{{ jumpserver_secret.redis_password }}"
+    # DB set — core + celery only.
+    jumpserver_env_db:
+      DB_ENGINE: "{{ jumpserver_db_engine }}"
+      DB_HOST: "jms-postgres"
+      DB_PORT: "5432"
+      DB_USER: "{{ jumpserver_db_user }}"
+      DB_PASSWORD: "{{ jumpserver_secret.db_password }}"
+      DB_NAME: "{{ jumpserver_db_name }}"
+    # OIDC set (Authentik) — appended to core+celery only when enabled.
+    jumpserver_env_oidc: "{{ jumpserver_oidc_enabled | bool | ternary(jumpserver_oidc_env_map, {}) }}"
+  no_log: true
+  vars:
+    jumpserver_oidc_env_map:
+      AUTH_OPENID: "true"
+      BASE_SITE_URL: "{{ jumpserver_base_site_url }}"
+      AUTH_OPENID_CLIENT_ID: "{{ jumpserver_oidc_creds.client_id | default('') }}"
+      AUTH_OPENID_CLIENT_SECRET: "{{ jumpserver_oidc_creds.client_secret | default('') }}"
+      AUTH_OPENID_PROVIDER_ENDPOINT: "{{ jumpserver_oidc_provider_endpoint }}"
+      AUTH_OPENID_PROVIDER_SIGNATURE_ALG: "RS256"
+      AUTH_OPENID_SCOPES: "openid profile email"
+      AUTH_OPENID_SHARE_SESSION: "true"
+      AUTH_OPENID_IGNORE_SSL_VERIFICATION: "false"
+      AUTH_OPENID_ALWAYS_UPDATE_USER: "true"
+
+# --- Host layout (bind mounts) ----------------------------------------------
+- name: "JumpServer | Create data directories"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ jumpserver_base_dir }}", mode: "0755" }
+    - { path: "{{ jumpserver_base_dir }}/certs", mode: "0755" }   # SHARED inter-component certs
+    - { path: "{{ jumpserver_data_dir }}/data", mode: "0755" }    # core/celery/web /opt/jumpserver/data
+    - { path: "{{ jumpserver_base_dir }}/koko/data", mode: "0755" }
+    - { path: "{{ jumpserver_base_dir }}/lion/data", mode: "0755" }
+    - { path: "{{ jumpserver_base_dir }}/nginx/logs", mode: "0755" }
+
+- name: "JumpServer | Named volumes for bundled Postgres + Redis (uid-999 safe)"
+  community.docker.docker_volume:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - "{{ jumpserver_pgdata_volume }}"
+    - "{{ jumpserver_redisdata_volume }}"
+
+- name: "JumpServer | Ensure images are present (pinned)"
+  community.docker.docker_image:
+    name: "{{ item }}"
+    source: pull
+    state: present
+  loop:
+    - "{{ jumpserver_image_postgres }}"
+    - "{{ jumpserver_image_redis }}"
+    - "{{ jumpserver_image_core }}"
+    - "{{ jumpserver_image_koko }}"
+    - "{{ jumpserver_image_lion }}"
+    - "{{ jumpserver_image_web }}"
+
+- name: "JumpServer | Private docker network"
+  community.docker.docker_network:
+    name: "{{ jumpserver_docker_network }}"
+    state: present
+
+# --- Bundled Postgres 16 (UTF8) ----------------------------------------------
+- name: "JumpServer | Run jms-postgres (bundled DB)"
+  community.docker.docker_container:
+    name: jms_postgres
+    image: "{{ jumpserver_image_postgres }}"
+    hostname: jms-postgres
+    state: started
+    restart_policy: always
+    pull: false
+    env:
+      TZ: "{{ jumpserver_tz }}"
+      POSTGRES_DB: "{{ jumpserver_db_name }}"
+      POSTGRES_USER: "{{ jumpserver_db_user }}"
+      POSTGRES_PASSWORD: "{{ jumpserver_secret.db_password }}"
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.utf8"
+    volumes:
+      - "{{ jumpserver_pgdata_volume }}:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ jumpserver_db_user }} -d {{ jumpserver_db_name }}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - name: "{{ jumpserver_docker_network }}"
+        aliases: [jms-postgres]
+  no_log: true
+
+- name: "JumpServer | Wait for Postgres healthy"
+  community.docker.docker_container_info:
+    name: jms_postgres
+  register: jumpserver_pg_info
+  until: jumpserver_pg_info.container.State.Health.Status == "healthy"
+  retries: 30
+  delay: 5
+
+# --- Bundled Redis 7 (requirepass; internal net only) ------------------------
+- name: "JumpServer | Run jms-redis (bundled cache/broker)"
+  community.docker.docker_container:
+    name: jms_redis
+    image: "{{ jumpserver_image_redis }}"
+    hostname: jms-redis
+    state: started
+    restart_policy: always
+    pull: false
+    command: ["redis-server", "--requirepass", "{{ jumpserver_secret.redis_password }}", "--appendonly", "yes"]
+    env:
+      TZ: "{{ jumpserver_tz }}"
+      REDIS_PASSWORD: "{{ jumpserver_secret.redis_password }}"
+    volumes:
+      - "{{ jumpserver_redisdata_volume }}:/data"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - name: "{{ jumpserver_docker_network }}"
+        aliases: [jms-redis]
+  no_log: true
+
+- name: "JumpServer | Wait for Redis healthy"
+  community.docker.docker_container_info:
+    name: jms_redis
+  register: jumpserver_redis_info
+  until: jumpserver_redis_info.container.State.Health.Status == "healthy"
+  retries: 20
+  delay: 5
+
+# --- Core (web/api; runs migrations on first boot) ---------------------------
+- name: "JumpServer | Run core (start web)"
+  community.docker.docker_container:
+    name: jms_core
+    image: "{{ jumpserver_image_core }}"
+    hostname: jms_core
+    state: started
+    restart_policy: always
+    pull: false
+    command: start web
+    ulimits: ["core:0:0"]
+    env: "{{ jumpserver_env_safe | combine(jumpserver_env_db) | combine(jumpserver_env_oidc) | combine({'TIME_ZONE': jumpserver_tz}) }}"
+    volumes:
+      - "{{ jumpserver_base_dir }}/certs:/opt/jumpserver/data/certs"
+      - "{{ jumpserver_data_dir }}/data:/opt/jumpserver/data"
+    healthcheck:
+      test: ["CMD-SHELL", "check http://localhost:8080/api/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    etc_hosts:
+      host.docker.internal: host-gateway
+    networks:
+      - name: "{{ jumpserver_docker_network }}"
+        aliases: [core]
+  no_log: true
+
+- name: "JumpServer | Wait for core healthy (migrations run on first boot)"
+  community.docker.docker_container_info:
+    name: jms_core
+  register: jumpserver_core_info
+  until: jumpserver_core_info.container.State.Health.Status == "healthy"
+  retries: 60
+  delay: 10
+
+# --- Celery (background tasks) ------------------------------------------------
+- name: "JumpServer | Run celery (start task)"
+  community.docker.docker_container:
+    name: jms_celery
+    image: "{{ jumpserver_image_core }}"
+    hostname: jms_celery
+    state: started
+    restart_policy: always
+    pull: false
+    command: start task
+    ulimits: ["core:0:0"]
+    env: "{{ jumpserver_env_safe | combine(jumpserver_env_db) | combine(jumpserver_env_oidc) | combine({'LC_ALL': 'C.UTF-8'}) }}"
+    volumes:
+      - "{{ jumpserver_base_dir }}/certs:/opt/jumpserver/data/certs"
+      - "{{ jumpserver_data_dir }}/data:/opt/jumpserver/data"
+    etc_hosts:
+      host.docker.internal: host-gateway
+    networks:
+      - name: "{{ jumpserver_docker_network }}"
+        aliases: [celery]
+  no_log: true
+
+# --- Koko (SSH/SFTP terminal) — SAFE env, no DB ------------------------------
+- name: "JumpServer | Run koko (SSH/terminal gateway)"
+  community.docker.docker_container:
+    name: jms_koko
+    image: "{{ jumpserver_image_koko }}"
+    hostname: jms_koko
+    state: started
+    restart_policy: always
+    pull: false
+    ulimits: ["core:0:0"]
+    env: "{{ jumpserver_env_safe }}"
+    volumes:
+      - "{{ jumpserver_base_dir }}/certs:/opt/koko/data/certs"
+      - "{{ jumpserver_base_dir }}/koko/data:/opt/koko/data"
+    networks:
+      - name: "{{ jumpserver_docker_network }}"
+        aliases: [koko]
+  no_log: true
+
+# --- Lion (RDP/VNC via guacd) — SAFE env ------------------------------------
+- name: "JumpServer | Run lion (RDP/VNC gateway)"
+  community.docker.docker_container:
+    name: jms_lion
+    image: "{{ jumpserver_image_lion }}"
+    hostname: jms_lion
+    state: started
+    restart_policy: always
+    pull: false
+    ulimits: ["core:0:0"]
+    env: "{{ jumpserver_env_safe }}"
+    volumes:
+      - "{{ jumpserver_base_dir }}/certs:/opt/lion/data/certs"
+      - "{{ jumpserver_base_dir }}/lion/data:/opt/lion/data"
+    networks:
+      - name: "{{ jumpserver_docker_network }}"
+        aliases: [lion]
+  no_log: true
+
+# --- Web (nginx front; only published port) — no secrets --------------------
+- name: "JumpServer | Run web (nginx front)"
+  community.docker.docker_container:
+    name: jms_web
+    image: "{{ jumpserver_image_web }}"
+    hostname: jms_web
+    state: started
+    restart_policy: always
+    pull: false
+    ulimits: ["core:0:0"]
+    env:
+      TZ: "{{ jumpserver_tz }}"
+      HTTP_PORT: "80"
+      USE_LB: "0"            # eBPF SLB off (unprivileged) -> plain nginx; correct behind Traefik
+      USE_IPV6: "0"
+      USE_XPACK: "0"
+      GZIP: "on"
+      CLIENT_MAX_BODY_SIZE: "4096m"
+      CORE_ENABLED: "1"
+      KOKO_ENABLED: "1"
+      LION_ENABLED: "1"
+      CHEN_ENABLED: "0"     # chen (web DB client) not deployed
+      KAEL_ENABLED: "0"
+      RAZOR_ENABLED: "0"
+      FACELIVE_ENABLED: "0"
+      KOTL_ENABLED: "0"
+    published_ports:
+      - "{{ jumpserver_web_host_port }}:80"
+    volumes:
+      - "{{ jumpserver_data_dir }}/data:/opt/jumpserver/data"
+      - "{{ jumpserver_base_dir }}/nginx/logs:/var/log/nginx"
+    healthcheck:
+      test: ["CMD-SHELL", "check http://localhost/web/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    etc_hosts:
+      host.docker.internal: host-gateway
+    networks:
+      - name: "{{ jumpserver_docker_network }}"
+        aliases: [web]
+
+- name: "JumpServer | Wait for web front healthy"
+  community.docker.docker_container_info:
+    name: jms_web
+  register: jumpserver_web_info
+  until: jumpserver_web_info.container.State.Health.Status == "healthy"
+  retries: 30
+  delay: 10
+
+- name: "JumpServer | Readiness — web front answers on the published port"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ jumpserver_web_host_port }}/api/health/"
+    status_code: [200]
+    return_content: false
+  register: jumpserver_ready
+  until: jumpserver_ready.status == 200
+  retries: 12
+  delay: 5
+
+# koko (SSH gateway) fatally exits on its FIRST boot until core has issued its
+# terminal key — restart_policy retries it a few times, then it registers and
+# persists .access_key to the koko bind mount (subsequent boots are clean). This
+# is normal JumpServer first-boot behaviour (the official installer sees it too).
+# We don't leave that as a silent race: gate the deploy on koko + lion actually
+# serving through nginx (the real browser path), so "done" means verified-up.
+- name: "JumpServer | Readiness — koko (SSH gateway) serves via nginx"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ jumpserver_web_host_port }}/koko/health/"
+    status_code: [200]
+    return_content: false
+  register: jumpserver_koko_ready
+  until: jumpserver_koko_ready.status == 200
+  retries: 30
+  delay: 5
+
+- name: "JumpServer | Readiness — lion (RDP/VNC gateway) serves via nginx"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ jumpserver_web_host_port }}/lion/health/"
+    status_code: [200]
+    return_content: false
+  register: jumpserver_lion_ready
+  until: jumpserver_lion_ready.status == 200
+  retries: 30
+  delay: 5

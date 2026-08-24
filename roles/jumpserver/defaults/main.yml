@@ -1,0 +1,60 @@
+---
+# ==============================================================================
+# Role: jumpserver — self-contained JumpServer CE bastion/PAM (Docker-in-LXC).
+#
+# Break-glass tool: runs its OWN bundled Postgres + Redis (NOT the shared
+# cluster) so it still grants access if the cluster is down. Non-privileged
+# multi-container compose (privileged containers are unsafe nested in an
+# unprivileged LXC). All secrets are Vault-native (fabric/app-jumpserver +
+# fabric/app-oidc-jumpserver); the on-host .env (0600) is rendered from Vault,
+# same pattern as gitlab.rb — no repo/controller secret files.
+#
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/jumpserver.yml
+# ==============================================================================
+
+# --- Pinned images (never :latest) — installer GA tag v4.10.19 --------------
+jumpserver_version: "v4.10.19-ce"
+jumpserver_image_core: "jumpserver/core:{{ jumpserver_version }}"
+jumpserver_image_koko: "jumpserver/koko:{{ jumpserver_version }}"
+jumpserver_image_lion: "jumpserver/lion:{{ jumpserver_version }}"
+jumpserver_image_web: "jumpserver/web:{{ jumpserver_version }}"
+jumpserver_image_postgres: "postgres:16"
+jumpserver_image_redis: "redis:7-alpine"
+
+# --- Layout on the LXC ------------------------------------------------------
+# Root-owned components (core/koko/lion/nginx) use host BIND MOUNTS (container
+# root = LXC root, works fine). Postgres + Redis run as uid 999 inside their
+# containers: in an UNPRIVILEGED LXC a host bind mount hits the userns uid-remap
+# mismatch (server can't reopen its own files -> "Permission denied"), so they
+# use DOCKER NAMED VOLUMES, which docker uid-maps consistently within the LXC.
+jumpserver_base_dir: "/opt/jumpserver"
+jumpserver_compose_dir: "{{ jumpserver_base_dir }}"          # compose + .env live here
+jumpserver_data_dir: "{{ jumpserver_base_dir }}/core"        # app data + session recordings
+jumpserver_pgdata_volume: "jumpserver_pgdata"                # bundled Postgres (named volume)
+jumpserver_redisdata_volume: "jumpserver_redisdata"          # bundled Redis (named volume)
+jumpserver_docker_network: "jumpserver-net"
+
+# --- Web front — browser-only; only this port is published + proxied ---------
+jumpserver_web_host_port: 8090                                # host:8090 -> web container:80
+jumpserver_fqdn: "jumpserver.by-research.be"
+jumpserver_base_site_url: "https://{{ jumpserver_fqdn }}"     # OIDC redirect base (BASE_SITE_URL)
+jumpserver_domains: "{{ jumpserver_fqdn }}"                   # DOMAINS allow-list
+
+# --- Bundled DB / Redis (self-contained; compose-internal only) --------------
+jumpserver_db_name: "jumpserver"
+jumpserver_db_user: "jumpserver"
+jumpserver_db_engine: "postgresql"
+
+# --- Vault-native secrets (get-or-create; minted here on first run) ----------
+# fabric/app-jumpserver: secret_key(>=50 alnum), bootstrap_token(>=24 alnum),
+# db_password, redis_password. no special chars (JumpServer rule) + no quotes.
+jumpserver_vault_path: "fabric/app-jumpserver"
+
+# --- OIDC (Phase 2) — client creds minted by the authentik role into Vault ---
+jumpserver_oidc_enabled: false                               # flipped on in Phase 2
+jumpserver_oidc_vault_path: "fabric/app-oidc-jumpserver"
+jumpserver_oidc_provider_endpoint: "https://authentik.by-research.be/application/o/jumpserver/"
+
+# --- Locale / misc -----------------------------------------------------------
+jumpserver_tz: "Europe/Brussels"
+jumpserver_log_level: "ERROR"
