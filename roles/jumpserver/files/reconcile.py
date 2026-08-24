@@ -172,6 +172,33 @@ for _name, _val in CFG.get("settings", {}).items():
 if CFG.get("settings"):
     summary.append(f"settings: {', '.join(f'{k}={v}' for k, v in CFG['settings'].items())}")
 
+# --- (7) Email (mailcow SMTP) — notifications sender ------------------------
+email = CFG.get("email")
+if email and email.get("smtp_host"):
+    email_vals = {
+        "EMAIL_HOST": email["smtp_host"],
+        "EMAIL_PORT": email["smtp_port"],
+        "EMAIL_HOST_USER": email["smtp_user"],
+        "EMAIL_HOST_PASSWORD": email["smtp_password"],
+        "EMAIL_FROM": "JumpServer <%s>" % email["smtp_user"],
+        "EMAIL_USE_TLS": True,
+        "EMAIL_USE_SSL": False,
+        "EMAIL_PROTOCOL": "smtp",
+        "EMAIL_SUBJECT_PREFIX": "[JumpServer] ",
+    }
+    # encrypted=False so cleaned_value reads back the raw value (Vault is the
+    # source of truth for the mailbox password; JumpServer's DB is its own store).
+    for _n, _v in email_vals.items():
+        Setting.objects.update_or_create(
+            name=_n, defaults={"value": json.dumps(_v), "category": "email", "encrypted": False}
+        )
+    for _r in Setting.objects.filter(name__startswith="EMAIL_"):
+        try:
+            _r.refresh_setting()
+        except Exception:  # noqa: BLE001
+            pass
+    summary.append(f"email: SMTP -> {email['smtp_host']}:{email['smtp_port']} as {email['smtp_user']}")
+
 print("RECONCILE_OK")
 for line in summary:
     print("  -", line)

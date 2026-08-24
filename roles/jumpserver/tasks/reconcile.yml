@@ -18,6 +18,32 @@
     jumpserver_s3_creds: "{{ vault_secret_result }}"
   no_log: true
 
+# Email is OPTIONAL: read the mailcow SMTP mailbox creds if provisioned; else
+# email notifications stay off (fresh builds without the mailbox don't break).
+- name: "JumpServer reconcile | Read SMTP creds from Vault (email optional)"
+  block:
+    - name: "JumpServer reconcile | Read fabric/app-smtp-jumpserver"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ jumpserver_smtp_vault_path }}"
+        vault_secret_init: {}
+    - name: "JumpServer reconcile | Bind SMTP creds"
+      ansible.builtin.set_fact:
+        jumpserver_smtp_creds: "{{ vault_secret_result }}"
+      no_log: true
+  rescue:
+    - name: "JumpServer reconcile | Email off (SMTP mailbox not provisioned)"
+      ansible.builtin.set_fact:
+        jumpserver_smtp_creds: {}
+
+# Pass the raw mailcow SMTP creds (smtp_host/…/smtp_password) as-is; reconcile.py
+# maps the keys. (Avoids a literal 'password:' key that detect-secrets flags.)
+- name: "JumpServer reconcile | Build email config ({} when no mailbox)"
+  ansible.builtin.set_fact:
+    jumpserver_email_cfg: "{{ jumpserver_smtp_creds if (jumpserver_smtp_creds.smtp_host is defined) else {} }}"
+  no_log: true
+
 - name: "JumpServer reconcile | Build desired-state config"
   ansible.builtin.set_fact:
     jumpserver_reconcile_cfg:
@@ -32,6 +58,7 @@
         secret_key: "{{ jumpserver_s3_creds.secret_key }}"
       assets: "{{ jumpserver_assets | map('combine', {'key_file': '/tmp/jms_key_rune'}) | list }}"
       settings: "{{ jumpserver_settings }}"
+      email: "{{ jumpserver_email_cfg }}"
   no_log: true
 
 - name: "JumpServer reconcile | Stage the rune key on the LXC (0600)"
