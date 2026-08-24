@@ -384,3 +384,10 @@
   until: jumpserver_lion_ready.status == 200
   retries: 30
   delay: 5
+
+# RBAC + assets (adm_yboujraf System Admin, bastion-admins, register assets,
+# vault the rune key, grant all, replay storage -> S3). Idempotent; runs after
+# core is healthy so the Django models are migrated + serving.
+- name: "JumpServer | RBAC + asset reconcile"
+  ansible.builtin.include_tasks: reconcile.yml
+  when: jumpserver_reconcile_enabled | bool
