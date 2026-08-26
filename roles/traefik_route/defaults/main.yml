@@ -16,6 +16,12 @@ traefik_route_dynamic_dir: "/etc/traefik/dynamic"
 # Internal-only services get an ipAllowList (no public exposure). Public services
 # (a Cloudflare record + DNAT exist) set this false.
 traefik_route_internal_only: true
+# Backend speaks its own TLS with a NON-Traefik-verifiable cert (e.g. PBS's
+# self-signed cert on :8007). true -> emit a per-route serversTransport with
+# insecureSkipVerify so Traefik still proxies over TLS but skips cert validation
+# (acceptable on the trusted internal SVC hop). Default false = verify the cert
+# (the Vault pattern: point the backend at the FQDN so the wildcard validates).
+traefik_route_backend_insecure_skip_verify: false
 traefik_route_internal_cidrs:
   - "10.1.0.0/16"
   - "fd01::/16"

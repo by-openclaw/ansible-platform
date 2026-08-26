@@ -133,6 +133,18 @@ authentik_oidc_apps:
       - "https://mail.by-research.be"
     redirect_uris_regex:
       - "https://mail\\.by-research\\.be/.*"
+  - slug: pbs
+    launch_url: "https://pbs.by-research.be"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/proxmox.svg"
+    name: "Proxmox Backup Server"
+    group: "pbs-admins"             # ACCESS group — only members may SSO into PBS
+    secret_file: "fabric/app-oidc-pbs.json"
+    restrict_to_group: true         # IdP-enforced: only pbs-admins can log in
+    # PBS (proxmox-backup-manager openid) redirects to its own web root after auth.
+    redirect_uris:
+      - "https://pbs.by-research.be"
+    redirect_uris_regex:
+      - "https://pbs\\.by-research\\.be/.*"
 
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
@@ -167,6 +179,7 @@ authentik_groups:
   - netbird-users       # access group — only members may authenticate to NetBird VPN
   - netbird-admins      # NetBird admins (NetBird's own owner/admin role set in-app)
   - mailcow-users       # access group — only members may SSO into mailcow webmail
+  - pbs-admins          # access group — only members may SSO into Proxmox Backup Server
   - infra-admins
   - dev
 # Groups whose members are Authentik superusers (can manage Authentik itself).

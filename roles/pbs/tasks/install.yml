@@ -1,0 +1,42 @@
+---
+# PBS 4 install from the Proxmox no-subscription repo (Debian 13 / trixie).
+- name: "Install | Proxmox release GPG keyring"
+  ansible.builtin.get_url:
+    url: "{{ pbs_repo_key_url }}"
+    dest: /usr/share/keyrings/proxmox-archive-keyring.gpg
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: "Install | PBS 4 no-subscription apt repo"
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/pbs.list
+    content: "{{ pbs_repo_line }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+- name: "Install | Disable the enterprise (subscription) repo — we use no-subscription"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/pbs-enterprise.sources
+    - /etc/apt/sources.list.d/pbs-enterprise.list
+
+- name: "Install | proxmox-backup-server (+ jq for helpers)"
+  ansible.builtin.apt:
+    name:
+      - proxmox-backup-server
+      - jq
+    state: present
+    update_cache: true   # always refresh so a freshly-added PBS repo is seen
+
+- name: "Install | PBS services enabled + running"
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - proxmox-backup
+    - proxmox-backup-proxy
+  when: not ansible_check_mode
