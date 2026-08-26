@@ -61,3 +61,36 @@ hardening_email_relay_password: ""
 hardening_email_from: "alerts@by-systems.be"
 hardening_email_alert_dest: "ops@by-systems.be"
 hardening_email_hostname: "{{ inventory_hostname }}"
+
+# ------------------------------------------------------------------------------
+# Part-B baseline (CIS-L1 ≈ NIS2 Art.21 / GDPR Art.32) — mandatory-now hardening
+# ------------------------------------------------------------------------------
+# Automatic security patching (unattended-upgrades). No auto-reboot by default
+# on a controlled platform — alert instead.
+hardening_auto_updates: true
+hardening_auto_reboot: false
+hardening_auto_reboot_time: "03:30"
+hardening_updates_mail: "{{ hardening_email_alert_dest | default('ops@by-systems.be') }}"
+
+# sudoers: secure_path (env-PATH hardening) + logged, tty-required sudo
+hardening_sudo_secure_path: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+hardening_sudo_logfile: "/var/log/sudo.log"
+
+# login.defs default umask (027 = files 640 / dirs 750)
+hardening_umask: "027"
+
+# NTP (chrony) — time sync for log correlation / forensics. Default pool; override
+# per env to point at the OPNsense gateway if preferred.
+hardening_ntp_enabled: true
+hardening_ntp_servers:
+  - "{{ ansible_default_ipv4.gateway }}"   # the OPNsense VLAN gateway (FW serves NTP)
+
+# auditd — audit trail of auth / privilege / config changes + log retention.
+hardening_auditd_enabled: true
+hardening_auditd_max_log_file: 20      # MB per log
+hardening_auditd_num_logs: 8
+hardening_auditd_space_left_action: "SYSLOG"
+
+# sysctl kernel hardening. NOTE: ip_forward / *.forwarding are deliberately NOT
+# set here — Docker-in-LXC hosts require forwarding (roles/docker sets it).
+hardening_sysctl_enabled: true
