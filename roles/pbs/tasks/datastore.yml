@@ -1,0 +1,84 @@
+---
+# S3-backed datastore on SeaweedFS (via the Traefik HTTPS route — PBS S3 needs TLS).
+# Order: create bucket+scoped identity -> load creds -> s3 endpoint -> s3 check ->
+# local cache dir -> datastore.
+
+- name: "Datastore | Provision the SeaweedFS S3 bucket + scoped identity"
+  ansible.builtin.include_role:
+    name: seaweedfs_bucket
+  vars:
+    seaweedfs_bucket_identity: "{{ pbs_s3_identity }}"
+    seaweedfs_bucket_names: ["{{ pbs_s3_bucket }}"]
+    seaweedfs_bucket_secret_file: "{{ pbs_s3_secret_file }}"
+
+- name: "Datastore | Load the PBS S3 credentials"
+  ansible.builtin.set_fact:
+    pbs_s3_creds: "{{ (lookup('file', pbs_secret_dir + '/' + pbs_s3_secret_file) | from_json).fields }}"
+  no_log: true
+
+- name: "Datastore | List existing S3 endpoints"
+  ansible.builtin.command: "proxmox-backup-manager s3 endpoint list --output-format json"
+  register: pbs_s3_ep_list
+  changed_when: false
+
+- name: "Datastore | Create the SeaweedFS S3 endpoint"
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - s3
+      - endpoint
+      - create
+      - "{{ pbs_s3_endpoint_id }}"
+      - "--access-key"
+      - "{{ pbs_s3_creds.access_key }}"
+      - "--secret-key"
+      - "{{ pbs_s3_creds.secret_key }}"
+      - "--endpoint"
+      - "{{ pbs_s3_endpoint_host }}"
+      # NO --port: PBS defaults to 443 and signs `host` WITHOUT the port. Setting
+      # --port 443 makes PBS sign host:443, but Traefik forwards a bare Host header
+      # -> SigV4 canonical-host mismatch (SignatureDoesNotMatch). Omit it.
+      - "--path-style"
+      - "{{ pbs_s3_path_style | string | lower }}"
+  no_log: true
+  changed_when: true
+  when: pbs_s3_endpoint_id not in (pbs_s3_ep_list.stdout | from_json | map(attribute='id') | list)
+
+- name: "Datastore | Verify S3 connectivity (s3 check)"
+  ansible.builtin.command: "proxmox-backup-manager s3 check {{ pbs_s3_endpoint_id }} {{ pbs_s3_bucket }}"
+  register: pbs_s3_check
+  changed_when: false
+
+- name: "Datastore | Local cache/metadata dir for the S3 datastore"
+  ansible.builtin.file:
+    path: "{{ pbs_datastore_cache_path }}"
+    state: directory
+    owner: backup
+    group: backup
+    mode: "0750"
+
+- name: "Datastore | List existing datastores"
+  ansible.builtin.command: "proxmox-backup-manager datastore list --output-format json"
+  register: pbs_ds_list
+  changed_when: false
+
+- name: "Datastore | Create the S3-backed datastore ({{ pbs_datastore_name }})"
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - datastore
+      - create
+      - "{{ pbs_datastore_name }}"
+      - "{{ pbs_datastore_cache_path }}"
+      - "--backend"
+      - "type=s3,client={{ pbs_s3_endpoint_id }},bucket={{ pbs_s3_bucket }}"
+      - "--gc-schedule"
+      - "{{ pbs_gc_schedule }}"
+  register: pbs_ds_create
+  changed_when: true
+  when: pbs_datastore_name not in (pbs_ds_list.stdout | from_json | map(attribute='name') | list)
+
+- name: "Datastore | Show the datastore (confirm S3 backend online)"
+  ansible.builtin.command: "proxmox-backup-manager datastore show {{ pbs_datastore_name }}"
+  register: pbs_ds_show
+  changed_when: false

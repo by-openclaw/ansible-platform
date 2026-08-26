@@ -1,0 +1,236 @@
+---
+# ==============================================================================
+# Wire PBS into Proxmox VE: add it as a `pbs` storage + a SECOND backup job.
+# The existing vzdump -> NFS (Synology, storage `poc-backup`) job is left ENABLED
+# and untouched — every guest ends up on BOTH Synology (NFS) and SeaweedFS (S3).
+#
+#   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/pbs-pve-storage.yml
+#
+# Prereq: playbooks/pbs.yml has run (datastore pbs-datastore exists on vm-pbs-01).
+# ==============================================================================
+- name: "PBS side — PVE backup user, token, fingerprint"
+  hosts: pbs
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../roles/pbs/defaults/main.yml
+  tasks:
+    - name: "PVE-wire | Ensure the PVE backup user exists"
+      ansible.builtin.command:
+        argv: [proxmox-backup-manager, user, create, "{{ pbs_pve_backup_user }}"]
+      register: r_user
+      changed_when: r_user.rc == 0
+      failed_when:
+        - r_user.rc != 0
+        - "'already exists' not in (r_user.stderr | default(''))"
+
+    - name: "PVE-wire | Grant DatastoreBackup on the datastore"
+      ansible.builtin.command:
+        argv: [proxmox-backup-manager, acl, update, "/datastore/{{ pbs_datastore_name }}",
+               DatastoreBackup, "--auth-id", "{{ pbs_pve_backup_user }}"]
+      register: r_acl
+      changed_when: r_acl.rc == 0
+      failed_when:
+        - r_acl.rc != 0
+        - "'already' not in (r_acl.stderr | default(''))"
+
+    - name: "PVE-wire | Stat the controller-side token secret"
+      ansible.builtin.stat:
+        path: "{{ pbs_secret_dir | expanduser }}/fabric/pbs-pve-backup-token.json"
+      delegate_to: localhost
+      become: false
+      register: pbs_tok_stat
+
+    - name: "PVE-wire | (Re)generate the API token when its secret is not held"
+      when: not pbs_tok_stat.stat.exists
+      block:
+        - name: "PVE-wire | Delete any stale token (secret unknown)"
+          ansible.builtin.command:
+            argv: [proxmox-backup-manager, user, delete-token,
+                   "{{ pbs_pve_backup_user }}", "{{ pbs_pve_backup_token }}"]
+          register: r_deltok
+          changed_when: r_deltok.rc == 0
+          failed_when: false
+
+        - name: "PVE-wire | Generate the backup API token (privsep off -> inherits ACL)"
+          ansible.builtin.command:
+            argv: [proxmox-backup-manager, user, generate-token,
+                   "{{ pbs_pve_backup_user }}", "{{ pbs_pve_backup_token }}"]
+          register: r_gentok
+          changed_when: true
+          no_log: true
+
+        - name: "PVE-wire | Persist the token secret on the controller (0600)"
+          ansible.builtin.copy:
+            dest: "{{ pbs_secret_dir | expanduser }}/fabric/pbs-pve-backup-token.json"
+            mode: "0600"
+            content: |
+              {{ {'fields': {
+                   'tokenid': (r_gentok.stdout | regex_replace('^[^{]*', '') | from_json).tokenid,
+                   'value': (r_gentok.stdout | regex_replace('^[^{]*', '') | from_json).value,
+                   'note': 'PVE->PBS backup API token (pve-backup@pbs!pve)'
+                 }} | to_nice_json }}
+          delegate_to: localhost
+          become: false
+          no_log: true
+
+    - name: "PVE-wire | Grant DatastoreBackup to the API TOKEN (privsep default)"
+      ansible.builtin.command:
+        argv: [proxmox-backup-manager, acl, update, "/datastore/{{ pbs_datastore_name }}",
+               DatastoreBackup, "--auth-id", "{{ pbs_pve_backup_user }}!{{ pbs_pve_backup_token }}"]
+      register: r_tokacl
+      changed_when: r_tokacl.rc == 0
+      failed_when:
+        - r_tokacl.rc != 0
+        - "'already' not in (r_tokacl.stderr | default(''))"
+
+    - name: "PVE-wire | Read the PBS TLS fingerprint"
+      ansible.builtin.command:
+        argv: [proxmox-backup-manager, cert, info]
+      register: r_cert
+      changed_when: false
+
+    - name: "PVE-wire | Extract the sha256 fingerprint"
+      ansible.builtin.set_fact:
+        pbs_fingerprint: "{{ r_cert.stdout | regex_search('([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){31})') }}"
+
+- name: "PVE side — add PBS storage + 2nd backup job"
+  hosts: pve_nodes
+  gather_facts: false
+  vars_files:
+    - ../roles/pbs/defaults/main.yml
+  vars:
+    pbs_tok: "{{ (lookup('file', (pbs_secret_dir | expanduser) + '/fabric/pbs-pve-backup-token.json') | from_json).fields }}"
+    pbs_fp: "{{ hostvars[groups['pbs'][0]]['pbs_fingerprint'] }}"
+    pbs_ip: "10.1.3.222"
+    pbs_svc_subnet: "10.1.3.0/24"     # SVC VLAN (where PBS lives)
+    pbs_fw_oob_ip: "10.6.239.196"     # FW OOB IP the node routes SVC traffic through
+  tasks:
+    # The node sits on OOB (10.6.224.105); PBS is on the SVC VLAN behind the FW.
+    # The node reaches the FW's OOB IP (10.6.239.196), and the FW routes+permits
+    # OOB->SVC, so a static route via the FW makes PBS:8007 reachable. Persist it
+    # via a systemd oneshot (no risky /etc/network/interfaces edits on the node).
+    - name: "PVE-wire | Persistent route unit: node -> SVC VLAN via the FW"
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/pbs-svc-route.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Static route to the SVC VLAN via the FW (PVE -> PBS backups)
+          After=network-online.target
+          Wants=network-online.target
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/sbin/ip route replace {{ pbs_svc_subnet }} via {{ pbs_fw_oob_ip }}
+          ExecStop=/sbin/ip route del {{ pbs_svc_subnet }} via {{ pbs_fw_oob_ip }}
+          [Install]
+          WantedBy=multi-user.target
+      register: pbs_route_unit
+
+    - name: "PVE-wire | Enable + start the SVC route (node can reach PBS:8007)"
+      ansible.builtin.systemd_service:
+        name: pbs-svc-route.service
+        enabled: true
+        state: started
+        daemon_reload: "{{ pbs_route_unit is changed }}"
+
+    - name: "PVE-wire | Existing PVE storages"
+      ansible.builtin.command:
+        argv: [pvesm, status]
+      register: r_pvesm
+      changed_when: false
+
+    - name: "PVE-wire | Add the PBS storage (content=backup)"
+      ansible.builtin.command:
+        argv:
+          - pvesm
+          - add
+          - pbs
+          - "{{ pbs_pve_storage_id }}"
+          - "--server"
+          - "{{ pbs_ip }}"
+          - "--datastore"
+          - "{{ pbs_datastore_name }}"
+          - "--username"
+          - "{{ pbs_tok.tokenid }}"
+          - "--password"
+          - "{{ pbs_tok.value }}"
+          - "--fingerprint"
+          - "{{ pbs_fp }}"
+          - "--content"
+          - backup
+      no_log: true
+      register: r_add
+      changed_when: r_add.rc == 0
+      failed_when:
+        - r_add.rc != 0
+        - "'already defined' not in (r_add.stderr | default(''))"
+      when: pbs_pve_storage_id not in r_pvesm.stdout
+
+    - name: "PVE-wire | Stat the storage encryption key"
+      ansible.builtin.stat:
+        path: "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc"
+      register: pbs_enc_stat
+
+    - name: "PVE-wire | Enable client-side encryption (autogen key, once)"
+      ansible.builtin.command:
+        argv: [pvesm, set, "{{ pbs_pve_storage_id }}", "--encryption-key", autogen]
+      register: r_enc
+      changed_when: r_enc.rc == 0
+      when:
+        - pbs_encryption_enabled | bool
+        - not pbs_enc_stat.stat.exists
+
+    - name: "PVE-wire | Read the encryption key (to back up off-node)"
+      ansible.builtin.slurp:
+        src: "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc"
+      register: pbs_enc_key
+      when: pbs_encryption_enabled | bool
+      no_log: true
+
+    - name: "PVE-wire | Back up the encryption key to the controller secret store (0600)"
+      ansible.builtin.copy:
+        dest: "{{ (pbs_secret_dir | expanduser) }}/fabric/pbs-encryption-key.json"
+        mode: "0600"
+        content: |
+          {{ {'fields': {
+               'encryption_key': (pbs_enc_key.content | b64decode),
+               'note': 'PVE->PBS client-side encryption key. LOSS = UNRECOVERABLE BACKUPS. Mirror to Vault ({{ pbs_encryption_vault_path }}).'
+             }} | to_nice_json }}
+      delegate_to: localhost
+      become: false
+      when: pbs_encryption_enabled | bool
+      no_log: true
+
+    - name: "PVE-wire | Existing backup jobs"
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/backup, "--output-format", json]
+      register: r_jobs
+      changed_when: false
+
+    - name: "PVE-wire | Create the 2nd backup job -> PBS (keeps the NFS job)"
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - create
+          - /cluster/backup
+          - "--schedule"
+          - "{{ pbs_backup_schedule }}"
+          - "--storage"
+          - "{{ pbs_pve_storage_id }}"
+          - "--mode"
+          - snapshot
+          - "--all"
+          - "1"
+          - "--compress"
+          - zstd
+          - "--enabled"
+          - "1"
+          - "--notes-template"
+          - "PBS S3 copy (SeaweedFS) — {{ '{{guestname}}' }} (VMID {{ '{{vmid}}' }})"
+          - "--comment"
+          - "PBS S3 second copy (managed by ansible pbs role)"
+      register: r_job
+      changed_when: r_job.rc == 0
+      when: pbs_pve_storage_id not in (r_jobs.stdout | from_json | map(attribute='storage') | list)
