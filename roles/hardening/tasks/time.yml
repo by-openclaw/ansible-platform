@@ -1,0 +1,27 @@
+---
+- name: "Time | Install chrony"
+  ansible.builtin.apt:
+    name: chrony
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Time | Configure NTP servers"
+  ansible.builtin.copy:
+    dest: /etc/chrony/conf.d/10-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (role: hardening)
+      {% for s in hardening_ntp_servers %}
+      server {{ s }} iburst
+      {% endfor %}
+  notify: Restart chrony
+
+- name: "Time | Ensure chrony enabled + running"
+  ansible.builtin.systemd_service:
+    name: chrony
+    enabled: true
+    state: started
+  when: not ansible_check_mode

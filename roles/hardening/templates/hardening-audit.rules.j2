@@ -1,0 +1,23 @@
+## Managed by Ansible (role: hardening) — auth / privilege / config audit trail.
+-D
+-b 8192
+-f 1
+## Identity & auth
+-w /etc/passwd -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/sudoers -p wa -k scope
+-w /etc/sudoers.d/ -p wa -k scope
+## SSH / PAM config
+-w /etc/ssh/sshd_config -p wa -k sshd
+-w /etc/pam.d/ -p wa -k pam
+## Privileged command use (sudo/su)
+-w /usr/bin/sudo -p x -k priv_esc
+-w /bin/su -p x -k priv_esc
+## Login records & log tampering
+-w /var/log/wtmp -p wa -k logins
+-w /var/log/btmp -p wa -k logins
+-w /var/log/auth.log -p wa -k audit_log
+## Enabled (mutable). Set -e 2 later for immutable (tamper-proof, reboot-to-change).
+-e 1

@@ -1,0 +1,38 @@
+---
+# auditd needs the kernel audit subsystem — skipped in unprivileged LXC.
+- name: "Auditd | Install auditd"
+  ansible.builtin.apt:
+    name: auditd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Auditd | Log retention (max size / rotation)"
+  ansible.builtin.lineinfile:
+    path: /etc/audit/auditd.conf
+    regexp: "^{{ item.k }}\\s*="
+    line: "{{ item.k }} = {{ item.v }}"
+  loop:
+    - { k: "max_log_file", v: "{{ hardening_auditd_max_log_file }}" }
+    - { k: "num_logs", v: "{{ hardening_auditd_num_logs }}" }
+    - { k: "space_left_action", v: "{{ hardening_auditd_space_left_action }}" }
+    - { k: "max_log_file_action", v: "ROTATE" }
+  notify: Restart auditd
+  when: not ansible_check_mode
+
+- name: "Auditd | Deploy audit rules"
+  ansible.builtin.template:
+    src: hardening-audit.rules.j2
+    dest: /etc/audit/rules.d/hardening.rules
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart auditd
+  when: not ansible_check_mode
+
+- name: "Auditd | Ensure auditd enabled + running"
+  ansible.builtin.systemd_service:
+    name: auditd
+    enabled: true
+    state: started
+  when: not ansible_check_mode

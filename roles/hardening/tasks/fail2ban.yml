@@ -4,26 +4,26 @@
 # Note: SSH port is pulled from hardening_ssh_port (default 22222, not 22)
 # ==============================================================================
 
-- name: "fail2ban | Install"
+- name: "Fail2ban | Install"
   ansible.builtin.package:
     name: fail2ban
     state: present
 
-- name: "fail2ban | Ensure service is enabled"
+- name: "Fail2ban | Ensure service is enabled"
   ansible.builtin.service:
     name: fail2ban
     enabled: true
 
-- name: "fail2ban | Deploy jail.local from template"
+- name: "Fail2ban | Deploy jail.local from template"
   ansible.builtin.template:
     src: jail.local.j2
     dest: /etc/fail2ban/jail.local
     owner: root
     group: root
     mode: "0644"
-  notify: restart fail2ban
+  notify: Restart fail2ban
 
-- name: "fail2ban | Deploy Proxmox filter if needed"
+- name: "Fail2ban | Deploy Proxmox filter if needed"
   ansible.builtin.copy:
     dest: /etc/fail2ban/filter.d/proxmox.conf
     owner: root
@@ -34,4 +34,4 @@
       failregex = pvedaemon\[.*authentication failure; rhost=<HOST> user=.* msg=.*
       ignoreregex =
   when: hardening_fail2ban_extra_jails | selectattr('name', 'equalto', 'proxmox') | list | length > 0
-  notify: restart fail2ban
+  notify: Restart fail2ban
