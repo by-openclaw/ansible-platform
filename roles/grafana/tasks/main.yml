@@ -1,0 +1,70 @@
+---
+# ==============================================================================
+# Role: grafana — dashboards on lxc-monitoring-01, SSO via Authentik, Prometheus
+# (+ optional Loki) datasource, behind Traefik (VPN-only).
+# ==============================================================================
+- name: "Grafana | Create the cluster Postgres database + role"
+  ansible.builtin.include_role:
+    name: postgres_db
+  vars:
+    postgres_db_name: "{{ grafana_pg_name }}"
+    postgres_db_user: "{{ grafana_pg_user }}"
+    postgres_db_secret_file: "{{ grafana_pg_secret_file }}"
+  when: grafana_db_enabled | bool
+  tags: [db]
+
+- name: "Grafana | Install grafana (APT repo)"
+  ansible.builtin.import_tasks: install.yml
+  tags: [install]
+
+- name: "Grafana | Secrets (admin password + OIDC client)"
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [config, sso]
+
+- name: "Grafana | Provisioned datasources (Prometheus + optional Loki)"
+  ansible.builtin.template:
+    src: datasources.yaml.j2
+    dest: /etc/grafana/provisioning/datasources/datasources.yaml
+    owner: root
+    group: grafana
+    mode: "0640"
+  notify: Restart grafana
+  tags: [config]
+
+- name: "Grafana | grafana.ini (server + security + OIDC)"
+  ansible.builtin.template:
+    src: grafana.ini.j2
+    dest: /etc/grafana/grafana.ini
+    owner: root
+    group: grafana
+    mode: "0640"
+  no_log: true   # contains admin password + OIDC secret
+  notify: Restart grafana
+  tags: [config, sso]
+
+- name: "Grafana | Enabled + running"
+  ansible.builtin.systemd_service:
+    name: grafana-server
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+  tags: [config]
+
+- name: "Grafana | Publish via Traefik (internal / VPN-only)"
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: grafana
+    traefik_route_fqdn: "{{ grafana_fqdn }}"
+    traefik_route_backend_url: "http://{{ hostvars[inventory_hostname].ansible_host }}:{{ grafana_port }}"
+    traefik_route_internal_only: true
+    traefik_route_internal_cidrs:
+      - "10.1.0.0/16"
+      - "100.64.0.0/10"     # NetBird overlay (CGNAT) — VPN peers
+      - "fd01::/16"
+      - "127.0.0.1/32"
+      - "::1/128"
+  when: grafana_traefik_enabled | default(true) | bool
+  tags: [route]

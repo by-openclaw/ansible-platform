@@ -1,0 +1,52 @@
+{# Managed by Ansible (role: loki). Chunks + index in SeaweedFS S3; local = scratch. #}
+auth_enabled: false
+
+server:
+  http_listen_port: {{ loki_port }}
+  grpc_listen_port: {{ loki_grpc_port }}
+  log_level: info
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: {{ loki_data_dir }}
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+storage_config:
+  aws:
+    endpoint: {{ loki_s3_endpoint }}
+    bucketnames: {{ loki_s3_bucket }}
+    access_key_id: {{ loki_s3_creds.access_key }}
+    secret_access_key: {{ loki_s3_creds.secret_key }}
+    s3forcepathstyle: true
+    insecure: false
+    region: us-east-1
+  tsdb_shipper:
+    active_index_directory: {{ loki_data_dir }}/tsdb-index
+    cache_location: {{ loki_data_dir }}/tsdb-cache
+
+schema_config:
+  configs:
+    - from: 2024-04-01
+      store: tsdb
+      object_store: aws
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+compactor:
+  working_directory: {{ loki_data_dir }}/compactor
+  retention_enabled: true
+  delete_request_store: aws
+
+limits_config:
+  retention_period: {{ loki_retention }}
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  volume_enabled: true
+
+analytics:
+  reporting_enabled: false

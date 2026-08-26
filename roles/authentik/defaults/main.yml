@@ -145,6 +145,16 @@ authentik_oidc_apps:
       - "https://pbs.by-research.be"
     redirect_uris_regex:
       - "https://pbs\\.by-research\\.be/.*"
+  - slug: grafana
+    launch_url: "https://grafana.by-research.be"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/grafana.svg"
+    name: "Grafana"
+    group: "grafana-admins"         # ACCESS group — only members may SSO into Grafana
+    secret_file: "fabric/app-oidc-grafana.json"
+    restrict_to_group: true         # IdP-enforced: only grafana-admins can log in
+    # Grafana generic_oauth callback. role_attribute_path maps the groups claim.
+    redirect_uris:
+      - "https://grafana.by-research.be/login/generic_oauth"
 
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
