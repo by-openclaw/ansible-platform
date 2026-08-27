@@ -1,6 +1,12 @@
 ---
-# Admin break-glass desktop allowed into internal-only Traefik routes from the
-# OOB plane (BY-DESK-03). Interim access path until the NetBird VPN is the path —
-# see reference_offnet_desktop_access_model. Remove once VPN is the access path.
-traefik_route_admin_cidrs:
-  - "10.6.239.113/32"
+# Admin break-glass desktops allowed into internal-only Traefik ipAllowLists from
+# the OOB plane. Interim path until the NetBird VPN is the only route in — see
+# reference_offnet_desktop_access_model. ONE source of truth, consumed by BOTH the
+# per-route routes (traefik_route_admin_cidrs) AND the Traefik dashboard
+# (traefik_admin_cidrs), so re-rendering EITHER keeps desk access — no per-route
+# drift where one service silently 403s a desk (that's how pgadmin lost .103).
+_admin_desk_cidrs: &admin_desk_cidrs
+  - "10.6.239.103/32"   # desk-003 — primary admin desk (OOB egress IP)
+  - "10.6.239.113/32"   # admin laptop
+traefik_route_admin_cidrs: *admin_desk_cidrs
+traefik_admin_cidrs: *admin_desk_cidrs
