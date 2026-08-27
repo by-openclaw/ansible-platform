@@ -1,0 +1,116 @@
+---
+- name: "decommission | Require + resolve the target service"
+  ansible.builtin.assert:
+    that:
+      - decommission_target | length > 0
+      - decommission_target in decommission_catalog
+    fail_msg: "Set -e decommission_target=<name>. Known: {{ decommission_catalog.keys() | list }}"
+    success_msg: "Decommissioning '{{ decommission_target }}' (ABSENT)."
+
+- name: "decommission | Pin the service footprint"
+  ansible.builtin.set_fact:
+    _svc: "{{ decommission_catalog[decommission_target] }}"
+    _stamp: "{{ lookup('pipe', 'date +%Y-%m-%d') }}"
+
+# ============================ Postgres DB + role =============================
+- name: "decommission | DB — dump (archive) then drop"
+  when: _svc.db is defined
+  block:
+    - name: "decommission | DB present?"
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ decommission_pg_container }}", psql, -U, postgres, -tAc,
+               "select 1 from pg_database where datname='{{ _svc.db.database }}'"]
+      delegate_to: "{{ decommission_pg_host }}"
+      register: _dbchk
+      changed_when: false
+
+    - name: "decommission | Dump the DB before dropping (custom format)"
+      ansible.builtin.shell:
+        cmd: "docker exec {{ decommission_pg_container }} pg_dump -U postgres -Fc {{ _svc.db.database }} > /tmp/{{ _svc.db.database }}.dump"
+      delegate_to: "{{ decommission_pg_host }}"
+      changed_when: true
+      when: (_dbchk.stdout | trim) == '1'
+
+    - name: "decommission | Ensure the controller archive dir"
+      ansible.builtin.file:
+        path: "{{ decommission_dump_dir }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      when: (_dbchk.stdout | trim) == '1'
+
+    - name: "decommission | Fetch the dump to the controller archive"
+      ansible.builtin.fetch:
+        src: "/tmp/{{ _svc.db.database }}.dump"
+        dest: "{{ decommission_dump_dir }}/{{ _svc.db.database }}-{{ _stamp }}.dump"
+        flat: true
+      delegate_to: "{{ decommission_pg_host }}"
+      when: (_dbchk.stdout | trim) == '1'
+
+    - name: "decommission | DROP DATABASE (FORCE)"
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ decommission_pg_container }}", psql, -U, postgres, -c,
+               "DROP DATABASE IF EXISTS {{ _svc.db.database }} WITH (FORCE);"]
+      delegate_to: "{{ decommission_pg_host }}"
+      register: _dbdrop
+      changed_when: "'DROP DATABASE' in _dbdrop.stdout"
+
+    - name: "decommission | DROP ROLE"
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ decommission_pg_container }}", psql, -U, postgres, -c,
+               "DROP ROLE IF EXISTS {{ _svc.db.role }};"]
+      delegate_to: "{{ decommission_pg_host }}"
+      register: _roledrop
+      changed_when: "'DROP ROLE' in _roledrop.stdout"
+      when: _svc.db.role is defined
+
+# ============================ Secrets (archive) ==============================
+- name: "decommission | Secrets — archive in Vault + move fabric files"
+  when: (_svc.secrets | default([])) | length > 0
+  block:
+    - name: "decommission | Load the Vault root token"
+      ansible.builtin.set_fact:
+        _vault_root_token: "{{ (lookup('file', (vault_secret_dir | expanduser) + '/' + vault_init_secret) | from_json).fields.root_token }}"
+      no_log: true
+
+    - name: "decommission | Stage the token on the vault host (0600)"
+      ansible.builtin.copy:
+        dest: /tmp/.vt
+        content: "{{ _vault_root_token }}"
+        mode: "0600"
+      delegate_to: "{{ groups['vault'][0] }}"
+      no_log: true
+
+    - name: "decommission | Stage the archive script on the vault host"
+      ansible.builtin.copy:
+        src: vault_archive_secret.py
+        dest: /tmp/vault_archive_secret.py
+        mode: "0644"
+      delegate_to: "{{ groups['vault'][0] }}"
+
+    - name: "decommission | Archive the secrets in Vault (-> fabric/archive/)"
+      ansible.builtin.command:
+        argv: "{{ ['python3', '/tmp/vault_archive_secret.py'] + _svc.secrets }}"
+      delegate_to: "{{ groups['vault'][0] }}"
+      register: _secarch
+      changed_when: "'CHANGED=0' not in _secarch.stdout"
+
+    - name: "decommission | Remove the staged token"
+      ansible.builtin.file:
+        path: /tmp/.vt
+        state: absent
+      delegate_to: "{{ groups['vault'][0] }}"
+
+    - name: "decommission | Move the fabric secret files to _stale (controller)"
+      ansible.builtin.command:
+        cmd: "mv {{ (vault_secret_dir | expanduser) }}/fabric/{{ item }}.json {{ decommission_stale_dir }}/{{ item }}.json"
+        removes: "{{ (vault_secret_dir | expanduser) }}/fabric/{{ item }}.json"
+      delegate_to: localhost
+      loop: "{{ _svc.secrets }}"
+
+- name: "decommission | Summary"
+  ansible.builtin.debug:
+    msg: >-
+      {{ decommission_target }}: DB {{ 'dumped+dropped' if (_svc.db is defined) else 'n/a' }},
+      secrets {{ (_svc.secrets | default([])) | length }} archived. Guest VM/LXC + Authentik
+      app + Traefik/DNS are handled separately (see role header).

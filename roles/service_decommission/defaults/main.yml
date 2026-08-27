@@ -1,0 +1,35 @@
+---
+# ==============================================================================
+# Role: service_decommission — force a retired service ABSENT.
+# Data-driven, archive-before-destroy, idempotent. Given a service from the
+# catalog it will (for the components that service declares):
+#   * db      — pg_dump the database (archived), then DROP DATABASE + DROP ROLE
+#   * secrets — archive each in Vault (-> secret/fabric/archive/) + move the
+#               controller fabric file to secrets/_stale/
+# A component the service does not declare, or one already gone, is a no-op.
+#
+# NOT handled here (do separately, by design):
+#   * destroying the guest VM/LXC        -> Terraform (infra-terraform-proxmox)
+#   * Authentik OIDC app / group         -> remove from authentik_oidc_apps + apply
+#   * Traefik route + split-DNS override -> remove from the catalog + re-apply
+# ==============================================================================
+
+# Which service to decommission (required at run time): -e decommission_target=<name>
+decommission_target: ""
+
+# Where the DB dump + moved secret files are archived (controller-side).
+decommission_dump_dir: "{{ (vault_secret_dir | expanduser) }}/_stale/db-dumps"
+decommission_stale_dir: "{{ (vault_secret_dir | expanduser) }}/_stale"
+
+# Postgres location (runs in a container on the DB host).
+decommission_pg_host: "lxc-pgsql-01"
+decommission_pg_container: "postgres"
+
+# The catalog of decommissionable services + their footprint. Extend as needed.
+decommission_catalog:
+  defguard:
+    db: { database: "defguard", role: "defguard" }
+    secrets: ["db-pgsql-defguard", "defguard-core"]
+  minio:
+    # DB-less; MinIO was replaced by SeaweedFS. Only stray secrets (if any).
+    secrets: []
