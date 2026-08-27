@@ -95,29 +95,45 @@ jumpserver_settings:
 # The single automation key JumpServer vaults as each asset's account (encrypted
 # in JumpServer's own store — the "one credential, root on all" pattern).
 jumpserver_rune_key_path: "~/.ssh/id_ed25519_rune_nopass"
+# The Proxmox node rejects the standard rune key — it uses the automation key on
+# port 22222 (asset key_file: /tmp/jms_key_automation).
+jumpserver_node_key_path: "~/.ssh/id_ed25519_rune_automation"
 
 # Assets to register (SSH). SVC (10.1.3.x) are same-subnet as the bastion →
 # reachable now; DMZ (10.1.2.x) needs the SVC→DMZ FW rule (Phase 4). LXCs log in
 # as root (privileged); VMs as by-systems (sudo). OOB proxmox + OPNsense are
 # special (different key/port / API-only) → added later.
+# Organised by SERVICE TYPE (the JumpServer node tree groups by function, not
+# network zone). LXCs log in as root (privileged); VMs as by-systems (sudo).
+# The Proxmox node is the special case: OOB, port 22222, and the AUTOMATION key
+# (it rejects the standard rune key) -> key_file override.
 jumpserver_assets:
-  # --- SVC LXCs (root) ---
-  - { name: lxc-vault-01, address: 10.1.3.150, node: SVC, account: root, privileged: true }
-  - { name: lxc-pgsql-01, address: 10.1.3.110, node: SVC, account: root, privileged: true }
-  - { name: lxc-redis-01, address: 10.1.3.117, node: SVC, account: root, privileged: true }
-  - { name: lxc-seaweedfs-01, address: 10.1.3.200, node: SVC, account: root, privileged: true }
-  - { name: lxc-authentik-01, address: 10.1.3.130, node: SVC, account: root, privileged: true }
-  - { name: lxc-crowdsec-01, address: 10.1.3.190, node: SVC, account: root, privileged: true }
-  - { name: lxc-diagrams-01, address: 10.1.3.220, node: SVC, account: root, privileged: true }
-  - { name: lxc-gitlab-01, address: 10.1.3.210, node: SVC, account: root, privileged: true }
-  - { name: lxc-nbox-01, address: 10.1.3.120, node: SVC, account: root, privileged: true }
-  - { name: lxc-netbird-01, address: 10.1.3.181, node: SVC, account: root, privileged: true }
-  - { name: lxc-nextcloud-01, address: 10.1.3.170, node: SVC, account: root, privileged: true }
-  - { name: lxc-pgadmin-01, address: 10.1.3.140, node: SVC, account: root, privileged: true }
-  - { name: lxc-vaultwarden-01, address: 10.1.3.160, node: SVC, account: root, privileged: true }
-  # --- SVC VMs (by-systems + sudo) ---
-  - { name: vm-adguard-01, address: 10.1.3.101, node: SVC, account: by-systems, privileged: false }
-  - { name: vm-gitlab-runner-01, address: 10.1.3.211, node: SVC, account: by-systems, privileged: false }
-  # --- DMZ (needs SVC→DMZ FW rule, Phase 4) ---
-  - { name: lxc-traefik-01, address: 10.1.2.110, node: DMZ, account: root, privileged: true }
-  - { name: vm-mailcow-01, address: 10.1.2.120, node: DMZ, account: by-systems, privileged: false }
+  # --- Databases ---
+  - { name: lxc-pgsql-01, address: 10.1.3.110, node: Databases, account: root, privileged: true }
+  - { name: lxc-redis-01, address: 10.1.3.117, node: Databases, account: root, privileged: true }
+  - { name: lxc-pgadmin-01, address: 10.1.3.140, node: Databases, account: root, privileged: true }
+  # --- Identity & Secrets ---
+  - { name: lxc-authentik-01, address: 10.1.3.130, node: Identity, account: root, privileged: true }
+  - { name: lxc-vault-01, address: 10.1.3.150, node: Identity, account: root, privileged: true }
+  - { name: lxc-vaultwarden-01, address: 10.1.3.160, node: Identity, account: root, privileged: true }
+  # --- Storage & Backup ---
+  - { name: lxc-seaweedfs-01, address: 10.1.3.200, node: Storage, account: root, privileged: true }
+  - { name: vm-pbs-01, address: 10.1.3.222, node: Storage, account: by-systems, privileged: false }
+  - { name: lxc-nextcloud-01, address: 10.1.3.170, node: Storage, account: root, privileged: true }
+  # --- Networking ---
+  - { name: lxc-traefik-01, address: 10.1.2.110, node: Networking, account: root, privileged: true }
+  - { name: lxc-netbird-01, address: 10.1.3.181, node: Networking, account: root, privileged: true }
+  - { name: vm-adguard-01, address: 10.1.3.101, node: Networking, account: by-systems, privileged: false }
+  # --- DevOps / CI ---
+  - { name: lxc-gitlab-01, address: 10.1.3.210, node: DevOps, account: root, privileged: true }
+  - { name: vm-gitlab-runner-01, address: 10.1.3.211, node: DevOps, account: by-systems, privileged: false }
+  - { name: lxc-diagrams-01, address: 10.1.3.220, node: DevOps, account: root, privileged: true }
+  # --- Monitoring & Security ---
+  - { name: lxc-monitoring-01, address: 10.1.3.230, node: Monitoring, account: root, privileged: true }
+  - { name: lxc-crowdsec-01, address: 10.1.3.190, node: Monitoring, account: root, privileged: true }
+  # --- Mail ---
+  - { name: vm-mailcow-01, address: 10.1.2.120, node: Mail, account: by-systems, privileged: false }
+  # --- IPAM ---
+  - { name: lxc-nbox-01, address: 10.1.3.120, node: IPAM, account: root, privileged: true }
+  # --- Hypervisor (OOB, port 22222, automation key) ---
+  - { name: srv-proxmox-poc-01, address: 10.6.224.105, node: Hypervisor, account: root, privileged: true, port: 22222, key_file: /tmp/jms_key_automation }

@@ -394,5 +394,9 @@
 # vault the rune key, grant all, replay storage -> S3). Idempotent; runs after
 # core is healthy so the Django models are migrated + serving.
 - name: "JumpServer | RBAC + asset reconcile"
-  ansible.builtin.include_tasks: reconcile.yml
+  ansible.builtin.include_tasks:
+    file: reconcile.yml
+    apply:
+      tags: [reconcile]
   when: jumpserver_reconcile_enabled | bool
+  tags: [reconcile]

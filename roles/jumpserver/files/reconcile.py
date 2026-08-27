@@ -82,15 +82,19 @@ for a in CFG["assets"]:
     if host.address != a["address"]:
         host.address = a["address"]
         host.save(update_fields=["address"])
-    if not host.nodes.filter(pk=node.pk).exists():
-        host.nodes.add(node)
-    Protocol.objects.get_or_create(
+    # set node membership to exactly the configured category (clean reorg — an
+    # asset moved to a new service-type node is not left behind in the old one)
+    host.nodes.set([node])
+    proto, _pc = Protocol.objects.get_or_create(
         asset=host, name=a.get("protocol", "ssh"), defaults={"port": a.get("port", 22)}
     )
+    if proto.port != a.get("port", 22):
+        proto.port = a.get("port", 22)
+        proto.save(update_fields=["port"])
     if h_created:
         n_hosts += 1
-    # account (SSH key vaulted into JumpServer)
-    kp = a["key_file"]
+    # account (SSH key vaulted into JumpServer); per-asset key_file, default = rune
+    kp = a.get("key_file", "/tmp/jms_key_rune")
     if kp not in key_cache:
         key_cache[kp] = load_key(kp)
     acct, a_created = Account.objects.get_or_create(
