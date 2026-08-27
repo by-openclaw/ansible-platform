@@ -49,3 +49,62 @@
       c.commit(); sys.stdout.write('updated' if cur.rowcount else 'nochange')"
   register: pgadmin_shared_u
   changed_when: "'updated' in pgadmin_shared_u.stdout"
+
+# --- Passexec connect flow: no password prompt, survives container recreate ------
+# pgAdmin runs PasswordExecCommand (cat the passfile) at connect. Populate that
+# passfile from the superuser secret INTO the persistent data volume, then point
+# the server row at the passexec command. This is what makes the fix durable: an
+# old live-only edit was lost whenever the container was recreated; here every
+# deploy re-asserts both. Idempotent — the passfile is rewritten only when its
+# content drifts (sha256 compare, no secret printed) and the row update only fires
+# on an actual change.
+- name: "servers | Hash the desired superuser password (idempotency probe)"
+  ansible.builtin.set_fact:
+    _pgadmin_pw_sha: "{{ pgadmin_pg_superuser_password | hash('sha256') }}"
+  no_log: true
+  when: pgadmin_pg_superuser_password is defined
+
+- name: "servers | Read the current passfile hash inside the container"
+  community.docker.docker_container_exec:
+    container: pgadmin
+    user: root        # the volume dir + passfile are pgadmin-owned 0600; read as root
+    command: >-
+      /venv/bin/python3 -c "import hashlib,os,sys; p='{{ pgadmin_pg_passfile_container }}';
+      sys.stdout.write(hashlib.sha256(open(p,'rb').read()).hexdigest() if os.path.exists(p) else 'absent')"
+  register: pgadmin_passfile_now
+  changed_when: false
+  when: pgadmin_pg_superuser_password is defined
+
+# Write via the exec module's stdin (password never appears in argv / ps / logs)
+# AND as root — the image's default exec user is the unprivileged `pgadmin`, which
+# cannot create files in the volume dir or chown; root can, then hands ownership
+# back to pgadmin. stdin_add_newline:false keeps the file byte-identical to the
+# secret so the hash probe above stays idempotent and `cat` returns the exact pw.
+- name: "servers | Write the passfile into the container (root, stdin, no newline)"
+  community.docker.docker_container_exec:
+    container: pgadmin
+    user: root
+    command: >-
+      sh -c "cat > {{ pgadmin_pg_passfile_container }}
+      && chown pgadmin {{ pgadmin_pg_passfile_container }}
+      && chmod 600 {{ pgadmin_pg_passfile_container }}"
+    stdin: "{{ pgadmin_pg_superuser_password }}"
+    stdin_add_newline: false
+  no_log: true
+  changed_when: true
+  when:
+    - pgadmin_pg_superuser_password is defined
+    - (pgadmin_passfile_now.stdout | default('absent')) != _pgadmin_pw_sha
+
+- name: "servers | Point the shared server at the passexec command (idempotent)"
+  community.docker.docker_container_exec:
+    container: pgadmin
+    command: >-
+      /venv/bin/python3 -c "import sqlite3,sys;
+      c=sqlite3.connect('/var/lib/pgadmin/pgadmin4.db');
+      cur=c.execute('update server set passexec_cmd=:e, save_password=1, password=NULL where name=:n and (passexec_cmd is null or passexec_cmd != :e or save_password != 1)',
+      {'e':'{{ pgadmin_pg_passexec_cmd }}','n':'{{ pgadmin_pg_server_name }}'});
+      c.commit(); sys.stdout.write('updated' if cur.rowcount else 'nochange')"
+  register: pgadmin_passexec_set
+  changed_when: "'updated' in pgadmin_passexec_set.stdout"
+  when: pgadmin_register_pg_server | bool

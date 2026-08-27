@@ -46,6 +46,16 @@ pgadmin_pg_username: "postgres"                   # superuser → sees all servi
 pgadmin_pg_shared_username: "postgres"
 pgadmin_pg_sslmode: "verify-full"
 pgadmin_servers_host_path: "/etc/pgadmin/servers.json"
+# The shared server connects WITHOUT prompting for the postgres password: pgAdmin
+# runs a "password exec command" at connect time that cats a file in the (persistent)
+# data volume. That file is populated at deploy from the superuser secret — so the
+# password is never baked into servers.json and is re-asserted after any container
+# recreate (which is what made the old live-only fix regress on restart).
+# Source of truth for the superuser password (fabric secret; Vault migration = TODO,
+# tracked platform-wide for ALL db-pgsql-*.json, not just pgAdmin).
+pgadmin_pg_superuser_secret_file: "fabric/db-pgsql-superuser.json"  # pragma: allowlist secret
+pgadmin_pg_passfile_container: "/var/lib/pgadmin/.pgpass-pg"   # in the persistent volume
+pgadmin_pg_passexec_cmd: "/bin/cat {{ pgadmin_pg_passfile_container }}"
 # libpq (used by pgAdmin to reach Postgres) looks for the verify-full CA at
 # ~/.postgresql/root.crt by default. The container HOME is /home/pgadmin; point
 # that path at the system bundle (ISRG Root X1 → trusts the LE server cert).
