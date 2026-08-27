@@ -75,6 +75,13 @@
     mode: "0600"
   no_log: true
 
+- name: "JumpServer reconcile | Stage the OPNsense key (by-rune) on the LXC (0600)"
+  ansible.builtin.copy:
+    src: "{{ jumpserver_opnsense_key_path | replace('~', lookup('env', 'HOME')) }}"
+    dest: /tmp/jms_key_opnsense
+    mode: "0600"
+  no_log: true
+
 - name: "JumpServer reconcile | Stage the desired-state config on the LXC (0600)"
   ansible.builtin.copy:
     content: "{{ jumpserver_reconcile_cfg | to_json }}"
@@ -94,6 +101,7 @@
   loop:
     - { src: /tmp/jms_key_rune, dst: /tmp/jms_key_rune }
     - { src: /tmp/jms_key_automation, dst: /tmp/jms_key_automation }
+    - { src: /tmp/jms_key_opnsense, dst: /tmp/jms_key_opnsense }
     - { src: /tmp/jms_reconcile.json, dst: /tmp/jms_reconcile.json }
     - { src: /tmp/jms_reconcile.py, dst: /tmp/reconcile.py }
   changed_when: true
@@ -115,7 +123,7 @@
   ansible.builtin.command:
     cmd: "{{ item }}"
   loop:
-    - "docker exec jms_core rm -f /tmp/jms_key_rune /tmp/jms_key_automation /tmp/jms_reconcile.json"
-    - "shred -u /tmp/jms_key_rune /tmp/jms_key_automation"
+    - "docker exec jms_core rm -f /tmp/jms_key_rune /tmp/jms_key_automation /tmp/jms_key_opnsense /tmp/jms_reconcile.json"
+    - "shred -u /tmp/jms_key_rune /tmp/jms_key_automation /tmp/jms_key_opnsense"
     - "rm -f /tmp/jms_reconcile.json /tmp/jms_reconcile.py"
   changed_when: true

@@ -17,7 +17,7 @@ from orgs.utils import set_current_org
 org = Organization.default()
 set_current_org(org)
 
-from assets.models import Host, Node, Protocol           # noqa: E402
+from assets.models import Asset, Host, Node, Protocol    # noqa: E402
 from accounts.models import Account                       # noqa: E402
 from perms.models import AssetPermission                  # noqa: E402
 from perms.const import ActionChoices                     # noqa: E402
@@ -122,6 +122,15 @@ perm.user_groups.add(grp)
 for _child in node_cache.values():
     perm.nodes.add(_child)
 perm.nodes.remove(root)  # idempotent: undo any prior root grant
+# The v4 Workbench flat listing ("All assets") reads DIRECT asset grants — node
+# membership alone yields correct per-node COUNTS but an EMPTY listing (observed
+# live). Grant every managed asset directly too, so the tree counts AND the flat
+# listing both populate. set() is idempotent and self-heals: a newly added asset
+# (e.g. OPNsense) picks up its direct grant on the next run automatically.
+try:
+    perm.assets.set(list(Asset.objects.all()))
+except Exception as _e:  # noqa: BLE001
+    summary.append(f"WARN direct-asset grant failed: {type(_e).__name__}")
 # Make the Workbench reflect the grant immediately: expire AND rebuild the perm
 # tree for the granted group's members. Expiring alone only marks it stale — the
 # Workbench reads the BUILT tree, and the lazy rebuild doesn't reliably fire — so
@@ -137,6 +146,21 @@ try:
 except Exception as _e:  # noqa: BLE001
     _pt = f"tree-rebuild skipped ({type(_e).__name__})"
 summary.append(f"permission={perm.name} created={p_created} -> group {grp.name}, all nodes; perm-tree {_pt}")
+
+# --- (4b) refresh cached per-node asset counts (the tree badges) -------------
+# host.nodes.set() fires the m2m signal, but the cached assets_amount can lag on
+# bulk runs, showing a stale (0) badge. Recompute so the badges match the tree.
+# Best-effort / idempotent — only writes the nodes whose count actually drifted.
+try:
+    _fixed = 0
+    for _n in Node.objects.all():
+        _cnt = _n.get_all_assets().count()
+        if _n.assets_amount != _cnt:
+            Node.objects.filter(id=_n.id).update(assets_amount=_cnt)
+            _fixed += 1
+    summary.append(f"node-count refresh: {_fixed} badge(s) corrected")
+except Exception as _e:  # noqa: BLE001
+    summary.append(f"node-count refresh skipped ({type(_e).__name__})")
 
 # --- (5) replay storage -> SeaweedFS S3 -------------------------------------
 s3 = CFG.get("s3")
