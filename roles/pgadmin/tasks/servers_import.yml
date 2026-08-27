@@ -13,42 +13,42 @@
   until: pgadmin_ready.status == 200
   changed_when: false
 
-- name: "servers | Check whether the shared server already matches"
-  community.docker.docker_container_exec:
-    container: pgadmin
-    command: >-
-      /venv/bin/python3 -c "import sqlite3,sys;
-      c=sqlite3.connect('/var/lib/pgadmin/pgadmin4.db');
-      r=c.execute('select 1 from server where name=:n and host=:h and port=:p and shared_username=:s',
-      {'n':'{{ pgadmin_pg_server_name }}','h':'{{ pgadmin_pg_host }}','p':{{ pgadmin_pg_port }},'s':'{{ pgadmin_pg_shared_username }}'}).fetchone();
-      sys.stdout.write('present' if r else 'absent')"
-  register: pgadmin_server_check
+# pgAdmin runs a server's PasswordExecCommand ONLY for that server's OWNER, so a
+# single SHARED server can never connect passwordless for non-owner SSO users
+# (they get a "Connect to Server" password prompt / HTTP 428, sharedserverbad).
+# Provision a PER-USER server (owned by each pgAdmin user) with passexec instead.
+# pg_provision.py is idempotent — matches by (user_id, name), converges on drift,
+# and un-shares any legacy shared copy of the same name.
+- name: "servers | Stage the per-user provisioner config"
+  ansible.builtin.copy:
+    dest: /tmp/pg_provision.json
+    mode: "0644"
+    content: >-
+      {{ {'name': pgadmin_pg_server_name, 'host': pgadmin_pg_host, 'port': pgadmin_pg_port,
+          'maintenance_db': pgadmin_pg_maintenance_db, 'username': pgadmin_pg_username,
+          'sslmode': pgadmin_pg_sslmode, 'passexec': pgadmin_pg_passexec_cmd,
+          'comment': 'Per-user server (pgadmin role) — passexec, passwordless connect.'} | to_json }}
+
+- name: "servers | Stage the provisioner script"
+  ansible.builtin.copy:
+    src: pg_provision.py
+    dest: /tmp/pg_provision.py
+    mode: "0644"
+
+- name: "servers | Copy provisioner + config into the container"
+  ansible.builtin.command:
+    cmd: "docker cp {{ item }} pgadmin:{{ item }}"
+  loop:
+    - /tmp/pg_provision.json
+    - /tmp/pg_provision.py
   changed_when: false
 
-- name: "servers | Load the shared servers.json into pgAdmin"
+- name: "servers | Provision a per-user passexec server for every pgAdmin user"
   community.docker.docker_container_exec:
     container: pgadmin
-    command: >-
-      /venv/bin/python3 /pgadmin4/setup.py load-servers
-      /pgadmin4/servers.json --user {{ pgadmin_default_email }} --replace
-  register: pgadmin_load
-  changed_when: true
-  when: "'present' not in pgadmin_server_check.stdout"
-
-# The CLI load-servers does not set shared_username (only the web import does),
-# so non-owner SSO users get "Username must be specified". Set it directly;
-# idempotent via rowcount (only changes when it actually differs).
-- name: "servers | Ensure shared_username on the shared server"
-  community.docker.docker_container_exec:
-    container: pgadmin
-    command: >-
-      /venv/bin/python3 -c "import sqlite3,sys;
-      c=sqlite3.connect('/var/lib/pgadmin/pgadmin4.db');
-      cur=c.execute('update server set shared_username=:s where name=:n and shared=1 and (shared_username is null or shared_username != :s)',
-      {'s':'{{ pgadmin_pg_shared_username }}','n':'{{ pgadmin_pg_server_name }}'});
-      c.commit(); sys.stdout.write('updated' if cur.rowcount else 'nochange')"
-  register: pgadmin_shared_u
-  changed_when: "'updated' in pgadmin_shared_u.stdout"
+    command: /venv/bin/python3 /tmp/pg_provision.py
+  register: pgadmin_provision
+  changed_when: "'CHANGED=0' not in pgadmin_provision.stdout"
 
 # --- Passexec connect flow: no password prompt, survives container recreate ------
 # pgAdmin runs PasswordExecCommand (cat the passfile) at connect. Populate that
@@ -96,15 +96,4 @@
     - pgadmin_pg_superuser_password is defined
     - (pgadmin_passfile_now.stdout | default('absent')) != _pgadmin_pw_sha
 
-- name: "servers | Point the shared server at the passexec command (idempotent)"
-  community.docker.docker_container_exec:
-    container: pgadmin
-    command: >-
-      /venv/bin/python3 -c "import sqlite3,sys;
-      c=sqlite3.connect('/var/lib/pgadmin/pgadmin4.db');
-      cur=c.execute('update server set passexec_cmd=:e, save_password=1, password=NULL where name=:n and (passexec_cmd is null or passexec_cmd != :e or save_password != 1)',
-      {'e':'{{ pgadmin_pg_passexec_cmd }}','n':'{{ pgadmin_pg_server_name }}'});
-      c.commit(); sys.stdout.write('updated' if cur.rowcount else 'nochange')"
-  register: pgadmin_passexec_set
-  changed_when: "'updated' in pgadmin_passexec_set.stdout"
-  when: pgadmin_register_pg_server | bool
+# (passexec_cmd is set per-user by pg_provision.py above — no separate task needed.)
