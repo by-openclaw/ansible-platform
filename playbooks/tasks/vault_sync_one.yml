@@ -1,0 +1,63 @@
+---
+# Sync ONE fabric secret file into Vault KV v2 (secret/fabric/<relpath>).
+# Included per-file by secrets-to-vault.yml. Idempotent via a content compare;
+# absent → write, drifted → report (or overwrite when secrets_sync_overwrite).
+- name: "sync | Resolve KV path + desired data ({{ secret_file.path | basename }})"
+  ansible.builtin.set_fact:
+    _kv_rel: "{{ secret_file.path | regex_replace('^' + (fabric_dir | regex_escape) + '/', '') | regex_replace('\\.json$', '') }}"
+    _desired: "{{ (lookup('file', secret_file.path) | from_json).fields | default(lookup('file', secret_file.path) | from_json, true) }}"
+  no_log: true
+
+- name: "sync | Read current Vault value (rc!=0 = absent)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "-e"
+      - "VAULT_TOKEN={{ vault_root_token }}"
+      - "{{ vault_container_name }}"
+      - vault
+      - kv
+      - get
+      - "-mount={{ vault_kv_path }}"
+      - "-format=json"
+      - "fabric/{{ _kv_rel }}"
+  register: _cur
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: "sync | Decide action"
+  ansible.builtin.set_fact:
+    _absent: "{{ _cur.rc != 0 }}"
+    _drift: "{{ _cur.rc == 0 and ((_cur.stdout | from_json).data.data != _desired) }}"
+  no_log: true
+
+- name: "sync | Write to Vault (absent, or drifted + overwrite requested)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "-i"
+      - "-e"
+      - "VAULT_TOKEN={{ vault_root_token }}"
+      - "{{ vault_container_name }}"
+      - vault
+      - kv
+      - put
+      - "-mount={{ vault_kv_path }}"
+      - "fabric/{{ _kv_rel }}"
+      - "-"
+    stdin: "{{ _desired | to_json }}"
+    stdin_add_newline: false
+  when: _absent | bool or (_drift | bool and (secrets_sync_overwrite | bool))
+  register: _put
+  changed_when: _put.rc == 0
+  no_log: true
+
+- name: "sync | Record drift (present but differs, left as-is)"
+  ansible.builtin.set_fact:
+    _vault_drift: "{{ (_vault_drift | default([])) + ['fabric/' + _kv_rel] }}"
+  when:
+    - _drift | bool
+    - not (secrets_sync_overwrite | bool)

@@ -1,0 +1,25 @@
+---
+# ==============================================================================
+# Role: vault_backup — automated Vault raft snapshots (the proper Vault DR).
+# A raft snapshot is a single, consistent, portable file that restores the WHOLE
+# Vault (all KV secrets + policies + mounts) into a fresh server. Snapshots land
+# in a host dir that is ALSO captured by the node's vzdump jobs, so each one
+# reaches both Synology (NFS) and SeaweedFS (S3) with no extra S3 tooling here.
+# The play additionally pulls the newest snapshot to the controller secret store
+# for an immediate off-host copy.
+# ==============================================================================
+vault_backup_dir: "/var/lib/vault/snapshots"     # on lxc-vault-01; included in vzdump
+vault_backup_keep: 14                             # daily snapshots retained on-host
+vault_backup_schedule: "*-*-* 02:15:00"           # systemd OnCalendar (before 03:30 PBS job)
+
+# Low-privilege token the timer uses (snapshot-read only — never the root token).
+vault_backup_policy_name: "snapshot"
+vault_backup_token_file: "/etc/vault/snapshot.token"     # 0600 on the host
+vault_backup_token_period: "768h"                        # 32d periodic; auto-renews
+
+# Off-host copy of the newest snapshot, pulled to the controller store by the play.
+vault_backup_pull_to_controller: true
+vault_backup_controller_dir: "{{ (vault_secret_dir | expanduser) }}/backups/vault"
+
+# Reused from the vault role defaults (loaded via vars_files in the play):
+#   vault_container_name, vault_secret_dir, vault_init_secret
