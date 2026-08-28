@@ -1,0 +1,72 @@
+---
+# ==============================================================================
+# Harbor <-> GitLab integration (topic 2a): publish the Harbor CI robot creds as
+# GitLab INSTANCE-level CI/CD variables so every pipeline can
+#   docker login "$HARBOR_HOST" -u "$HARBOR_ROBOT_USER" -p "$HARBOR_ROBOT_TOKEN"
+# and push private images to harbor.by-research.be/gitlab/<image>.
+#
+# Consumes fabric/harbor-robot-gitlab.json (written by roles/harbor gitlab-ci.yml).
+# House pattern = gitlab-rails runner reconciler (no API token), same as gitlab_rbac.
+# The desired-state file carries the token, so it is 0600 and removed after the run.
+# GitLab's host lives in the gitlab-ce inventory (#172); we add it at runtime here
+# so this integration stays self-contained on the harbor branch.
+# ==============================================================================
+- name: "Register the GitLab host at runtime"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "Add lxc-gitlab-01 as a target (same access as the other SVC LXCs)"
+      ansible.builtin.add_host:
+        name: lxc-gitlab-01
+        groups: _harbor_gitlab_ci
+        ansible_host: "{{ harbor_gitlab_host | default('10.1.3.210') }}"
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_ed25519_rune_nopass
+        ansible_ssh_common_args: >-
+          -o ProxyCommand="ssh -W %h:%p -i ~/.ssh/id_ed25519_opnsense
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          by-rune@10.6.239.196"
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+
+- name: "Seed Harbor CI credentials into GitLab"
+  hosts: _harbor_gitlab_ci
+  gather_facts: false
+  vars:
+    harbor_robot_secret_file: "~/.openclaw/workspace/infra/secrets/fabric/harbor-robot-gitlab.json"
+  tasks:
+    - name: "Load the Harbor CI robot creds (controller fabric)"
+      ansible.builtin.set_fact:
+        harbor_ci_robot: "{{ (lookup('file', harbor_robot_secret_file) | from_json).fields }}"
+      no_log: true
+
+    - name: "Stage the CI-variable reconciler on the GitLab host"
+      ansible.builtin.copy:
+        src: files/harbor_ci_vars.rb
+        dest: /opt/harbor-ci-vars.rb
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "Reconcile the CI variables (gitlab-rails runner; token via env, not disk)"
+      vars:
+        harbor_ci_desired:
+          variables:
+            - { key: "HARBOR_HOST", value: "{{ harbor_ci_robot.host }}", masked: false, protected: false, raw: false }
+            - { key: "HARBOR_ROBOT_USER", value: "{{ harbor_ci_robot.username }}", masked: false, protected: false, raw: true }
+            - { key: "HARBOR_ROBOT_TOKEN", value: "{{ harbor_ci_robot.token }}", masked: true, protected: false, raw: true }  # pragma: allowlist secret
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - /opt/harbor-ci-vars.rb
+      environment:
+        HARBOR_CI_DESIRED: "{{ harbor_ci_desired | to_json }}"
+      register: harbor_ci_vars_run
+      changed_when: "'changes=0' not in harbor_ci_vars_run.stdout"
+      failed_when: "'HARBOR_CI_VARS_DONE' not in harbor_ci_vars_run.stdout"
+      no_log: true
+
+    - name: "Result (change lines only — no secret values)"
+      ansible.builtin.debug:
+        msg: "{{ harbor_ci_vars_run.stdout_lines }}"
