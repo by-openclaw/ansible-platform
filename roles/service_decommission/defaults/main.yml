@@ -21,11 +21,28 @@ decommission_target: ""
 decommission_dump_dir: "{{ (vault_secret_dir | expanduser) }}/_stale/db-dumps"
 decommission_stale_dir: "{{ (vault_secret_dir | expanduser) }}/_stale"
 
-# Postgres location (runs in a container on the DB host).
+# Where each footprint component is removed.
 decommission_pg_host: "lxc-pgsql-01"
 decommission_pg_container: "postgres"
+decommission_traefik_host: "lxc-traefik-01"
+decommission_traefik_dynamic_dir: "/etc/traefik/dynamic"
+decommission_authentik_host: "lxc-authentik-01"
+decommission_crowdsec_host: "lxc-crowdsec-01"
 
-# The catalog of decommissionable services + their footprint. Extend as needed.
+# The catalog of decommissionable services + their FULL footprint. Every field is
+# OPTIONAL — declare only the components a service actually has; each is removed
+# archive-before-destroy and skipped (no-op) when already absent. Full template:
+#
+#   <service>:
+#     db:             { database: <db>, role: <role> }   # pg_dump → DROP DATABASE + ROLE
+#     secrets:        [<fabric-secret-name>, ...]         # → Vault fabric/archive/ + file _stale
+#     traefik_route:  <route-name>                        # rm /etc/traefik/dynamic/<name>.yml
+#     authentik_app:  <oidc-slug>                         # delete app + provider
+#     authentik_group: <group-name>                       #   (optional) + delete this group
+#     crowdsec_machine: <machine-id>                       # cscli machines delete
+#     guest:          <vm-or-lxc-name>                     # ⚠️ Terraform-managed → logged, NOT auto-destroyed
+#     split_dns:      <fqdn>                               # ⚠️ remove from opn_unbound.host_overrides → logged
+#
 decommission_catalog:
   defguard:
     db: { database: "defguard", role: "defguard" }

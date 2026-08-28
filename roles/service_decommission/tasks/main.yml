@@ -108,9 +108,64 @@
       delegate_to: localhost
       loop: "{{ _svc.secrets }}"
 
+# ============================ Traefik route =================================
+- name: "decommission | Remove the Traefik route file (file provider hot-reloads)"
+  ansible.builtin.file:
+    path: "{{ decommission_traefik_dynamic_dir }}/{{ _svc.traefik_route }}.yml"
+    state: absent
+  delegate_to: "{{ decommission_traefik_host }}"
+  when: _svc.traefik_route is defined
+
+# ============================ Authentik OIDC app ============================
+- name: "decommission | Remove the Authentik app + provider (+ group)"
+  when: _svc.authentik_app is defined
+  block:
+    - name: "decommission | Stage the Authentik remover"
+      ansible.builtin.copy:
+        src: authentik_remove_app.py
+        dest: /tmp/authentik_remove_app.py
+        mode: "0644"
+      delegate_to: "{{ decommission_authentik_host }}"
+
+    - name: "decommission | Delete the Authentik app + provider (+ group)"
+      ansible.builtin.shell:
+        cmd: >-
+          cat /tmp/authentik_remove_app.py | docker exec -i authentik-server
+          python3 - {{ _svc.authentik_app }} {{ _svc.authentik_group | default('') }}
+      delegate_to: "{{ decommission_authentik_host }}"
+      register: _akdel
+      changed_when: "'CHANGED=0' not in _akdel.stdout"
+
+# ============================ CrowdSec machine ==============================
+- name: "decommission | Delete the CrowdSec machine"
+  ansible.builtin.command:
+    argv: [cscli, machines, delete, "{{ _svc.crowdsec_machine }}"]
+  delegate_to: "{{ decommission_crowdsec_host }}"
+  register: _csdel
+  changed_when: _csdel.rc == 0
+  failed_when:
+    - _csdel.rc != 0
+    - "'exist' not in (_csdel.stderr | default('') | lower)"
+  when: _svc.crowdsec_machine is defined
+
+# ==================== Guest + split-DNS (flagged, not auto) =================
+- name: "decommission | Guest VM/LXC → destroy in Terraform (NOT done here)"
+  ansible.builtin.debug:
+    msg: "⚠️ Guest '{{ _svc.guest }}' is Terraform-managed — remove it in infra-terraform-proxmox (module / terraform destroy -target). Not auto-destroyed by design."
+  when: _svc.guest is defined
+
+- name: "decommission | Split-DNS override → remove from the FW catalog (NOT done here)"
+  ansible.builtin.debug:
+    msg: "⚠️ Remove split-DNS host override '{{ _svc.split_dns }}' from inventories/prod/group_vars/opnsense.yml (opn_unbound.host_overrides) + apply."
+  when: _svc.split_dns is defined
+
 - name: "decommission | Summary"
   ansible.builtin.debug:
     msg: >-
-      {{ decommission_target }}: DB {{ 'dumped+dropped' if (_svc.db is defined) else 'n/a' }},
-      secrets {{ (_svc.secrets | default([])) | length }} archived. Guest VM/LXC + Authentik
-      app + Traefik/DNS are handled separately (see role header).
+      {{ decommission_target }} ABSENT —
+      db:{{ 'dumped+dropped' if _svc.db is defined else '-' }}
+      secrets:{{ (_svc.secrets | default([])) | length }}
+      route:{{ 'removed' if _svc.traefik_route is defined else '-' }}
+      authentik:{{ 'removed' if _svc.authentik_app is defined else '-' }}
+      crowdsec:{{ 'removed' if _svc.crowdsec_machine is defined else '-' }}.
+      Guest(TF){{ '=' + _svc.guest if _svc.guest is defined else '' }} + split-DNS are flagged, not auto-removed.
