@@ -7,7 +7,7 @@
 # Uses the local admin API creds — still valid after the OIDC switch.
 
 # --- Upstream registry endpoints (the pull-through source) --------------------
-- name: "proxy | Look up existing upstream registries"
+- name: "Proxy | Look up existing upstream registries"
   ansible.builtin.uri:
     url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/registries?name={{ item.name }}"
     user: admin
@@ -20,7 +20,7 @@
   changed_when: false
   no_log: true
 
-- name: "proxy | Create the missing upstream registry endpoints"
+- name: "Proxy | Create the missing upstream registry endpoints"
   ansible.builtin.uri:
     url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/registries"
     method: POST
@@ -43,7 +43,7 @@
   no_log: true
 
 # --- Resolve endpoint ids (every configured registry now exists) --------------
-- name: "proxy | Resolve the registry endpoint ids"
+- name: "Proxy | Resolve the registry endpoint ids"
   ansible.builtin.uri:
     url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/registries?name={{ item.name }}"
     user: admin
@@ -57,7 +57,7 @@
   no_log: true
 
 # --- Proxy-cache projects bound to those endpoints ----------------------------
-- name: "proxy | Look up existing proxy-cache projects"
+- name: "Proxy | Look up existing proxy-cache projects"
   ansible.builtin.uri:
     url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/projects?name={{ item.project }}"
     user: admin
@@ -70,7 +70,7 @@
   changed_when: false
   no_log: true
 
-- name: "proxy | Create the missing proxy-cache projects"
+- name: "Proxy | Create the missing proxy-cache projects"
   ansible.builtin.uri:
     url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/projects"
     method: POST

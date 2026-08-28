@@ -40,6 +40,11 @@
   when: (harbor_proxy_caches | default([])) | length > 0
   tags: [harbor, proxy]
 
+- name: "Provision the GitLab CI push target (project + scoped system robot)"
+  ansible.builtin.import_tasks: gitlab-ci.yml
+  when: harbor_ci_enabled | bool
+  tags: [harbor, ci]
+
 - name: "Publish Harbor via Traefik (internal-only, TLS at the edge)"
   ansible.builtin.include_role:
     name: traefik_route

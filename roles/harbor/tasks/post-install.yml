@@ -2,12 +2,12 @@
 # Switch Harbor to Authentik OIDC (auth_mode=oidc_auth) via the Harbor API, using
 # the local admin creds. Only flips when not already OIDC (Harbor allows the switch
 # while only the admin local user exists — do this before onboarding people).
-- name: "oidc | The OIDC client creds must be present (run playbooks/authentik.yml first)"
+- name: "Oidc | The OIDC client creds must be present (run playbooks/authentik.yml first)"
   ansible.builtin.assert:
     that: harbor_oidc is defined and (harbor_oidc.client_id | default('')) | length > 0
     fail_msg: "fabric/app-oidc-harbor.json missing — add 'harbor' to authentik_oidc_apps and run playbooks/authentik.yml first."
 
-- name: "oidc | Read Harbor's current auth mode"
+- name: "Oidc | Read Harbor's current auth mode"
   ansible.builtin.uri:
     url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/configurations"
     user: admin
@@ -18,7 +18,7 @@
   changed_when: false
   no_log: true
 
-- name: "oidc | Configure Authentik OIDC + switch auth mode"
+- name: "Oidc | Configure Authentik OIDC + switch auth mode"
   ansible.builtin.uri:
     url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/configurations"
     method: PUT

@@ -65,3 +65,17 @@ harbor_proxy_caches:
   - { project: "dockerhub", name: "docker-hub", type: "docker-hub", url: "https://hub.docker.com" }
   # - { project: "ghcr",   name: "ghcr",   type: "github-ce", url: "https://ghcr.io" }
   # - { project: "quay",   name: "quay",   type: "quay",      url: "https://quay.io" }
+
+# --- GitLab CI push target: private project + scoped system robot (topic 2a) ----
+# CI pipelines docker-login as this robot and push private images to <ci_project>,
+# and pull base images through the dockerhub proxy-cache. The robot secret is
+# returned by Harbor ONCE at creation → captured to fabric (+ Vault). Least
+# privilege: push/pull on the CI project, pull-only on the cache. The matching
+# GitLab CI/CD variables (HARBOR_HOST/USER/TOKEN) are set on the GitLab side
+# (gitlab-ce repo) from this same fabric secret.
+harbor_ci_enabled: true
+harbor_ci_project: "gitlab"                               # private project images land in
+harbor_ci_robot_name: "gitlab-ci"                         # system robot -> login name robot$gitlab-ci
+harbor_ci_robot_duration: -1                              # days; -1 = non-expiring
+harbor_ci_robot_secret_file: "fabric/harbor-robot-gitlab.json"  # pragma: allowlist secret
+harbor_ci_pull_cache_project: "dockerhub"                 # proxy-cache the robot may pull from

@@ -1,0 +1,136 @@
+---
+# Topic 2a — GitLab CI push target: a private project + a scoped system robot.
+# Harbor returns a robot's secret ONLY at creation, so we key idempotency on the
+# fabric secret file: create when the robot is absent OR the secret was lost
+# (recreate to rotate a fresh, matching token). Uses admin creds (valid post-OIDC).
+
+# --- Private project the CI images land in ------------------------------------
+- name: "Ci | Look up the CI project"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/projects?name={{ harbor_ci_project }}"
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  register: harbor_ci_proj_lookup
+  changed_when: false
+  no_log: true
+
+- name: "Ci | Create the CI project (private)"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/projects"
+    method: POST
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      project_name: "{{ harbor_ci_project }}"
+      metadata: { public: "false" }
+    status_code: [201]
+  when: >-
+    (harbor_ci_proj_lookup.json | default([])
+      | selectattr('name', 'equalto', harbor_ci_project) | list | length) == 0
+  changed_when: true
+  no_log: true
+
+# --- Robot account ------------------------------------------------------------
+- name: "Ci | Stat the robot secret on the controller"
+  ansible.builtin.stat:
+    path: "{{ harbor_secret_dir }}/{{ harbor_ci_robot_secret_file }}"
+  delegate_to: localhost
+  become: false
+  register: harbor_ci_secret_stat
+
+- name: "Ci | List existing robot accounts"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/robots?page_size=100"
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  register: harbor_robots
+  changed_when: false
+  no_log: true
+
+- name: "Ci | Resolve robot state"
+  ansible.builtin.set_fact:
+    harbor_ci_robot_fullname: "robot${{ harbor_ci_robot_name }}"
+    harbor_ci_robot_existing: >-
+      {{ (harbor_robots.json | default([])
+          | selectattr('name', 'equalto', 'robot$' ~ harbor_ci_robot_name) | list) }}
+
+# Recreate path: robot exists but we no longer hold its secret -> rotate it clean.
+- name: "Ci | Delete the stale robot (secret lost, will recreate)"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/robots/{{ (harbor_ci_robot_existing | first).id }}"
+    method: DELETE
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  when:
+    - harbor_ci_robot_existing | length > 0
+    - not harbor_ci_secret_stat.stat.exists
+  changed_when: true
+  no_log: true
+
+- name: "Ci | Create the scoped system robot"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/robots"
+    method: POST
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      name: "{{ harbor_ci_robot_name }}"
+      description: "GitLab CI push/pull — managed by Ansible (role harbor)"
+      duration: "{{ harbor_ci_robot_duration }}"
+      level: system
+      disable: false
+      permissions:
+        - kind: project
+          namespace: "{{ harbor_ci_project }}"
+          access:
+            - { resource: repository, action: push }
+            - { resource: repository, action: pull }
+            - { resource: tag, action: create }
+            - { resource: artifact, action: read }
+            - { resource: scan, action: create }
+        - kind: project
+          namespace: "{{ harbor_ci_pull_cache_project }}"
+          access:
+            - { resource: repository, action: pull }
+            - { resource: artifact, action: read }
+    status_code: [201]
+  register: harbor_ci_robot_create
+  when: (harbor_ci_robot_existing | length == 0) or (not harbor_ci_secret_stat.stat.exists)
+  changed_when: true
+  no_log: true
+
+- name: "Ci | Persist the robot credentials (fabric, 0600)"
+  vars:
+    harbor_ci_robot_record:
+      fields:
+        host: "{{ harbor_fqdn }}"
+        username: "{{ harbor_ci_robot_create.json.name }}"
+        token: "{{ harbor_ci_robot_create.json.secret }}"  # pragma: allowlist secret
+        project: "{{ harbor_ci_project }}"
+  ansible.builtin.copy:
+    dest: "{{ harbor_secret_dir }}/{{ harbor_ci_robot_secret_file }}"
+    mode: "0600"
+    content: "{{ harbor_ci_robot_record | to_nice_json }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: harbor_ci_robot_create is defined and harbor_ci_robot_create is changed
+
+- name: "Ci | Report robot state (no secrets)"
+  ansible.builtin.debug:
+    msg: >-
+      robot={{ harbor_ci_robot_fullname }}
+      {{ 'CREATED (secret persisted to ' ~ harbor_ci_robot_secret_file ~ ')'
+         if (harbor_ci_robot_create is defined and harbor_ci_robot_create is changed)
+         else 'already present (secret held in fabric) — no change' }}
+      project={{ harbor_ci_project }} (private)  pull-cache={{ harbor_ci_pull_cache_project }}
