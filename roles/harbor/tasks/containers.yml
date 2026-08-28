@@ -12,6 +12,17 @@
     - "{{ harbor_install_dir | dirname }}"
     - "{{ harbor_data_dir }}"
 
+# Platform base image ships Debian's docker.io (docker-cli) WITHOUT the compose
+# plugin — `docker compose` is not a subcommand here. Debian packages Compose v2
+# as the standalone `docker-compose` binary; Harbor is the only compose-based
+# service, so we pull it in here rather than in the shared docker role.
+- name: "container | Ensure Compose v2 (Debian standalone docker-compose) is present"
+  ansible.builtin.apt:
+    name: docker-compose
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: "container | Download the Harbor installer (pinned {{ harbor_version }})"
   ansible.builtin.get_url:
     url: "{{ harbor_installer_url }}"
@@ -44,7 +55,7 @@
 
 - name: "container | Bring up the Harbor stack"
   ansible.builtin.command:
-    cmd: docker compose up -d --remove-orphans
+    cmd: docker-compose up -d --remove-orphans
     chdir: "{{ harbor_install_dir }}"
   register: harbor_up
   changed_when: >-
