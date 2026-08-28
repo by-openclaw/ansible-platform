@@ -20,7 +20,7 @@ its **own bundled Redis**, **Authentik OIDC**, TLS terminated at **Traefik**. Al
 | 3 | **Authentik OIDC app + group** | `harbor` app, `harbor-admins` | `roles/authentik/defaults/main.yml` | explicit |
 | 4 | **Postgres DB + role** | `harbor` DB (via `postgres_db`) | included by `roles/harbor/tasks/main.yml` | via role |
 | 5 | **SeaweedFS S3 bucket** | `harbor-registry` (via `seaweedfs_bucket`) | included by `roles/harbor/tasks/main.yml` | via role |
-| 6 | **Secrets** | `fabric/harbor.json` (+ db/s3/oidc) → mirror to Vault | `tasks/secrets.yml` + `playbooks/secrets-to-vault.yml` | via role |
+| 6 | **Secrets** | `fabric/harbor.json` (+ db/s3/oidc/`harbor-robot-gitlab`) → Vault | `tasks/secrets.yml` + `playbooks/secrets-to-vault.yml` | via role |
 | 7 | **Ansible role** | install → OIDC → proxy-cache | `roles/harbor` | explicit |
 | 8 | **Traefik route** | `harbor.by-research.be` (internal-only) | included by `roles/harbor/tasks/main.yml` | via role |
 | 9 | **Split-DNS** | `lxc-harbor-01`.240 + `harbor`→Traefik | `inventories/prod/group_vars/opnsense.yml` | explicit |
@@ -43,7 +43,10 @@ its **own bundled Redis**, **Authentik OIDC**, TLS terminated at **Traefik**. Al
 5. `playbooks/harbor.yml` — DB → S3 bucket → secrets → install → OIDC → proxy-cache → Traefik route.
 6. `playbooks/secrets-to-vault.yml` — mirror Harbor's new fabric secrets into Vault.
 7. `playbooks/jumpserver.yml --tags reconcile` — register the bastion asset (after #170).
-8. **GitLab tie-in** — create a Harbor robot account + set GitLab CI vars so pipelines push scanned/signed images.
+8. **GitLab tie-in** (topic 2a, done) — `roles/harbor tasks/gitlab-ci.yml` creates the
+   private `gitlab` project + scoped system robot `robot$gitlab-ci` (creds →
+   `fabric/harbor-robot-gitlab.json` → Vault); `playbooks/harbor-gitlab-ci.yml` seeds
+   `HARBOR_HOST` / `HARBOR_ROBOT_USER` / `HARBOR_ROBOT_TOKEN` as GitLab instance CI vars.
 
 ## Using it as Docker Hub
 
@@ -52,9 +55,31 @@ pull explicitly: `docker pull harbor.by-research.be/dockerhub/library/nginx:late
 The first pull caches; later pulls are local. Serves Docker today, Swarm/k3s + Helm
 (OCI) tomorrow — all identical OCI pulls.
 
+## Pushing from GitLab CI (topic 2a)
+
+The robot has push/pull on the private `gitlab` project and pull on the `dockerhub`
+cache. The three CI variables are set instance-wide, so any pipeline can:
+
+```yaml
+build-image:
+  image: docker:27
+  services: [docker:27-dind]
+  script:
+    - echo "$HARBOR_ROBOT_TOKEN" | docker login "$HARBOR_HOST" -u "$HARBOR_ROBOT_USER" --password-stdin
+    - docker build -t "$HARBOR_HOST/gitlab/$CI_PROJECT_NAME:$CI_COMMIT_SHORT_SHA" .
+    - docker push "$HARBOR_HOST/gitlab/$CI_PROJECT_NAME:$CI_COMMIT_SHORT_SHA"
+```
+
+`HARBOR_ROBOT_USER`/`HARBOR_ROBOT_TOKEN` are `raw` (the `robot$…` name must not expand);
+the token is masked in job logs. Base images pull through the cache, e.g.
+`FROM harbor.by-research.be/dockerhub/library/alpine:3.20`. Re-run the seed playbook
+after rotating the robot; it is idempotent (`changes=0` when unchanged).
+
 ## Decommission (reverse chain)
 
 `ansible-playbook … playbooks/decommission-service.yml -e decommission_target=harbor`
 once a `harbor` entry (db, secrets, traefik_route, authentik_app, crowdsec_machine,
 guest, split_dns) is added to the `service_decommission` catalog — then `terraform
-destroy` the guest.
+destroy` the guest. GitLab-side leftovers to reverse too: the `robot$gitlab-ci`
+account + `gitlab` project (Harbor API) and the three `HARBOR_*` instance CI variables
+(`gitlab-rails runner`).
