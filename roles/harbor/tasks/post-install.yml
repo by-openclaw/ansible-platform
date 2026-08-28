@@ -1,0 +1,44 @@
+---
+# Switch Harbor to Authentik OIDC (auth_mode=oidc_auth) via the Harbor API, using
+# the local admin creds. Only flips when not already OIDC (Harbor allows the switch
+# while only the admin local user exists — do this before onboarding people).
+- name: "oidc | The OIDC client creds must be present (run playbooks/authentik.yml first)"
+  ansible.builtin.assert:
+    that: harbor_oidc is defined and (harbor_oidc.client_id | default('')) | length > 0
+    fail_msg: "fabric/app-oidc-harbor.json missing — add 'harbor' to authentik_oidc_apps and run playbooks/authentik.yml first."
+
+- name: "oidc | Read Harbor's current auth mode"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/configurations"
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  register: harbor_cfg_now
+  changed_when: false
+  no_log: true
+
+- name: "oidc | Configure Authentik OIDC + switch auth mode"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/configurations"
+    method: PUT
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      auth_mode: "oidc_auth"
+      oidc_name: "authentik"
+      oidc_endpoint: "{{ harbor_oidc_endpoint }}"
+      oidc_client_id: "{{ harbor_oidc.client_id }}"
+      oidc_client_secret: "{{ harbor_oidc.client_secret }}"
+      oidc_scope: "{{ harbor_oidc_scope }}"
+      oidc_groups_claim: "{{ harbor_oidc_groups_claim }}"
+      oidc_admin_group: "{{ harbor_oidc_admin_group }}"
+      oidc_auto_onboard: "{{ harbor_oidc_auto_onboard | bool }}"
+      oidc_user_claim: "preferred_username"
+      oidc_verify_cert: true
+    status_code: [200]
+  no_log: true
+  changed_when: true
+  when: (harbor_cfg_now.json.auth_mode.value | default('db_auth')) != 'oidc_auth'

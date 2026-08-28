@@ -1,0 +1,61 @@
+{# Managed by Ansible (role harbor). Harbor installer config — ./prepare renders
+   docker-compose.yml from this. TLS is terminated at Traefik, so Harbor serves
+   plain HTTP on {{ harbor_host_port }} and external_url carries the https name. #}
+hostname: {{ harbor_fqdn }}
+
+# Traefik terminates TLS; Harbor's nginx listens HTTP on this port (Traefik backend).
+http:
+  port: {{ harbor_host_port }}
+
+# So Harbor emits correct https:// URLs (docker login / UI) behind the proxy.
+external_url: https://{{ harbor_fqdn }}
+
+harbor_admin_password: {{ harbor_admin_password }}
+
+# Local /data — only logs + Trivy DB cache live here; image blobs go to S3 below.
+data_volume: {{ harbor_data_dir }}
+
+# --- Image blob storage -> SeaweedFS S3 (path-style, https) --------------------
+storage_service:
+  s3:
+    accesskey: {{ harbor_s3_creds.access_key }}
+    secretkey: {{ harbor_s3_creds.secret_key }}
+    region: {{ harbor_s3_region }}
+    regionendpoint: {{ harbor_s3_endpoint }}
+    bucket: {{ harbor_s3_bucket }}
+    secure: true
+    v4auth: true
+    forcepathstyle: true
+
+# --- Metadata -> cluster PostgreSQL (lxc-pgsql-01) ----------------------------
+external_database:
+  harbor:
+    host: {{ harbor_pg_host }}
+    port: {{ harbor_pg_port }}
+    db_name: {{ harbor_pg_name }}
+    username: {{ harbor_pg_user }}
+    password: {{ harbor_pg_password }}
+    ssl_mode: {{ harbor_pg_sslmode }}
+    max_idle_conns: 2
+    max_open_conns: 0
+
+# Redis: Harbor's own bundled instance (internal job-queue/cache; not shared state,
+# so kept isolated rather than carving DB indexes out of the cluster Redis).
+
+{% if harbor_trivy_enabled | bool %}
+trivy:
+  ignore_unfixed: false
+  skip_update: false
+  offline_scan: false
+  security_check: vuln
+  insecure: false
+{% endif %}
+
+log:
+  level: info
+  local:
+    rotate_count: 50
+    rotate_size: 200M
+    location: /var/log/harbor
+
+_version: 2.12.0

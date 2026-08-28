@@ -146,6 +146,17 @@ authentik_oidc_apps:
     redirect_uris_regex:
       - "https://pbs\\.by-research\\.be/.*"
 
+  - slug: harbor
+    launch_url: "https://harbor.by-research.be"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/harbor.svg"
+    name: "Harbor"
+    group: "harbor-admins"          # ACCESS group — members become Harbor admins (oidc_admin_group)
+    secret_file: "fabric/app-oidc-harbor.json"  # pragma: allowlist secret
+    restrict_to_group: true         # IdP-enforced: only harbor-admins can log in
+    # Harbor's OIDC callback path.
+    redirect_uris:
+      - "https://harbor.by-research.be/c/oidc/callback"
+
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
 # Authentik fronts them with a Proxy Provider in `forward_single` mode, served by the
@@ -180,6 +191,7 @@ authentik_groups:
   - netbird-admins      # NetBird admins (NetBird's own owner/admin role set in-app)
   - mailcow-users       # access group — only members may SSO into mailcow webmail
   - pbs-admins          # access group — only members may SSO into Proxmox Backup Server
+  - harbor-admins       # access group — members may SSO into Harbor and become Harbor admins
   - infra-admins
   - dev
 # Groups whose members are Authentik superusers (can manage Authentik itself).

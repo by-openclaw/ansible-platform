@@ -1,0 +1,56 @@
+---
+# ==============================================================================
+# Role: harbor — OCI container registry (Docker/Swarm/k3s images + Helm charts)
+# on lxc-harbor-01 (SVC 10.1.3.240). Docker-compose stack via Harbor's installer.
+# Stateless-ish: blobs -> SeaweedFS S3, metadata -> cluster Postgres, sessions ->
+# cluster Redis. Fronted by Traefik (TLS terminated at the edge) + Authentik OIDC.
+# Trivy scanning on. Secrets follow the fabric-file house pattern; mirror to Vault
+# with playbooks/secrets-to-vault.yml (same follow-up as every other service).
+# ==============================================================================
+
+# Identity / addressing
+harbor_fqdn: "harbor.by-research.be"
+harbor_listen_ip: "10.1.3.240"
+harbor_host_port: 8080                 # Harbor portal/registry HTTP (Traefik does HTTPS)
+
+# Harbor release (PINNED — never :latest, per platform standard)
+harbor_version: "v2.12.2"
+harbor_installer_url: "https://github.com/goharbor/harbor/releases/download/{{ harbor_version }}/harbor-online-installer-{{ harbor_version }}.tgz"
+harbor_install_dir: "/opt/harbor"
+harbor_data_dir: "/data/harbor"        # Harbor's local /data (logs, trivy cache) — blobs are on S3
+
+# --- Secrets (controller fabric store; Vault mirror = follow-up) ---------------
+harbor_secret_dir: "~/.openclaw/workspace/infra/secrets"
+harbor_secret_file: "fabric/harbor.json"                 # admin password (generated here)  # pragma: allowlist secret
+
+# --- Cluster Postgres (roles/postgres_db creates the DB + role) ----------------
+harbor_pg_name: "harbor"
+harbor_pg_user: "harbor"
+harbor_pg_host: "lxc-pgsql-01.by-research.be"            # FQDN so verify-full matches the cert
+harbor_pg_port: 5432
+harbor_pg_sslmode: "verify-full"
+harbor_pg_secret_file: "fabric/db-pgsql-harbor.json"     # written by postgres_db  # pragma: allowlist secret
+
+# Redis: Harbor uses its own bundled instance (internal job-queue/cache), so no
+# cluster-Redis wiring here — see the comment in templates/harbor.yml.j2.
+
+# --- SeaweedFS S3 (roles/seaweedfs_bucket provisions bucket + scoped identity) --
+harbor_s3_identity: "harbor"
+harbor_s3_bucket: "harbor-registry"
+harbor_s3_region: "us-east-1"
+harbor_s3_endpoint: "https://s3.by-research.be"           # Traefik route (reused, no new split-DNS)
+harbor_s3_secret_file: "fabric/infra-seaweedfs-harbor.json"  # pragma: allowlist secret
+
+# --- Authentik OIDC (app declared in roles/authentik authentik_oidc_apps) -------
+harbor_oidc_enabled: true
+harbor_oidc_secret_file: "fabric/app-oidc-harbor.json"    # written by the authentik role  # pragma: allowlist secret
+harbor_authentik_base: "https://authentik.by-research.be"
+harbor_oidc_slug: "harbor"
+harbor_oidc_endpoint: "{{ harbor_authentik_base }}/application/o/{{ harbor_oidc_slug }}/"
+harbor_oidc_scope: "openid,email,profile,groups"
+harbor_oidc_groups_claim: "groups"
+harbor_oidc_admin_group: "harbor-admins"                  # members become Harbor admins
+harbor_oidc_auto_onboard: true
+
+# --- Trivy vulnerability scanner ----------------------------------------------
+harbor_trivy_enabled: true

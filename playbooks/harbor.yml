@@ -1,0 +1,20 @@
+---
+# ==============================================================================
+# Configure PROD Harbor (lxc-harbor-01, SVC 10.1.3.240) — OCI container registry.
+# Order (see roles/harbor/tasks/main.yml): DB -> S3 bucket -> secrets -> install ->
+# OIDC post-install -> Traefik route.
+#
+# PREREQS (run once, in order):
+#   1. Add 'harbor' to authentik_oidc_apps + 'harbor-admins' group -> playbooks/authentik.yml
+#      (writes fabric/app-oidc-harbor.json).
+#   2. Guest up (infra-terraform-proxmox svc-harbor.tf) + host in inventory.
+#   3. playbooks/hardening.yml -l lxc-harbor-01
+#   4. Split-DNS + OPNsense catalog applied (overrides + Traefik->SVC rule).
+#   Then: ansible-playbook -i inventories/prod/hosts.yml playbooks/harbor.yml
+# ==============================================================================
+- name: "Configure PROD Harbor"
+  hosts: harbor
+  become: true
+  gather_facts: true
+  roles:
+    - harbor
