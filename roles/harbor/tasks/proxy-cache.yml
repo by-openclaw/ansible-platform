@@ -1,0 +1,55 @@
+---
+# Pull-through proxy-cache projects (Docker Hub etc.). Idempotent: create the
+# upstream registry endpoint + its proxy project only when absent (409 = exists).
+# Uses the local admin API creds — still valid after the OIDC switch.
+- name: "proxy | Ensure the upstream registry endpoints"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/registries"
+    method: POST
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      type: "{{ item.type }}"
+      url: "{{ item.url }}"
+      insecure: false
+    status_code: [201, 409]     # 409 = endpoint already present
+  loop: "{{ harbor_proxy_caches }}"
+  loop_control: { label: "{{ item.name }}" }
+  register: harbor_reg_create
+  changed_when: harbor_reg_create is not skipped and (201 in (harbor_reg_create.results | map(attribute='status') | list))
+  no_log: true
+
+- name: "proxy | Resolve the registry endpoint ids"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/registries?name={{ item.name }}"
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  loop: "{{ harbor_proxy_caches }}"
+  loop_control: { label: "{{ item.name }}" }
+  register: harbor_reg_ids
+  changed_when: false
+  no_log: true
+
+- name: "proxy | Ensure the proxy-cache projects"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/projects"
+    method: POST
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      project_name: "{{ item.item.project }}"
+      registry_id: "{{ (item.json | first).id }}"
+      metadata: { public: "true" }
+    status_code: [201, 409]     # 409 = project already present
+  loop: "{{ harbor_reg_ids.results }}"
+  loop_control: { label: "{{ item.item.project }}" }
+  register: harbor_proj_create
+  changed_when: harbor_proj_create is not skipped and (201 in (harbor_proj_create.results | map(attribute='status') | list))
+  no_log: true

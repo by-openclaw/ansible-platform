@@ -34,6 +34,11 @@
   when: harbor_oidc_enabled | bool
   tags: [harbor, oidc]
 
+- name: "Configure pull-through proxy caches (Docker Hub etc.)"
+  ansible.builtin.import_tasks: proxy-cache.yml
+  when: (harbor_proxy_caches | default([])) | length > 0
+  tags: [harbor, proxy]
+
 - name: "Publish Harbor via Traefik (internal-only, TLS at the edge)"
   ansible.builtin.include_role:
     name: traefik_route

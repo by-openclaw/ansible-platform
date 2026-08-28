@@ -54,3 +54,14 @@ harbor_oidc_auto_onboard: true
 
 # --- Trivy vulnerability scanner ----------------------------------------------
 harbor_trivy_enabled: true
+
+# --- Pull-through proxy caches (replace Docker Hub etc.) -----------------------
+# A proxy-cache project mirrors an upstream registry: the first pull fetches +
+# caches it, later pulls are served locally — beats Docker Hub rate limits, keeps
+# images on-net, and lets Trivy scan them. Pull as harbor.by-research.be/<project>/<image>
+# e.g. harbor.by-research.be/dockerhub/library/nginx:latest. Point nodes' container
+# runtime at Harbor as a registry mirror for docker.io to make it transparent.
+harbor_proxy_caches:
+  - { project: "dockerhub", name: "docker-hub", type: "docker-hub", url: "https://hub.docker.com" }
+  # - { project: "ghcr",   name: "ghcr",   type: "github-ce", url: "https://ghcr.io" }
+  # - { project: "quay",   name: "quay",   type: "quay",      url: "https://quay.io" }
