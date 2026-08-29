@@ -1,0 +1,21 @@
+---
+# Resolve ONE fabric basename (var: _kv_base, no .json) to its Vault KV path
+# segment "{service}/{key}" (var out: _kv_rel). Explicit map first, then the
+# rule families; anything unmatched FAILS — no silent misplacement.
+# Requires vars/vault_kv_map.yml loaded (vault_kv_explicit_map).
+- name: "Kvmap | Resolve {{ _kv_base }}"
+  ansible.builtin.set_fact:
+    _kv_rel: >-
+      {%- if _kv_base in vault_kv_explicit_map -%}{{ vault_kv_explicit_map[_kv_base] }}
+      {%- elif _kv_base is match('^app-oidc-.+') -%}{{ _kv_base[9:] }}/oidc
+      {%- elif _kv_base is match('^db-pgsql-.+') -%}{{ _kv_base[9:] }}/db-pgsql
+      {%- elif _kv_base is match('^infra-seaweedfs-.+') -%}{{ _kv_base[16:] }}/s3
+      {%- elif _kv_base is match('^app-smtp-.+') -%}{{ _kv_base[9:] }}/smtp
+      {%- else -%}__UNMAPPED__{%- endif -%}
+
+- name: "Kvmap | Refuse unmapped fabric names"
+  ansible.builtin.fail:
+    msg: >-
+      No Vault KV mapping for fabric secret '{{ _kv_base }}' — add it to
+      playbooks/vars/vault_kv_map.yml (or follow a rule family naming).
+  when: _kv_rel == '__UNMAPPED__'

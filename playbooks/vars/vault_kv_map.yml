@@ -1,0 +1,75 @@
+---
+# ==============================================================================
+# Fabric basename (no .json) -> "{service}/{key}" for the Vault KV v2 path
+# convention secret/{env}/{service}/{key} (security/0001 §KV v2 path convention).
+#
+# REGULAR families are matched by RULE in tasks/vault_kv_path.yml — new services
+# following the fabric naming convention auto-map with no edit here:
+#   app-oidc-<svc>        -> <svc>/oidc
+#   db-pgsql-<svc>        -> <svc>/db-pgsql
+#   infra-seaweedfs-<svc> -> <svc>/s3
+#   app-smtp-<svc>        -> <svc>/smtp
+#
+# Everything irregular is listed EXPLICITLY below (checked before the rules, so
+# an entry here overrides a rule). A file that matches neither FAILS the run —
+# no silent misplacement. Keys are lowercase-hyphen per the ADR (underscores in
+# legacy fabric names are normalised here).
+# ==============================================================================
+vault_kv_explicit_map:
+  # --- overrides of the rule families -----------------------------------------
+  db-pgsql-superuser: "postgres/superuser"
+  infra-seaweedfs: "seaweedfs/admin"
+  # --- crowdsec ---------------------------------------------------------------
+  app-crowdsec-bouncer-opnsense: "crowdsec/bouncer-opnsense"
+  app-crowdsec-bouncer-traefik: "crowdsec/bouncer-traefik"
+  app-crowdsec-console: "crowdsec/console"
+  app-crowdsec-console-enroll: "crowdsec/console-enroll"
+  app-crowdsec-registration-token: "crowdsec/registration-token"
+  # --- authentik (identity) ---------------------------------------------------
+  authentik: "authentik/admin"
+  app-ldap-bind: "authentik/ldap-bind"
+  app-ldap-outpost: "authentik/ldap-outpost"
+  app-user-adm_yboujraf: "authentik/user-adm-yboujraf"
+  app-user-yboujraf: "authentik/user-yboujraf"
+  # --- per-service admin/base secrets -----------------------------------------
+  app-adguard-prod: "adguard/admin"
+  app-grafana-admin: "grafana/admin"
+  app-pgadmin-poc: "pgadmin/admin-poc"
+  pgadmin-admin: "pgadmin/admin"
+  harbor: "harbor/admin"
+  harbor-robot-gitlab: "harbor/robot-gitlab"
+  mailcow: "mailcow/admin"
+  app-s3-mailcow: "mailcow/s3"
+  netbox: "netbox/admin"
+  nextcloud: "nextcloud/admin"
+  vaultwarden: "vaultwarden/admin"
+  app-vault-seal: "vault/seal"
+  db-redis: "redis/admin"
+  monit-smtp-resend: "monit/smtp-resend"
+  # --- gitlab -----------------------------------------------------------------
+  gitlab-runner-token: "gitlab/runner-token"
+  gitlab-secrets: "gitlab/secrets"  # pragma: allowlist secret
+  # --- netbird ----------------------------------------------------------------
+  netbird-automation: "netbird/automation"
+  netbird-core: "netbird/core"
+  netbird-owner: "netbird/owner"
+  # --- infra ------------------------------------------------------------------
+  infra-backup-nfs-poc: "backup/nfs"
+  infra-backup-s3-contabo: "backup/s3-contabo"
+  infra-postgres-poc: "postgres/admin"
+  infra-proxmox-poc: "proxmox/admin"
+  infra-synology-nas: "synology/admin"
+  pbs-encryption-key: "pbs/encryption-key"
+  pbs-pve-backup-token: "pbs/pve-backup-token"
+  # --- network / OPNsense -----------------------------------------------------
+  net-internal-domain: "net/internal-domain"
+  net-isp-proximus-pppoe: "net/isp-proximus-pppoe"
+  net-isp-telenet: "net/isp-telenet"
+  net-lxc-break-glass: "net/lxc-break-glass"
+  net-opnsense-prod-adm-yboujraf: "opnsense/adm-yboujraf"
+  net-opnsense-prod-oob-admin: "opnsense/oob-admin"
+  net-opnsense-prod-vm-opns-01: "opnsense/vm-opns-01"
+  net-opnsense-vm-opns-01-access: "opnsense/vm-opns-01-access"
+  OPNsense.seed-bootstrap: "opnsense/seed-bootstrap"
+  # --- misc -------------------------------------------------------------------
+  vpn-expressvpn: "vpn/expressvpn"
