@@ -1,0 +1,107 @@
+---
+# ==============================================================================
+# Load the svc SSH keys into the controller's ssh-agent — naming/0002 §5.1:
+# "Ansible runtime — ssh-agent populated via Vault lookup". Ansible-ONLY, no
+# shell scripts:
+#   * passphrases come from Vault EXCLUSIVELY, read with the ansible-controller
+#     AppRole (playbooks/vault-approle.yml) — never the root token, never disk;
+#   * the agent binds a FIXED socket (~/.ssh/rune-agent.sock) and ~/.ssh/config
+#     gets `IdentityAgent` pointing at it, so every later ansible-playbook run
+#     uses the unlocked keys with no environment exporting.
+#
+#   Run at session start: ansible-playbook -i inventories/prod/hosts.yml playbooks/ssh-agent.yml
+# ==============================================================================
+- name: "Fetch svc key passphrases (AppRole, on the Vault host)"
+  hosts: vault
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../roles/vault/defaults/main.yml
+  vars:
+    approle_secret_file: "{{ (vault_secret_dir | expanduser) }}/fabric/app-vault-ansible-controller.json"
+  tasks:
+    - name: "Agent | Load the AppRole credentials (controller file)"
+      ansible.builtin.set_fact:
+        _approle: "{{ (lookup('file', approle_secret_file) | from_json).fields }}"
+      no_log: true
+
+    - name: "Agent | AppRole login (short-lived scoped token)"
+      ansible.builtin.command:
+        argv: ["docker", "exec", "{{ vault_container_name }}",
+               "vault", "write", "-field=token", "auth/approle/login",
+               "role_id={{ _approle.role_id }}", "secret_id={{ _approle.secret_id }}"]
+      register: _approle_token
+      changed_when: false
+      no_log: true
+
+    - name: "Agent | Read the svc passphrases"
+      ansible.builtin.command:
+        argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ _approle_token.stdout }}", "{{ vault_container_name }}",
+               "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-field=passphrase",
+               "prod/{{ item }}/ssh-passphrase"]
+      loop: [svc-ansible, svc-rune]
+      register: _pass_reads
+      changed_when: false
+      no_log: true
+
+    - name: "Agent | Expose to the localhost play (in-memory only)"
+      ansible.builtin.set_fact:
+        agent_passphrases:
+          svc-ansible-prod: "{{ _pass_reads.results[0].stdout }}"
+          svc-rune-prod: "{{ _pass_reads.results[1].stdout }}"
+      no_log: true
+
+- name: "Load the agent (controller)"
+  hosts: localhost
+  gather_facts: true
+  become: false
+  vars:
+    agent_sock: "{{ ansible_env.HOME }}/.ssh/rune-agent.sock"
+    agent_keys: [svc-ansible-prod, svc-rune-prod]
+  tasks:
+    - name: "Agent | Stat the fixed socket"
+      ansible.builtin.stat:
+        path: "{{ agent_sock }}"
+      register: agent_sock_stat
+
+    - name: "Agent | Start the agent on the fixed socket"
+      ansible.builtin.command: "ssh-agent -a {{ agent_sock }}"
+      when: not agent_sock_stat.stat.exists
+      changed_when: true
+
+    - name: "Agent | Point ssh at the agent (IdentityAgent — no env export needed)"
+      ansible.builtin.blockinfile:
+        path: "{{ ansible_env.HOME }}/.ssh/config"
+        create: true
+        mode: "0600"
+        marker: "# {mark} ANSIBLE MANAGED — rune agent (identity/0004 §2)"
+        block: |
+          Host *
+              IdentityAgent {{ agent_sock }}
+        insertbefore: BOF
+
+    - name: "Agent | Add the svc keys (passphrase from Vault, via expect)"
+      ansible.builtin.expect:
+        command: "ssh-add {{ ansible_env.HOME }}/.ssh/id_ed25519_{{ item }}"
+        responses:
+          "Enter passphrase.*": "{{ hostvars[groups['vault'][0]].agent_passphrases[item] }}"
+        timeout: 15
+      environment:
+        SSH_AUTH_SOCK: "{{ agent_sock }}"
+      loop: "{{ agent_keys }}"
+      register: agent_add
+      changed_when: "'Identity added' in (agent_add.stdout | default(''))"
+      failed_when: false
+      no_log: true
+
+    - name: "Agent | Verify the keys are loaded"
+      ansible.builtin.command: "ssh-add -l"
+      environment:
+        SSH_AUTH_SOCK: "{{ agent_sock }}"
+      register: agent_list
+      changed_when: false
+      failed_when: agent_list.rc != 0 or (agent_list.stdout_lines | length) < (agent_keys | length)
+
+    - name: "Agent | Loaded identities (fingerprints only)"
+      ansible.builtin.debug:
+        msg: "{{ agent_list.stdout_lines }}"
