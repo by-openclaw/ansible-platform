@@ -3,22 +3,6 @@
 # Handlers — triggered by notify, run once at end of play (or after flush)
 # ==============================================================================
 
-- name: Validate and restart sshd
-  block:
-    - name: "SSHD | Validate config syntax"
-      ansible.builtin.command: /usr/sbin/sshd -t
-      changed_when: false
-
-    - name: "SSHD | Restart service"
-      ansible.builtin.service:
-        name: sshd
-        state: restarted
-
-- name: Restart fail2ban
-  ansible.builtin.service:
-    name: fail2ban
-    state: restarted
-
 - name: Reload ufw
   community.general.ufw:
     state: reloaded

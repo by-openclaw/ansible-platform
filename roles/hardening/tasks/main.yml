@@ -3,14 +3,6 @@
 # Role: hardening — main task dispatcher
 # ==============================================================================
 
-- name: Apply SSH hardening
-  ansible.builtin.import_tasks: sshd.yml
-  tags: [hardening, ssh]
-
-- name: Apply fail2ban
-  ansible.builtin.import_tasks: fail2ban.yml
-  tags: [hardening, fail2ban]
-
 - name: Apply firewall (ufw)
   ansible.builtin.import_tasks: firewall.yml
   tags: [hardening, firewall, ufw]
@@ -57,3 +49,7 @@
     - hardening_auditd_enabled | bool
     - not hardening_is_container | bool
   tags: [hardening, auditd]
+
+- name: "Hardening | Lynis audit gate (security/0003 §5)"
+  ansible.builtin.import_tasks: lynis.yml
+  tags: [hardening, lynis]
