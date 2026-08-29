@@ -7,7 +7,7 @@
 # Native systemd service (NOT docker). All server config via proxmox-backup-manager.
 # ==============================================================================
 
-pbs_fqdn: "pbs.by-research.be"
+pbs_fqdn: "pbs.{{ platform_domain }}"
 pbs_secret_dir: "~/.openclaw/workspace/infra/secrets"
 
 # --- PBS 4 apt repo (no-subscription) on Debian 13 (trixie) --------------------
@@ -18,7 +18,7 @@ pbs_repo_line: "deb [signed-by=/usr/share/keyrings/proxmox-archive-keyring.gpg] 
 # PBS S3 always speaks HTTPS -> reach SeaweedFS via the Traefik HTTPS route
 # (real LE wildcard cert PBS trusts). Direct :8333 is plain HTTP and unusable.
 pbs_s3_endpoint_id: "seaweedfs"
-pbs_s3_endpoint_host: "s3.by-research.be"
+pbs_s3_endpoint_host: "s3.{{ platform_domain }}"
 pbs_s3_endpoint_port: 443
 pbs_s3_path_style: true
 pbs_s3_bucket: "pbs-datastore"
@@ -39,7 +39,7 @@ pbs_keep:
 pbs_oidc_enabled: true
 pbs_oidc_secret_file: "fabric/app-oidc-pbs.json"        # written by the authentik role
 pbs_oidc_realm: "authentik"
-pbs_authentik_base: "https://authentik.by-research.be"
+pbs_authentik_base: "https://authentik.{{ platform_domain }}"
 pbs_oidc_slug: "pbs"
 pbs_oidc_issuer: "{{ pbs_authentik_base }}/application/o/{{ pbs_oidc_slug }}/"
 pbs_oidc_username_claim: "preferred_username"           # Authentik emits this (profile scope)

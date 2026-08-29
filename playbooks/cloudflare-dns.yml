@@ -1,9 +1,12 @@
 ---
-# Manage public Cloudflare DNS for by-research.be (exposure model).
+# Manage public Cloudflare DNS for {{ platform_domain }} (exposure model).
 # Controller-side only — no FW/host connection.
 #   Apply:  ansible-playbook playbooks/cloudflare-dns.yml
-- name: Cloudflare public DNS (by-research.be)
+- name: Cloudflare public DNS (platform zone)
   hosts: localhost
+  vars_files:
+    # implicit localhost gets no inventory group_vars — load the deployment manifest
+    - "{{ inventory_dir }}/group_vars/all/deployment.yml"
   connection: local
   gather_facts: false
   become: false
