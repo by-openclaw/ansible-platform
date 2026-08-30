@@ -38,7 +38,7 @@
 
     - name: "Kit | Write it into the print kit (controller, 0600)"
       ansible.builtin.copy:
-        dest: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/print-kit/breakglass-ssh-passphrase.json"
+        dest: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/print-kit/04-ssh-passphrase-by-research.json"
         mode: "0600"
         content: "{{ (kit_bg_pass.stdout | from_json).data.data | to_nice_json }}"  # pragma: allowlist secret
       delegate_to: localhost
@@ -55,24 +55,24 @@
     kit_dir: "{{ secret_root }}/print-kit"
     kit_items:
       - src: "{{ secret_root }}/vault-init.json"
-        name: "vault-init.json"
+        name: "01-vault-unseal-shares.json"
         what: "Vault unseal shares (5, threshold 3) + root token"
       - src: "{{ secret_root }}/fabric/os-by-research.json"
-        name: "os-by-research.json"
+        name: "02-os-password-by-research.json"
         what: "break-glass password ({org}) — OS SSH AND the PVE WebUI pam realm"
       - src: "{{ ansible_env.HOME }}/.ssh/id_ed25519_by-research"
-        name: "id_ed25519_by-research"
+        name: "03-ssh-key-by-research"
         what: "break-glass SSH private key (passphrase in Vault + kit)"
       - src: "{{ ansible_env.HOME }}/.ssh/id_ed25519_by-research.pub"
-        name: "id_ed25519_by-research.pub"
+        name: "03-ssh-key-by-research.pub"
         what: "break-glass SSH public key"
       # Passphrase of the break-glass key — printed so the kit works with Vault sealed:
-      - src: "{{ secret_root }}/print-kit/breakglass-ssh-passphrase.json"
-        name: "breakglass-ssh-passphrase.json"
+      - src: "{{ secret_root }}/print-kit/04-ssh-passphrase-by-research.json"
+        name: "04-ssh-passphrase-by-research.json"
         what: "break-glass SSH key passphrase (exported from Vault by its pass)"
       # Added by the PVE / OPNsense identity passes when those local admins are created:
       - src: "{{ secret_root }}/fabric/os-opnsense-by-research.json"
-        name: "os-opnsense-by-research.json"
+        name: "05-opnsense-password-by-research.json"
         what: "OPNsense local by-research WebUI password"
   tasks:
     - name: "Kit | Ensure the folder (0700)"
@@ -101,10 +101,12 @@
 
     - name: "Kit | Cover sheet (inventory only — NO secret values)"
       ansible.builtin.copy:
-        dest: "{{ kit_dir }}/COVER-SHEET.md"
+        dest: "{{ kit_dir }}/00-cover-sheet.md"
         mode: "0600"
         content: |
           # BREAK-GLASS PRINT KIT — {{ '%Y-%m-%d' | strftime }}
+          Naming convention: <seq>-<system>-<credential> — seq = print/verify
+          order, system = what it unlocks (vault|os|ssh|opnsense|...).
           Print EVERY file in this folder (lp <file>), store in the physical
           safe. This kit restores access with Authentik down, Vault sealed,
           or the controller lost. No single copy elsewhere is complete.
