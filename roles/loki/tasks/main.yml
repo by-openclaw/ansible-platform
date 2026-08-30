@@ -1,0 +1,68 @@
+---
+# Loki with a SeaweedFS S3 backend (chunks + index off-box).
+- name: "Loki | Ensure gnupg + curl"
+  ansible.builtin.apt:
+    name:
+      - gnupg
+      - curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Loki | Grafana APT signing key (dearmored)"
+  ansible.builtin.shell:
+    cmd: "set -o pipefail; curl -fsSL {{ loki_apt_key_url }} | gpg --dearmor -o /usr/share/keyrings/grafana.gpg"
+    creates: /usr/share/keyrings/grafana.gpg
+  changed_when: true
+
+- name: "Loki | APT repo"
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/grafana.list
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ loki_apt_repo }}\n"
+
+- name: "Loki | Install loki"
+  ansible.builtin.apt:
+    name: loki
+    state: present
+    update_cache: true
+
+- name: "Loki | Provision the SeaweedFS S3 bucket + scoped identity"
+  ansible.builtin.include_role:
+    name: seaweedfs_bucket
+  vars:
+    seaweedfs_bucket_identity: "{{ loki_s3_identity }}"
+    seaweedfs_bucket_names: ["{{ loki_s3_bucket }}"]
+    seaweedfs_bucket_secret_file: "{{ loki_s3_secret_file }}"
+
+- name: "Loki | Load the S3 credentials"
+  ansible.builtin.set_fact:
+    loki_s3_creds: "{{ (lookup('file', (lookup('env', 'HOME')) + '/.openclaw/workspace/infra/secrets/' + loki_s3_secret_file) | from_json).fields }}"
+  no_log: true
+
+- name: "Loki | Local scratch dir"
+  ansible.builtin.file:
+    path: "{{ loki_data_dir }}"
+    state: directory
+    owner: loki
+    group: nogroup
+    mode: "0750"
+
+- name: "Loki | Config (/etc/loki/config.yml) — S3 backend"
+  ansible.builtin.template:
+    src: loki.yaml.j2
+    dest: /etc/loki/config.yml
+    owner: root
+    group: nogroup
+    mode: "0640"
+  no_log: true   # contains S3 secret key
+  notify: Restart loki
+
+- name: "Loki | Enabled + running"
+  ansible.builtin.systemd_service:
+    name: loki
+    enabled: true
+    state: started
+  when: not ansible_check_mode

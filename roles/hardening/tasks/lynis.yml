@@ -1,0 +1,36 @@
+---
+# Lynis host-hardening audit — security/0003 §5 (LOCKED): runs on every apply,
+# hardening index below the threshold FAILS the play (the host is not hardened).
+- name: "Lynis | Install"
+  ansible.builtin.apt:
+    name: lynis
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Lynis | Run the system audit (quiet, non-interactive)"
+  ansible.builtin.command: lynis audit system --quiet --no-colors
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: "Lynis | Read the hardening index"
+  ansible.builtin.command: grep -oP 'hardening_index=\K[0-9]+' /var/log/lynis-report.dat
+  register: hardening_lynis_index
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: "Lynis | Report"
+  ansible.builtin.debug:
+    msg: "Lynis hardening index = {{ hardening_lynis_index.stdout | default('n/a') }} (minimum {{ hardening_lynis_min_score }})"
+  when: not ansible_check_mode
+
+- name: "Lynis | Enforce the security/0003 §5 threshold"
+  ansible.builtin.assert:
+    that: (hardening_lynis_index.stdout | int) >= (hardening_lynis_min_score | int)
+    fail_msg: >-
+      Lynis hardening index {{ hardening_lynis_index.stdout }} <
+      {{ hardening_lynis_min_score }} (security/0003 §5) — host is NOT hardened.
+      Review /var/log/lynis-report.dat suggestions.
+  when:
+    - not ansible_check_mode
+    - hardening_lynis_enforce | bool

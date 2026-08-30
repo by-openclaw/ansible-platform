@@ -1,0 +1,55 @@
+---
+# ==============================================================================
+# updates | preflight — record what is running BEFORE we touch anything.
+# verify.yml compares against this. Also surfaces the pending-package list so
+# a --check run shows the operator exactly what an apply would change.
+# ==============================================================================
+
+- name: "Updates | preflight | Refresh the package index"
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 600
+  changed_when: false
+  check_mode: false
+
+# No module reports the pending set without applying it; apt --simulate is the
+# only read-only way to get the list, hence the explicit command.
+- name: "Updates | preflight | List pending upgrades" # noqa command-instead-of-module
+  ansible.builtin.command:
+    cmd: apt-get --simulate --quiet dist-upgrade
+  register: updates_pending_raw
+  changed_when: false
+  check_mode: false
+
+- name: "Updates | preflight | Extract the package names"
+  ansible.builtin.set_fact:
+    updates_pending: >-
+      {{ updates_pending_raw.stdout_lines
+         | select('match', '^Inst ')
+         | map('regex_replace', '^Inst (\S+).*$', '\1')
+         | list }}
+
+- name: "Updates | preflight | Show the pending upgrades (the diff)"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ updates_pending | length }} package(s) pending
+      {{ '— ' ~ (updates_pending | join(' ')) if updates_pending | length > 0 else '' }}
+
+- name: "Updates | preflight | Record running systemd services"
+  ansible.builtin.service_facts:
+
+- name: "Updates | preflight | Record running containers"
+  ansible.builtin.command:
+    cmd: docker ps --format '{% raw %}{{.Names}}{% endraw %}'
+  register: updates_containers_before
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "Updates | preflight | Store the baseline"
+  ansible.builtin.set_fact:
+    updates_services_before: >-
+      {{ ansible_facts.services | dict2items
+         | selectattr('value.state', 'eq', 'running')
+         | map(attribute='key') | list | sort }}
+    updates_docker_before: "{{ (updates_containers_before.stdout_lines | default([])) | sort }}"

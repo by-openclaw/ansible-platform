@@ -1,0 +1,20 @@
+---
+# Userspace baseline — safe in both VMs and unprivileged LXCs.
+- name: "Baseline | sudoers secure_path + logged, tty-required sudo"
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/10-hardening
+    mode: "0440"
+    validate: "visudo -cf %s"
+    content: |
+      # Managed by Ansible (role: hardening)
+      Defaults        secure_path="{{ hardening_sudo_secure_path }}"
+      Defaults        use_pty
+      Defaults        logfile="{{ hardening_sudo_logfile }}"
+      Defaults        !visiblepw
+
+- name: "Baseline | Default UMASK in /etc/login.defs"
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: '^\s*UMASK\s+'
+    line: "UMASK           {{ hardening_umask }}"
+    state: present

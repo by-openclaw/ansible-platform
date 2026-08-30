@@ -5,9 +5,11 @@
 # (postgres_db: authentik) + Redis, both over verified TLS. Fronted by Traefik
 # (wildcard TLS). Upgrade = bump authentik_image tag.
 # ==============================================================================
-authentik_image: "ghcr.io/goauthentik/server:2026.5.2"   # pinned (never :latest)
+# Core image. Derived from authentik_version so the LDAP outpost tag below
+# cannot drift away from it — one variable moves both.
+authentik_image: "ghcr.io/goauthentik/server:{{ authentik_version }}"
 
-authentik_fqdn: "authentik.by-research.be"
+authentik_fqdn: "authentik.{{ platform_domain }}"
 
 # Server HTTP backend (Traefik terminates TLS) — published on the SVC IP.
 authentik_listen_ip: "10.1.3.130"
@@ -15,13 +17,13 @@ authentik_host_port: 9000
 authentik_container_port: 9000
 
 # Shared PostgreSQL (DB + role created by the postgres_db role).
-authentik_pg_host: "lxc-pgsql-01.by-research.be"
+authentik_pg_host: "lxc-pgsql-01.{{ platform_domain }}"
 authentik_pg_port: 5432
 authentik_pg_name: "authentik"
 authentik_pg_user: "authentik"
 
 # Shared Redis.
-authentik_redis_host: "lxc-redis-01.by-research.be"
+authentik_redis_host: "lxc-redis-01.{{ platform_domain }}"
 authentik_redis_port: 6379
 
 # Controller secret store.
@@ -31,7 +33,7 @@ authentik_pg_secret_file: "fabric/db-pgsql-authentik.json"   # written by postgr
 authentik_redis_secret_file: "fabric/db-redis.json"
 
 # Initial admin (akadmin).
-authentik_bootstrap_email: "admin@by-research.be"
+authentik_bootstrap_email: "admin@{{ platform_domain }}"
 
 # Persistent volumes.
 authentik_media_volume: "authentik-media"
@@ -45,33 +47,33 @@ authentik_blueprints_dir: "/opt/authentik/blueprints"
 # service here to wire its SSO — same pattern for every svc.
 authentik_oidc_apps:
   - slug: vault
-    launch_url: "https://vault.by-research.be"
+    launch_url: "https://vault.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/hashicorp-vault.svg"
     name: "Vault"
     group: "vault-admins"
     secret_file: "fabric/app-oidc-vault.json"
     redirect_uris:
-      - "https://vault.by-research.be/ui/vault/auth/oidc/oidc/callback"
+      - "https://vault.{{ platform_domain }}/ui/vault/auth/oidc/oidc/callback"
       - "http://localhost:8250/oidc/callback"
   - slug: pgadmin
-    launch_url: "https://pgadmin.by-research.be"
+    launch_url: "https://pgadmin.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/pgadmin.svg"
     name: "pgAdmin"
     group: "pgadmin-admins"
     secret_file: "fabric/app-oidc-pgadmin.json"
     redirect_uris:
-      - "https://pgadmin.by-research.be/oauth2/authorize"
+      - "https://pgadmin.{{ platform_domain }}/oauth2/authorize"
   - slug: netbox
-    launch_url: "https://netbox.by-research.be"
+    launch_url: "https://netbox.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/netbox.svg"
     name: "NetBox"
     group: "netbox-admins"
     secret_file: "fabric/app-oidc-netbox.json"
     restrict_to_group: true     # IdP-enforced: only netbox-admins can log in
     redirect_uris:
-      - "https://netbox.by-research.be/oauth/complete/oidc/"
+      - "https://netbox.{{ platform_domain }}/oauth/complete/oidc/"
   - slug: vaultwarden
-    launch_url: "https://vaultwarden.by-research.be"
+    launch_url: "https://vaultwarden.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/vaultwarden.svg"
     name: "Vaultwarden"
     group: "vaultwarden-admins"
@@ -80,9 +82,9 @@ authentik_oidc_apps:
     force_email_verified: true  # vaultwarden rejects email_verified=False (authentik default)
     offline_access: true        # vaultwarden requests offline_access → needs refresh_token
     redirect_uris:
-      - "https://vaultwarden.by-research.be/identity/connect/oidc-signin"
+      - "https://vaultwarden.{{ platform_domain }}/identity/connect/oidc-signin"
   - slug: nextcloud
-    launch_url: "https://nextcloud.by-research.be"
+    launch_url: "https://nextcloud.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/nextcloud.svg"
     name: "Nextcloud"
     group: "nextcloud-users"    # ACCESS group — any member may log into Nextcloud
@@ -91,11 +93,11 @@ authentik_oidc_apps:
     restrict_to_group: true     # IdP-enforced: only nextcloud-users can log in
     admin_group_alias: "admin"  # admin_source_group members → NC "admin" group
     redirect_uris:
-      - "https://nextcloud.by-research.be/apps/user_oidc/code"
+      - "https://nextcloud.{{ platform_domain }}/apps/user_oidc/code"
     logout_uris:                                # post_logout_redirect_uri (type=logout)
-      - "https://nextcloud.by-research.be/"
+      - "https://nextcloud.{{ platform_domain }}/"
   - slug: netbird
-    launch_url: "https://vpn.by-research.be"
+    launch_url: "https://vpn.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/netbird.svg"
     name: "NetBird"
     group: "netbird-users"        # ACCESS group — only members may authenticate
@@ -117,7 +119,7 @@ authentik_oidc_apps:
     redirect_uris_regex:
       - "https://vpn\\.by-research\\.be/.*"
   - slug: mailcow
-    launch_url: "https://mail.by-research.be"
+    launch_url: "https://mail.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/mailcow.svg"
     name: "Mailcow"
     group: "mailcow-users"          # ACCESS group — only members may log into mail
@@ -125,22 +127,44 @@ authentik_oidc_apps:
     restrict_to_group: true         # IdP-enforced: only mailcow-users can log in
     # mailcow's native Generic-OIDC. On first login it reads the `mailcow_template`
     # claim and auto-provisions the mailbox from that template (the 5 GB "default").
-    # The Authentik email IS already <user>@by-research.be (matches the hosted
+    # The Authentik email IS already <user>@{{ platform_domain }} (matches the hosted
     # domain), so the mailbox address = the email claim — no domain rewrite needed.
     mailcow_template: true          # emit the static mailcow_template="default" scope
     redirect_uris:
-      - "https://mail.by-research.be/"
-      - "https://mail.by-research.be"
+      - "https://mail.{{ platform_domain }}/"
+      - "https://mail.{{ platform_domain }}"
     redirect_uris_regex:
       - "https://mail\\.by-research\\.be/.*"
+  - slug: pbs
+    launch_url: "https://pbs.{{ platform_domain }}"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/proxmox.svg"
+    name: "Proxmox Backup Server"
+    group: "pbs-admins"             # ACCESS group — only members may SSO into PBS
+    secret_file: "fabric/app-oidc-pbs.json"
+    restrict_to_group: true         # IdP-enforced: only pbs-admins can log in
+    # PBS (proxmox-backup-manager openid) redirects to its own web root after auth.
+    redirect_uris:
+      - "https://pbs.{{ platform_domain }}"
+    redirect_uris_regex:
+      - "https://pbs\\.by-research\\.be/.*"
+  - slug: grafana
+    launch_url: "https://grafana.by-research.be"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/grafana.svg"
+    name: "Grafana"
+    group: "grafana-admins"         # ACCESS group — only members may SSO into Grafana
+    secret_file: "fabric/app-oidc-grafana.json"
+    restrict_to_group: true         # IdP-enforced: only grafana-admins can log in
+    # Grafana generic_oauth callback. role_attribute_path maps the groups claim.
+    redirect_uris:
+      - "https://grafana.by-research.be/login/generic_oauth"
   - slug: gitlab
-    launch_url: "https://gitlab.by-research.be"
+    launch_url: "https://gitlab.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/gitlab.svg"
     name: "GitLab"
     group: "gitlab-users"           # ACCESS group — only members may authenticate
     # Vault-native (GitLab chain): client creds read from Vault, not a local file.
     # Other apps still carry secret_file until their own Phase-2 migration.
-    vault_path: "fabric/app-oidc-gitlab"
+    vault_path: "prod/gitlab/oidc"   # post-migration KV convention (security/0001)
     restrict_to_group: true         # IdP-enforced: only gitlab-users can log in
     offline_access: true            # GitLab omniauth requests refresh tokens
     # GitLab CE reads the `groups` claim natively (emitted by scope-groups-<slug>):
@@ -174,11 +198,11 @@ authentik_proxy_apps:
   - slug: traefik-dashboard
     name: "Traefik Dashboard"
     group: "traefik-admins"                       # only this group passes forwardAuth
-    external_host: "https://traefik.by-research.be"
+    external_host: "https://traefik.{{ platform_domain }}"
   - slug: seaweedfs
     name: "SeaweedFS Admin"
     group: "seaweedfs-admins"                     # only this group passes forwardAuth
-    external_host: "https://seaweedfs.by-research.be"
+    external_host: "https://seaweedfs.{{ platform_domain }}"
   # NOTE: drawio is intentionally NOT SSO-gated — it's consumed as an iframe embed
   # by GitLab/Nextcloud (forwardAuth-in-iframe breaks), and is a stateless editor.
   # Kept internal via VPN + FW instead. (A dormant drawio proxy app + diagrams-users
@@ -200,6 +224,7 @@ authentik_groups:
   - netbird-users       # access group — only members may authenticate to NetBird VPN
   - netbird-admins      # NetBird admins (NetBird's own owner/admin role set in-app)
   - mailcow-users       # access group — only members may SSO into mailcow webmail
+  - pbs-admins          # access group — only members may SSO into Proxmox Backup Server
   - gitlab-users        # access group — only members may SSO into GitLab
   - gitlab-admins       # subset of gitlab-users → GitLab instance admins (admin_groups)
   - jumpserver-users    # access group — only members may SSO into the JumpServer bastion
@@ -221,7 +246,7 @@ authentik_users:
     secret_file: "fabric/app-user-adm_yboujraf.json"  # PRIVILEGED admin account
   # Dedicated example.com mail identity. mailcow OIDC maps email->mailbox, so this
   # carries the @example.com email (in mailcow-users) to SSO into the example.com
-  # inbox — the @by-research.be account above can't reach a second-domain mailbox.
+  # inbox — the @{{ platform_domain }} account above can't reach a second-domain mailbox.
   # NOTE: there is no adm_*_example identity — adm_yboujraf is ADMIN-ONLY (no mailbox
   # on any domain); mailcow admin = the local admin account (no SSO-admin in mailcow).
   - username: yboujraf_example
@@ -229,3 +254,24 @@ authentik_users:
 
 # Outbound email (password resets / MFA / notifications) via Resend (by-research).
 authentik_resend_secret_file: "shared/app-resend-by-research.json"
+
+# ------------------------------------------------------------------------------
+# LDAP outpost — the container that serves LDAPS for the OPNsense WebGUI login.
+#
+# This ran UNMANAGED until now: it was created by hand, so nothing in this role
+# could move it and it drifted a full release behind the core (2026.5.2 while
+# server/worker were on 2026.5.6). Outposts are expected to track the core
+# version, so the tag is derived from authentik_version and cannot silently
+# diverge again.
+# ------------------------------------------------------------------------------
+authentik_ldap_enabled: true
+authentik_version: "2026.5.6"
+authentik_ldap_image: "ghcr.io/goauthentik/ldap:{{ authentik_version }}"
+
+# LDAPS only — no cleartext 389. Dual-stack: Docker will not bind v6 on its own
+# even with ip6tables enabled, so both families are published explicitly.
+authentik_ldap_port: 636
+authentik_ldap_container_port: 6636
+
+# Outpost API token, issued by Authentik and stored in the secret folder.
+authentik_ldap_secret_file: "fabric/app-ldap-outpost.json"  # pragma: allowlist secret

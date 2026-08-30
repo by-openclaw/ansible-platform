@@ -51,6 +51,15 @@ http:
       loadBalancer:
         servers:
           - url: "{{ traefik_route_backend_url }}"
+{% if traefik_route_backend_insecure_skip_verify | bool %}
+        serversTransport: {{ traefik_route_name }}-transport
+{% endif %}
+{% if traefik_route_backend_insecure_skip_verify | bool %}
+
+  serversTransports:
+    {{ traefik_route_name }}-transport:
+      insecureSkipVerify: true
+{% endif %}
 {% if _net_mw %}
 
   middlewares:

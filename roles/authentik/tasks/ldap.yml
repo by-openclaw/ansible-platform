@@ -1,0 +1,71 @@
+---
+# ==============================================================================
+# authentik | ldap — the LDAPS outpost that authenticates the OPNsense WebGUI.
+#
+# Previously created by hand and therefore invisible to Ansible: it sat a full
+# release behind the core (2026.5.2 vs 2026.5.6) and nothing in this repo could
+# move it. Its tag now derives from authentik_version, so core and outpost
+# cannot diverge again.
+#
+# LDAPS (636) ONLY — cleartext 389 is never published.
+# ==============================================================================
+
+- name: "ldap | Load the outpost API token"
+  ansible.builtin.set_fact:
+    authentik_ldap_token: >-
+      {{ (lookup('file', authentik_secret_dir + '/' + authentik_ldap_secret_file)
+          | from_json).fields.token }}
+  no_log: true
+
+- name: "ldap | Pull the pinned outpost image"
+  community.docker.docker_image:
+    name: "{{ authentik_ldap_image }}"
+    source: pull
+    state: present
+
+# published_ports is compared 'strict' on purpose: without it, a removed port
+# lingers on the running container and a cleartext 389 binding could survive a
+# config change that was meant to drop it.
+- name: "ldap | Run the LDAP outpost"
+  community.docker.docker_container:
+    name: authentik-ldap
+    image: "{{ authentik_ldap_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    published_ports:
+      - "0.0.0.0:{{ authentik_ldap_port }}:{{ authentik_ldap_container_port }}"
+      - "[::]:{{ authentik_ldap_port }}:{{ authentik_ldap_container_port }}"
+    comparisons:
+      published_ports: strict
+    env:
+      AUTHENTIK_HOST: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}"
+      AUTHENTIK_INSECURE: "true"
+      AUTHENTIK_TOKEN: "{{ authentik_ldap_token }}"
+  no_log: true
+
+- name: "ldap | Wait for the outpost to report healthy"
+  ansible.builtin.command:
+    cmd: docker inspect --format '{% raw %}{{.State.Health.Status}}{% endraw %}' authentik-ldap
+  register: authentik_ldap_health
+  until: authentik_ldap_health.stdout | trim == 'healthy'
+  retries: 20
+  delay: 5
+  changed_when: false
+  check_mode: false
+
+- name: "ldap | Confirm LDAPS is answering on both address families"
+  ansible.builtin.wait_for:
+    host: "{{ item }}"
+    port: "{{ authentik_ldap_port }}"
+    timeout: 30
+  loop:
+    - "{{ authentik_listen_ip }}"
+    - "127.0.0.1"
+  when: not ansible_check_mode
+
+- name: "ldap | Report"
+  ansible.builtin.debug:
+    msg: >-
+      LDAP outpost {{ authentik_ldap_image }} healthy,
+      LDAPS on {{ authentik_ldap_port }} (v4 + v6), core {{ authentik_version }}.

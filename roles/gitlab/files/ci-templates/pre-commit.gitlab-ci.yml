@@ -1,0 +1,19 @@
+# ==============================================================================
+# GitLab CI secrets/hygiene gate — the GitLab-side twin of the GitHub
+# .github/workflows/pre-commit.yml used across the platform repos.
+# Consume from any project's .gitlab-ci.yml:
+#   include:
+#     - local: /path-to-this-template            # same repo, or
+#   (copy the job below verbatim for standalone projects)
+# Requires the project to carry .pre-commit-config.yaml + .secrets.baseline.
+# ==============================================================================
+pre-commit:
+  image: python:3.12-slim
+  stage: test
+  before_script:
+    - pip install --quiet pre-commit
+  script:
+    - pre-commit run --all-files --show-diff-on-failure
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

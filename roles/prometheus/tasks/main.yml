@@ -1,0 +1,36 @@
+---
+# Prometheus server on lxc-monitoring-01 (Debian package).
+- name: "Prometheus | Install prometheus"
+  ansible.builtin.apt:
+    name: prometheus
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Prometheus | Scrape config (/etc/prometheus/prometheus.yml)"
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: /etc/prometheus/prometheus.yml
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "promtool check config %s"
+  notify: Restart prometheus
+
+- name: "Prometheus | Runtime args (retention + listen) — /etc/default/prometheus"
+  ansible.builtin.copy:
+    dest: /etc/default/prometheus
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (role: prometheus)
+      ARGS="--web.listen-address={{ prometheus_listen }}:{{ prometheus_port }} --storage.tsdb.retention.time={{ prometheus_retention }}"
+  notify: Restart prometheus
+
+- name: "Prometheus | Enabled + running"
+  ansible.builtin.systemd_service:
+    name: prometheus
+    enabled: true
+    state: started
+  when: not ansible_check_mode

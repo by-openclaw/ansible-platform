@@ -25,13 +25,14 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from deployment_vars import render_deployment_tokens
 
 from opnsense.client import OpnsenseClient
 from opnsense.exceptions import OpnsenseError
@@ -119,7 +120,7 @@ def load_catalog(env: str) -> dict[str, Any]:
     catalog_path = REPO_ROOT / "inventories" / env / "group_vars" / "opnsense.yml"
     if not catalog_path.exists():
         raise SystemExit(f"Catalog file missing: {catalog_path}")
-    return yaml.safe_load(catalog_path.read_text())
+    return yaml.safe_load(render_deployment_tokens(catalog_path))
 
 
 def strip_ref(entry: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:

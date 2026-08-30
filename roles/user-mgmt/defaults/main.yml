@@ -1,0 +1,67 @@
+---
+# ==============================================================================
+# Role: user-mgmt — OS accounts, groups, sudo, authorized_keys.
+# Contract: identity/0004-os-accounts (lifecycle) + naming/0002-identity §5
+# (names — break-glass account/group = {org} deployment variable, service
+# accounts svc-{function}-{env}; NO sshuser group). Idempotent + re-runnable.
+# Reverse ("un-install") = DISABLE (lock + expire), NEVER delete (§1).
+# Additive only — no sshd/root change here (that is roles/sshd-hardening), so
+# it is safe to apply while still connected as root.
+# ==============================================================================
+
+# Deployment identity (group_vars/all/deployment.yml once PR #189 merges).
+user_mgmt_org: "{{ platform_org | default('by-research') }}"
+user_mgmt_env: "{{ platform_env | default('prod') }}"
+
+# Public-key store — committed under the role (identity/0004 §2: public keys in git).
+user_mgmt_key_dir: "{{ role_path }}/files/keys"
+
+# Account passwords (sudo/become + break-glass — NOPASSWD is forbidden,
+# identity/0004 §4): generated once -> controller fabric os-<account>.json (0600)
+# -> Vault secret/{env}/... via secrets-to-vault (mapping in vars/vault_kv_map.yml).
+user_mgmt_secret_dir: "~/.openclaw/workspace/infra/secrets"
+
+# Role groups (naming/0002 §5.2) — capabilities, not users.
+user_mgmt_role_groups:
+  - sudo
+  - break-glass
+
+# docker group only where Docker runs; svc-rune ONLY joins it (naming/0002 §5.2).
+user_mgmt_docker_group: docker
+
+# Account model (naming/0002 §5.1): primary group = same-named, created with the
+# account. SSH is key-only for every account (enforced by sshd-hardening);
+# password: true = a password for sudo / break-glass fallback only.
+user_mgmt_accounts:
+  - name: "{{ user_mgmt_org }}"
+    comment: "Local break-glass admin — always local, never Authentik (identity/0004 §1)"
+    primary_group: "{{ user_mgmt_org }}"
+    groups: ["sudo", "break-glass"]
+    shell: /bin/bash
+    pubkey: "id_ed25519_by-research.pub"
+    sudo: true
+    password: true
+    docker: false
+    state: present
+
+  - name: "svc-rune-{{ user_mgmt_env }}"
+    comment: "Interactive service account (Rune agent) — key-only SSH"
+    primary_group: "rune"
+    groups: ["sudo"]
+    shell: /bin/bash
+    pubkey: "id_ed25519_svc-rune-prod.pub"
+    sudo: true
+    password: true
+    docker: true
+    state: present
+
+  - name: "svc-ansible-{{ user_mgmt_env }}"
+    comment: "Automation account (Ansible/CI) — key-only SSH"
+    primary_group: "ansible"
+    groups: ["sudo"]
+    shell: /bin/bash
+    pubkey: "id_ed25519_svc-ansible-prod.pub"
+    sudo: true
+    password: true
+    docker: false
+    state: present

@@ -1,0 +1,57 @@
+---
+# Authentik OIDC realm on PBS. The authentik role must have run first (it writes
+# fabric/app-oidc-pbs.json). PBS autocreates users on first SSO login; we also
+# pre-create the privileged account so its Admin ACL is in place before login.
+
+- name: "OIDC | Load the Authentik OIDC client (id + secret)"
+  ansible.builtin.set_fact:
+    pbs_oidc_client: "{{ (lookup('file', pbs_secret_dir + '/' + pbs_oidc_secret_file) | from_json).fields }}"
+  no_log: true
+
+- name: "OIDC | List existing OpenID realms"
+  ansible.builtin.command: "proxmox-backup-manager openid list --output-format json"
+  register: pbs_oidc_list
+  changed_when: false
+
+- name: "OIDC | Create the Authentik OpenID realm"
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - openid
+      - create
+      - "{{ pbs_oidc_realm }}"
+      - "--issuer-url"
+      - "{{ pbs_oidc_issuer }}"
+      - "--client-id"
+      - "{{ pbs_oidc_client.client_id }}"
+      - "--client-key"
+      - "{{ pbs_oidc_client.client_secret }}"
+      - "--username-claim"
+      - "{{ pbs_oidc_username_claim }}"
+      - "--scopes"
+      - "{{ pbs_oidc_scopes | join(' ') }}"
+      - "--autocreate"
+      - "true"
+      - "--comment"
+      - "Authentik SSO (pbs-admins)"
+  no_log: true
+  changed_when: true
+  when: pbs_oidc_realm not in (pbs_oidc_list.stdout | from_json | map(attribute='realm') | list)
+
+- name: "OIDC | Pre-create the privileged admin account ({{ pbs_admin_auth_id }})"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, user, create, "{{ pbs_admin_auth_id }}"]
+  register: pbs_user_create
+  changed_when: pbs_user_create.rc == 0
+  failed_when:
+    - pbs_user_create.rc != 0
+    - "'already exists' not in (pbs_user_create.stderr | default(''))"
+
+- name: "OIDC | Grant Admin ACL to the privileged account"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, acl, update, /, Admin, "--auth-id", "{{ pbs_admin_auth_id }}"]
+  register: pbs_acl
+  changed_when: pbs_acl.rc == 0
+  failed_when:
+    - pbs_acl.rc != 0
+    - "'already' not in (pbs_acl.stderr | default(''))"

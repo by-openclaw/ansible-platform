@@ -1,0 +1,25 @@
+{# Managed by Ansible (role: prometheus). Do not edit by hand. #}
+{% set node_hosts = [] %}
+{% for grp in prometheus_node_groups %}
+{%   for h in groups[grp] | default([]) %}
+{%     if h not in node_hosts %}{{ node_hosts.append(h) or "" }}{% endif %}
+{%   endfor %}
+{% endfor %}
+global:
+  scrape_interval: {{ prometheus_scrape_interval }}
+  evaluation_interval: {{ prometheus_scrape_interval }}
+  external_labels:
+    cluster: by-systems-poc
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:{{ prometheus_port }}']
+
+  - job_name: node
+    static_configs:
+{% for h in node_hosts | sort %}
+      - targets: ['{{ hostvars[h].ansible_host }}:{{ prometheus_node_exporter_port }}']
+        labels:
+          instance: "{{ h }}"
+{% endfor %}

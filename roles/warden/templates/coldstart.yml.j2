@@ -1,0 +1,79 @@
+---
+# {{ ansible_managed | default('Managed by Ansible (roles/warden)') }}
+# LOCAL cold-start reconciliation — run by warden-coldstart.service on boot.
+# Unseal shares are read from {{ warden_share_file }} (0600) and sent in the
+# HTTPS request BODY (never argv). Vault serves the LE wildcard cert, so
+# validate_certs stays true.
+- name: "Warden cold-start reconciliation"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    vault_url: "{{ warden_vault_url }}"
+    share_file: "{{ warden_share_file }}"
+    threshold: {{ warden_key_threshold }}
+  tasks:
+    - name: "Wait for the Vault API (any status incl. sealed)"
+      ansible.builtin.uri:
+        url: "{{ '{{' }} vault_url {{ '}}' }}/v1/sys/health?sealedcode=503&standbycode=200"
+        status_code: [200, 429, 501, 503]
+      register: health
+      retries: 60
+      delay: 10
+      until: health.status is defined and health.status in [200, 429, 501, 503]
+
+    - name: "Unseal (API body — sealed only)"
+      ansible.builtin.uri:
+        url: "{{ '{{' }} vault_url {{ '}}' }}/v1/sys/unseal"
+        method: PUT
+        body_format: json
+        body:
+          key: "{{ '{{' }} item {{ '}}' }}"
+        status_code: [200]
+      loop: "{{ '{{' }} (lookup('file', share_file) | from_json).shares[:threshold] {{ '}}' }}"
+      when: health.json.sealed | default(false)
+      no_log: true
+
+    - name: "Verify unsealed"
+      ansible.builtin.uri:
+        url: "{{ '{{' }} vault_url {{ '}}' }}/v1/sys/health"
+        status_code: [200, 429]
+      register: verify
+      retries: 6
+      delay: 5
+      until: verify.status in [200, 429]
+
+    - name: "Platform probes"
+      ansible.builtin.uri:
+        url: "{{ '{{' }} item.url {{ '}}' }}"
+        status_code: "{{ '{{' }} item.status {{ '}}' }}"
+      loop:
+{% for p in warden_probes %}
+        - { name: "{{ p.name }}", url: "{{ p.url }}", status: {{ p.status | to_json }} }
+{% endfor %}
+      loop_control:
+        label: "{{ '{{' }} item.name {{ '}}' }}"
+      register: probes
+      retries: 30
+      delay: 10
+      until: probes.status in item.status
+      failed_when: false
+
+    - name: "Summary (journal)"
+      ansible.builtin.debug:
+        msg: >-
+          WARDEN: vault={{ '{{' }} 'UNSEALED' if verify.status in [200, 429] else 'SEALED' {{ '}}' }}
+          probes={{ '{{' }} probes.results | selectattr('status', 'defined')
+            | selectattr('status', 'in', [200, 204, 429]) | list | length {{ '}}' }}/{{ warden_probes | length }}
+
+{% if warden_discord_webhook %}
+    - name: "Notify Discord"
+      ansible.builtin.uri:
+        url: "{{ warden_discord_webhook }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🛡️ warden: platform cold-start reconciled — Vault unsealed."
+        status_code: [200, 204]
+      failed_when: false
+{% endif %}

@@ -1,0 +1,48 @@
+---
+# ==============================================================================
+# upgrade_path — walk the version ladder, one rung at a time.
+# Determine where we are, drop the rungs already behind us, then climb.
+# ==============================================================================
+
+- name: "Upgrade_path | Refuse to run without an explicit step list"
+  ansible.builtin.fail:
+    msg: "upgrade_path_steps is empty — nothing to upgrade for {{ upgrade_path_service }}."
+  when: upgrade_path_steps | length == 0
+
+# shell, not command: version probes pipe through sed/awk by design.
+- name: "Upgrade_path | Detect the running version of {{ upgrade_path_service }}" # noqa command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: "{{ upgrade_path_current_cmd }}"
+  register: upgrade_path_current_raw
+  changed_when: false
+  check_mode: false
+
+- name: "Upgrade_path | Record the starting point"
+  ansible.builtin.set_fact:
+    upgrade_path_current: "{{ upgrade_path_current_raw.stdout | trim }}"
+
+# version_compare on the loop var keeps already-applied rungs out of the climb,
+# so a re-run is a no-op rather than a downgrade.
+- name: "Upgrade_path | Work out which steps remain"
+  ansible.builtin.set_fact:
+    upgrade_path_remaining: >-
+      {{ upgrade_path_steps
+         | rejectattr('version', 'version', upgrade_path_current, '<=')
+         | list }}
+
+- name: "Upgrade_path | Show the ladder"
+  ansible.builtin.debug:
+    msg: >-
+      {{ upgrade_path_service }} at {{ upgrade_path_current }} →
+      {{ (upgrade_path_remaining | map(attribute='version') | list | join(' → '))
+         if upgrade_path_remaining | length > 0 else 'already at target' }}
+      ({{ upgrade_path_remaining | length }} step(s),
+      {{ 'APPLY' if upgrade_path_apply | bool else 'dry run — set upgrade_path_apply=true' }})
+
+- name: "Upgrade_path | Climb one rung at a time"
+  ansible.builtin.include_tasks: step.yml
+  loop: "{{ upgrade_path_remaining }}"
+  loop_control:
+    loop_var: upgrade_path_step
+    label: "{{ upgrade_path_service }} → {{ upgrade_path_step.version }}"
+  when: upgrade_path_apply | bool

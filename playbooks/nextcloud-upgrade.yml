@@ -1,0 +1,60 @@
+---
+# ==============================================================================
+# Playbook: nextcloud-upgrade.yml — sequential major upgrade for Nextcloud.
+#
+# Nextcloud refuses to skip majors, and each major applies its own database
+# migrations via `occ upgrade`. Jumping 33 -> 34 directly, or moving off a major
+# before its latest patch, does not fail loudly — it corrupts. So the ladder is
+# explicit and every rung is verified before the next one is allowed to start.
+#
+#   DRY RUN (prints the ladder, changes nothing):
+#     ansible-playbook -i inventories/prod/hosts.yml playbooks/nextcloud-upgrade.yml
+#
+#   APPLY:
+#     ansible-playbook -i inventories/prod/hosts.yml playbooks/nextcloud-upgrade.yml \
+#       -e upgrade_path_apply=true
+#
+# Take a backup first — a failed major migration is restored, not retried.
+# ==============================================================================
+
+- name: "Nextcloud — sequential major upgrade"
+  hosts: nextcloud
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+
+  roles:
+    - role: upgrade_path
+      vars:
+        upgrade_path_service: nextcloud
+
+        # Latest patch of the CURRENT major first, then the next major. This
+        # ordering is Nextcloud's own requirement, not a preference.
+        upgrade_path_steps:
+          - version: "33.0.8"
+            image: "nextcloud:33.0.8-apache"
+            note: "latest 33.x — required before leaving the major"
+          - version: "34.0.3"
+            image: "nextcloud:34.0.3-apache"
+            note: "major 33 -> 34"
+
+        upgrade_path_current_cmd: >-
+          docker exec -u www-data nextcloud php occ status --output=json
+          | sed -E 's/.*"versionstring":"([^"]+)".*/\1/'
+
+        # Re-run the nextcloud role with this rung's image so the upgrade takes
+        # the normal deploy path instead of a hand-rolled docker command.
+        upgrade_path_role: nextcloud
+        upgrade_path_image_var: nextcloud_image
+
+        # occ upgrade MUST complete before the next major is applied.
+        upgrade_path_migrate_cmd: >-
+          docker exec -u www-data nextcloud php occ upgrade --no-interaction
+          || docker exec -u www-data nextcloud php occ status --output=json | grep -q '"needsDbUpgrade":false'
+
+        # Health gate: installed, not in maintenance, no pending DB upgrade.
+        upgrade_path_verify_cmd: >-
+          docker exec -u www-data nextcloud php occ status --output=json
+          | grep -q '"maintenance":false' &&
+          docker exec -u www-data nextcloud php occ status --output=json
+          | grep -q '"needsDbUpgrade":false'

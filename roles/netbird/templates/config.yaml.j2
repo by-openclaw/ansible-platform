@@ -1,0 +1,65 @@
+# {{ ansible_managed }}
+#
+# NetBird combined server (management + signal + relay + STUN in one process).
+# Replaces the legacy multi-container model and its management.json: upstream
+# ships and tests this, and it is what the current dashboard is built against.
+#
+# All three stores are PostgreSQL per services/0004-database-strategy — the
+# management store, the activity/audit store, and the embedded-IdP store. None
+# of them is allowed to fall back to a SQLite file in a container volume.
+server:
+  listenAddress: ":{{ netbird_server_port }}"
+  exposedAddress: "https://{{ netbird_fqdn }}:443"
+
+  metricsPort: {{ netbird_metrics_port }}
+  healthcheckAddress: ":{{ netbird_health_port }}"
+
+  logLevel: "{{ netbird_log_level }}"
+  logFile: "console"
+
+  # TLS terminates at Traefik, so the server speaks plain HTTP behind it.
+  tls:
+    certFile: ""
+    keyFile: ""
+    letsencrypt:
+      enabled: false
+
+  authSecret: "{{ netbird_auth_secret }}"
+  dataDir: "/var/lib/netbird/"
+
+  disableAnonymousMetrics: {{ netbird_disable_anonymous_metrics | bool | lower }}
+
+  # Embedded IdP. Its issuer is served by this same container under /oauth2,
+  # which is why Traefik must route /oauth2 here and not to the dashboard.
+  # Authentik is added afterwards as an EXTERNAL provider (Settings → Identity
+  # Providers), which is how the combined model integrates SSO.
+  auth:
+    issuer: "https://{{ netbird_fqdn }}/oauth2"
+    localAuthDisabled: {{ netbird_local_auth_disabled | bool | lower }}
+    signKeyRefreshEnabled: false
+    dashboardRedirectURIs:
+      - "https://{{ netbird_fqdn }}/nb-auth"
+      - "https://{{ netbird_fqdn }}/nb-silent-auth"
+    cliRedirectURIs:
+      - "http://localhost:53000/"
+    dashboardPostLogoutRedirectURIs:
+      - "https://{{ netbird_fqdn }}/"
+
+  store:
+    encryptionKey: "{{ netbird_store_encryption_key }}"
+    engine: "postgres"
+    dsn: "host={{ netbird_pg_host }} user={{ netbird_pg.user }} password={{ netbird_pg.password }} dbname={{ netbird_pg.database }} port={{ netbird_pg.port }} sslmode={{ netbird_pg_sslmode }} sslrootcert={{ netbird_pg_sslrootcert }}"
+
+  activityStore:
+    engine: "postgres"
+    dsn: "host={{ netbird_pg_host }} user={{ netbird_pg.user }} password={{ netbird_pg.password }} dbname={{ netbird_pg.database }} port={{ netbird_pg.port }} sslmode={{ netbird_pg_sslmode }} sslrootcert={{ netbird_pg_sslrootcert }}"
+
+  authStore:
+    engine: "postgres"
+    dsn: "host={{ netbird_pg_host }} user={{ netbird_pg.user }} password={{ netbird_pg.password }} dbname={{ netbird_pg.database }} port={{ netbird_pg.port }} sslmode={{ netbird_pg_sslmode }} sslrootcert={{ netbird_pg_sslrootcert }}"
+
+  # Traefik fronts this server; trust it so client IPs and the auth flow work.
+  reverseProxy:
+    trustedHTTPProxies: ["{{ netbird_trusted_proxy_cidr }}"]
+    trustedPeers: ["{{ netbird_peer_cidr }}"]
+    accessLogRetentionDays: 7

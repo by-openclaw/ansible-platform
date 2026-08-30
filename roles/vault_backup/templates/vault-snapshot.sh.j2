@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Managed by Ansible (role vault_backup). Take a Vault raft snapshot, keep the
+# last N, and let the node's vzdump carry it to NFS + S3. Restore: see the role
+# README — `vault operator raft snapshot restore <file>`.
+set -euo pipefail
+
+SNAPDIR="{{ vault_backup_dir }}"
+KEEP={{ vault_backup_keep }}
+CONTAINER="{{ vault_container_name }}"
+TOKEN_FILE="{{ vault_backup_token_file }}"
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+OUT="${SNAPDIR}/vault-${TS}.snap"
+
+mkdir -p "$SNAPDIR"
+VAULT_TOKEN="$(cat "$TOKEN_FILE")"
+
+# Keep this periodic token alive (renew on every run — daily << the token period).
+docker exec -e VAULT_TOKEN="$VAULT_TOKEN" "$CONTAINER" vault token renew >/dev/null 2>&1 || true
+
+# Snapshot inside the container, then copy it out to the (backed-up) host dir.
+docker exec -e VAULT_TOKEN="$VAULT_TOKEN" "$CONTAINER" \
+    vault operator raft snapshot save /tmp/vault.snap
+docker cp "${CONTAINER}:/tmp/vault.snap" "$OUT"
+docker exec "$CONTAINER" rm -f /tmp/vault.snap
+chmod 600 "$OUT"
+
+# Sanity: a valid snapshot is a non-trivial gzip tar.
+if [ ! -s "$OUT" ]; then echo "ERROR: empty snapshot $OUT" >&2; exit 1; fi
+
+# Rotate: keep the newest $KEEP.
+ls -1t "${SNAPDIR}"/vault-*.snap 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f
+echo "vault snapshot OK -> ${OUT} ($(du -h "$OUT" | cut -f1))"
