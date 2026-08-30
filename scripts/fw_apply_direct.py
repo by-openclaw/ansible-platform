@@ -368,6 +368,60 @@ async def apply_section(
         )
 
 
+async def apply_forwarders(
+    client: OpnsenseClient,
+    entries: list[dict[str, Any]],
+    check_mode: bool,
+    results: list[dict[str, Any]],
+) -> None:
+    """Idempotently apply Unbound query-forwarders (opn_unbound.forwarders).
+
+    WORKAROUND for a lib-opnsense limitation (track + fix upstream): the catch-all
+    root forward-zone uses an EMPTY domain (``domain: ''``), but
+    ``IdentityResolver.find_existing`` short-circuits to ``None`` whenever the primary
+    match key (``domain``) is empty — so ``UbForwardManager`` can never match an
+    existing catch-all entry and every apply would CREATE another duplicate. That is
+    exactly what produced the 8x ``127.0.0.1:53531`` / ``::1:53531`` duplication on the
+    live FW. Until the lib matches on the remaining keys when the primary is
+    legitimately empty, we pre-check existence here by ``(domain, server, port)`` and
+    skip entries already present; only genuinely-missing ones are created. This keeps
+    a from-scratch deploy correct AND a re-run idempotent (no new duplicates).
+    """
+    if not entries:
+        log.info("[DNS_FW] no entries — skipping")
+        return
+    existing = await client.search("unbound/settings/searchForward")
+    have = {(e.get("domain", ""), e.get("server", ""), str(e.get("port", ""))) for e in existing}
+    mgr = UbForwardManager(client)
+    log.info("[DNS_FW] applying %d entries (%d already present live)", len(entries), len(have))
+    for entry in entries:
+        payload, meta = strip_ref(entry)
+        key = (payload.get("domain", ""), payload.get("server", ""), str(payload.get("port", "")))
+        ident = payload.get("description") or f"{payload.get('server')}:{payload.get('port')}"
+        start = time.monotonic()
+        base = {
+            "section": "DNS_FW", "name": ident, "uuid": None,
+            "adr_ref": meta["ref"].get("adr"), "lib_manager": "UbForwardManager",
+            "ansible_module": meta["ref"].get("ansible_module"),
+        }
+        if key in have:
+            dur_ms = int((time.monotonic() - start) * 1000)
+            log.info("[DNS_FW] %-8s changed=False action=noop name=%r (already present) (%d ms)", "OK", ident, dur_ms)
+            results.append({**base, "outcome": "ok", "action": "noop", "changed": False, "duration_ms": dur_ms})
+            continue
+        try:
+            res = await mgr.ensure(meta["state"], payload, check_mode=check_mode)
+            dur_ms = int((time.monotonic() - start) * 1000)
+            log.info("[DNS_FW] %-8s changed=%-5s action=%s uuid=%s name=%r (%d ms)",
+                     "OK", str(res.changed), res.action, res.uuid, ident, dur_ms)
+            results.append({**base, "uuid": res.uuid, "outcome": "ok", "action": res.action,
+                            "changed": res.changed, "duration_ms": dur_ms})
+        except Exception as exc:  # noqa: BLE001  defensive — never crash mid-apply
+            dur_ms = int((time.monotonic() - start) * 1000)
+            log.error("[DNS_FW] FAIL name=%r reason=%s (%d ms)", ident, exc, dur_ms)
+            results.append({**base, "outcome": "error", "action": None, "changed": None, "duration_ms": dur_ms})
+
+
 def summarize(results: list[dict[str, Any]]) -> None:
     print()
     print("=" * 100)
@@ -438,7 +492,7 @@ async def main_async(args: argparse.Namespace) -> int:
             host_overrides = [{"state": "present", **{k: v for k, v in h.items() if k != "ref"}} for h in unbound.get("host_overrides", [])]
             forwarders     = [{"state": "present", **{k: v for k, v in f.items() if k != "ref"}} for f in unbound.get("forwarders", [])]
             await apply_section(UbHostOverrideManager, client, host_overrides, "DNS_HO", args.check, results)
-            await apply_section(UbForwardManager,      client, forwarders,     "DNS_FW", args.check, results)
+            await apply_forwarders(client, forwarders, args.check, results)
 
         # Kea DHCPv4 — general settings (enable + interfaces) then subnets
         kea4 = catalog.get("opn_kea_dhcp4", {})
