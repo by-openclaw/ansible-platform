@@ -1,0 +1,8 @@
+---
+# Guarded for --check: the package install is only simulated under check mode,
+# so the unit does not exist and a restart would fail a dry run on a clean host.
+- name: Restart unattended-upgrades
+  ansible.builtin.systemd_service:
+    name: unattended-upgrades
+    state: restarted
+  when: not ansible_check_mode

@@ -1,0 +1,43 @@
+---
+# ==============================================================================
+# Shared diagram services — Kroki (+ Mermaid) + drawio on lxc-diagrams-01.
+# Internal-only (VPN + FW; no public). Kroki is a server-to-server render API so
+# it is NOT forwardAuth-gated (would break API callers); drawio is the editor UI.
+# Used platform-wide (GitLab admin diagram settings, docs, NetBox, admin portal).
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/diagrams.yml
+# ==============================================================================
+- name: "Diagram services (Kroki + drawio)"
+  hosts: diagrams
+  become: true
+  gather_facts: true
+  roles:
+    - role: diagrams
+  tasks:
+    - name: "Traefik route — Kroki (render API)"
+      ansible.builtin.include_role:
+        name: traefik_route
+      vars:
+        traefik_route_name: kroki
+        traefik_route_fqdn: kroki.{{ platform_domain }}
+        traefik_route_backend_url: "http://lxc-diagrams-01.{{ platform_domain }}:8000"
+
+    - name: "Traefik route — PlantUML (standalone render)"
+      ansible.builtin.include_role:
+        name: traefik_route
+      vars:
+        traefik_route_name: plantuml
+        traefik_route_fqdn: plantuml.{{ platform_domain }}
+        traefik_route_backend_url: "http://lxc-diagrams-01.{{ platform_domain }}:8004"
+
+    - name: "Traefik route — drawio (editor)"
+      ansible.builtin.include_role:
+        name: traefik_route
+      vars:
+        traefik_route_name: drawio
+        traefik_route_fqdn: drawio.{{ platform_domain }}
+        traefik_route_backend_url: "http://lxc-diagrams-01.{{ platform_domain }}:8080"
+        # NO forwardAuth: drawio is consumed as an IFRAME EMBED by GitLab (edit
+        # .drawio) and Nextcloud (drawio app) — a forwardAuth OAuth redirect inside
+        # an iframe is blocked by browsers and breaks the embed. drawio is a
+        # stateless editor (no server-side data; diagrams are stored in Nextcloud/
+        # GitLab, which ARE SSO'd), so it's kept internal (VPN + FW), like kroki.

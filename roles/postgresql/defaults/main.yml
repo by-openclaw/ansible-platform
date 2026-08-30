@@ -5,7 +5,9 @@
 # Single-node now; HA-adoptable (wal_level=replica) so a future Patroni promotion
 # needs no rebuild. Data persists in a named volume across container re-creation.
 # ==============================================================================
-pg_image: "postgres:17"          # pinned (never :latest); upgrade = bump tag
+# Exact pin, never a stream tag: ":17" would silently roll forward to whatever
+# 17.x is newest on any re-pull, changing the database version with no commit.
+pg_image: "postgres:17.11"       # upgrade = bump this tag deliberately
 pg_container_name: "postgres"
 
 # Publish only on loopback + the SVC IP (apps connect over SVC). Dual-stack:
@@ -16,6 +18,13 @@ pg_listen_ip6: "fd01:3::110"
 pg_port: 5432
 pg_data_volume: "pgdata"
 pg_uid: 999                       # postgres uid inside the official image
+
+# GitLab's schema loads in ONE transaction that acquires a lock per object; with
+# 19.x's many partitioned tables it exceeds the default max_locks_per_transaction
+# (64) → "out of shared memory / increase max_locks_per_transaction" on schema
+# load. GitLab's own bundled PG raises this; the shared cluster PG must too. Also
+# fine for every other consumer. Restart-required (postmaster) setting.
+pg_max_locks_per_transaction: 256
 
 # Host dirs bind-mounted into the container (same path inside).
 pg_conf_host_dir: "/etc/postgres/conf"     # pg_hba.conf
@@ -29,7 +38,7 @@ pg_app_cidrs:
 # NOTE: app databases + roles are NOT created here. Each app's playbook creates
 # its own DB+role via the reusable `postgres_db` role (separation of concerns).
 
-# TLS — shared wildcard *.by-research.be cert (distributed by tls_cert, mounted
+# TLS — shared wildcard *.{{ platform_domain }} cert (distributed by tls_cert, mounted
 # into the container). Remote app access forced over TLS (hostssl); clients
 # connect sslmode=verify-full against the publicly-trusted LE chain.
 pg_ssl: true

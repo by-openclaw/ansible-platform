@@ -1,0 +1,14 @@
+---
+# ==============================================================================
+# GitLab RBAC — reconcile instance admins + groups + memberships from desired
+# state (roles/gitlab_rbac/defaults). Re-run whenever the desired state changes;
+# it converges. GitLab CE can't sync group membership from OIDC, so this is the
+# source of truth for GitLab-side groups/policies.
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/gitlab-rbac.yml
+# ==============================================================================
+- name: "GitLab RBAC — groups + policies"
+  hosts: gitlab
+  become: true
+  gather_facts: false
+  roles:
+    - role: gitlab_rbac

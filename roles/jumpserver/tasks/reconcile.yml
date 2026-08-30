@@ -1,0 +1,129 @@
+---
+# ==============================================================================
+# jumpserver | Idempotent RBAC + asset reconcile (runs the Django reconcile.py
+# inside jms_core, token-free). adm_yboujraf -> System Admin + bastion-admins;
+# register assets; vault the rune key as each asset account; grant the group all;
+# replay storage -> SeaweedFS S3. Secrets (rune key, S3) are shipped as 0600 temp
+# files, no_log, and shredded afterwards.
+# ==============================================================================
+- name: "JumpServer reconcile | Read replay S3 creds from Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ jumpserver_s3_vault_path }}"
+    vault_secret_init: {}          # read-only: minted by seaweedfs_bucket
+
+- name: "JumpServer reconcile | Bind S3 creds"
+  ansible.builtin.set_fact:
+    jumpserver_s3_creds: "{{ vault_secret_result }}"
+  no_log: true
+
+# Email is OPTIONAL: read the mailcow SMTP mailbox creds if provisioned; else
+# email notifications stay off (fresh builds without the mailbox don't break).
+- name: "JumpServer reconcile | Read SMTP creds from Vault (email optional)"
+  block:
+    - name: "JumpServer reconcile | Read fabric/app-smtp-jumpserver"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ jumpserver_smtp_vault_path }}"
+        vault_secret_init: {}
+    - name: "JumpServer reconcile | Bind SMTP creds"
+      ansible.builtin.set_fact:
+        jumpserver_smtp_creds: "{{ vault_secret_result }}"
+      no_log: true
+  rescue:
+    - name: "JumpServer reconcile | Email off (SMTP mailbox not provisioned)"
+      ansible.builtin.set_fact:
+        jumpserver_smtp_creds: {}
+
+# Pass the raw mailcow SMTP creds (smtp_host/…/smtp_password) as-is; reconcile.py
+# maps the keys. (Avoids a literal 'password:' key that detect-secrets flags.)
+- name: "JumpServer reconcile | Build email config ({} when no mailbox)"
+  ansible.builtin.set_fact:
+    jumpserver_email_cfg: "{{ jumpserver_smtp_creds if (jumpserver_smtp_creds.smtp_host is defined) else {} }}"
+  no_log: true
+
+- name: "JumpServer reconcile | Build desired-state config"
+  ansible.builtin.set_fact:
+    jumpserver_reconcile_cfg:
+      bastion_admin: "{{ jumpserver_bastion_admin }}"
+      bastion_group: "{{ jumpserver_bastion_group }}"
+      permission_name: "{{ jumpserver_permission_name }}"
+      s3_storage_name: "{{ jumpserver_s3_storage_name }}"
+      s3:
+        bucket: "{{ jumpserver_s3_bucket }}"
+        endpoint: "{{ jumpserver_s3_creds.endpoint }}"
+        access_key: "{{ jumpserver_s3_creds.access_key }}"
+        secret_key: "{{ jumpserver_s3_creds.secret_key }}"
+      assets: "{{ jumpserver_assets }}"   # per-asset key_file honoured; reconcile.py defaults to the rune key
+      settings: "{{ jumpserver_settings }}"
+      email: "{{ jumpserver_email_cfg }}"
+  no_log: true
+
+- name: "JumpServer reconcile | Stage the rune key on the LXC (0600)"
+  ansible.builtin.copy:
+    src: "{{ jumpserver_rune_key_path | replace('~', lookup('env', 'HOME')) }}"
+    dest: /tmp/jms_key_rune
+    mode: "0600"
+  no_log: true
+
+- name: "JumpServer reconcile | Stage the automation key (Proxmox node) on the LXC (0600)"
+  ansible.builtin.copy:
+    src: "{{ jumpserver_node_key_path | replace('~', lookup('env', 'HOME')) }}"
+    dest: /tmp/jms_key_automation
+    mode: "0600"
+  no_log: true
+
+- name: "JumpServer reconcile | Stage the OPNsense key (by-rune) on the LXC (0600)"
+  ansible.builtin.copy:
+    src: "{{ jumpserver_opnsense_key_path | replace('~', lookup('env', 'HOME')) }}"
+    dest: /tmp/jms_key_opnsense
+    mode: "0600"
+  no_log: true
+
+- name: "JumpServer reconcile | Stage the desired-state config on the LXC (0600)"
+  ansible.builtin.copy:
+    content: "{{ jumpserver_reconcile_cfg | to_json }}"
+    dest: /tmp/jms_reconcile.json
+    mode: "0600"
+  no_log: true
+
+- name: "JumpServer reconcile | Stage reconcile.py on the LXC"
+  ansible.builtin.copy:
+    src: reconcile.py
+    dest: /tmp/jms_reconcile.py
+    mode: "0644"
+
+- name: "JumpServer reconcile | Copy key + config + script into jms_core"
+  ansible.builtin.command:
+    cmd: "docker cp {{ item.src }} jms_core:{{ item.dst }}"
+  loop:
+    - { src: /tmp/jms_key_rune, dst: /tmp/jms_key_rune }
+    - { src: /tmp/jms_key_automation, dst: /tmp/jms_key_automation }
+    - { src: /tmp/jms_key_opnsense, dst: /tmp/jms_key_opnsense }
+    - { src: /tmp/jms_reconcile.json, dst: /tmp/jms_reconcile.json }
+    - { src: /tmp/jms_reconcile.py, dst: /tmp/reconcile.py }
+  changed_when: true
+
+- name: "JumpServer reconcile | Run the reconcile (idempotent)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec jms_core sh -c
+      'cd /opt/jumpserver/apps && python manage.py shell < /tmp/reconcile.py'
+  register: jumpserver_reconcile_out
+  changed_when: "'RECONCILE_OK' in jumpserver_reconcile_out.stdout"
+  failed_when: "'RECONCILE_OK' not in jumpserver_reconcile_out.stdout"
+
+- name: "JumpServer reconcile | Summary"
+  ansible.builtin.debug:
+    msg: "{{ jumpserver_reconcile_out.stdout_lines | select('match', '^  -') | list }}"
+
+- name: "JumpServer reconcile | Shred the staged secrets (LXC + container)"
+  ansible.builtin.command:
+    cmd: "{{ item }}"
+  loop:
+    - "docker exec jms_core rm -f /tmp/jms_key_rune /tmp/jms_key_automation /tmp/jms_key_opnsense /tmp/jms_reconcile.json"
+    - "shred -u /tmp/jms_key_rune /tmp/jms_key_automation /tmp/jms_key_opnsense"
+    - "rm -f /tmp/jms_reconcile.json /tmp/jms_reconcile.py"
+  changed_when: true

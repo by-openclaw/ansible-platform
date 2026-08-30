@@ -38,6 +38,8 @@ import requests
 import urllib3
 import yaml
 
+from deployment_vars import render_deployment_tokens
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -348,7 +350,7 @@ def main():
     args = p.parse_args()
 
     s = load_secret()
-    catalog = yaml.safe_load(CATALOG.read_text())
+    catalog = yaml.safe_load(render_deployment_tokens(CATALOG))
     print(f"FW = {s['host']}  apply = {args.apply}  only = {args.only}")
 
     if args.only in (None, "1", "snapshot"):

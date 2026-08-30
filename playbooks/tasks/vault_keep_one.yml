@@ -1,0 +1,10 @@
+---
+# Append ONE fabric file's new-convention Vault path to _keep_paths.
+- name: "Keep | Resolve the KV path ({{ secret_file.path | basename }})"
+  ansible.builtin.include_tasks: vault_kv_path.yml
+  vars:
+    _kv_base: "{{ secret_file.path | basename | regex_replace('\\.json$', '') }}"
+
+- name: "Keep | Record {{ secret_file.path | basename }}"
+  ansible.builtin.set_fact:
+    _keep_paths: "{{ _keep_paths + [vault_migrate_env + '/' + _kv_rel] }}"

@@ -1,0 +1,29 @@
+# Managed by Ansible role `gitlab_runner`. Do NOT edit by hand.
+concurrent = {{ gitlab_runner_concurrent }}
+check_interval = 3
+shutdown_timeout = 0
+
+[session_server]
+  session_timeout = 1800
+
+[[runners]]
+  name = "{{ gitlab_runner_description }}"
+  url = "{{ gitlab_runner_gitlab_url }}"
+  token = "{{ gitlab_runner_token }}"
+  executor = "{{ gitlab_runner_executor }}"
+  environment = ["DOCKER_DRIVER=overlay2"]
+  [runners.docker]
+    image = "{{ gitlab_runner_default_image }}"
+    privileged = {{ gitlab_runner_docker_privileged | lower }}
+    tls_verify = false
+    disable_cache = false
+    volumes = {{ gitlab_runner_docker_volumes | to_json }}
+    shm_size = 0
+{% if gitlab_runner_docker_network_mtu %}
+    network_mtu = {{ gitlab_runner_docker_network_mtu }}
+{% endif %}
+    # Pull job/base images every run so a moved tag is picked up; Docker Hub bases
+    # should be referenced via the Dependency Proxy ({{ gitlab_runner_dependency_proxy }}).
+    pull_policy = ["always"]
+  [runners.cache]
+    Type = ""

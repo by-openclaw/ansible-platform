@@ -1,0 +1,11 @@
+---
+# Role: fail2ban — SSH jail + OOB allow-list (identity/0004 §9 role 6, split
+# out of the monolithic hardening role). Debian LXCs need a backend that works
+# without systemd-journal quirks; defaults follow the previous hardening role.
+fail2ban_ssh_port: "{{ sshd_hardening_port | default(22222) }}"
+fail2ban_ssh_maxretry: 5
+fail2ban_ssh_bantime: 3600
+fail2ban_ssh_findtime: 600
+# OOB + MGMT nets never banned (trusted ops stations)
+fail2ban_ssh_ignoreip: "127.0.0.1/8 10.6.224.0/20 10.6.240.0/20"
+fail2ban_extra_jails: []

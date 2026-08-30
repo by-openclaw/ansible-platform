@@ -5,9 +5,9 @@
 # PostgreSQL (postgres_db: netbox) + Redis, both over verified TLS. Fronted by
 # Traefik (wildcard TLS). Upgrade = bump netbox_image tag.
 # ==============================================================================
-netbox_image: "netboxcommunity/netbox:v4.6.2"   # pinned (never :latest)
+netbox_image: "netboxcommunity/netbox:v4.6.8"   # exact pin — bump deliberately
 
-netbox_fqdn: "netbox.by-research.be"
+netbox_fqdn: "netbox.{{ platform_domain }}"
 
 # Web HTTP backend (Traefik terminates TLS) — published on the SVC IP.
 netbox_listen_ip: "10.1.3.120"
@@ -15,7 +15,7 @@ netbox_host_port: 8080
 netbox_container_port: 8080
 
 # Shared PostgreSQL (DB + role created by the postgres_db role).
-netbox_pg_host: "lxc-pgsql-01.by-research.be"
+netbox_pg_host: "lxc-pgsql-01.{{ platform_domain }}"
 netbox_pg_port: 5432
 netbox_pg_name: "netbox"
 netbox_pg_user: "netbox"
@@ -23,7 +23,7 @@ netbox_pg_sslmode: "verify-full"          # falls back to "require" only if repo
 netbox_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"
 
 # Shared Redis (TLS, two logical DBs: tasks=0, cache=1).
-netbox_redis_host: "lxc-redis-01.by-research.be"
+netbox_redis_host: "lxc-redis-01.{{ platform_domain }}"
 netbox_redis_port: 6379
 netbox_redis_tasks_db: 0
 netbox_redis_cache_db: 1
@@ -41,13 +41,13 @@ netbox_isolated_deployment: false
 
 # Initial local break-glass admin (kept alongside SSO as the break-glass login).
 netbox_superuser_name: "admin"
-netbox_superuser_email: "admin@by-research.be"
+netbox_superuser_email: "admin@{{ platform_domain }}"
 
 # --- Authentik OIDC SSO (wired only when the client secret file exists) ---------
 # python-social-auth OIDC backend. The Authentik app/provider/group are declared
 # in the authentik role (authentik_oidc_apps: netbox). Access = netbox-admins.
 netbox_oidc_secret_file: "fabric/app-oidc-netbox.json"
-netbox_authentik_base: "https://authentik.by-research.be"
+netbox_authentik_base: "https://authentik.{{ platform_domain }}"
 netbox_oidc_app_slug: "netbox"
 # Members of this Authentik group become NetBox superusers (group sync from the
 # OIDC `groups` claim). Login restriction to the group is enforced IdP-side

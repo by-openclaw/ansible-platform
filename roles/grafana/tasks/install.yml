@@ -1,0 +1,29 @@
+---
+- name: "Grafana | Ensure gnupg + curl"
+  ansible.builtin.apt:
+    name:
+      - gnupg
+      - curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Grafana | APT signing key (dearmored)"
+  ansible.builtin.shell:
+    cmd: "set -o pipefail; curl -fsSL {{ grafana_apt_key_url }} | gpg --dearmor -o /usr/share/keyrings/grafana.gpg"
+    creates: /usr/share/keyrings/grafana.gpg
+  changed_when: true
+
+- name: "Grafana | APT repo"
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/grafana.list
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ grafana_apt_repo }}\n"
+
+- name: "Grafana | Install grafana"
+  ansible.builtin.apt:
+    name: grafana
+    state: present
+    update_cache: true

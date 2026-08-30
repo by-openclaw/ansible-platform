@@ -14,8 +14,8 @@ adguard_ip6: "fd01:3::101"
 # Primary NIC (netplan) — used to disable IPv6 RA/SLAAC so the host stays
 # static-only (keeps adguard_ip6, drops the auto EUI-64 mngtmpaddr).
 adguard_primary_iface: "eth0"
-# prod wildcard *.by-research.be (NOT test.by-research.be)
-adguard_domain: "by-research.be"
+# prod wildcard *.{{ platform_domain }} (NOT test.{{ platform_domain }})
+adguard_domain: "{{ platform_domain }}"
 adguard_renew_days: 30
 
 # Upstream = the PROD OPNsense FW Unbound (SVC gateway). NOTE: prod FW currently
@@ -34,7 +34,12 @@ adguard_bootstrap_dns:
 # ------------------------------------------------------------------------------
 # Installer versions / sources
 # ------------------------------------------------------------------------------
-adguard_release_url: "https://static.adguard.com/adguardhome/release/AdGuardHome_linux_amd64.tar.gz"
+# AdGuardHome. The static.adguard.com "release" path is an UNVERSIONED link —
+# it always serves whatever is current, which is `:latest` by another name: a
+# rebuild would install a different version than the one running, with nothing
+# in git recording the change. Pinned to a GitHub release tag instead.
+adguard_version: "0.107.79"
+adguard_release_url: "https://github.com/AdguardTeam/AdGuardHome/releases/download/v{{ adguard_version }}/AdGuardHome_linux_amd64.tar.gz"
 adguard_install_dir: "/opt"
 adguard_home_dir: "/opt/AdGuardHome"
 

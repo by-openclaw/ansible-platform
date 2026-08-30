@@ -89,6 +89,20 @@
       url: {{ crowdsec_agent_lapi_url }}
   when: crowdsec_agent_needs_enrol | bool
 
+# REBUILD-SAFE: a destroyed+recreated host still has its OLD machine registered on
+# the central LAPI under the same name, and `cscli lapi register --machine <host>`
+# refuses to overwrite it ("machine already exists") — which would need a manual
+# `cscli machines delete`. Delete any stale registration for THIS hostname on the
+# central LAPI first (delegated), so re-enrolment is fully hands-off. Best-effort:
+# a first-ever install has nothing to delete. Only runs when we're (re-)enrolling.
+- name: "Crowdsec_agent | Remove any stale registration for this host on the central LAPI"
+  ansible.builtin.command: "cscli machines delete {{ inventory_hostname }}"
+  delegate_to: "{{ crowdsec_agent_lapi_inventory_host }}"
+  become: true
+  when: crowdsec_agent_needs_enrol | bool
+  changed_when: true
+  failed_when: false
+
 - name: "Crowdsec_agent | Enrol with the central LAPI (auto-registration token)"
   ansible.builtin.command: >-
     cscli lapi register

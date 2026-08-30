@@ -1,0 +1,18 @@
+---
+# Loki — log aggregation on lxc-monitoring-01. Installed from the Grafana APT repo.
+# CHUNKS + INDEX live in SeaweedFS S3 (not local) — local disk is only the WAL +
+# tsdb cache/compactor scratch. Grafana wires it as the "Loki" datasource.
+loki_port: 3100
+loki_grpc_port: 9096
+loki_data_dir: "/var/lib/loki"          # local WAL/cache/compactor scratch ONLY
+loki_retention: "720h"                   # 30d
+
+# SeaweedFS S3 backend (via the Traefik HTTPS route — like PBS; NO explicit port so
+# the SigV4 host header matches what Traefik forwards).
+loki_s3_endpoint: "s3.{{ platform_domain }}"
+loki_s3_bucket: "loki-data"
+loki_s3_identity: "loki"
+loki_s3_secret_file: "fabric/infra-seaweedfs-loki.json"   # written by seaweedfs_bucket
+
+loki_apt_repo: "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://apt.grafana.com stable main"
+loki_apt_key_url: "https://apt.grafana.com/gpg.key"

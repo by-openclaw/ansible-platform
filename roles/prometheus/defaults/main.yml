@@ -1,0 +1,19 @@
+---
+# Prometheus — metrics TSDB + scraper on lxc-monitoring-01. Debian package
+# (systemd), config in /etc/prometheus, ARGS in /etc/default/prometheus.
+prometheus_port: 9090
+# Local TSDB kept small (metrics TSDB must be local — POSIX/locking, not S3/NFS).
+# Long-term/S3 metrics = a future Thanos/Mimir sidecar (remote-write). 15d is plenty
+# for operational dashboards + keeps the LXC disk light.
+prometheus_retention: "15d"
+prometheus_scrape_interval: "30s"
+prometheus_node_exporter_port: 9100
+# Inventory groups whose hosts run node-exporter (scraped on :9100). Deduped.
+prometheus_node_groups:
+  - cluster
+  - adguard
+  - mailcow
+  - pbs
+  - monitoring
+# Bind to localhost only — Grafana is co-located and Traefik/edge (if any) fronts it.
+prometheus_listen: "127.0.0.1"

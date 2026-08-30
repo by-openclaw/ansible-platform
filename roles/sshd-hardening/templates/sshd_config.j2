@@ -1,0 +1,79 @@
+# ==============================================================================
+# /etc/ssh/sshd_config — managed by Ansible (role: hardening)
+# DO NOT EDIT MANUALLY — changes will be overwritten
+# Template: roles/hardening/templates/sshd_config.j2
+# ==============================================================================
+
+# ---- Port ----
+# Only one port — no Port 22 line. Default port 22 is NOT enabled.
+Port {{ sshd_hardening_port }}
+LogLevel VERBOSE
+
+# ---- Address families ----
+AddressFamily any
+ListenAddress 0.0.0.0
+ListenAddress ::
+
+# ---- Host keys ----
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+
+# ---- Authentication ----
+PermitRootLogin {{ sshd_hardening_permit_root_login }}
+PubkeyAuthentication {{ sshd_hardening_pubkey_auth }}
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication {{ sshd_hardening_password_auth }}
+PermitEmptyPasswords no
+ChallengeResponseAuthentication {{ sshd_hardening_challenge_response }}
+UsePAM yes
+KbdInteractiveAuthentication no
+
+# ---- Access control ----
+# Only members of these groups can connect (key-based by default)
+AllowGroups {{ sshd_hardening_allow_groups | join(' ') }} {{ sshd_hardening_break_glass_group }}{% if sshd_hardening_root_allowed_from | default([]) | length > 0 %} root{% endif %}
+
+# ---- Limits ----
+MaxAuthTries {{ sshd_hardening_max_auth_tries }}
+LoginGraceTime {{ sshd_hardening_login_grace_time }}
+MaxSessions 2
+
+# ---- Session ----
+X11Forwarding {{ sshd_hardening_x11_forwarding }}
+PrintMotd no
+Banner {{ sshd_hardening_banner }}
+TCPKeepAlive no
+ClientAliveInterval {{ sshd_hardening_client_alive_interval }}
+ClientAliveCountMax {{ sshd_hardening_client_alive_count_max }}
+
+# ---- Forwarding ----
+AllowAgentForwarding no
+AllowTcpForwarding no
+GatewayPorts no
+PermitTunnel no
+
+# ---- Misc ----
+AcceptEnv LANG LC_*
+Subsystem sftp /usr/lib/openssh/sftp-server
+
+# ==============================================================================
+# Break-glass block
+# Password authentication allowed ONLY for:
+#   - Group: {{ sshd_hardening_break_glass_group }}
+#   - From networks: {{ sshd_hardening_break_glass_networks | join(', ') }}
+# This enables emergency access when certificates/keys are unavailable.
+# Networks are restricted to OOB/MGMT — never internet-facing.
+# ==============================================================================
+Match Group {{ sshd_hardening_break_glass_group }} Address {{ sshd_hardening_break_glass_networks | join(',') }}
+    PasswordAuthentication yes
+    # No key forwarding even for break-glass
+    AllowAgentForwarding no
+    AllowTcpForwarding no
+
+{% if sshd_hardening_root_allowed_from | default([]) | length > 0 %}
+# PVE cluster/lifeline carve-out: Proxmox cluster join + live-migration are
+# hardcoded to root (official docs) — root stays reachable KEY-ONLY from these
+# networks exclusively. Everywhere else PermitRootLogin no applies.
+Match Address {{ sshd_hardening_root_allowed_from | join(',') }}
+    PermitRootLogin prohibit-password
+{% endif %}

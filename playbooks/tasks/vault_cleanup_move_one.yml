@@ -1,0 +1,41 @@
+---
+# Move ONE KV entry (var: _mv_from) to a new path (var: _mv_to), verified:
+# read origin -> write destination if absent -> re-read + compare -> destroy the
+# origin's metadata ONLY when destination content matches. Never lossy.
+- name: "Mv | Read origin {{ _mv_from }}"
+  ansible.builtin.command:
+    argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+           "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-format=json", "{{ _mv_from }}"]
+  register: _mv_src
+  changed_when: false
+  no_log: true
+
+- name: "Mv | Ensure destination {{ _mv_to }}"
+  ansible.builtin.command:
+    argv: ["docker", "exec", "-i", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+           "vault", "kv", "put", "-mount={{ vault_kv_path }}", "{{ _mv_to }}", "-"]
+    stdin: "{{ (_mv_src.stdout | from_json).data.data | to_json }}"
+    stdin_add_newline: false
+  register: _mv_put
+  changed_when: true
+  no_log: true
+
+- name: "Mv | Verify destination matches origin"
+  ansible.builtin.command:
+    argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+           "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-format=json", "{{ _mv_to }}"]
+  register: _mv_dst
+  changed_when: false
+  failed_when: (_mv_dst.stdout | from_json).data.data != (_mv_src.stdout | from_json).data.data
+  no_log: true
+
+- name: "Mv | Destroy the origin metadata (verified moved)"
+  ansible.builtin.command:
+    argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+           "vault", "kv", "metadata", "delete", "-mount={{ vault_kv_path }}", "{{ _mv_from }}"]
+  changed_when: true
+  no_log: true
+
+- name: "Mv | Record"
+  ansible.builtin.set_fact:
+    _moved: "{{ (_moved | default([])) + [_mv_from + ' -> ' + _mv_to] }}"

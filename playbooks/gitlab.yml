@@ -1,0 +1,120 @@
+---
+# ==============================================================================
+# GitLab CE (#8) — full dependency-composed deploy. Order matters (deps first):
+#   Play 1  PVE host    : persistent ZFS git-data bind-mount (survives destroy)
+#   Play 2  authentik   : OIDC application + client creds (SSO, mandatory)
+#   Play 3  gitlab host : DB(+extensions) + S3 buckets/key → install → Traefik routes
+#
+# Secrets: Vault IS the store — no local files. postgres_db / seaweedfs_bucket mint
+# their creds INTO Vault (get-or-create); the gitlab role reads DB/Redis/S3/OIDC/SMTP
+# from Vault and writes GitLab's own generated secrets back to Vault. No post-run
+# vault-kv-sync step is needed for the GitLab chain.
+#
+# Prereqs: lxc-gitlab-01 provisioned (terraform svc-gitlab.tf); shared PG/Redis/
+# SeaweedFS/Authentik/Traefik/Vault up + unsealed; DNS overrides for gitlab/registry
+# applied so the Traefik backends resolve (opnsense catalog host_overrides).
+# ==============================================================================
+
+- name: "GitLab — persistent ZFS git-data (PVE host)"
+  hosts: srv-proxmox-poc-01
+  gather_facts: false
+  vars:
+    ansible_user: root
+    ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_rune_automation"
+    ansible_become: false
+    pve_zfs_mount_items:
+      - dataset: "tank/data/gitlab"
+        quota: "100G"
+        vmid: 560
+        mp_index: 0
+        mount_path: "/var/opt/gitlab/git-data"
+        uid: 100000
+        gid: 100000
+  roles:
+    - role: pve_zfs_mount
+
+- name: "GitLab — Authentik OIDC application (SSO)"
+  hosts: lxc-authentik-01
+  become: true
+  gather_facts: true
+  # Regenerates blueprints + generates any missing client creds (incl. the new
+  # gitlab app) — idempotent for the already-live apps.
+  roles:
+    - role: authentik
+      tags: ["secrets", "blueprints"]
+
+- name: "GitLab — dependencies, install, routes"
+  hosts: lxc-gitlab-01
+  become: true
+  gather_facts: true
+  tasks:
+    - name: "Provision the GitLab database (shared cluster Postgres)"
+      ansible.builtin.include_role:
+        name: postgres_db
+      vars:
+        postgres_db_name: gitlabhq_production
+        postgres_db_user: gitlab
+        postgres_db_vault_path: prod/gitlab/db-pgsql
+
+    - name: "Enable required Postgres extensions for GitLab (superuser)"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec postgres psql -U postgres -d gitlabhq_production
+          -c "CREATE EXTENSION IF NOT EXISTS {{ item }}"
+      delegate_to: lxc-pgsql-01
+      loop:
+        - pg_trgm
+        - btree_gist
+      changed_when: true
+
+    - name: "Provision GitLab S3 buckets + scoped key (SeaweedFS)"
+      ansible.builtin.include_role:
+        name: seaweedfs_bucket
+      vars:
+        seaweedfs_bucket_identity: gitlab
+        seaweedfs_bucket_names:
+          - gitlab-artifacts
+          - gitlab-external-diffs
+          - gitlab-lfs
+          - gitlab-uploads
+          - gitlab-packages
+          - gitlab-dependency-proxy
+          - gitlab-terraform-state
+          - gitlab-ci-secure-files
+          - gitlab-pages
+          - gitlab-registry
+          - gitlab-backups
+        seaweedfs_bucket_vault_path: prod/gitlab/s3
+
+    - name: "Install + configure GitLab CE"
+      ansible.builtin.include_role:
+        name: gitlab
+
+    - name: "Traefik route — GitLab web"
+      ansible.builtin.include_role:
+        name: traefik_route
+      vars:
+        traefik_route_name: gitlab
+        traefik_route_fqdn: gitlab.{{ platform_domain }}
+        traefik_route_backend_url: "http://lxc-gitlab-01.{{ platform_domain }}:80"
+
+    - name: "Traefik route — Container registry"
+      ansible.builtin.include_role:
+        name: traefik_route
+      vars:
+        traefik_route_name: gitlab-registry
+        traefik_route_fqdn: registry.{{ platform_domain }}
+        traefik_route_backend_url: "http://lxc-gitlab-01.{{ platform_domain }}:5050"
+
+    - name: "Traefik route — GitLab Pages (apex + wildcard)"
+      ansible.builtin.include_role:
+        name: traefik_route
+      vars:
+        traefik_route_name: gitlab-pages
+        traefik_route_fqdn: pages.{{ platform_domain }}
+        # apex pages.{{ platform_domain }} + every <project>.pages.{{ platform_domain }}.
+        # Use [.] (literal-dot char class) NOT \. — a backslash is an invalid YAML
+        # escape in the rendered double-quoted route file and makes Traefik reject
+        # the whole dynamic dir (outage). [.] is backslash-free and YAML-safe.
+        traefik_route_rule: 'HostRegexp(`^([a-zA-Z0-9-]+[.])?pages[.]by-research[.]be$`)'
+        traefik_route_backend_url: "http://lxc-gitlab-01.{{ platform_domain }}:8091"

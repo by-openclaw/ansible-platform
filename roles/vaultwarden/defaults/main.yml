@@ -5,13 +5,17 @@
 # (postgres_db: vaultwarden) over verified TLS. Fronted by Traefik (wildcard
 # TLS). Upgrade = bump vaultwarden_image tag.
 #
-# NOTE: distinct from Vault (roles/vault, vault.by-research.be) — Vault is the
+# NOTE: distinct from Vault (roles/vault, vault.{{ platform_domain }}) — Vault is the
 # infra secrets backend; Vaultwarden is the end-user password manager.
 # ==============================================================================
-vaultwarden_image: "vaultwarden/server:1.36.0"   # pinned (never :latest)
+# NOTE: each release ships JS/CSS bundles with DIFFERENT hashed filenames. A
+# browser holding a cached index.html from another version requests bundles that
+# 404, and the app renders a BLANK page with no server-side error. After any
+# version change here, clear the site cache in the browser once.
+vaultwarden_image: "vaultwarden/server:1.37.1"   # exact pin — bump deliberately
 
 vaultwarden_container_name: vaultwarden
-vaultwarden_fqdn: "vaultwarden.by-research.be"
+vaultwarden_fqdn: "vaultwarden.{{ platform_domain }}"
 
 # HTTP backend (Traefik terminates TLS) — published on the SVC IP. Vaultwarden
 # serves the web vault + WebSocket notifications on the same :80 in 1.36.
@@ -20,7 +24,7 @@ vaultwarden_host_port: 80
 vaultwarden_container_port: 80
 
 # Shared PostgreSQL (DB + role created by the postgres_db role).
-vaultwarden_pg_host: "lxc-pgsql-01.by-research.be"
+vaultwarden_pg_host: "lxc-pgsql-01.{{ platform_domain }}"
 vaultwarden_pg_port: 5432
 vaultwarden_pg_name: "vaultwarden"
 vaultwarden_pg_user: "vaultwarden"
@@ -35,7 +39,7 @@ vaultwarden_pg_secret_file: "fabric/db-pgsql-vaultwarden.json" # written by post
 # vaultwarden-admins group (authentik restrict_to_group). The master password
 # still protects the vault (E2EE) — SSO only handles authentication.
 vaultwarden_oidc_secret_file: "fabric/app-oidc-vaultwarden.json"
-vaultwarden_authentik_base: "https://authentik.by-research.be"
+vaultwarden_authentik_base: "https://authentik.{{ platform_domain }}"
 vaultwarden_oidc_app_slug: "vaultwarden"
 
 # SMTP via Resend — required so SSO account email verification (and password

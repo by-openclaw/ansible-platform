@@ -18,3 +18,42 @@
     regexp: '^\s*UMASK\s+'
     line: "UMASK           {{ hardening_umask }}"
     state: present
+
+# --- Lynis-driven additions (security/0003 §5, canary index 75 -> target >=80) --
+- name: "Baseline | Blacklist unused storage/net protocol modules (USB-1000/STRG-1846/NETW-3200)"
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/hardening-blacklist.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/hardening) — Lynis USB-1000/STRG-1846/NETW-3200
+      blacklist usb-storage
+      blacklist firewire-core
+      install dccp /bin/false
+      install sctp /bin/false
+      install rds /bin/false
+      install tipc /bin/false
+
+- name: "Baseline | Package-integrity + patch-mgmt + malware tooling (PKGS-7370/7394, HRDN-7230, FINT-4350)"
+  ansible.builtin.apt:
+    name: [debsums, apt-show-versions, rkhunter]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Baseline | File-integrity tool (FINT-4350: AIDE)"
+  ansible.builtin.apt:
+    name: aide
+    state: present
+
+- name: "Baseline | Hide the postfix banner (MAIL-8818) — only where postfix exists"
+  ansible.builtin.lineinfile:
+    path: /etc/postfix/main.cf
+    regexp: "^smtpd_banner"
+    line: "smtpd_banner = $myhostname ESMTP"
+  register: hardening_postfix_banner
+  failed_when:
+    - hardening_postfix_banner is failed
+    - "'does not exist' not in (hardening_postfix_banner.msg | default(''))"
+  notify: Restart postfix

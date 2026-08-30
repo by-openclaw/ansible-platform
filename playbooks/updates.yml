@@ -1,0 +1,66 @@
+---
+# ==============================================================================
+# Playbook: updates.yml — OS patching for the whole fleet, in blast-radius order.
+#
+# The cluster LXCs shipped with no patch mechanism at all and drifted ~100
+# packages (~34 of them security) behind. This playbook applies the backlog AND
+# installs unattended-upgrades so it stops recurring.
+#
+#   DRY RUN (reports the pending package list per host, changes nothing):
+#     ansible-playbook -i inventories/prod/hosts.yml playbooks/updates.yml --check
+#
+#   A run WITHOUT --check and WITHOUT updates_apply installs the unattended-
+#   upgrades mechanism but does NOT apply the backlog. That is deliberate: the
+#   mechanism is safe to roll out ahead of the patch window.
+#
+#   APPLY one wave at a time (recommended):
+#     ansible-playbook -i inventories/prod/hosts.yml playbooks/updates.yml \
+#       -e updates_apply=true --limit patch_canary
+#
+#   APPLY everything in wave order:
+#     ansible-playbook -i inventories/prod/hosts.yml playbooks/updates.yml \
+#       -e updates_apply=true
+#
+# serial:1 + any_errors_fatal means the run STOPS at the first host that fails
+# verification, rather than patching the rest of the fleet behind a known break.
+#
+# NOTE (vault): needrestart is blocked from restarting docker.service, so
+# containers are not bounced. If Vault's container is ever restarted by hand it
+# RE-SEALS and must be unsealed again — see roles/updates/README.md.
+# ==============================================================================
+
+- name: "Patch wave 0 — canary"
+  hosts: patch_canary
+  become: true
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+  roles:
+    - updates
+
+- name: "Patch wave 2 — leaf services"
+  hosts: patch_wave2
+  become: true
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+  roles:
+    - updates
+
+- name: "Patch wave 3 — network and edge"
+  hosts: patch_wave3
+  become: true
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+  roles:
+    - updates
+
+- name: "Patch wave 4 — core dependencies (DB, IdP, secrets, mail)"
+  hosts: patch_wave4
+  become: true
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+  roles:
+    - updates

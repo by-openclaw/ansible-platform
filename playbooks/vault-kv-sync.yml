@@ -1,0 +1,64 @@
+---
+# ==============================================================================
+# Mirror controller-side secret files into Vault KV v2 (secret/<island>/<name>),
+# per the "secrets in Vault AND local" rule. Idempotent: reads the current Vault
+# value and only writes a new version when the data actually changed. Secret data
+# is piped via stdin (never in process args). Reusable — extend vault_sync_items.
+#   ansible-playbook playbooks/vault-secrets.yml
+# ==============================================================================
+- name: Mirror secrets into Vault KV
+  hosts: lxc-vault-01
+  become: true
+  gather_facts: false
+  vars:
+    vault_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
+    vault_init_secret: "vault-init.json"  # pragma: allowlist secret
+    vault_container_name: "vault"
+    vault_kv_path: "secret"
+    vault_sync_items:
+      - { file: "fabric/infra-seaweedfs.json", path: "fabric/infra-seaweedfs" }
+      - { file: "fabric/app-s3-mailcow.json", path: "fabric/app-s3-mailcow" }
+      - { file: "fabric/infra-seaweedfs-offsite.json", path: "fabric/infra-seaweedfs-offsite" }
+      # GitLab CE (#8) — consumed creds + GitLab's own generated secrets. Run
+      # playbooks/gitlab.yml FIRST (it provisions these + captures gitlab-secrets),
+      # then this sync. app-smtp-gitlab is added once the mailcow mailbox exists.
+      - { file: "fabric/db-pgsql-gitlab.json", path: "fabric/db-pgsql-gitlab" }
+      - { file: "fabric/infra-seaweedfs-gitlab.json", path: "fabric/infra-seaweedfs-gitlab" }
+      - { file: "fabric/app-oidc-gitlab.json", path: "fabric/app-oidc-gitlab" }
+      # DR-critical: without gitlab-secrets.json a GitLab backup is UNRESTORABLE.
+      - { file: "fabric/gitlab-secrets.json", path: "fabric/gitlab-secrets" }
+      # Email step: mailcow stack + mailbox creds, and GitLab's SMTP submission creds.
+      - { file: "fabric/mailcow.json", path: "fabric/mailcow" }
+      - { file: "fabric/app-smtp-gitlab.json", path: "fabric/app-smtp-gitlab" }
+      # GitLab CI runner authentication token (glrt-…).
+      - { file: "fabric/gitlab-runner-token.json", path: "fabric/gitlab-runner-token" }
+  tasks:
+    - name: "Vault | Load root token"
+      ansible.builtin.set_fact:
+        vault_root_token: "{{ (lookup('file', vault_secret_dir + '/' + vault_init_secret) | from_json).fields.root_token }}"
+      no_log: true
+
+    - name: "Vault | Read current KV value (if any)"
+      ansible.builtin.command:
+        cmd: "docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault kv get -mount={{ vault_kv_path }} -format=json {{ item.path }}"
+      register: vault_get
+      changed_when: false
+      failed_when: false
+      no_log: true
+      loop: "{{ vault_sync_items }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: "Vault | Write secret when new or changed (JSON via stdin)"
+      ansible.builtin.command:
+        cmd: "docker exec -i -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault kv put -mount={{ vault_kv_path }} {{ item.item.path }} -"
+        stdin: "{{ (lookup('file', vault_secret_dir + '/' + item.item.file) | from_json).fields | to_json }}"
+      when: >-
+        item.rc != 0 or
+        ((lookup('file', vault_secret_dir + '/' + item.item.file) | from_json).fields
+         != ((item.stdout | from_json).data.data | default({})))
+      changed_when: true
+      no_log: true
+      loop: "{{ vault_get.results }}"
+      loop_control:
+        label: "{{ item.item.path }}"

@@ -1,0 +1,37 @@
+---
+# ==============================================================================
+# JumpServer CE bastion/PAM on lxc-jumpserver-01. Self-contained (bundled
+# Postgres + Redis), NON-privileged, Vault-native secrets. Browser SSH/RDP to
+# infra; VPN-only via Traefik. JumpServer speaks OIDC to Authentik natively, so
+# the Traefik route is PLAIN (no forwardAuth — that would double-auth / break
+# the API + browser terminal websockets).
+#
+# Session REPLAYS (screen recordings) are offloaded to SeaweedFS S3 (they grow
+# fast) — the bucket + scoped key are provisioned in pre_tasks (Vault-native).
+# `roles:` (not include_role) so the jumpserver role defaults (jumpserver_fqdn,
+# jumpserver_web_host_port) are in scope for the Traefik-route task below.
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/jumpserver.yml
+# ==============================================================================
+- name: "JumpServer CE bastion"
+  hosts: jumpserver
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: "Provision JumpServer replay bucket + scoped key (SeaweedFS)"
+      ansible.builtin.include_role:
+        name: seaweedfs_bucket
+      vars:
+        seaweedfs_bucket_identity: jumpserver
+        seaweedfs_bucket_names:
+          - jumpserver-replays
+        seaweedfs_bucket_vault_path: prod/jumpserver/s3
+  roles:
+    - role: jumpserver
+  tasks:
+    - name: "Traefik route — JumpServer web front (VPN-only, native OIDC)"
+      ansible.builtin.include_role:
+        name: traefik_route
+      vars:
+        traefik_route_name: jumpserver
+        traefik_route_fqdn: "{{ jumpserver_fqdn }}"
+        traefik_route_backend_url: "http://lxc-jumpserver-01.{{ platform_domain }}:{{ jumpserver_web_host_port }}"

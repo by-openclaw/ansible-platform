@@ -1,0 +1,35 @@
+---
+# ==============================================================================
+# gitlab_rbac | reconcile GitLab admins + groups + memberships from desired state.
+# Runs on the GitLab server via gitlab-rails (no token). Idempotent + re-runnable.
+# ==============================================================================
+- name: "RBAC | Stage the reconciler script"
+  ansible.builtin.copy:
+    src: reconcile.rb
+    dest: /opt/gitlab-rbac-reconcile.rb
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: "RBAC | Render the desired-state JSON"
+  ansible.builtin.template:
+    src: desired.json.j2
+    dest: /opt/gitlab-rbac-desired.json
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: "RBAC | Reconcile (admins, groups, memberships)"
+  ansible.builtin.command:
+    argv:
+      - gitlab-rails
+      - runner
+      - /opt/gitlab-rbac-reconcile.rb
+      - /opt/gitlab-rbac-desired.json
+  register: gitlab_rbac_run
+  changed_when: "'changes=0' not in gitlab_rbac_run.stdout"
+  failed_when: "'RBAC_DONE' not in gitlab_rbac_run.stdout"
+
+- name: "RBAC | Reconcile result"
+  ansible.builtin.debug:
+    msg: "{{ gitlab_rbac_run.stdout_lines }}"

@@ -1,0 +1,78 @@
+---
+# ==============================================================================
+# upgrade_path | step — apply exactly ONE version, then prove it landed.
+# Every command is gated on the previous one succeeding, so a failed migration
+# stops the climb instead of stacking the next major on a broken schema.
+# ==============================================================================
+
+# Preferred: re-run the service's OWN role with this rung's image, so the
+# upgrade goes through the same code path as a normal deploy and leaves no
+# hand-made container behind. Falls back to a shell command for services whose
+# upgrade is not a container swap.
+# `vars:` on include_role must be a literal dictionary — it cannot be a computed
+# expression, and a per-service key name is exactly that. set_fact DOES accept a
+# templated key, so the service's own image variable is set by name and is then
+# in scope for the role. That keeps this role generic across services.
+- name: "Upgrade_path | Point the service image variable at rung {{ upgrade_path_step.version }}"
+  ansible.builtin.set_fact:
+    "{{ upgrade_path_image_var }}": "{{ upgrade_path_step.image }}"
+  when:
+    - upgrade_path_role | length > 0
+    - upgrade_path_image_var | length > 0
+
+- name: "Upgrade_path | Apply via the service role — rung {{ upgrade_path_step.version }}"
+  ansible.builtin.include_role:
+    name: "{{ upgrade_path_role }}"
+  when: upgrade_path_role | length > 0
+
+- name: "Upgrade_path | Apply via command — rung {{ upgrade_path_step.version }}" # noqa command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: "{{ upgrade_path_apply_cmd }}"
+  register: upgrade_path_apply_result
+  changed_when: true
+  when:
+    - upgrade_path_role | length == 0
+    - upgrade_path_apply_cmd | length > 0
+
+- name: "Upgrade_path | Let the service settle after rung {{ upgrade_path_step.version }}"
+  ansible.builtin.wait_for:
+    timeout: "{{ upgrade_path_settle_seconds }}"
+  delegate_to: localhost
+  become: false
+
+# The migration must COMPLETE before the next major is allowed near the data.
+- name: "Upgrade_path | Run migrations for rung {{ upgrade_path_step.version }}" # noqa command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: "{{ upgrade_path_migrate_cmd }}"
+  register: upgrade_path_migrate_result
+  changed_when: true
+  when: upgrade_path_migrate_cmd | length > 0
+
+- name: "Upgrade_path | Verify before the next rung — {{ upgrade_path_step.version }}" # noqa command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: "{{ upgrade_path_verify_cmd }}"
+  register: upgrade_path_verify_result
+  changed_when: false
+  failed_when: upgrade_path_verify_result.rc != 0
+  when: upgrade_path_verify_cmd | length > 0
+
+# shell, not command: the version probes pipe through sed/awk by design.
+- name: "Upgrade_path | Confirm the version moved to {{ upgrade_path_step.version }}" # noqa command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: "{{ upgrade_path_current_cmd }}"
+  register: upgrade_path_after
+  changed_when: false
+
+- name: "Upgrade_path | Stop the climb if it did not land — {{ upgrade_path_step.version }}"
+  ansible.builtin.fail:
+    msg: >-
+      {{ upgrade_path_service }} reports {{ upgrade_path_after.stdout | trim }}
+      after applying {{ upgrade_path_step.version }}. Halting — the next step
+      must never run against a service that did not complete this one.
+  when: (upgrade_path_after.stdout | trim) is version(upgrade_path_step.version, '<')
+
+- name: "Upgrade_path | Landed on {{ upgrade_path_step.version }}"
+  ansible.builtin.debug:
+    msg: >-
+      {{ upgrade_path_service }} now {{ upgrade_path_after.stdout | trim }}
+      {{ '(' ~ upgrade_path_step.note ~ ')' if upgrade_path_step.note is defined else '' }}

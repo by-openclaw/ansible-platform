@@ -1,0 +1,50 @@
+; Managed by Ansible (role: grafana). Overrides the packaged defaults.ini.
+[server]
+protocol = http
+http_addr = {{ grafana_listen }}
+http_port = {{ grafana_port }}
+root_url = https://{{ grafana_fqdn }}
+domain = {{ grafana_fqdn }}
+enforce_domain = false
+
+[security]
+admin_user = {{ grafana_admin_user }}
+admin_password = {{ grafana_admin_password }}
+cookie_secure = true
+disable_gravatar = true
+
+{% if grafana_db_enabled | default(false) %}
+[database]
+type = postgres
+host = {{ grafana_pg_host }}:{{ grafana_pg_port }}
+name = {{ grafana_pg_name }}
+user = {{ grafana_pg_user }}
+password = {{ grafana_pg_password }}
+ssl_mode = verify-full
+ca_cert_path = {{ grafana_pg_ca }}
+{% endif %}
+
+[users]
+allow_sign_up = false
+auto_assign_org = true
+auto_assign_org_role = Viewer
+
+[auth]
+disable_login_form = false
+{% if grafana_oidc_configured | default(false) %}
+
+[auth.generic_oauth]
+enabled = true
+name = Authentik
+allow_sign_up = true
+client_id = {{ grafana_oidc.client_id }}
+client_secret = {{ grafana_oidc.client_secret }}
+scopes = openid email profile
+auth_url = {{ grafana_authentik_base }}/application/o/authorize/
+token_url = {{ grafana_authentik_base }}/application/o/token/
+api_url = {{ grafana_authentik_base }}/application/o/userinfo/
+; groups claim -> Grafana role. Only grafana-admins can log in (IdP restrict_to_group).
+role_attribute_path = contains(groups[*], '{{ grafana_admin_group }}') && 'Admin' || 'Viewer'
+allow_assign_grafana_admin = true
+use_pkce = true
+{% endif %}

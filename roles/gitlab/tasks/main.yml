@@ -1,0 +1,280 @@
+---
+# ==============================================================================
+# GitLab CE (Omnibus) — install + wire to the shared cluster services.
+# Pre-req: Play 1 (pve_zfs_mount) has attached the ZFS git-data bind-mount, and
+# the gitlab DB / S3 bucket+key / OIDC client have been provisioned (playbook).
+# ==============================================================================
+
+- name: "GitLab | Prereq packages (repo tooling + CA)"
+  ansible.builtin.apt:
+    name: [curl, ca-certificates, gnupg, apt-transport-https]
+    state: present
+    update_cache: true
+
+- name: "GitLab | Ensure apt keyring dir"
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: "GitLab | Add GitLab CE apt signing key"
+  ansible.builtin.get_url:
+    url: "{{ gitlab_apt_repo_url }}/gpgkey"
+    dest: /etc/apt/keyrings/gitlab-ce.asc
+    mode: "0644"
+
+- name: "GitLab | Add GitLab CE apt repository"
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/gitlab-ce.asc] {{ gitlab_apt_repo_url }}/debian/ {{ ansible_distribution_release }} main"
+    filename: gitlab_gitlab-ce
+    state: present
+    update_cache: true
+
+# --- Secrets from Vault (no local files; owning roles created each path) --------
+- name: "GitLab | Load Vault root token (bootstrap — the one allowed local secret)"
+  ansible.builtin.set_fact:
+    gitlab_vault_token: "{{ (lookup('file', lookup('env', 'HOME') + '/.openclaw/workspace/infra/secrets/vault-init.json') | from_json).fields.root_token }}"
+  no_log: true
+
+- name: "GitLab | Read PostgreSQL creds from Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ gitlab_pg_vault_path }}"
+
+- name: "GitLab | Adopt PostgreSQL password"
+  ansible.builtin.set_fact:
+    gitlab_pg_password: "{{ vault_secret_result.password }}"
+  no_log: true
+
+- name: "GitLab | Read Redis creds from Vault (shared)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ gitlab_redis_vault_path }}"
+
+- name: "GitLab | Adopt Redis password"
+  ansible.builtin.set_fact:
+    gitlab_redis_password: "{{ vault_secret_result.password }}"
+  no_log: true
+
+- name: "GitLab | Read S3 scoped key from Vault (SeaweedFS)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ gitlab_s3_vault_path }}"
+
+- name: "GitLab | Adopt S3 scoped key"
+  ansible.builtin.set_fact:
+    gitlab_s3_key: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "GitLab | Read OIDC client creds from Vault (Authentik)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ gitlab_oidc_vault_path }}"
+
+- name: "GitLab | Adopt OIDC client creds"
+  ansible.builtin.set_fact:
+    gitlab_oidc: "{{ vault_secret_result }}"
+  no_log: true
+
+# SMTP is optional: read directly (don't fail if the mailcow mailbox isn't made yet).
+- name: "GitLab | Probe optional SMTP creds in Vault (mailcow)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ gitlab_vault_token }} vault
+      vault kv get -mount=secret -format=json {{ gitlab_smtp_vault_path }}
+  delegate_to: lxc-vault-01
+  become: true
+  register: gitlab_smtp_get
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: "GitLab | Adopt SMTP creds when present"
+  ansible.builtin.set_fact:
+    gitlab_smtp: "{{ (gitlab_smtp_get.stdout | from_json).data.data }}"
+    gitlab_smtp_configured: true
+  no_log: true
+  when: gitlab_smtp_get.rc == 0
+
+# --- Persistent git storage must be the ZFS bind-mount BEFORE install ----------
+- name: "GitLab | Verify git-data is a mountpoint (ZFS bind-mount)"
+  ansible.builtin.command: "mountpoint -q {{ gitlab_git_data_dir }}"
+  register: gitlab_gitdata_mp
+  changed_when: false
+  failed_when: false
+
+- name: "GitLab | Fail if the git-data ZFS bind-mount is missing"
+  ansible.builtin.fail:
+    msg: >-
+      {{ gitlab_git_data_dir }} is not a mountpoint. Run Play 1 (pve_zfs_mount) so
+      git repositories land on tank/data/gitlab and survive `terraform destroy`.
+  when: gitlab_gitdata_mp.rc != 0
+
+# --- Install (pinned) ---------------------------------------------------------
+# Do NOT set EXTERNAL_URL here: it makes the Omnibus postinst auto-run
+# `gitlab-ctl reconfigure` BEFORE our gitlab.rb exists, which in an unprivileged
+# LXC dies trying to set kernel sysctls. We install the package only, then render
+# gitlab.rb (with modify_kernel_parameters=false) and reconfigure explicitly.
+- name: "GitLab | Install GitLab CE (pinned {{ gitlab_version }})"
+  ansible.builtin.apt:
+    name: "gitlab-ce={{ gitlab_version }}"
+    state: present
+    update_cache: true
+
+# gitaly runs as `git` and must own the git-data storage (the ZFS bind-mount +
+# every repo under it) or it crash-loops with "permission denied". On a FRESH
+# install the git user does not exist until `gitlab-ctl reconfigure` runs — but
+# gitaly needs the ownership DURING that reconfigure, so we must create `git`
+# (omnibus idempotently adopts it) and fix ownership BEFORE reconfigure. On a
+# rebuild the preserved repos carry the OLD container's git uid, which may differ
+# from the new one, so the chown is recursive — but only when the root isn't
+# already git-owned (keeps a normal re-run on a big repo set fast + churn-free).
+- name: "GitLab | Ensure the git group exists (omnibus adopts it)"
+  ansible.builtin.group:
+    name: git
+    system: true
+
+- name: "GitLab | Ensure the git user exists before reconfigure (omnibus adopts it)"
+  ansible.builtin.user:
+    name: git
+    group: git
+    system: true
+    home: /var/opt/gitlab
+    create_home: false
+    shell: /bin/sh
+
+- name: "GitLab | Stat the git-data mount root"
+  ansible.builtin.stat:
+    path: "{{ gitlab_git_data_dir }}"
+  register: gitlab_gitdata_owner
+
+- name: "GitLab | Own git-data as git (recursive; only when not already git-owned)"
+  ansible.builtin.command: "chown -R git:git {{ gitlab_git_data_dir }}"
+  when: gitlab_gitdata_owner.stat.pw_name | default('') != 'git'
+  changed_when: true
+
+- name: "GitLab | Ensure git-data mode (setgid dir, group traversal)"
+  ansible.builtin.file:
+    path: "{{ gitlab_git_data_dir }}"
+    mode: "2770"
+
+# --- DR restore: put GitLab's OWN secrets back BEFORE the first reconfigure -----
+# On a fresh install GitLab would generate NEW secret_key_base/db_key_base, which
+# cannot decrypt the PRESERVED database (CI variables, 2FA, runner tokens, PATs are
+# encrypted with these keys). The DB + git-data survive a destroy; the encryption
+# keys live only in Vault. Restore them here so reconfigure adopts them and the
+# rebuilt instance reconnects to its data cleanly. First-ever install: Vault path
+# is absent → skip, GitLab generates fresh (captured back to Vault post-install).
+# Only when the file is ABSENT (i.e. a fresh install / rebuild). On an existing
+# install the file is present → skip, so a normal re-run never churns it.
+- name: "GitLab | Check whether gitlab-secrets.json already exists"
+  ansible.builtin.stat:
+    path: /etc/gitlab/gitlab-secrets.json
+  register: gitlab_secrets_local
+
+- name: "GitLab | Read GitLab's own secrets from Vault (for DR restore)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ gitlab_vault_token }} vault
+      vault kv get -mount=secret -format=json {{ gitlab_secrets_vault_path }}
+  delegate_to: lxc-vault-01
+  become: true
+  register: gitlab_secrets_restore
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: not gitlab_secrets_local.stat.exists
+
+- name: "GitLab | Restore /etc/gitlab/gitlab-secrets.json from Vault (before reconfigure)"
+  ansible.builtin.copy:
+    dest: /etc/gitlab/gitlab-secrets.json
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ (gitlab_secrets_restore.stdout | from_json).data.data.gitlab_secrets | to_nice_json }}"
+  when:
+    - not gitlab_secrets_local.stat.exists
+    - gitlab_secrets_restore.rc | default(1) == 0
+    - (gitlab_secrets_restore.stdout | default('{}') | from_json).data.data.gitlab_secrets | default({}) | length > 0
+  no_log: true
+  notify: Reconfigure GitLab
+
+- name: "GitLab | Render /etc/gitlab/gitlab.rb"
+  ansible.builtin.template:
+    src: gitlab.rb.j2
+    dest: /etc/gitlab/gitlab.rb
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Reconfigure GitLab
+
+- name: "GitLab | Apply config now (flush handlers)"
+  ansible.builtin.meta: flush_handlers
+
+# --- Verify the daemon is actually healthy (API 'ok' != running; read status) --
+- name: "GitLab | gitlab-ctl status"
+  ansible.builtin.command: gitlab-ctl status
+  register: gitlab_status
+  changed_when: false
+
+- name: "GitLab | Assert no service is down"
+  ansible.builtin.assert:
+    that: "'down:' not in gitlab_status.stdout"
+    fail_msg: "A GitLab service is down:\n{{ gitlab_status.stdout }}"
+    success_msg: "All GitLab services up."
+
+- name: "GitLab | Wait for the web endpoint to answer"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ gitlab_http_backend_port }}/-/readiness"
+    status_code: [200, 401]
+    validate_certs: false
+  register: gitlab_ready
+  retries: 20
+  delay: 15
+  until: gitlab_ready.status in [200, 401]
+
+# --- Capture GitLab's OWN generated secrets → Vault (DR-critical, no local file) -
+# gitlab-secrets.json holds secret_key_base / db_key_base / otp_key_base: a backup
+# restored WITHOUT it cannot decrypt 2FA/CI tokens. Written straight to Vault
+# (fabric/gitlab-secrets) via stdin — never lands on the controller disk.
+- name: "GitLab | Slurp GitLab-generated secrets (DR-critical)"
+  ansible.builtin.slurp:
+    src: /etc/gitlab/gitlab-secrets.json
+  register: gitlab_secrets_raw
+  no_log: true
+
+- name: "GitLab | Slurp initial root password (exists ~24h post-install)"
+  ansible.builtin.slurp:
+    src: /etc/gitlab/initial_root_password
+  register: gitlab_initial_root_raw
+  failed_when: false
+  no_log: true
+
+- name: "GitLab | Write GitLab-generated secrets to Vault ({{ gitlab_secrets_vault_path }})"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -i -e VAULT_TOKEN={{ gitlab_vault_token }} vault
+      vault kv put -mount=secret {{ gitlab_secrets_vault_path }} -
+    stdin: >-
+      {{ {
+        'gitlab_secrets': (gitlab_secrets_raw.content | b64decode | from_json),
+        'initial_root_password_file': (gitlab_initial_root_raw.content | default('') | b64decode)
+      } | to_json }}
+  delegate_to: lxc-vault-01
+  become: true
+  changed_when: true
+  no_log: true
+
+# --- Nightly backup → SeaweedFS gitlab-backups (pure gitlab command, no .sh) ---
+- name: "GitLab | Schedule nightly backup to S3"
+  ansible.builtin.cron:
+    name: "gitlab-backup-to-s3"
+    minute: "{{ gitlab_backup_cron.split()[0] }}"
+    hour: "{{ gitlab_backup_cron.split()[1] }}"
+    job: "/opt/gitlab/bin/gitlab-backup create CRON=1 >> /var/log/gitlab/backup.log 2>&1"
+    user: root
+  when: gitlab_backup_enabled

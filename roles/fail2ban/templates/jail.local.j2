@@ -1,0 +1,42 @@
+# ==============================================================================
+# /etc/fail2ban/jail.local — managed by Ansible (role: hardening)
+# DO NOT EDIT MANUALLY
+# ==============================================================================
+
+[DEFAULT]
+# Whitelist: localhost + OOB/MGMT networks
+ignoreip = {{ fail2ban_ssh_ignoreip }}
+
+# Ban duration: 1 hour
+bantime  = {{ fail2ban_ssh_bantime }}
+
+# Detection window
+findtime = {{ fail2ban_ssh_findtime }}
+
+# Max attempts before ban
+maxretry = {{ fail2ban_ssh_maxretry }}
+
+# Use systemd backend when available
+backend  = systemd
+
+# ---- SSH jail ----
+# Note: port is {{ fail2ban_ssh_port }} (NOT 22)
+[sshd]
+enabled  = true
+port     = {{ fail2ban_ssh_port }}
+filter   = sshd
+logpath  = %(sshd_log)s
+maxretry = {{ fail2ban_ssh_maxretry }}
+bantime  = {{ fail2ban_ssh_bantime }}
+
+{% for jail in fail2ban_extra_jails | default([]) %}
+# ---- Extra jail: {{ jail.name }} ----
+[{{ jail.name }}]
+enabled  = true
+port     = {{ jail.port }}
+filter   = {{ jail.filter | default(jail.name) }}
+logpath  = /var/log/syslog
+maxretry = {{ jail.maxretry | default(fail2ban_ssh_maxretry) }}
+bantime  = {{ jail.bantime | default(fail2ban_ssh_bantime) }}
+
+{% endfor %}

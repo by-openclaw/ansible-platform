@@ -1,0 +1,111 @@
+---
+# ==============================================================================
+# netbird | combined — the architecture upstream actually ships and tests.
+#
+# Replaces the legacy five-container assembly (management/signal/relay/coturn +
+# dashboard fed external-IdP env vars). That model is superseded: the current
+# dashboard is built against the combined server, authenticates through the
+# server's own /oauth2, and ignores the old AUTH_* external-IdP variables —
+# which is why its browser login could never complete.
+#
+# Two containers: netbird-server (management+signal+relay+STUN) and dashboard.
+# All three stores are PostgreSQL per services/0004.
+# ==============================================================================
+
+- name: "combined | Ensure the config directory exists"
+  ansible.builtin.file:
+    path: "{{ netbird_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: "combined | Render config.yaml"
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ netbird_config_dir }}/config.yaml"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  register: netbird_combined_config
+
+- name: "combined | Render dashboard.env"
+  ansible.builtin.template:
+    src: dashboard.env.combined.j2
+    dest: "{{ netbird_config_dir }}/dashboard.env"
+    owner: root
+    group: root
+    mode: "0640"
+  register: netbird_combined_dashenv
+
+- name: "combined | Pull the pinned images"
+  community.docker.docker_image:
+    name: "{{ item }}"
+    source: pull
+    state: present
+  loop:
+    - "{{ netbird_server_image }}"
+    - "{{ netbird_dashboard_image }}"
+
+- name: "combined | Run netbird-server"
+  community.docker.docker_container:
+    name: netbird-server
+    image: "{{ netbird_server_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    published_ports:
+      - "{{ netbird_listen_ip }}:{{ netbird_server_port }}:{{ netbird_server_port }}"
+      - "{{ netbird_listen_ip }}:{{ netbird_stun_port }}:{{ netbird_stun_port }}/udp"
+    volumes:
+      - "{{ netbird_config_dir }}/config.yaml:/etc/netbird/config.yaml:ro"
+      - "netbird-data:/var/lib/netbird"
+      # CA bundle so the stores can verify the Postgres certificate.
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+    comparisons:
+      published_ports: strict
+    log_options: { max-size: "500m", max-file: "2" }
+    log_driver: json-file
+    restart: "{{ netbird_combined_config is changed }}"
+  no_log: true
+
+- name: "combined | Run the dashboard"
+  community.docker.docker_container:
+    name: netbird-dashboard
+    image: "{{ netbird_dashboard_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    published_ports:
+      - "{{ netbird_listen_ip }}:80:80"
+    env_file: "{{ netbird_config_dir }}/dashboard.env"
+    comparisons:
+      published_ports: strict
+    restart: "{{ netbird_combined_dashenv is changed }}"
+
+- name: "combined | Wait for the server healthcheck"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_health_port }}/healthz"
+    status_code: [200]
+  register: netbird_combined_health
+  retries: 30
+  delay: 5
+  until: netbird_combined_health is succeeded
+  failed_when: false
+
+- name: "combined | Confirm the embedded IdP is serving /oauth2"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_server_port }}/oauth2/.well-known/openid-configuration"
+    status_code: [200]
+  register: netbird_combined_oidc
+  retries: 12
+  delay: 5
+  until: netbird_combined_oidc is succeeded
+
+- name: "combined | Report"
+  ansible.builtin.debug:
+    msg: >-
+      netbird-server {{ netbird_server_image }} up, embedded IdP issuer
+      {{ netbird_combined_oidc.json.issuer | default('?') }},
+      stores on PostgreSQL.

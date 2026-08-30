@@ -1,0 +1,74 @@
+---
+# ==============================================================================
+# netbird | approval-notify — tell an admin when someone is waiting to be let in.
+#
+# NetBird's user approval is a good control with one gap: it notifies nobody.
+# A new user's first login leaves them blocked, they see a failure, and no admin
+# learns about it. We hit exactly that. This makes approval usable by mailing
+# the admins whenever a user is held, so approval can stay ON deliberately
+# rather than being switched off because it silently strands people.
+#
+# Notifies once per user (state file), so a frequent timer is not noisy.
+# ==============================================================================
+
+- name: "approval-notify | Load the Resend SMTP credentials"
+  ansible.builtin.set_fact:
+    netbird_resend: >-
+      {{ (lookup('file', netbird_secret_dir + '/' + netbird_approval_smtp_secret_file)
+          | from_json).fields }}
+  no_log: true
+
+- name: "approval-notify | Ship the API token to the host (0600)"
+  ansible.builtin.copy:
+    src: "{{ netbird_secret_dir }}/{{ netbird_automation_token_file }}"
+    dest: "{{ netbird_approval_token_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: "approval-notify | Install the notifier"
+  ansible.builtin.template:
+    src: netbird-approval-notify.py.j2
+    dest: "{{ netbird_approval_script_path }}"
+    owner: root
+    group: root
+    mode: "0700"
+  no_log: true
+
+- name: "approval-notify | Install the systemd unit + timer"
+  ansible.builtin.template:
+    src: "netbird-approval-notify.{{ item }}.j2"
+    dest: "/etc/systemd/system/netbird-approval-notify.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [service, timer]
+  register: netbird_approval_units
+
+- name: "approval-notify | Reload systemd"
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: netbird_approval_units is changed
+
+- name: "approval-notify | Enable the timer"
+  ansible.builtin.systemd_service:
+    name: netbird-approval-notify.timer
+    enabled: true
+    state: started
+
+# Prove it runs end to end now, rather than discovering at 2am that it never did.
+- name: "approval-notify | Run once to verify it works"
+  ansible.builtin.command:
+    cmd: "{{ netbird_approval_script_path }}"
+  register: netbird_approval_run
+  changed_when: "'notified about' in netbird_approval_run.stdout"
+  failed_when: netbird_approval_run.rc != 0
+  when: not ansible_check_mode
+
+- name: "approval-notify | Report"
+  ansible.builtin.debug:
+    msg: >-
+      Approval notifier active (every {{ netbird_approval_interval }}) →
+      {{ netbird_approval_mail_to }}.
+      {{ netbird_approval_run.stdout | default('nothing pending') | trim | default('nothing pending', true) }}

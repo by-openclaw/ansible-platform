@@ -18,23 +18,41 @@
   ansible.builtin.set_fact:
     mailcow_provision_mailboxes:
       - local_part: "postmaster"
-        domain: "by-research.be"
+        domain: "{{ platform_domain }}"
         name: "Postmaster"
         password: "{{ mailcow_sec.postmaster_password }}"
         quota: 5120
       - local_part: "{{ mailcow_sec.user_local_part }}"
-        domain: "by-research.be"
+        domain: "{{ platform_domain }}"
         name: "Youssef Boujraf"
         password: "{{ mailcow_sec.user_password }}"
         quota: 5120
       # example.com inbox (separate, internal-only domain — dev/tutorials/docs, so the
-      # real @by-research.be address is never exposed). SSO via its OWN Authentik
+      # real @{{ platform_domain }} address is never exposed). SSO via its OWN Authentik
       # identity yboujraf_example (email == mailbox; mailcow OIDC maps email->mailbox).
       - local_part: "yboujraf"
         domain: "example.com"
         name: "Youssef Boujraf (example.com)"
         password: "{{ mailcow_sec.example_user_password }}"
         quota: 5120
+      # Service mailboxes: alerts@ = single recipient inbox for ALL platform/service
+      # notifications (FW/GitLab/etc.); gitlab@ = GitLab's authenticated submission
+      # sender + reply-by-email address. No SSO (local mailbox creds only).
+      - local_part: "alerts"
+        domain: "{{ platform_domain }}"
+        name: "Platform Alerts"
+        password: "{{ mailcow_sec.alerts_password }}"
+        quota: 2048
+      - local_part: "gitlab"
+        domain: "{{ platform_domain }}"
+        name: "GitLab"
+        password: "{{ mailcow_sec.gitlab_password }}"
+        quota: 1024
+      - local_part: "jumpserver"
+        domain: "{{ platform_domain }}"
+        name: "JumpServer"
+        password: "{{ mailcow_sec.jumpserver_password }}"
+        quota: 1024
   # NOTE: adm_yboujraf is ADMIN-ONLY and has NO mailbox (on either domain). mailcow
   # SSO can only log in MAILBOX users (role 'user'); there is no SSO-admin path, so
   # mailcow administration is done via the local admin account (the `admin` super-

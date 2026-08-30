@@ -1,0 +1,63 @@
+---
+- name: "Vault secret | Validate input"
+  ansible.builtin.assert:
+    that: vault_secret_path | length > 0
+    fail_msg: "vault_secret requires vault_secret_path"
+
+- name: "Vault secret | Load Vault root token (bootstrap — the one allowed local secret)"
+  ansible.builtin.set_fact:
+    vault_secret_token: "{{ (lookup('file', vault_secret_bootstrap_dir + '/' + vault_secret_bootstrap_file) | from_json).fields.root_token }}"
+  no_log: true
+
+- name: "Vault secret | Read current KV: {{ vault_secret_path }}"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_secret_token }} {{ vault_secret_container }}
+      vault kv get -mount={{ vault_secret_mount }} -format=json {{ vault_secret_path }}
+  delegate_to: "{{ vault_secret_host }}"
+  become: true
+  register: vault_secret_get
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: "Vault secret | Fail when absent and no init given (read-only consumer)"
+  ansible.builtin.fail:
+    msg: >-
+      Vault secret '{{ vault_secret_path }}' does not exist and no vault_secret_init
+      was provided. A read-only consumer requires the secret to already be in Vault
+      (its owning role must create it first).
+  when:
+    - vault_secret_get.rc != 0
+    - vault_secret_init | length == 0
+
+- name: "Vault secret | Initialize secret in Vault when absent (stdin, no argv)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -i -e VAULT_TOKEN={{ vault_secret_token }} {{ vault_secret_container }}
+      vault kv put -mount={{ vault_secret_mount }} {{ vault_secret_path }} -
+    stdin: "{{ vault_secret_init | to_json }}"
+  delegate_to: "{{ vault_secret_host }}"
+  become: true
+  when: vault_secret_get.rc != 0
+  changed_when: true
+  no_log: true
+
+- name: "Vault secret | Re-read after init"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_secret_token }} {{ vault_secret_container }}
+      vault kv get -mount={{ vault_secret_mount }} -format=json {{ vault_secret_path }}
+  delegate_to: "{{ vault_secret_host }}"
+  become: true
+  register: vault_secret_get2
+  changed_when: false
+  no_log: true
+  when: vault_secret_get.rc != 0
+
+- name: "Vault secret | Publish the secret fields as `vault_secret_result`"
+  ansible.builtin.set_fact:
+    vault_secret_result: >-
+      {{ ((vault_secret_get2 if (vault_secret_get.rc != 0) else vault_secret_get).stdout
+          | from_json).data.data }}
+  no_log: true
