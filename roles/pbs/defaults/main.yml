@@ -7,7 +7,7 @@
 # Native systemd service (NOT docker). All server config via proxmox-backup-manager.
 # ==============================================================================
 
-pbs_fqdn: "pbs.by-research.be"
+pbs_fqdn: "pbs.{{ platform_domain }}"
 pbs_secret_dir: "~/.openclaw/workspace/infra/secrets"
 
 # --- PBS 4 apt repo (no-subscription) on Debian 13 (trixie) --------------------
@@ -18,7 +18,7 @@ pbs_repo_line: "deb [signed-by=/usr/share/keyrings/proxmox-archive-keyring.gpg] 
 # PBS S3 always speaks HTTPS -> reach SeaweedFS via the Traefik HTTPS route
 # (real LE wildcard cert PBS trusts). Direct :8333 is plain HTTP and unusable.
 pbs_s3_endpoint_id: "seaweedfs"
-pbs_s3_endpoint_host: "s3.by-research.be"
+pbs_s3_endpoint_host: "s3.{{ platform_domain }}"
 pbs_s3_endpoint_port: 443
 pbs_s3_path_style: true
 pbs_s3_bucket: "pbs-datastore"
@@ -39,7 +39,7 @@ pbs_keep:
 pbs_oidc_enabled: true
 pbs_oidc_secret_file: "fabric/app-oidc-pbs.json"        # written by the authentik role
 pbs_oidc_realm: "authentik"
-pbs_authentik_base: "https://authentik.by-research.be"
+pbs_authentik_base: "https://authentik.{{ platform_domain }}"
 pbs_oidc_slug: "pbs"
 pbs_oidc_issuer: "{{ pbs_authentik_base }}/application/o/{{ pbs_oidc_slug }}/"
 pbs_oidc_username_claim: "preferred_username"           # Authentik emits this (profile scope)
@@ -62,6 +62,18 @@ pbs_pve_storage_id: "pbs"                 # PVE storage entry name
 pbs_pve_backup_user: "pve-backup@pbs"     # dedicated PBS user PVE authenticates as
 pbs_pve_backup_token: "pve"               # API token name -> pve-backup@pbs!pve
 pbs_backup_schedule: "03:30"              # 2nd job; NFS vzdump is 05:00 — offset to not overlap
+# The PBS VM must NOT be in its OWN S3 job — backing the backup server up into the
+# datastore it serves deadlocks ("http upgrade request timed out") and is pointless
+# (PBS's DR copy is the NFS/vzdump job). Excluded by VMID (auto-detected by name).
+pbs_self_vm_name: "vm-pbs-01"
+# VMs whose guest agent can't fs-freeze (FreeBSD/OPNsense → "Resource deadlock
+# avoided"), so the whole backup job errors. Set freeze-fs-on-backup=0 on these so
+# the backup runs crash-consistent (fine for a firewall) with no error. NOTE: the
+# flag is a PVE VM-config attribute Telmate 2.9.x can't express AND the OPNsense
+# module ignores agent drift, so Ansible owns it here. Applies on the VM's next
+# `qm reboot` (a guest reboot is NOT enough — it doesn't cycle the QEMU process).
+pbs_no_fsfreeze_vms:
+  - vm-opns-01
 pbs_backup_notes: "PBS S3 copy (SeaweedFS) — 2nd copy alongside NFS. {{ '{{' }} guestname {{ '}}' }} (VMID {{ '{{' }} vmid {{ '}}' }})"
 # Client-side encryption: the key is generated + stored in Vault; PVE encrypts
 # before upload. Losing the key = unrecoverable backups -> Vault is the store.

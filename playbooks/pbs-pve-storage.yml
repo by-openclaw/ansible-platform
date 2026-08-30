@@ -234,3 +234,40 @@
       register: r_job
       changed_when: r_job.rc == 0
       when: pbs_pve_storage_id not in (r_jobs.stdout | from_json | map(attribute='storage') | list)
+
+    # --- PBS must NOT back itself up into its own datastore (circular) ----------
+    # The all-guests S3 job would include the PBS VM; backing the backup server up
+    # into the datastore it serves deadlocks ("http upgrade request timed out").
+    # PBS's real DR copy is the NFS/vzdump job — so exclude PBS by its own VMID.
+    - name: "PVE-wire | Exclude the PBS VM from its own S3 job (idempotent)"
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          vmid=$(qm list | awk -v n='{{ pbs_self_vm_name }}' '$2==n {print $1}')
+          jid=$(pvesh get /cluster/backup --output-format json \
+                | python3 -c "import sys,json; print(next((j['id'] for j in json.load(sys.stdin) if j.get('storage')=='{{ pbs_pve_storage_id }}'), ''))")
+          [ -z "$vmid" ] || [ -z "$jid" ] && { echo "SKIP (vmid=$vmid jid=$jid)"; exit 0; }
+          cur=$(pvesh get /cluster/backup/$jid --output-format json \
+                | python3 -c "import sys,json; print(json.load(sys.stdin).get('exclude',''))")
+          if echo ",$cur," | grep -q ",$vmid,"; then echo "NOCHANGE ($vmid already excluded)";
+          else pvesh set /cluster/backup/$jid --exclude "$vmid" && echo "EXCLUDED $vmid"; fi
+      register: r_excl
+      changed_when: "'EXCLUDED' in r_excl.stdout"
+
+    # --- Guests whose agent can't fs-freeze (FreeBSD/OPNsense) ------------------
+    # fs-freeze fails ("Resource deadlock avoided") and errors the whole job, even
+    # though the backup itself succeeds (crash-consistent — fine for a firewall).
+    # Disable freeze-on-backup for them. Telmate 2.9.x can't express this and the
+    # OPNsense TF module ignores agent drift, so Ansible owns it. NOTE: it takes
+    # effect on the guest's next `qm reboot` (a guest-OS reboot does NOT cycle QEMU).
+    - name: "PVE-wire | Disable fs-freeze on backup for FreeBSD/OPNsense guests"
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          vmid=$(qm list | awk -v n='{{ item }}' '$2==n {print $1}')
+          [ -z "$vmid" ] && { echo "NOTFOUND ({{ item }})"; exit 0; }
+          if qm config "$vmid" | grep -q 'freeze-fs-on-backup=0'; then echo "NOCHANGE ($vmid)";
+          else qm set "$vmid" --agent enabled=1,type=virtio,freeze-fs-on-backup=0 && echo "SET $vmid (applies on next qm reboot)"; fi
+      register: r_freeze
+      changed_when: "'SET' in r_freeze.stdout"
+      loop: "{{ pbs_no_fsfreeze_vms }}"

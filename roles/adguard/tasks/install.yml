@@ -61,22 +61,65 @@
     path: "{{ adguard_home_dir }}/AdGuardHome"
   register: adguard_bin
 
+# Install-if-absent alone means a version bump in git never reaches the host —
+# the variable would simply stop matching reality. Compare what is installed
+# against what is declared, and treat a mismatch as an upgrade.
+- name: "install | Detect installed AdGuardHome version"
+  ansible.builtin.command:
+    cmd: "{{ adguard_home_dir }}/AdGuardHome --version"
+  register: adguard_installed_raw
+  changed_when: false
+  failed_when: false
+  when: adguard_bin.stat.exists
+
+- name: "install | Decide whether an install or upgrade is needed"
+  ansible.builtin.set_fact:
+    adguard_installed_version: >-
+      {{ (adguard_installed_raw.stdout | default('')
+          | regex_search('v([0-9]+\.[0-9]+\.[0-9]+)', '\1') | first) | default('none', true) }}
+
+- name: "install | Report the version decision"
+  ansible.builtin.debug:
+    msg: >-
+      AdGuardHome installed={{ adguard_installed_version }},
+      declared={{ adguard_version }} →
+      {{ 'up to date' if adguard_installed_version == adguard_version else 'will install/upgrade' }}
+
+- name: "install | Stop AdGuardHome before replacing the binary"
+  ansible.builtin.systemd_service:
+    name: AdGuardHome
+    state: stopped
+  when:
+    - adguard_bin.stat.exists
+    - adguard_installed_version != adguard_version
+    - not ansible_check_mode
+
 - name: "install | Download AdGuardHome release tarball"
   ansible.builtin.get_url:
     url: "{{ adguard_release_url }}"
-    dest: /tmp/AdGuardHome_linux_amd64.tar.gz
+    dest: "/tmp/AdGuardHome_{{ adguard_version }}_linux_amd64.tar.gz"
     mode: "0644"
-  when: not adguard_bin.stat.exists
+  when: adguard_installed_version != adguard_version
 
 - name: "install | Unpack AdGuardHome to {{ adguard_install_dir }}"
   ansible.builtin.unarchive:
-    src: /tmp/AdGuardHome_linux_amd64.tar.gz
+    src: "/tmp/AdGuardHome_{{ adguard_version }}_linux_amd64.tar.gz"
     dest: "{{ adguard_install_dir }}"
     remote_src: true
-    creates: "{{ adguard_home_dir }}/AdGuardHome"
     owner: root
     group: root
-  when: not adguard_bin.stat.exists
+  when:
+    - adguard_installed_version != adguard_version
+    - not ansible_check_mode
+
+- name: "install | Start AdGuardHome again after an upgrade"
+  ansible.builtin.systemd_service:
+    name: AdGuardHome
+    state: started
+  when:
+    - adguard_bin.stat.exists
+    - adguard_installed_version != adguard_version
+    - not ansible_check_mode
 
 - name: "install | Check whether AdGuardHome systemd unit is registered"
   ansible.builtin.stat:

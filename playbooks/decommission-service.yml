@@ -1,0 +1,19 @@
+---
+# ==============================================================================
+# Force a retired service ABSENT — clean, data-driven decommission.
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/decommission-service.yml \
+#       -e decommission_target=defguard
+#
+# Dumps+drops the service's Postgres DB & role and archives its secrets, all
+# archive-before-destroy + idempotent. Extend the catalog in the role defaults.
+# Guest VM/LXC (Terraform), Authentik app, Traefik/DNS are decommissioned
+# separately — see roles/service_decommission/defaults/main.yml.
+# ==============================================================================
+- name: "Decommission a service (force ABSENT)"
+  hosts: localhost
+  gather_facts: false
+  become: false     # controller-side file ops + root@ LXC docker exec — no sudo anywhere
+  vars_files:
+    - ../roles/vault/defaults/main.yml     # vault_secret_dir, vault_init_secret, vault_container_name
+  roles:
+    - service_decommission

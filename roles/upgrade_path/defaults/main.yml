@@ -1,0 +1,49 @@
+---
+# ==============================================================================
+# Role: upgrade_path — step a service through majors ONE AT A TIME
+#
+# Some products refuse to jump majors. Nextcloud must be on the latest patch of
+# its current major before moving to the next, and applies DB migrations per
+# major (`occ upgrade`). GitLab is stricter still, publishing required stop-over
+# versions that must each run their background migrations to completion before
+# the next hop. Skipping a step does not fail loudly — it corrupts.
+#
+# This role encodes the rule once so every service upgrades the same way.
+# ==============================================================================
+
+# Ordered list of versions to pass through, oldest first. Each entry:
+#   { version: "34.0.3", image: "nextcloud:34.0.3-apache", note: "major" }
+# The role skips any step at or below the running version, so re-running is safe.
+upgrade_path_steps: []
+
+# Human name, used in messages only.
+upgrade_path_service: "service"
+
+# Shell command returning the CURRENTLY running version, run on the target host.
+upgrade_path_current_cmd: ""
+
+# Preferred apply mechanism: the service's own role, re-run per rung with the
+# step's image. Keeps the upgrade on the normal deploy path.
+upgrade_path_role: ""
+# Name of the variable the service role reads its image from, e.g.
+# "nextcloud_image". Set by name per rung so this role stays service-agnostic.
+upgrade_path_image_var: ""
+
+# Fallback for services whose upgrade is not a container swap.
+# Shell command applying one step. Receives the step's image/version via the
+# `upgrade_path_step` fact. Typically recreates the container on the new tag.
+upgrade_path_apply_cmd: ""
+
+# Post-step hook: schema/data migrations that MUST finish before the next hop
+# (Nextcloud `occ upgrade`, GitLab background migrations). Empty = none.
+upgrade_path_migrate_cmd: ""
+
+# Health gate between steps. Non-zero exit stops the whole path — a half-migrated
+# service must never receive the next major.
+upgrade_path_verify_cmd: ""
+
+# Seconds to wait for the service to come back before verifying each step.
+upgrade_path_settle_seconds: 20
+
+# Refuse to run unless explicitly enabled, exactly like the updates role.
+upgrade_path_apply: false

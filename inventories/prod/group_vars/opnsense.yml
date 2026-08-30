@@ -654,7 +654,7 @@ opn_aliases:
 # (NIS2: the record must match what is enforced). Full definitions remain in git
 # history if this is ever revisited.
 #
-# Rationale: mailcow is reached over HTTPS through Traefik (mail.by-research.be)
+# Rationale: mailcow is reached over HTTPS through Traefik (mail.{{ platform_domain }})
 # and receives mail on port 25; neither needs these. Opening 587/465 in
 # particular means authenticated relay — a single cracked mailbox turns the
 # server into a spam relay and gets the sending IP blacklisted. Today nothing
@@ -2159,68 +2159,68 @@ opn_dnat_rules:
 - {descr: 'DNAT Telenet→mailcow SMTP/MX (v6)',  interface: opt13, protocol: TCP, ipprotocol: inet6, destination: {network: host6_wan_pub, port: port_smtp},       target: host6_mailcow, local-port: port_smtp,       state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
 opn_unbound:
   enabled: true
-  domain: by-research.be
+  domain: "{{ platform_domain }}"
   listen_acl_networks:
   - grp_net4_internal
   - grp_net6_internal
   host_overrides:
   # --- Real cluster hosts (present) — split-horizon internal records ---
-  - {hostname: vm-adguard-01, domain: by-research.be, rr: A,    server: 10.1.3.101}
-  - {hostname: vm-adguard-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::101'}
-  - {hostname: lxc-traefik-01, domain: by-research.be, rr: A,    server: 10.1.2.110}
-  - {hostname: lxc-traefik-01, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
-  - {hostname: traefik, domain: by-research.be, rr: A,    server: 10.1.2.110}   # dashboard / ingress name
-  - {hostname: traefik, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
-  - {hostname: lxc-pgsql-01, domain: by-research.be, rr: A,    server: 10.1.3.110}
-  - {hostname: lxc-pgsql-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::110'}
-  - {hostname: lxc-redis-01, domain: by-research.be, rr: A,    server: 10.1.3.117}
-  - {hostname: lxc-redis-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::117'}
-  - {hostname: lxc-pgadmin-01, domain: by-research.be, rr: A,    server: 10.1.3.140}
-  - {hostname: lxc-pgadmin-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::140'}
+  - {hostname: vm-adguard-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.101}
+  - {hostname: vm-adguard-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::101'}
+  - {hostname: lxc-traefik-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}
+  - {hostname: lxc-traefik-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: traefik, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}   # dashboard / ingress name
+  - {hostname: traefik, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: lxc-pgsql-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.110}
+  - {hostname: lxc-pgsql-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::110'}
+  - {hostname: lxc-redis-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.117}
+  - {hostname: lxc-redis-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::117'}
+  - {hostname: lxc-pgadmin-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.140}
+  - {hostname: lxc-pgadmin-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::140'}
   # Service name → Traefik (internal split-horizon; pgAdmin is published via Traefik).
-  - {hostname: pgadmin, domain: by-research.be, rr: A,    server: 10.1.2.110}
-  - {hostname: pgadmin, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
-  - {hostname: lxc-authentik-01, domain: by-research.be, rr: A,    server: 10.1.3.130}
-  - {hostname: lxc-authentik-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::130'}
-  - {hostname: authentik, domain: by-research.be, rr: A,    server: 10.1.2.110}
-  - {hostname: authentik, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
-  - {hostname: lxc-vault-01, domain: by-research.be, rr: A,    server: 10.1.3.150}
-  - {hostname: lxc-vault-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::150'}
-  - {hostname: lxc-nbox-01, domain: by-research.be, rr: A,    server: 10.1.3.120}
-  - {hostname: lxc-nbox-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::120'}
+  - {hostname: pgadmin, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}
+  - {hostname: pgadmin, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: lxc-authentik-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.130}
+  - {hostname: lxc-authentik-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::130'}
+  - {hostname: authentik, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}
+  - {hostname: authentik, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: lxc-vault-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.150}
+  - {hostname: lxc-vault-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::150'}
+  - {hostname: lxc-nbox-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.120}
+  - {hostname: lxc-nbox-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::120'}
   # Service name → Traefik (internal split-horizon; NetBox is published via Traefik).
-  - {hostname: netbox, domain: by-research.be, rr: A,    server: 10.1.2.110}
-  - {hostname: netbox, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
-  - {hostname: vault, domain: by-research.be, rr: A,    server: 10.1.2.110}
-  - {hostname: vault, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
-  - {hostname: lxc-vaultwarden-01, domain: by-research.be, rr: A,    server: 10.1.3.160}
-  - {hostname: lxc-vaultwarden-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::160'}
+  - {hostname: netbox, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}
+  - {hostname: netbox, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: vault, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}
+  - {hostname: vault, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: lxc-vaultwarden-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.160}
+  - {hostname: lxc-vaultwarden-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::160'}
   # Service name → Traefik (internal split-horizon; Vaultwarden is published via Traefik).
-  - {hostname: vaultwarden, domain: by-research.be, rr: A,    server: 10.1.2.110}
-  - {hostname: vaultwarden, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
-  - {hostname: lxc-nextcloud-01, domain: by-research.be, rr: A,    server: 10.1.3.170}
-  - {hostname: lxc-nextcloud-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::170'}
+  - {hostname: vaultwarden, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}
+  - {hostname: vaultwarden, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: lxc-nextcloud-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.170}
+  - {hostname: lxc-nextcloud-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::170'}
   # Service name → Traefik (internal split-horizon; Nextcloud is published via Traefik).
-  - {hostname: nextcloud, domain: by-research.be, rr: A,    server: 10.1.2.110}
-  - {hostname: nextcloud, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
-  - {hostname: lxc-netbird-01, domain: by-research.be, rr: A,    server: 10.1.3.181}
-  - {hostname: lxc-netbird-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::181'}
+  - {hostname: nextcloud, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}
+  - {hostname: nextcloud, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: lxc-netbird-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.181}
+  - {hostname: lxc-netbird-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::181'}
   # Service name → Traefik (internal split-horizon; NetBird dashboard/API via Traefik).
-  - {hostname: netbird, domain: by-research.be, rr: A,    server: 10.1.2.110}
-  - {hostname: netbird, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
-  - {hostname: lxc-seaweedfs-01, domain: by-research.be, rr: A,    server: 10.1.3.200}
-  - {hostname: lxc-seaweedfs-01, domain: by-research.be, rr: AAAA, server: 'fd01:3::200'}
+  - {hostname: netbird, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}
+  - {hostname: netbird, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: lxc-seaweedfs-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.200}
+  - {hostname: lxc-seaweedfs-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::200'}
   # Service name → Traefik (internal split-horizon; SeaweedFS S3 API via Traefik).
-  - {hostname: s3, domain: by-research.be, rr: A,    server: 10.1.2.110}
-  - {hostname: s3, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
-  - {hostname: seaweedfs, domain: by-research.be, rr: A,    server: 10.1.2.110}
-  - {hostname: seaweedfs, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: s3, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}
+  - {hostname: s3, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: seaweedfs, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}
+  - {hostname: seaweedfs, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
   # Service name → Traefik (internal split-horizon; Proxmox Backup Server UI via Traefik).
-  - {hostname: pbs, domain: by-research.be, rr: A,    server: 10.1.2.110}
-  - {hostname: pbs, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: pbs, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}
+  - {hostname: pbs, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
   # Service name → Traefik (internal split-horizon; Grafana via Traefik).
-  - {hostname: grafana, domain: by-research.be, rr: A,    server: 10.1.2.110}
-  - {hostname: grafana, domain: by-research.be, rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: grafana, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}
+  - {hostname: grafana, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
   # (20 stale probe-fleet overrides pruned 2026-06-06 — never-built hosts.)
   # Query Forwarding — chain step: Unbound → dnscrypt-proxy on loopback.
   # Empty domain = catch-all → Unbound creates a `forward-zone "."` from these entries.
@@ -2275,7 +2275,7 @@ opn_kea_dhcp4:
         routers: 10.1.1.1
         domain_name_servers: 10.1.1.1
         ntp_servers: 10.1.1.1
-        domain_name: by-research.be
+        domain_name: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.2.0/24
       pools: 10.1.2.50-10.1.2.99
@@ -2284,7 +2284,7 @@ opn_kea_dhcp4:
         routers: 10.1.2.1
         domain_name_servers: 10.1.2.1
         ntp_servers: 10.1.2.1
-        domain_name: by-research.be
+        domain_name: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.3.0/24
       pools: 10.1.3.50-10.1.3.99
@@ -2293,7 +2293,7 @@ opn_kea_dhcp4:
         routers: 10.1.3.1
         domain_name_servers: 10.1.3.1
         ntp_servers: 10.1.3.1
-        domain_name: by-research.be
+        domain_name: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.4.0/24
       pools: 10.1.4.50-10.1.4.99
@@ -2302,7 +2302,7 @@ opn_kea_dhcp4:
         routers: 10.1.4.1
         domain_name_servers: 10.1.4.1
         ntp_servers: 10.1.4.1
-        domain_name: by-research.be
+        domain_name: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.10.0/24
       pools: 10.1.10.50-10.1.10.99
@@ -2311,7 +2311,7 @@ opn_kea_dhcp4:
         routers: 10.1.10.1
         domain_name_servers: 10.1.10.1
         ntp_servers: 10.1.10.1
-        domain_name: by-research.be
+        domain_name: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.11.0/24
       pools: 10.1.11.50-10.1.11.99
@@ -2320,7 +2320,7 @@ opn_kea_dhcp4:
         routers: 10.1.11.1
         domain_name_servers: 10.1.11.1
         ntp_servers: 10.1.11.1
-        domain_name: by-research.be
+        domain_name: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.20.0/24
       pools: 10.1.20.50-10.1.20.99
@@ -2329,7 +2329,7 @@ opn_kea_dhcp4:
         routers: 10.1.20.1
         domain_name_servers: 10.1.20.1
         ntp_servers: 10.1.20.1
-        domain_name: by-research.be
+        domain_name: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.30.0/24
       pools: 10.1.30.50-10.1.30.99
@@ -2338,7 +2338,7 @@ opn_kea_dhcp4:
         routers: 10.1.30.1
         domain_name_servers: 10.1.30.1
         ntp_servers: 10.1.30.1
-        domain_name: by-research.be
+        domain_name: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.32.0/24
       pools: 10.1.32.50-10.1.32.99
@@ -2347,7 +2347,7 @@ opn_kea_dhcp4:
         routers: 10.1.32.1
         domain_name_servers: 10.1.32.1
         ntp_servers: 10.1.32.1
-        domain_name: by-research.be
+        domain_name: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.40.0/24
       pools: 10.1.40.50-10.1.40.99
@@ -2356,7 +2356,7 @@ opn_kea_dhcp4:
         routers: 10.1.40.1
         domain_name_servers: 10.1.40.1
         ntp_servers: 10.1.40.1
-        domain_name: by-research.be
+        domain_name: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
 
 # ---------------------------------------------------------------------------

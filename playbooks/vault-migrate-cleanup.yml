@@ -1,0 +1,104 @@
+---
+# ==============================================================================
+# One-shot cleanup AFTER secrets-to-vault.yml has populated the ADR-convention
+# tree secret/{env}/{service}/{key}. Verify-then-retire, never lossy:
+#
+#   A. Old flat entries secret/fabric/<name>: destroyed ONLY when the migrated
+#      entry exists AND holds identical data; mismatches reported, untouched.
+#   B. secret/fabric/archive/* (the archived legacy layer): MOVED verbatim to
+#      secret/archive/* (verified copy, then origin destroyed) so 'fabric/'
+#      disappears entirely.
+#   C. Residual legacy trees (app/, authentik/, infra/, net/, prod/*, shared/):
+#      leaves that are NOT valid new-convention paths are MOVED to
+#      secret/archive/legacy/<path> (verified). Leaves that already sit at a
+#      mapped new-convention path are KEPT (they ARE the migrated entry).
+#
+#   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/vault-migrate-cleanup.yml
+# ==============================================================================
+- name: "Vault KV migration cleanup (verify-then-archive)"
+  hosts: vault
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../roles/vault/defaults/main.yml
+    - vars/vault_kv_map.yml
+  vars:
+    fabric_dir: "{{ (vault_secret_dir | expanduser) }}/fabric"
+    vault_migrate_env: "{{ platform_env | default('prod') }}"
+    secrets_sync_exclude: [defguard, minio, pfsense, adguard-test, yboujraf_example]
+    vault_legacy_trees: ["app/", "authentik/", "infra/", "net/", "prod/", "shared/"]
+  tasks:
+    - name: "Cleanup | Load the Vault root token (controller secret)"
+      ansible.builtin.set_fact:
+        vault_root_token: "{{ (lookup('file', (vault_secret_dir | expanduser) + '/' + vault_init_secret) | from_json).fields.root_token }}"
+      no_log: true
+
+    # ---------- A: retire verified-duplicate flat entries ----------------------
+    - name: "Cleanup | Enumerate fabric secret files"
+      ansible.builtin.find:
+        paths: "{{ fabric_dir }}"
+        patterns: "*.json"
+      delegate_to: localhost
+      become: false
+      register: fabric_files
+
+    - name: "Cleanup | A: retire old flat entries (verified against migrated)"
+      ansible.builtin.include_tasks: tasks/vault_cleanup_flat_one.yml
+      loop: "{{ fabric_files.files }}"
+      loop_control:
+        loop_var: secret_file
+        label: "{{ secret_file.path | basename }}"
+      when: >-
+        (secrets_sync_exclude | length == 0) or
+        (secret_file.path | basename | regex_search(secrets_sync_exclude | join('|')) is none)
+
+    # ---------- B+C: walk remaining legacy paths -------------------------------
+    - name: "Cleanup | List remaining KV paths (recursive walk in the container)"
+      vars:
+        _walk_script: >-
+          walk(){ vault kv list -mount={{ vault_kv_path }} -format=json "$1" 2>/dev/null
+          | sed 's/[][",]//g'
+          | while read -r k; do [ -z "$k" ] && continue;
+          case "$k" in */) walk "$1$k";; *) echo "$1$k";; esac; done; };
+          for t in {{ vault_legacy_trees | join(' ') }} fabric/; do walk "$t"; done
+      ansible.builtin.command:
+        argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+               "sh", "-c", "{{ _walk_script }}"]
+      register: _legacy_leaves
+      changed_when: false
+
+    - name: "Cleanup | Compute the keep-list (valid new-convention targets)"
+      ansible.builtin.set_fact:
+        _keep_paths: []
+
+    - name: "Cleanup | Resolve every fabric file's target into the keep-list"
+      ansible.builtin.include_tasks: tasks/vault_keep_one.yml
+      loop: "{{ fabric_files.files }}"
+      loop_control:
+        loop_var: secret_file
+        label: "{{ secret_file.path | basename }}"
+      when: >-
+        (secrets_sync_exclude | length == 0) or
+        (secret_file.path | basename | regex_search(secrets_sync_exclude | join('|')) is none)
+
+    - name: "Cleanup | B+C: move non-target legacy leaves to the archive"
+      ansible.builtin.include_tasks: tasks/vault_cleanup_move_one.yml
+      vars:
+        _mv_from: "{{ leaf }}"
+        _mv_to: >-
+          {{ 'archive/' + (leaf | regex_replace('^fabric/archive/', ''))
+             if leaf is match('^fabric/archive/')
+             else 'archive/legacy/' + leaf }}
+      # keep-list = valid targets; flat mismatches stay put for investigation
+      loop: "{{ _legacy_leaves.stdout_lines | reject('match', '^archive/') | reject('in', _keep_paths) | reject('in', _flat_mismatch | default([])) | list }}"
+      loop_control:
+        loop_var: leaf
+        label: "{{ leaf }}"
+
+    # ---------- report ---------------------------------------------------------
+    - name: "Cleanup | Report"
+      ansible.builtin.debug:
+        msg:
+          - "flat mismatches (untouched, investigate): {{ _flat_mismatch | default([]) | join(', ') or 'none' }}"
+          - "moved to archive: {{ _moved | default([]) | length }} entries"
+          - "kept (valid new-convention paths): {{ _keep_paths | length }}"

@@ -1,0 +1,40 @@
+---
+# Retire ONE old flat entry secret/fabric/<base> AFTER verifying the migrated
+# entry secret/{env}/{service}/{key} holds identical data. Equal -> destroy the
+# flat metadata; absent old -> nothing; differing -> report, touch nothing.
+- name: "Flat | Resolve the KV path ({{ secret_file.path | basename }})"
+  ansible.builtin.include_tasks: vault_kv_path.yml
+  vars:
+    _kv_base: "{{ secret_file.path | basename | regex_replace('\\.json$', '') }}"
+
+- name: "Flat | Read old + new ({{ secret_file.path | basename }})"
+  ansible.builtin.command:
+    argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+           "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-format=json", "{{ item }}"]
+  loop:
+    - "fabric/{{ secret_file.path | basename | regex_replace('\\.json$', '') }}"
+    - "{{ vault_migrate_env }}/{{ _kv_rel }}"
+  register: _pair
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: "Flat | Destroy the verified-duplicate flat entry"
+  ansible.builtin.command:
+    argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+           "vault", "kv", "metadata", "delete", "-mount={{ vault_kv_path }}",
+           "fabric/{{ secret_file.path | basename | regex_replace('\\.json$', '') }}"]
+  when:
+    - _pair.results[0].rc == 0        # old flat entry exists
+    - _pair.results[1].rc == 0        # migrated entry exists
+    - (_pair.results[0].stdout | from_json).data.data == (_pair.results[1].stdout | from_json).data.data
+  register: _flat_del
+  changed_when: _flat_del is not skipped
+  no_log: true
+
+- name: "Flat | Record a mismatch (old != new — left untouched)"
+  ansible.builtin.set_fact:
+    _flat_mismatch: "{{ (_flat_mismatch | default([])) + ['fabric/' + (secret_file.path | basename | regex_replace('\\.json$', ''))] }}"
+  when:
+    - _pair.results[0].rc == 0
+    - (_pair.results[1].rc != 0) or ((_pair.results[0].stdout | from_json).data.data != (_pair.results[1].stdout | from_json).data.data)

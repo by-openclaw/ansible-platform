@@ -1,0 +1,63 @@
+---
+# ==============================================================================
+# Role: updates — OS patching + unattended-upgrades for every LXC/VM
+# The cluster LXCs shipped without any patch mechanism (the two VMs had
+# unattended-upgrades, the LXCs did not) and drifted ~100 packages behind.
+# This role both applies the backlog and installs the mechanism so it stops
+# recurring.
+# ==============================================================================
+
+# ---- apply pass -------------------------------------------------------------
+# safe: apt upgrade (never removes a package).
+# full: apt dist-upgrade (may add/remove deps — needed when a security fix
+#       pulls a new dependency). Set per-run, not globally.
+updates_upgrade_type: safe
+
+# Refuse to run the apply pass unless explicitly enabled. The playbook sets
+# this from --extra-vars so a stray `site.yml` can never patch the fleet.
+updates_apply: false
+
+# Remove no-longer-needed packages / cached .debs after a successful upgrade.
+updates_autoremove: true
+updates_autoclean: true
+
+# Restart services linked against upgraded libraries (libc6, libssl, …).
+# Without this an "upgraded" host keeps running the OLD openssl in memory.
+updates_needrestart: true
+
+# …but never auto-restart these. Two separate reasons:
+#  - docker/containerd: bouncing the runtime restarts every container on the
+#    host, and Vault RE-SEALS when its container restarts.
+#  - dbus/logind: restarting them tears down every systemd session scope,
+#    which kills Ansible's own SSH transport mid-play (observed on the canary).
+updates_needrestart_blacklist_services:
+  - docker\.service
+  - containerd\.service
+  - dbus\.service
+  - systemd-logind\.service
+
+# Reboot only if the host asks for it AND this is enabled. LXCs take their
+# kernel from the PVE host, so a reboot is a container restart — off by default.
+updates_reboot: false
+updates_reboot_timeout: 300
+
+# ---- unattended-upgrades (the mechanism) ------------------------------------
+updates_unattended_enabled: true
+
+# Security-only by default. Adding the stable/updates origin would let point
+# releases land unattended, which we want gated behind this role instead.
+updates_unattended_origins:
+  - "origin=Debian,codename=${distro_codename},label=Debian-Security"
+  - "origin=Debian,codename=${distro_codename}-security,label=Debian-Security"
+
+updates_unattended_auto_reboot: false
+updates_unattended_remove_unused_deps: true
+# Mail is handled by the postfix relay the hardening role configures.
+updates_unattended_mail: ""
+
+# Never touch these unattended — a surprise restart of the container runtime
+# would bounce every service on the host.
+updates_unattended_blacklist:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io

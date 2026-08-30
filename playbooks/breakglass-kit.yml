@@ -1,0 +1,130 @@
+---
+# ==============================================================================
+# Assemble the BREAK-GLASS PRINT KIT — one folder grouping every credential
+# that must exist on PAPER in the safe (DR with zero platform dependencies:
+# works with Authentik down, Vault sealed, controller lost):
+#   * Vault unseal shares + root token (vault-init.json)
+#   * break-glass OS password ({org})
+#   * break-glass SSH key PAIR (private + public, 0600)
+#   * PVE / OPNsense local-admin passwords (added by their passes when created)
+# Folder: {{ kit_dir }} (0700, files 0600). Re-runnable: copies what exists,
+# reports what is still missing. A cover sheet (no secret values) lists the
+# inventory + storage rules. AFTER printing: tell Rune -> controller copies of
+# the unseal material get purged (post-AppRole migration).
+#
+#   Run:   ansible-playbook -i inventories/prod/hosts.yml playbooks/breakglass-kit.yml
+#   Print: lp <file> for each file in the folder (never cat/echo to terminal)
+# ==============================================================================
+- name: "Fetch the break-glass SSH passphrase (Vault -> kit; kit must work with Vault sealed)"
+  hosts: vault
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../roles/vault/defaults/main.yml
+  tasks:
+    - name: "Kit | Load the Vault root token"
+      ansible.builtin.set_fact:
+        vault_root_token: "{{ (lookup('file', (vault_secret_dir | expanduser) + '/' + vault_init_secret) | from_json).fields.root_token }}"
+      no_log: true
+
+    - name: "Kit | Read the break-glass ssh passphrase"
+      ansible.builtin.command:
+        argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+               "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-format=json", "prod/break-glass/ssh-passphrase"]
+      register: kit_bg_pass
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: "Kit | Write it into the print kit (controller, 0600)"
+      ansible.builtin.copy:
+        dest: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/print-kit/04-ssh-passphrase-by-research.json"
+        mode: "0600"
+        content: "{{ (kit_bg_pass.stdout | from_json).data.data | to_nice_json }}"  # pragma: allowlist secret
+      delegate_to: localhost
+      become: false
+      when: kit_bg_pass.rc == 0
+      no_log: true
+
+- name: "Assemble the break-glass print kit"
+  hosts: localhost
+  gather_facts: true
+  become: false
+  vars:
+    secret_root: "{{ ansible_env.HOME }}/.openclaw/workspace/infra/secrets"
+    kit_dir: "{{ secret_root }}/print-kit"
+    kit_items:
+      - src: "{{ secret_root }}/vault-init.json"
+        name: "01-vault-unseal-shares.json"
+        what: "Vault unseal shares (5, threshold 3) + root token"
+      - src: "{{ secret_root }}/fabric/os-by-research.json"
+        name: "02-os-password-by-research.json"
+        what: "break-glass password ({org}) — OS SSH AND the PVE WebUI pam realm"
+      - src: "{{ ansible_env.HOME }}/.ssh/id_ed25519_by-research"
+        name: "03-ssh-key-by-research"
+        what: "break-glass SSH private key (passphrase in Vault + kit)"
+      - src: "{{ ansible_env.HOME }}/.ssh/id_ed25519_by-research.pub"
+        name: "03-ssh-key-by-research.pub"
+        what: "break-glass SSH public key"
+      # Passphrase of the break-glass key — printed so the kit works with Vault sealed:
+      - src: "{{ secret_root }}/print-kit/04-ssh-passphrase-by-research.json"
+        name: "04-ssh-passphrase-by-research.json"
+        what: "break-glass SSH key passphrase (exported from Vault by its pass)"
+      # Added by the PVE / OPNsense identity passes when those local admins are created:
+      - src: "{{ secret_root }}/fabric/os-opnsense-by-research.json"
+        name: "05-opnsense-password-by-research.json"
+        what: "OPNsense local by-research WebUI password"
+  tasks:
+    - name: "Kit | Ensure the folder (0700)"
+      ansible.builtin.file:
+        path: "{{ kit_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: "Kit | Stat every kit item"
+      ansible.builtin.stat:
+        path: "{{ item.src }}"
+      loop: "{{ kit_items }}"
+      loop_control: { label: "{{ item.name }}" }
+      register: kit_stat
+
+    - name: "Kit | Copy present items (0600)"
+      ansible.builtin.copy:
+        src: "{{ item.item.src }}"
+        dest: "{{ kit_dir }}/{{ item.item.name }}"
+        mode: "0600"
+      loop: "{{ kit_stat.results }}"
+      loop_control: { label: "{{ item.item.name }}" }
+      when:
+        - item.stat.exists
+        - item.item.src != kit_dir + '/' + item.item.name   # skip self-referential entries
+
+    - name: "Kit | Cover sheet (inventory only — NO secret values)"
+      ansible.builtin.copy:
+        dest: "{{ kit_dir }}/00-cover-sheet.md"
+        mode: "0600"
+        content: |
+          # BREAK-GLASS PRINT KIT — {{ '%Y-%m-%d' | strftime }}
+          Naming convention: <seq>-<system>-<credential> — seq = print/verify
+          order, system = what it unlocks (vault|os|ssh|opnsense|...).
+          Print EVERY file in this folder (lp <file>), store in the physical
+          safe. This kit restores access with Authentik down, Vault sealed,
+          or the controller lost. No single copy elsewhere is complete.
+
+          | File | Contents | In this kit |
+          |---|---|---|
+          {% for r in kit_stat.results %}
+          | {{ r.item.name }} | {{ r.item.what }} | {{ 'YES' if r.stat.exists else 'MISSING (added by a later pass)' }} |
+          {% endfor %}
+
+          Rules: reprint on any rotation/rekey (match kit date to rotation
+          date); optional encrypted NAS copy only in a share no platform host
+          mounts; after printing tell Rune to purge the controller copies of
+          the unseal material (post-AppRole migration).
+
+    - name: "Kit | Report"
+      ansible.builtin.debug:
+        msg: >-
+          kit at {{ kit_dir }}:
+          present={{ kit_stat.results | selectattr('stat.exists') | map(attribute='item.name') | list }}
+          missing={{ kit_stat.results | rejectattr('stat.exists') | map(attribute='item.name') | list }}

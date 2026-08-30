@@ -1,0 +1,59 @@
+---
+# ==============================================================================
+# updates | unattended — the mechanism that stops the drift recurring.
+# The two VMs already had this; every cluster LXC was missing it, which is why
+# they sat ~100 packages behind. Security origins only: point releases stay
+# gated behind an explicit run of this role.
+# ==============================================================================
+
+- name: "Updates | unattended | Install unattended-upgrades"
+  ansible.builtin.apt:
+    name:
+      - unattended-upgrades
+      - apt-listchanges
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Updates | unattended | Configure the upgrade policy"
+  ansible.builtin.template:
+    src: 50unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart unattended-upgrades
+
+- name: "Updates | unattended | Enable the periodic timers"
+  ansible.builtin.template:
+    src: 20auto-upgrades.j2
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+# Skipped under --check: the package install above was only simulated, so the
+# unit does not exist yet and systemd_service would fail on a clean host.
+- name: "Updates | unattended | Ensure the service is enabled"
+  ansible.builtin.systemd_service:
+    name: unattended-upgrades
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: "Updates | unattended | Ensure the apt timers are enabled"
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+
+- name: "Updates | unattended | Validate the config parses"
+  ansible.builtin.command:
+    cmd: unattended-upgrades --dry-run --debug
+  register: updates_unattended_check
+  changed_when: false
+  failed_when: updates_unattended_check.rc != 0
+  when: not ansible_check_mode

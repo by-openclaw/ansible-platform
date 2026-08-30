@@ -6,7 +6,7 @@
 
 # ---- Port ----
 # Only one port — no Port 22 line. Default port 22 is NOT enabled.
-Port {{ hardening_ssh_port }}
+Port {{ sshd_hardening_port }}
 
 # ---- Address families ----
 AddressFamily any
@@ -19,30 +19,31 @@ HostKey /etc/ssh/ssh_host_ecdsa_key
 HostKey /etc/ssh/ssh_host_ed25519_key
 
 # ---- Authentication ----
-PermitRootLogin {{ hardening_ssh_permit_root_login }}
-PubkeyAuthentication {{ hardening_ssh_pubkey_auth }}
+PermitRootLogin {{ sshd_hardening_permit_root_login }}
+PubkeyAuthentication {{ sshd_hardening_pubkey_auth }}
 AuthorizedKeysFile .ssh/authorized_keys
-PasswordAuthentication {{ hardening_ssh_password_auth }}
+PasswordAuthentication {{ sshd_hardening_password_auth }}
 PermitEmptyPasswords no
-ChallengeResponseAuthentication {{ hardening_ssh_challenge_response }}
+ChallengeResponseAuthentication {{ sshd_hardening_challenge_response }}
 UsePAM yes
 KbdInteractiveAuthentication no
 
 # ---- Access control ----
 # Only members of these groups can connect (key-based by default)
-AllowGroups {{ hardening_ssh_allow_groups | join(' ') }} {{ hardening_ssh_break_glass_group }}
+AllowGroups {{ sshd_hardening_allow_groups | join(' ') }} {{ sshd_hardening_break_glass_group }}{% if sshd_hardening_root_allowed_from | default([]) | length > 0 %} root{% endif %}
 
 # ---- Limits ----
-MaxAuthTries {{ hardening_ssh_max_auth_tries }}
-LoginGraceTime {{ hardening_ssh_login_grace_time }}
+MaxAuthTries {{ sshd_hardening_max_auth_tries }}
+LoginGraceTime {{ sshd_hardening_login_grace_time }}
 MaxSessions 10
 
 # ---- Session ----
-X11Forwarding {{ hardening_ssh_x11_forwarding }}
+X11Forwarding {{ sshd_hardening_x11_forwarding }}
 PrintMotd no
+Banner {{ sshd_hardening_banner }}
 TCPKeepAlive yes
-ClientAliveInterval {{ hardening_ssh_client_alive_interval }}
-ClientAliveCountMax {{ hardening_ssh_client_alive_count_max }}
+ClientAliveInterval {{ sshd_hardening_client_alive_interval }}
+ClientAliveCountMax {{ sshd_hardening_client_alive_count_max }}
 
 # ---- Forwarding ----
 AllowAgentForwarding no
@@ -57,14 +58,21 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 # ==============================================================================
 # Break-glass block
 # Password authentication allowed ONLY for:
-#   - Group: {{ hardening_ssh_break_glass_group }}
-#   - From networks: {{ hardening_ssh_break_glass_networks | join(', ') }}
+#   - Group: {{ sshd_hardening_break_glass_group }}
+#   - From networks: {{ sshd_hardening_break_glass_networks | join(', ') }}
 # This enables emergency access when certificates/keys are unavailable.
 # Networks are restricted to OOB/MGMT — never internet-facing.
 # ==============================================================================
-Match Group {{ hardening_ssh_break_glass_group }} Address {{ hardening_ssh_break_glass_networks | join(',') }}
+Match Group {{ sshd_hardening_break_glass_group }} Address {{ sshd_hardening_break_glass_networks | join(',') }}
     PasswordAuthentication yes
-    AuthenticationMethods password
     # No key forwarding even for break-glass
     AllowAgentForwarding no
     AllowTcpForwarding no
+
+{% if sshd_hardening_root_allowed_from | default([]) | length > 0 %}
+# PVE cluster/lifeline carve-out: Proxmox cluster join + live-migration are
+# hardcoded to root (official docs) — root stays reachable KEY-ONLY from these
+# networks exclusively. Everywhere else PermitRootLogin no applies.
+Match Address {{ sshd_hardening_root_allowed_from | join(',') }}
+    PermitRootLogin prohibit-password
+{% endif %}

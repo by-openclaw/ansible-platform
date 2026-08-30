@@ -18,6 +18,11 @@
   ansible.builtin.import_tasks: containers.yml
   tags: [authentik, container]
 
+- name: Run the LDAP outpost (LDAPS for the OPNsense WebGUI)
+  ansible.builtin.import_tasks: ldap.yml
+  when: authentik_ldap_enabled | bool
+  tags: [authentik, container, ldap]
+
 - name: Provision per-service OIDC blueprints (SSO)
   ansible.builtin.import_tasks: blueprints.yml
   tags: [authentik, blueprints, sso]

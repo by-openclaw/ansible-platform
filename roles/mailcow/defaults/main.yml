@@ -16,10 +16,10 @@ mailcow_mysql_container: "mailcowdockerized-mysql-mailcow-1"
 
 # --- Identity / hostnames ------------------------------------------------------
 # The mail SERVER hostname. Clients of EVERY hosted domain connect here, so this
-# is the only name that needs a TLS cert — covered by the *.by-research.be
+# is the only name that needs a TLS cert — covered by the *.{{ platform_domain }}
 # wildcard (which is why the unowned internal example.com needs no cert).
-mailcow_hostname: "mail.by-research.be"
-mailcow_fqdn: "mail.by-research.be" # web UI / SOGo (behind Traefik)
+mailcow_hostname: "mail.{{ platform_domain }}"
+mailcow_fqdn: "mail.{{ platform_domain }}" # web UI / SOGo (behind Traefik)
 mailcow_timezone: "Europe/Brussels"
 
 # --- Reverse-proxy posture (Traefik terminates TLS; mailcow's nginx is HTTP-only
@@ -62,10 +62,10 @@ mailcow_host_mta_packages:
   - opensmtpd
 
 # --- Hosted mail domains -------------------------------------------------------
-# by-research.be = PUBLIC (external send/receive). example.com = INTERNAL ONLY
+# {{ platform_domain }} = PUBLIC (external send/receive). example.com = INTERNAL ONLY
 # (no public MX/SPF/DKIM, no outbound egress) — enforced in postfix (extra.cf).
 mailcow_domains:
-  - domain: "by-research.be"
+  - domain: "{{ platform_domain }}"
     description: "BY-SYSTEMS primary mail domain (public)"
     internal_only: false
     defquota_mb: 5120
@@ -85,8 +85,8 @@ mailcow_default_quota_mb: 5120 # 5 GB/user starting (adjustable per-mailbox)
 
 # --- Mandatory role addresses (RFC 5321 — accept or get penalised) -------------
 mailcow_postmaster_addresses:
-  - { localpart: "postmaster", domain: "by-research.be" }
-  - { localpart: "abuse", domain: "by-research.be" }
+  - { localpart: "postmaster", domain: "{{ platform_domain }}" }
+  - { localpart: "abuse", domain: "{{ platform_domain }}" }
   - { localpart: "postmaster", domain: "example.com" }
 
 # --- Native Authentik OIDC (System > Configuration > Access > Identity Provider)
@@ -94,7 +94,7 @@ mailcow_postmaster_addresses:
 # claim → maps to a mailbox template → creates the mailbox with the 5 GB quota.
 mailcow_oidc_enabled: true
 mailcow_oidc_slug: "mailcow" # Authentik application slug
-mailcow_authentik_base: "https://authentik.by-research.be"
+mailcow_authentik_base: "https://authentik.{{ platform_domain }}"
 mailcow_oidc_authorization_endpoint: "{{ mailcow_authentik_base }}/application/o/authorize/"
 mailcow_oidc_token_endpoint: "{{ mailcow_authentik_base }}/application/o/token/"
 mailcow_oidc_userinfo_endpoint: "{{ mailcow_authentik_base }}/application/o/userinfo/"
@@ -149,15 +149,15 @@ mailcow_oidc_secret_file: "fabric/app-oidc-mailcow.json"
 #     roaming access; mailcow's own OIDC login gates it). Matches nextcloud. -----
 mailcow_traefik_internal_only: false
 
-# --- Mail-port TLS: the real *.by-research.be wildcard (NOT mailcow's self-signed).
+# --- Mail-port TLS: the real *.{{ platform_domain }} wildcard (NOT mailcow's self-signed).
 # The web UI already gets the wildcard via Traefik; the mail ports (25 STARTTLS,
 # 465 SMTPS, 587 submission, 993 IMAPS, 995 POP3S) must present it too so remote
 # MTAs + mail clients see a valid cert. Same canonical lego DNS-01 flow as the
 # traefik/adguard roles: issue on this host, drop into mailcow's bring-your-own
 # cert path (SKIP_LETS_ENCRYPT=y), reload the mail daemons, renew via cron. -------
 mailcow_tls_wildcard: true
-mailcow_domain: "by-research.be"
-mailcow_acme_email: "postmaster@by-research.be"
+mailcow_domain: "{{ platform_domain }}"
+mailcow_acme_email: "postmaster@{{ platform_domain }}"
 mailcow_lego_version: "4.21.0" # pin (matches traefik/adguard)
 mailcow_lego_url: "https://github.com/go-acme/lego/releases/download/v{{ mailcow_lego_version }}/lego_v{{ mailcow_lego_version }}_linux_amd64.tar.gz"
 mailcow_renew_days: 30
@@ -185,3 +185,9 @@ mailcow_secret_file: "fabric/mailcow.json" # DBROOT/DBPASS/REDISPASS/API key (ge
 #     Standing up a PUBLIC mail server is outward-facing → keep false until the
 #     NAS export + DNS + FW prerequisites are in place and the deploy is approved.
 mailcow_deploy_stack: false
+
+# Mailboxes that authenticate through Authentik SSO. Marked authsource=generic-oidc,
+# without which mailcow refuses their OIDC login. postmaster@ is deliberately NOT
+# listed — it stays local as break-glass, alongside the separate `admin` UI account.
+mailcow_oidc_sso_mailboxes:
+  - "yboujraf@by-research.be"
