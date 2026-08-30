@@ -5,7 +5,9 @@
 # (postgres_db: authentik) + Redis, both over verified TLS. Fronted by Traefik
 # (wildcard TLS). Upgrade = bump authentik_image tag.
 # ==============================================================================
-authentik_image: "ghcr.io/goauthentik/server:2026.5.2"   # pinned (never :latest)
+# Core image. Derived from authentik_version so the LDAP outpost tag below
+# cannot drift away from it — one variable moves both.
+authentik_image: "ghcr.io/goauthentik/server:{{ authentik_version }}"
 
 authentik_fqdn: "authentik.{{ platform_domain }}"
 
@@ -206,3 +208,24 @@ authentik_users:
 
 # Outbound email (password resets / MFA / notifications) via Resend (by-research).
 authentik_resend_secret_file: "shared/app-resend-by-research.json"
+
+# ------------------------------------------------------------------------------
+# LDAP outpost — the container that serves LDAPS for the OPNsense WebGUI login.
+#
+# This ran UNMANAGED until now: it was created by hand, so nothing in this role
+# could move it and it drifted a full release behind the core (2026.5.2 while
+# server/worker were on 2026.5.6). Outposts are expected to track the core
+# version, so the tag is derived from authentik_version and cannot silently
+# diverge again.
+# ------------------------------------------------------------------------------
+authentik_ldap_enabled: true
+authentik_version: "2026.5.6"
+authentik_ldap_image: "ghcr.io/goauthentik/ldap:{{ authentik_version }}"
+
+# LDAPS only — no cleartext 389. Dual-stack: Docker will not bind v6 on its own
+# even with ip6tables enabled, so both families are published explicitly.
+authentik_ldap_port: 636
+authentik_ldap_container_port: 6636
+
+# Outpost API token, issued by Authentik and stored in the secret folder.
+authentik_ldap_secret_file: "app-ldap-outpost.json"  # pragma: allowlist secret

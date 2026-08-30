@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""{{ ansible_managed }}
+
+Notify when a NetBird user is waiting for approval.
+
+WHY: with user approval enabled, a new user's first login leaves them blocked
+until an admin approves them. NetBird does not notify anyone, so the person
+simply cannot connect and nobody knows. This closes that gap: approval stays a
+deliberate decision instead of a silent dead end.
+
+Notifies ONCE per user (state file), so the timer can run often without
+becoming noise. Exits quietly when nothing is pending.
+"""
+import json
+import smtplib
+import sys
+import urllib.request
+from email.message import EmailMessage
+from pathlib import Path
+
+API = "{{ netbird_approval_api }}"
+TOKEN_FILE = Path("{{ netbird_approval_token_path }}")
+STATE = Path("{{ netbird_approval_state_path }}")
+DASHBOARD = "{{ netbird_approval_dashboard_url }}"
+
+SMTP_HOST = "{{ netbird_approval_smtp_host }}"
+SMTP_PORT = {{ netbird_approval_smtp_port }}
+SMTP_USER = "{{ netbird_approval_smtp_user }}"
+SMTP_PASS = "{{ netbird_approval_smtp_pass }}"
+MAIL_FROM = "{{ netbird_approval_mail_from }}"
+MAIL_TO = "{{ netbird_approval_mail_to }}"
+
+
+def pending_users(token):
+    req = urllib.request.Request(
+        f"{API}/api/users", headers={"Authorization": f"Token {token}"}
+    )
+    with urllib.request.urlopen(req, timeout=20) as r:
+        users = json.load(r)
+    # A user awaiting approval is flagged pending, or blocked before first login.
+    return [
+        u for u in users
+        if not u.get("is_service_user")
+        and (u.get("pending_approval") or (u.get("is_blocked") and not u.get("last_login")))
+    ]
+
+
+def notify(users):
+    lines = [
+        f"  {u.get('name') or '(no name)'}  <{u.get('email') or 'no email'}>  id={u.get('id')}"
+        for u in users
+    ]
+    body = (
+        "NetBird is holding the following user(s) for approval.\n"
+        "They cannot connect until you approve them.\n\n"
+        + "\n".join(lines)
+        + f"\n\nApprove them here:\n  {DASHBOARD}/team/users\n"
+    )
+    msg = EmailMessage()
+    msg["Subject"] = f"[NetBird] {len(users)} user(s) awaiting approval"
+    msg["From"] = MAIL_FROM
+    msg["To"] = MAIL_TO
+    msg.set_content(body)
+
+    # 465 = implicit TLS, anything else = STARTTLS.
+    if SMTP_PORT == 465:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as s:
+            s.login(SMTP_USER, SMTP_PASS)
+            s.send_message(msg)
+    else:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASS)
+            s.send_message(msg)
+
+
+def main():
+    if not TOKEN_FILE.exists():
+        print("no API token available", file=sys.stderr)
+        return 1
+    token = json.loads(TOKEN_FILE.read_text())["fields"]["personal_access_token"]
+
+    try:
+        pending = pending_users(token)
+    except Exception as exc:  # network/API problems must not spam or crash the timer
+        print(f"could not query NetBird: {exc}", file=sys.stderr)
+        return 1
+
+    already = set(json.loads(STATE.read_text())) if STATE.exists() else set()
+    fresh = [u for u in pending if u.get("id") not in already]
+
+    if not fresh:
+        # Forget users who are no longer pending, so a re-block notifies again.
+        STATE.write_text(json.dumps(sorted(u.get("id") for u in pending)))
+        return 0
+
+    notify(fresh)
+    print(f"notified about {len(fresh)} user(s) awaiting approval")
+    STATE.write_text(json.dumps(sorted(u.get("id") for u in pending)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -5,7 +5,9 @@
 # Authentik + NetBox. Single-node now; HA-adoptable (AOF + tls-replication).
 # Data persists in a named volume across container re-creation.
 # ==============================================================================
-redis_image: "redis:8.10.0"          # pinned (never :latest); upgrade = bump tag
+# Exact pin, never a stream tag: ":8.6" would silently drift within 8.6.x on any
+# re-pull, and was also why this host could never reach 8.10 at all.
+redis_image: "redis:8.10.0"       # upgrade = bump this tag deliberately
 redis_container_name: "redis"
 
 # Publish on loopback + the SVC IP (v4 and v6 — dual-stack data svc, reached

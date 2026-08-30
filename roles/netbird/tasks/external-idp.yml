@@ -1,0 +1,52 @@
+---
+# ==============================================================================
+# netbird | external-idp — register Authentik as an external identity provider.
+#
+# The combined architecture owns its own local users; Authentik is attached
+# afterwards so people sign in with their platform identity instead of a
+# NetBird-local account. Idempotent: GET-checks before creating.
+#
+# The callback is https://<fqdn>/oauth2/callback/<provider-id> and is already
+# covered by the Authentik provider's existing redirect regex for this host.
+# ==============================================================================
+
+- name: "external-idp | Load the Authentik OIDC client"
+  ansible.builtin.set_fact:
+    netbird_idp_client: >-
+      {{ (lookup('file', netbird_secret_dir + '/' + netbird_oidc_secret_file)
+          | from_json).fields }}
+  no_log: true
+
+- name: "external-idp | List existing identity providers"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/identity-providers"
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    status_code: [200]
+  register: netbird_idp_list
+  no_log: true
+
+- name: "external-idp | Register Authentik (idempotent)"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/identity-providers"
+    method: POST
+    headers: { Authorization: "Token {{ netbird_pat }}" }
+    body_format: json
+    body:
+      name: "{{ netbird_idp_name }}"
+      type: "authentik"
+      client_id: "{{ netbird_idp_client.client_id }}"
+      client_secret: "{{ netbird_idp_client.client_secret }}"
+      issuer: "{{ netbird_oidc_issuer }}"
+      enabled: true
+    status_code: [200, 201]
+  register: netbird_idp_new
+  no_log: true
+  when: >-
+    (netbird_idp_list.json | default([])
+     | selectattr('name', 'equalto', netbird_idp_name) | list | length) == 0
+
+- name: "external-idp | Report"
+  ansible.builtin.debug:
+    msg: >-
+      External IdP '{{ netbird_idp_name }}' {{ 'created' if netbird_idp_new is changed else 'already present' }}
+      (issuer {{ netbird_oidc_issuer }}).

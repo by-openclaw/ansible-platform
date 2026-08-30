@@ -5,7 +5,9 @@
 # Single-node now; HA-adoptable (wal_level=replica) so a future Patroni promotion
 # needs no rebuild. Data persists in a named volume across container re-creation.
 # ==============================================================================
-pg_image: "postgres:17"          # pinned (never :latest); upgrade = bump tag
+# Exact pin, never a stream tag: ":17" would silently roll forward to whatever
+# 17.x is newest on any re-pull, changing the database version with no commit.
+pg_image: "postgres:17.11"       # upgrade = bump this tag deliberately
 pg_container_name: "postgres"
 
 # Publish only on loopback + the SVC IP (apps connect over SVC). Dual-stack:
