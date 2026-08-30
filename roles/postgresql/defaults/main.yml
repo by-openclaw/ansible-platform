@@ -19,6 +19,13 @@ pg_port: 5432
 pg_data_volume: "pgdata"
 pg_uid: 999                       # postgres uid inside the official image
 
+# GitLab's schema loads in ONE transaction that acquires a lock per object; with
+# 19.x's many partitioned tables it exceeds the default max_locks_per_transaction
+# (64) → "out of shared memory / increase max_locks_per_transaction" on schema
+# load. GitLab's own bundled PG raises this; the shared cluster PG must too. Also
+# fine for every other consumer. Restart-required (postmaster) setting.
+pg_max_locks_per_transaction: 256
+
 # Host dirs bind-mounted into the container (same path inside).
 pg_conf_host_dir: "/etc/postgres/conf"     # pg_hba.conf
 pg_cert_host_dir: "/etc/postgres/certs"    # wildcard cert + key

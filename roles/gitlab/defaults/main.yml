@@ -1,0 +1,114 @@
+---
+# ==============================================================================
+# Role: gitlab — GitLab CE (official Omnibus, apt) on lxc-gitlab-01 (SVC).
+# Bundled Postgres/Redis/object-storage are DISABLED — GitLab consumes the shared
+# cluster services (separation of concerns), all wired from the controller secret
+# store. Fronted by Traefik (TLS termination); SSO via Authentik OIDC (mandatory).
+#
+#   DB     → lxc-pgsql-01     (postgres_db: gitlabhq_production)   sslmode=require
+#   Redis  → lxc-redis-01     (rediss, LE wildcard, password)
+#   S3     → lxc-seaweedfs-01 (seaweedfs_bucket: gitlab-* buckets, path-style)
+#   OIDC   → authentik        (required_groups + admin_groups from `groups` claim)
+#   Email  → mailcow          (submission 587, service mailbox — optional)
+#   Repos  → /var/opt/gitlab/git-data  (ZFS bind-mount, survives destroy)
+# ==============================================================================
+
+# Secrets: Vault IS the store (no local files). Each path below is read from Vault
+# via the vault_secret role; the owning role (postgres_db / seaweedfs_bucket /
+# authentik / mailcow) creates it first. GitLab's OWN generated secrets are written
+# back to Vault after install (DR-critical).
+gitlab_pg_vault_path: "prod/gitlab/db-pgsql"          # postgres_db creates
+gitlab_redis_vault_path: "prod/redis/admin"         # redis role owns (shared)
+gitlab_s3_vault_path: "prod/gitlab/s3"   # seaweedfs_bucket creates
+gitlab_oidc_vault_path: "prod/gitlab/oidc"        # authentik creates
+gitlab_smtp_vault_path: "prod/gitlab/smtp"        # mailcow mailbox (optional)
+gitlab_secrets_vault_path: "prod/gitlab/secrets"      # GitLab's own secrets (written post-install)  # pragma: allowlist secret
+
+# --- Version pin (NEVER unpinned / :latest) -----------------------------------
+# Verify the exact available string before apply: `apt-cache madison gitlab-ce`.
+gitlab_version: "19.3.0-ce.0"          # latest stable on trixie (verified via apt-cache madison)
+gitlab_apt_repo_url: "https://packages.gitlab.com/gitlab/gitlab-ce"
+
+# --- Identity / URLs ----------------------------------------------------------
+gitlab_external_url: "https://gitlab.by-research.be"
+gitlab_registry_external_url: "https://registry.by-research.be"
+gitlab_pages_external_url: "https://pages.by-research.be"   # wildcard TLS route = follow-up
+gitlab_svc_ip: "10.1.3.210"
+
+# Backends Traefik routes to (GitLab nginx serves plaintext; Traefik does TLS).
+gitlab_http_backend_port: 80
+gitlab_registry_backend_port: 5050
+
+# Git-over-SSH: gitlab-shell manages the git user's authorized_keys on the host
+# sshd. Current LXC sshd = port 22 (not yet hardened to 22222). If hardening moves
+# it, bump this too.
+gitlab_ssh_port: 22
+# Clone URLs advertise this SSH host. gitlab.by-research.be resolves to Traefik
+# (web/registry over 443 only) — SSH can't traverse Traefik, so SSH must target the
+# LXC directly. lxc-gitlab-01.by-research.be → 10.1.3.210 (VPN→SVC:22 already allowed).
+gitlab_ssh_host: "lxc-gitlab-01.by-research.be"
+
+# --- Persistent git storage (the ZFS bind-mount target) -----------------------
+gitlab_git_data_dir: "/var/opt/gitlab/git-data"
+
+# --- Shared PostgreSQL --------------------------------------------------------
+gitlab_pg_host: "lxc-pgsql-01.by-research.be"
+gitlab_pg_port: 5432
+gitlab_pg_name: "gitlabhq_production"
+gitlab_pg_user: "gitlab"
+gitlab_pg_sslmode: "require"           # verify-full = hardening follow-up (needs CA path)
+
+# --- Shared Redis (TLS) -------------------------------------------------------
+gitlab_redis_host: "lxc-redis-01.by-research.be"
+gitlab_redis_port: 6379
+gitlab_redis_ssl: true
+
+# --- S3 object storage (SeaweedFS, direct same-VLAN endpoint) -----------------
+# Host FQDN (same-VLAN direct, no IP, no Traefik hairpin; s3.by-research.be would
+# hairpin via the DMZ Traefik). TLS-direct to SeaweedFS = a hardening follow-up.
+gitlab_s3_endpoint: "http://lxc-seaweedfs-01.by-research.be:8333"
+gitlab_s3_region: "us-east-1"                   # SeaweedFS ignores it; GitLab requires one
+# One scoped key, access to all of these. Consolidated object storage + registry +
+# backups. seaweedfs_bucket creates the buckets and the gitlab-scoped identity.
+gitlab_s3_buckets:
+  artifacts: "gitlab-artifacts"
+  external_diffs: "gitlab-external-diffs"
+  lfs: "gitlab-lfs"
+  uploads: "gitlab-uploads"
+  packages: "gitlab-packages"
+  dependency_proxy: "gitlab-dependency-proxy"
+  terraform_state: "gitlab-terraform-state"
+  ci_secure_files: "gitlab-ci-secure-files"
+  pages: "gitlab-pages"
+gitlab_registry_bucket: "gitlab-registry"
+gitlab_backup_bucket: "gitlab-backups"
+
+# --- SSO (Authentik OIDC) -----------------------------------------------------
+gitlab_oidc_issuer: "https://authentik.by-research.be/application/o/gitlab/"
+gitlab_oidc_required_groups: ["gitlab-users"]   # only these may sign in (CE, from claim)
+gitlab_oidc_admin_groups: ["gitlab-admins"]     # these become GitLab admins (CE)
+gitlab_oidc_block_auto_created: false           # auto-provision on first SSO login
+# Keep local password login as break-glass (root). SSO is the user path.
+gitlab_disable_password_login: false
+
+# --- Email (mailcow submission) — optional ------------------------------------
+# If the Vault path exists (mailcow mailbox provisioned), SMTP is configured; else
+# email is left OFF. GitLab runs fine without it, but notifications/resets need it.
+
+# --- Pages --------------------------------------------------------------------
+# Pages ENABLED: prerequisites now in place — *.pages.by-research.be wildcard cert
+# (on Traefik) + Unbound wildcard override + Traefik wildcard router. Pages nginx
+# runs as a plaintext HTTP backend (Traefik terminates TLS) so it needs no local
+# cert (that was the earlier crash-loop). Backend port below.
+gitlab_pages_enabled: true
+gitlab_pages_backend_port: 8091   # Pages daemon external_http (Traefik target); listen_proxy default 8090 stays localhost
+
+# --- Footprint knobs ----------------------------------------------------------
+gitlab_prometheus_monitoring: false    # bundled prometheus/grafana off (RAM; monitoring stack is separate/parked)
+gitlab_puma_workers: 2
+gitlab_sidekiq_concurrency: 10
+
+# --- Backup (SeaweedFS gitlab-backups → Contabo offsite tier-3, pure Ansible) --
+gitlab_backup_enabled: true
+gitlab_backup_keep_seconds: 604800     # 7 days on S3 (GitLab prunes)
+gitlab_backup_cron: "30 2 * * *"       # nightly 02:30

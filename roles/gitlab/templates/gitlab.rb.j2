@@ -1,0 +1,206 @@
+# Managed by Ansible role `gitlab`. Do NOT edit by hand — changes are overwritten.
+# GitLab CE (Omnibus) wired to the shared cluster services. `gitlab-ctl reconfigure`
+# renders the running config from this file.
+
+external_url '{{ gitlab_external_url }}'
+
+## Unprivileged LXC: the Proxmox host owns kernel parameters. Omnibus must NOT try
+## to set sysctls (kernel.shmmax, vm.max_map_count, …) — the container can't, and
+## the attempt fails `gitlab-ctl reconfigure`. Safe here: bundled Postgres (the
+## main consumer of those tunables) is disabled; we use the external cluster PG.
+package['modify_kernel_parameters'] = false
+
+## Behind Traefik: nginx serves plaintext HTTP; Traefik terminates TLS. Tell Rails
+## the external scheme is https so it builds correct URLs / sets secure cookies.
+## (GitLab 18.x moved these nginx keys under gitlab_rails['nginx'].)
+gitlab_rails['nginx']['listen_port'] = {{ gitlab_http_backend_port }}
+gitlab_rails['nginx']['listen_https'] = false
+gitlab_rails['nginx']['listen_addresses'] = ['0.0.0.0', '[::]']
+gitlab_rails['nginx']['proxy_set_headers'] = {
+  'X-Forwarded-Proto' => 'https',
+  'X-Forwarded-Ssl' => 'on'
+}
+
+## Git repositories live on the persistent ZFS bind-mount (survives LXC destroy).
+## git_data_dirs was removed in 18.0 → use the Gitaly storage config. The path is
+## the repositories dir under the bind-mount (git_data_dirs appended /repositories).
+gitaly['configuration'] = {
+  storage: [
+    {
+      name: 'default',
+      path: '{{ gitlab_git_data_dir }}/repositories',
+    },
+  ],
+}
+
+## Git-over-SSH: advertise the LXC host directly (gitlab.by-research.be → Traefik,
+## which is web/registry only; SSH cannot traverse it). VPN→SVC:22 is already allowed.
+gitlab_rails['gitlab_ssh_host'] = '{{ gitlab_ssh_host }}'
+gitlab_rails['gitlab_shell_ssh_port'] = {{ gitlab_ssh_port }}
+
+# ------------------------------------------------------------------------------
+# External PostgreSQL (bundled disabled) — shared cluster PG, encrypted transport.
+# ------------------------------------------------------------------------------
+postgresql['enable'] = false
+gitlab_rails['db_adapter'] = 'postgresql'
+gitlab_rails['db_encoding'] = 'utf8'
+gitlab_rails['db_host'] = '{{ gitlab_pg_host }}'
+gitlab_rails['db_port'] = {{ gitlab_pg_port }}
+gitlab_rails['db_database'] = '{{ gitlab_pg_name }}'
+gitlab_rails['db_username'] = '{{ gitlab_pg_user }}'
+gitlab_rails['db_password'] = '{{ gitlab_pg_password }}'
+gitlab_rails['db_sslmode'] = '{{ gitlab_pg_sslmode }}'
+
+# ------------------------------------------------------------------------------
+# External Redis (bundled disabled) — shared cluster Redis over TLS (LE wildcard).
+# ------------------------------------------------------------------------------
+redis['enable'] = false
+gitlab_rails['redis_host'] = '{{ gitlab_redis_host }}'
+gitlab_rails['redis_port'] = {{ gitlab_redis_port }}
+gitlab_rails['redis_password'] = '{{ gitlab_redis_password }}'
+gitlab_rails['redis_ssl'] = {{ gitlab_redis_ssl | lower }}
+
+# ------------------------------------------------------------------------------
+# Consolidated object storage → SeaweedFS (S3, path-style). One scoped key.
+# ------------------------------------------------------------------------------
+gitlab_rails['object_store']['enabled'] = true
+gitlab_rails['object_store']['proxy_download'] = true
+gitlab_rails['object_store']['connection'] = {
+  'provider' => 'AWS',
+  'aws_access_key_id' => '{{ gitlab_s3_key.access_key }}',
+  'aws_secret_access_key' => '{{ gitlab_s3_key.secret_key }}',
+  'endpoint' => '{{ gitlab_s3_endpoint }}',
+  'region' => '{{ gitlab_s3_region }}',
+  'path_style' => true
+}
+gitlab_rails['object_store']['objects']['artifacts']['bucket'] = '{{ gitlab_s3_buckets.artifacts }}'
+gitlab_rails['object_store']['objects']['external_diffs']['bucket'] = '{{ gitlab_s3_buckets.external_diffs }}'
+gitlab_rails['object_store']['objects']['lfs']['bucket'] = '{{ gitlab_s3_buckets.lfs }}'
+gitlab_rails['object_store']['objects']['uploads']['bucket'] = '{{ gitlab_s3_buckets.uploads }}'
+gitlab_rails['object_store']['objects']['packages']['bucket'] = '{{ gitlab_s3_buckets.packages }}'
+gitlab_rails['object_store']['objects']['dependency_proxy']['bucket'] = '{{ gitlab_s3_buckets.dependency_proxy }}'
+gitlab_rails['object_store']['objects']['terraform_state']['bucket'] = '{{ gitlab_s3_buckets.terraform_state }}'
+gitlab_rails['object_store']['objects']['ci_secure_files']['bucket'] = '{{ gitlab_s3_buckets.ci_secure_files }}'
+gitlab_rails['object_store']['objects']['pages']['bucket'] = '{{ gitlab_s3_buckets.pages }}'
+
+# ------------------------------------------------------------------------------
+# Container Registry — S3-backed (own storage block), fronted by Traefik.
+# ------------------------------------------------------------------------------
+registry_external_url '{{ gitlab_registry_external_url }}'
+registry['nginx']['listen_port'] = {{ gitlab_registry_backend_port }}
+registry['nginx']['listen_https'] = false
+registry['nginx']['proxy_set_headers'] = {
+  'X-Forwarded-Proto' => 'https',
+  'X-Forwarded-Ssl' => 'on'
+}
+registry['storage'] = {
+  's3' => {
+    'accesskey' => '{{ gitlab_s3_key.access_key }}',
+    'secretkey' => '{{ gitlab_s3_key.secret_key }}',
+    'regionendpoint' => '{{ gitlab_s3_endpoint }}',
+    'region' => '{{ gitlab_s3_region }}',
+    'bucket' => '{{ gitlab_registry_bucket }}',
+    'pathstyle' => true
+  }
+}
+
+# ------------------------------------------------------------------------------
+# SSO — Authentik OIDC (mandatory). CE reads the `groups` claim: required_groups
+# gates login; admin_groups grants instance admin. Local login stays (break-glass).
+# ------------------------------------------------------------------------------
+gitlab_rails['omniauth_enabled'] = true
+gitlab_rails['omniauth_allow_single_sign_on'] = ['openid_connect']
+gitlab_rails['omniauth_block_auto_created_users'] = {{ gitlab_oidc_block_auto_created | lower }}
+gitlab_rails['omniauth_auto_link_user'] = ['openid_connect']
+{% if gitlab_disable_password_login %}
+gitlab_rails['omniauth_auto_sign_in_with_provider'] = 'openid_connect'
+{% endif %}
+gitlab_rails['omniauth_providers'] = [
+  {
+    'name' => 'openid_connect',
+    'label' => 'Authentik',
+    'icon' => 'https://cdn.jsdelivr.net/gh/selfhst/icons/svg/authentik.svg',
+    'args' => {
+      'name' => 'openid_connect',
+      'scope' => ['openid', 'profile', 'email', 'groups'],
+      'response_type' => 'code',
+      'issuer' => '{{ gitlab_oidc_issuer }}',
+      'discovery' => true,
+      'client_auth_method' => 'query',
+      'uid_field' => 'preferred_username',
+      'send_scope_to_token_endpoint' => true,
+      'pkce' => true,
+      'gitlab' => {
+        'groups_attribute' => 'groups',
+        'required_groups' => {{ gitlab_oidc_required_groups | to_json }},
+        'admin_groups' => {{ gitlab_oidc_admin_groups | to_json }}
+      },
+      'client_options' => {
+        'identifier' => '{{ gitlab_oidc.client_id }}',
+        'secret' => '{{ gitlab_oidc.client_secret }}',
+        'redirect_uri' => '{{ gitlab_external_url }}/users/auth/openid_connect/callback'
+      }
+    }
+  }
+]
+
+# ------------------------------------------------------------------------------
+# Email
+# ------------------------------------------------------------------------------
+{% if gitlab_smtp_configured | default(false) %}
+gitlab_rails['smtp_enable'] = true
+gitlab_rails['smtp_address'] = '{{ gitlab_smtp.smtp_host }}'
+gitlab_rails['smtp_port'] = {{ gitlab_smtp.smtp_port }}
+gitlab_rails['smtp_user_name'] = '{{ gitlab_smtp.smtp_user }}'
+gitlab_rails['smtp_password'] = '{{ gitlab_smtp.smtp_password }}'
+gitlab_rails['smtp_domain'] = 'by-research.be'
+gitlab_rails['smtp_authentication'] = 'login'
+gitlab_rails['smtp_enable_starttls_auto'] = true
+gitlab_rails['smtp_tls'] = false
+gitlab_rails['gitlab_email_from'] = '{{ gitlab_smtp.smtp_user }}'
+gitlab_rails['gitlab_email_reply_to'] = '{{ gitlab_smtp.smtp_user }}'
+{% else %}
+# SMTP not configured — Vault path {{ gitlab_smtp_vault_path }} absent. Provision
+# the mailcow mailbox (writes that Vault secret), then re-run to enable email.
+gitlab_rails['smtp_enable'] = false
+{% endif %}
+
+# ------------------------------------------------------------------------------
+# GitLab Pages (MANDATORY). Object-store backed. Wildcard TLS route (*.pages) via
+# Traefik is the remaining Pages step; access-control uses the OIDC session.
+# ------------------------------------------------------------------------------
+{% if gitlab_pages_enabled %}
+pages_external_url '{{ gitlab_pages_external_url }}'
+gitlab_pages['enable'] = true
+gitlab_pages['access_control'] = true
+## Behind Traefik (TLS terminator, holds the *.pages wildcard cert): disable the
+## bundled pages nginx and let the Pages DAEMON serve plaintext HTTP directly on
+## the backend port; Traefik routes *.pages.by-research.be → here. This avoids (a)
+## the main nginx trying to load a local pages cert (the first crash) and (b) a
+## port clash between pages_nginx and the daemon on the same port (the second).
+pages_nginx['enable'] = false
+gitlab_pages['external_http'] = ['0.0.0.0:{{ gitlab_pages_backend_port }}']
+{% else %}
+gitlab_pages['enable'] = false
+{% endif %}
+
+# ------------------------------------------------------------------------------
+# Backups → SeaweedFS gitlab-backups (staged to S3; Contabo offsite = tier-3).
+# ------------------------------------------------------------------------------
+gitlab_rails['backup_upload_connection'] = {
+  'provider' => 'AWS',
+  'aws_access_key_id' => '{{ gitlab_s3_key.access_key }}',
+  'aws_secret_access_key' => '{{ gitlab_s3_key.secret_key }}',
+  'endpoint' => '{{ gitlab_s3_endpoint }}',
+  'region' => '{{ gitlab_s3_region }}',
+  'path_style' => true
+}
+gitlab_rails['backup_upload_remote_directory'] = '{{ gitlab_backup_bucket }}'
+gitlab_rails['backup_keep_time'] = {{ gitlab_backup_keep_seconds }}
+
+# ------------------------------------------------------------------------------
+# Footprint
+# ------------------------------------------------------------------------------
+prometheus_monitoring['enable'] = {{ gitlab_prometheus_monitoring | lower }}
+puma['worker_processes'] = {{ gitlab_puma_workers }}
+sidekiq['max_concurrency'] = {{ gitlab_sidekiq_concurrency }}

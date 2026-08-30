@@ -1,0 +1,44 @@
+---
+# ==============================================================================
+# Role: gitlab_runner — a GitLab CI runner (Docker executor) on an isolated VM.
+# CI runs untrusted code → VM isolation (never an LXC). Images are built with
+# Kaniko (rootless, no privileged daemon); jobs run in clean containers.
+#
+# Registration uses the GitLab 17+ model: an INSTANCE runner is created on the
+# GitLab server (gitlab-rails) which mints an authentication token (glrt-…); the
+# runner registers with that token. The token is persisted to the controller
+# secret store so re-runs are idempotent (no duplicate runners).
+# ==============================================================================
+
+# --- GitLab target ------------------------------------------------------------
+gitlab_runner_gitlab_url: "https://gitlab.by-research.be"
+gitlab_runner_gitlab_host: "lxc-gitlab-01"          # inventory host to mint the token on
+gitlab_runner_description: "linux-kaniko"
+gitlab_runner_tags: ["linux", "docker", "kaniko"]
+gitlab_runner_run_untagged: true                     # also pick up untagged jobs (the default lane)
+
+# Auth token (glrt-…). Minted once on the GitLab server, stored in Vault, reused
+# after (no local file). Vault IS the store.
+gitlab_runner_token_vault_path: "prod/gitlab/runner-token"
+gitlab_runner_vault_host: "lxc-vault-01"
+gitlab_runner_vault_bootstrap: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/vault-init.json"
+
+# --- Version pins (NEVER unpinned / :latest) ----------------------------------
+gitlab_runner_apt_repo_url: "https://packages.gitlab.com/runner/gitlab-runner"
+gitlab_runner_version: ""            # "" = repo latest at install; pin a version to lock
+
+# --- Executor / config.toml ---------------------------------------------------
+gitlab_runner_concurrent: 4
+gitlab_runner_executor: "docker"
+# Default job image + the image Kaniko runs as (executor pulls via Dependency Proxy).
+gitlab_runner_default_image: "debian:12-slim"
+# Kaniko does NOT need privileged mode (that's the whole point vs dind). Keep false.
+gitlab_runner_docker_privileged: false
+gitlab_runner_docker_volumes:
+  - "/certs/client"                                  # noop w/o dind; harmless
+  - "/cache"
+gitlab_runner_docker_network_mtu: 0
+
+# Pull-through for Docker Hub base images (avoids rate limits; no Docker Hub creds).
+# Kaniko/jobs reference the GitLab Dependency Proxy instead of docker.io.
+gitlab_runner_dependency_proxy: "registry.by-research.be"

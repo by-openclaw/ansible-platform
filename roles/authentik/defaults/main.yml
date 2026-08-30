@@ -157,6 +157,35 @@ authentik_oidc_apps:
     # Grafana generic_oauth callback. role_attribute_path maps the groups claim.
     redirect_uris:
       - "https://grafana.by-research.be/login/generic_oauth"
+  - slug: gitlab
+    launch_url: "https://gitlab.{{ platform_domain }}"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/gitlab.svg"
+    name: "GitLab"
+    group: "gitlab-users"           # ACCESS group — only members may authenticate
+    # Vault-native (GitLab chain): client creds read from Vault, not a local file.
+    # Other apps still carry secret_file until their own Phase-2 migration.
+    vault_path: "prod/gitlab/oidc"   # post-migration KV convention (security/0001)
+    restrict_to_group: true         # IdP-enforced: only gitlab-users can log in
+    offline_access: true            # GitLab omniauth requests refresh tokens
+    # GitLab CE reads the `groups` claim natively (emitted by scope-groups-<slug>):
+    #   required_groups=[gitlab-users] gates login, admin_groups=[gitlab-admins]
+    #   grants admin — configured on the GitLab side (roles/gitlab). gitlab-admins
+    #   members MUST also be in gitlab-users to pass this IdP access policy.
+    redirect_uris:
+      - "https://gitlab.by-research.be/users/auth/openid_connect/callback"
+  - slug: jumpserver
+    launch_url: "https://jumpserver.by-research.be"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/jumpserver.svg"
+    name: "JumpServer"
+    group: "jumpserver-users"        # ACCESS group — only members may SSO into the bastion
+    vault_path: "prod/jumpserver/oidc"   # Vault-native client creds (like GitLab)
+    restrict_to_group: true          # IdP-enforced: only jumpserver-users can log in
+    offline_access: true             # JumpServer requests refresh tokens
+    # JumpServer's OIDC backend (apps/authentication/backends/oidc) does NOT
+    # auto-discover Authentik; the role feeds it the explicit Authentik endpoints.
+    # Callback is /core/auth/openid/callback/ (confirmed from the running core).
+    redirect_uris:
+      - "https://jumpserver.by-research.be/core/auth/openid/callback/"
 
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
@@ -174,6 +203,10 @@ authentik_proxy_apps:
     name: "SeaweedFS Admin"
     group: "seaweedfs-admins"                     # only this group passes forwardAuth
     external_host: "https://seaweedfs.{{ platform_domain }}"
+  # NOTE: drawio is intentionally NOT SSO-gated — it's consumed as an iframe embed
+  # by GitLab/Nextcloud (forwardAuth-in-iframe breaks), and is a stateless editor.
+  # Kept internal via VPN + FW instead. (A dormant drawio proxy app + diagrams-users
+  # group may exist in live Authentik from an earlier pass; harmless, can be pruned.)
 
 # --- Identity: groups + human users (declarative) -------------------------------
 # Passwords set via API from app-user-<username>.json after the blueprint creates
@@ -192,6 +225,9 @@ authentik_groups:
   - netbird-admins      # NetBird admins (NetBird's own owner/admin role set in-app)
   - mailcow-users       # access group — only members may SSO into mailcow webmail
   - pbs-admins          # access group — only members may SSO into Proxmox Backup Server
+  - gitlab-users        # access group — only members may SSO into GitLab
+  - gitlab-admins       # subset of gitlab-users → GitLab instance admins (admin_groups)
+  - jumpserver-users    # access group — only members may SSO into the JumpServer bastion
   - infra-admins
   - dev
 # Groups whose members are Authentik superusers (can manage Authentik itself).

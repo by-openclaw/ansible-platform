@@ -1,0 +1,111 @@
+---
+# ==============================================================================
+# diagrams | Kroki (+ Mermaid companion) + drawio, on a private docker network.
+# ==============================================================================
+- name: "Diagrams | Private docker network for Kroki<->companions"
+  community.docker.docker_network:
+    name: "{{ diagrams_docker_network }}"
+    state: present
+
+# --- Kroki Mermaid companion (internal only; Kroki calls it by name) ----------
+- name: "Diagrams | Pull the pinned Kroki Mermaid companion image"
+  community.docker.docker_image:
+    name: "{{ diagrams_kroki_mermaid_image }}"
+    source: pull
+    state: present
+
+- name: "Diagrams | Run kroki-mermaid (companion)"
+  community.docker.docker_container:
+    name: "{{ diagrams_kroki_mermaid_container }}"
+    image: "{{ diagrams_kroki_mermaid_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    networks:
+      - name: "{{ diagrams_docker_network }}"
+
+# --- Kroki main (PlantUML/Graphviz/Ditaa/… built in) -------------------------
+- name: "Diagrams | Pull the pinned Kroki image"
+  community.docker.docker_image:
+    name: "{{ diagrams_kroki_image }}"
+    source: pull
+    state: present
+
+- name: "Diagrams | Run kroki"
+  community.docker.docker_container:
+    name: "{{ diagrams_kroki_container }}"
+    image: "{{ diagrams_kroki_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    networks:
+      - name: "{{ diagrams_docker_network }}"
+    env:
+      KROKI_MERMAID_HOST: "{{ diagrams_kroki_mermaid_container }}"
+      KROKI_MERMAID_PORT: "{{ diagrams_kroki_mermaid_port | string }}"
+    published_ports:
+      - "{{ diagrams_kroki_port }}:8000"
+
+- name: "Diagrams | Wait for Kroki health"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ diagrams_kroki_port }}/health"
+    status_code: 200
+  register: diagrams_kroki_ready
+  retries: 30
+  delay: 5
+  until: diagrams_kroki_ready.status == 200
+  changed_when: false
+
+# --- PlantUML standalone (regular JVM — works on this old CPU) ----------------
+- name: "Diagrams | Pull the pinned PlantUML server image"
+  community.docker.docker_image:
+    name: "{{ diagrams_plantuml_image }}"
+    source: pull
+    state: present
+
+- name: "Diagrams | Run plantuml-server"
+  community.docker.docker_container:
+    name: "{{ diagrams_plantuml_container }}"
+    image: "{{ diagrams_plantuml_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    published_ports:
+      - "{{ diagrams_plantuml_port }}:8080"
+
+- name: "Diagrams | Wait for plantuml-server"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ diagrams_plantuml_port }}/"
+    status_code: 200
+  register: diagrams_plantuml_ready
+  retries: 30
+  delay: 5
+  until: diagrams_plantuml_ready.status == 200
+  changed_when: false
+
+# --- drawio (diagrams.net editor) --------------------------------------------
+- name: "Diagrams | Pull the pinned drawio image"
+  community.docker.docker_image:
+    name: "{{ diagrams_drawio_image }}"
+    source: pull
+    state: present
+
+- name: "Diagrams | Run drawio"
+  community.docker.docker_container:
+    name: "{{ diagrams_drawio_container }}"
+    image: "{{ diagrams_drawio_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    published_ports:
+      - "{{ diagrams_drawio_port }}:8080"
+
+- name: "Diagrams | Wait for drawio"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ diagrams_drawio_port }}/"
+    status_code: 200
+  register: diagrams_drawio_ready
+  retries: 30
+  delay: 5
+  until: diagrams_drawio_ready.status == 200
+  changed_when: false

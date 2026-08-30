@@ -77,6 +77,17 @@
   no_log: true
   notify: Restart seaweedfs
 
+- name: "SeaweedFS | Render SSE-S3 security.toml (encryption at rest)"
+  ansible.builtin.template:
+    src: security.toml.j2
+    dest: "{{ seaweedfs_config_dir }}/security.toml"
+    owner: root
+    group: "{{ seaweedfs_group }}"
+    mode: "0640"
+  no_log: true
+  when: seaweedfs_sse_enabled | bool
+  notify: Restart seaweedfs
+
 - name: "SeaweedFS | Render systemd unit"
   ansible.builtin.template:
     src: seaweedfs.service.j2

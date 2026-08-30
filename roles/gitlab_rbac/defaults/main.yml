@@ -1,0 +1,69 @@
+---
+# ==============================================================================
+# Role: gitlab_rbac — reconcile GitLab instance policy + groups + memberships
+# from desired state, idempotently, via gitlab-rails (no token). GitLab CE can't
+# sync group membership from OIDC and only re-evaluates admin at login, so this
+# role is the source of truth for GitLab-side RBAC. Re-run to converge.
+# Secure model (per BY-SYSTEMS): nothing public, Owner = adm_* only, only admins
+# create repos/groups, docs = read-only for users, SSO-only signup.
+# ==============================================================================
+
+# --- Instance policy (ApplicationSetting) — hardening ------------------------
+gitlab_rbac_settings:
+  signup_enabled: false                              # no open registration — Authentik SSO only
+  require_admin_approval_after_user_signup: true     # belt-and-suspenders
+  default_project_visibility: private
+  default_group_visibility: private
+  restricted_visibility_levels: [public]             # NOBODY can make anything public (internal+private ok)
+  can_create_group: false                            # regular users can't create top-level groups (admins exempt)
+  project_export_enabled: true                       # needed for per-project archive/restore
+  import_sources: [gitlab_project]                   # ONLY project export/import (no github/bitbucket/etc. external imports)
+  # Diagram rendering — URLs must be BROWSER-reachable (GitLab emits <img src=…>),
+  # so use the Traefik HTTPS names, not the internal SVC URL. Kroki covers
+  # graphviz/ditaa/etc.; ```plantuml routes to the standalone PlantUML server
+  # (Kroki's native-image PlantUML can't run on this old CPU); ```mermaid stays
+  # GitLab-native. Services: roles/diagrams on lxc-diagrams-01.
+  kroki_enabled: true
+  kroki_url: "https://kroki.by-research.be"
+  plantuml_enabled: true
+  plantuml_url: "https://plantuml.by-research.be"
+  # --- Track B: safe instance settings ---
+  default_branch_name: "main"                        # default branch for new repos
+  vscode_extension_marketplace_enabled: true         # Web IDE (VS Code) extension marketplace (open-vsx)
+  usage_ping_enabled: false                          # no telemetry phone-home (private instance)
+  default_project_deletion_protection: true          # guard against accidental project deletion
+
+# --- Instance admins (mirror Authentik gitlab-admins) — root always exempt ---
+gitlab_rbac_instance_admins:
+  - adm_yboujraf
+gitlab_rbac_enforce_admin_exact: true
+
+# --- Group tree --------------------------------------------------------------
+# access-creation levels: project_creation = maintainer (only admins create repos);
+# subgroup_creation = owner (only admins create subgroups). docs = internal so any
+# SSO user can READ the Pages "wiki"; code groups = private.
+gitlab_rbac_groups:
+  - { path: platform, name: "Platform", visibility: private, project_creation: maintainer, subgroup_creation: owner }
+  - { path: infra, parent: platform, name: "Infra", visibility: private, project_creation: maintainer, subgroup_creation: owner }
+  - { path: apps, parent: platform, name: "Apps", visibility: private, project_creation: maintainer, subgroup_creation: owner }
+  - { path: devops, parent: platform, name: "DevOps", visibility: private, project_creation: maintainer, subgroup_creation: owner }
+  # docs stays private like the parent (GitLab forbids a more-visible subgroup);
+  # "everyone reads the Pages wiki" is done per-project via Pages access control.
+  - { path: docs, parent: platform, name: "Docs", visibility: private, project_creation: maintainer, subgroup_creation: owner }
+
+# --- Memberships: Owner = adm_* only; users = Developer (code) / Reporter (docs) -
+# Not granted at platform level (inheritance would floor docs at Developer); set
+# per-subgroup so docs stays read-only for regular users.
+gitlab_rbac_members:
+  - { group: platform, username: adm_yboujraf, access: owner }   # inherits Owner to all subgroups
+  - { group: platform/infra, username: yboujraf, access: developer }
+  - { group: platform/apps, username: yboujraf, access: developer }
+  - { group: platform/devops, username: yboujraf, access: developer }
+  - { group: platform/docs, username: yboujraf, access: reporter }   # viewer — reads Pages only
+
+# --- Cleanup: throwaway projects created during CI bring-up -------------------
+gitlab_rbac_delete_projects:
+  - root/smoke
+  - root/gtest
+
+gitlab_rbac_host: lxc-gitlab-01

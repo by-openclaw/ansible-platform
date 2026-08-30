@@ -1,0 +1,144 @@
+---
+# ==============================================================================
+# GitLab CI runner (Docker executor) — install + register to lxc-gitlab-01.
+# Idempotent: the auth token is minted ONCE on the GitLab server and reused;
+# config.toml is templated declaratively (no repeated `gitlab-runner register`).
+# ==============================================================================
+
+# --- 1. Runner authentication token (GitLab 17+ instance runner) — Vault store --
+- name: "Runner | Load Vault root token (bootstrap)"
+  ansible.builtin.set_fact:
+    gitlab_runner_vault_token: "{{ (lookup('file', gitlab_runner_vault_bootstrap) | from_json).fields.root_token }}"
+  no_log: true
+
+- name: "Runner | Read the auth token from Vault (if already minted)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ gitlab_runner_vault_token }} vault
+      vault kv get -mount=secret -format=json {{ gitlab_runner_token_vault_path }}
+  delegate_to: "{{ gitlab_runner_vault_host }}"
+  become: true
+  register: gitlab_runner_token_get
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: "Runner | Mint an instance runner + token on the GitLab server (first run)"
+  ansible.builtin.command:
+    # Ruby word-array (%w[]) for tags — avoids double-quotes inside the double-quoted
+    # gitlab-rails string (which broke shell/ruby parsing).
+    cmd: >-
+      gitlab-rails runner
+      "r = Ci::Runner.create!(runner_type: 'instance_type',
+      description: '{{ gitlab_runner_description }}',
+      tag_list: %w[{{ gitlab_runner_tags | join(' ') }}],
+      run_untagged: {{ gitlab_runner_run_untagged | lower }});
+      puts r.token"
+  delegate_to: "{{ gitlab_runner_gitlab_host }}"
+  become: true
+  register: gitlab_runner_mint
+  changed_when: true
+  no_log: true
+  when: gitlab_runner_token_get.rc != 0
+
+- name: "Runner | Store the minted auth token in Vault (stdin, no argv)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -i -e VAULT_TOKEN={{ gitlab_runner_vault_token }} vault
+      vault kv put -mount=secret {{ gitlab_runner_token_vault_path }} -
+    stdin: "{{ {'token': (gitlab_runner_mint.stdout_lines | select('match', '^glrt') | first)} | to_json }}"
+  delegate_to: "{{ gitlab_runner_vault_host }}"
+  become: true
+  changed_when: true
+  no_log: true
+  when: gitlab_runner_token_get.rc != 0
+
+- name: "Runner | Resolve the auth token (Vault)"
+  ansible.builtin.set_fact:
+    gitlab_runner_token: >-
+      {{ (gitlab_runner_mint.stdout_lines | select('match', '^glrt') | first)
+         if (gitlab_runner_token_get.rc != 0)
+         else (gitlab_runner_token_get.stdout | from_json).data.data.token }}
+  no_log: true
+
+# --- 2. Docker (executor spawns clean job containers) --------------------------
+# A freshly-booted cloud VM still has cloud-init / apt-daily holding the dpkg lock
+# for the first minute or two → apt fails with "Unable to acquire the dpkg
+# frontend lock". Wait for cloud-init to finish and the lock to clear first, so a
+# rebuild needs no manual retry.
+- name: "Runner | Wait for cloud-init + apt/dpkg locks to settle (fresh boot)"
+  ansible.builtin.shell: |
+    command -v cloud-init >/dev/null 2>&1 && cloud-init status --wait >/dev/null 2>&1 || true
+    for _ in $(seq 1 60); do
+      fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1 || exit 0
+      sleep 5
+    done
+    exit 0
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: "Runner | Install Docker + prereqs"
+  ansible.builtin.apt:
+    name: [docker.io, ca-certificates, curl, gnupg]
+    state: present
+    update_cache: true
+  register: gitlab_runner_docker_apt
+  retries: 5
+  delay: 15
+  until: gitlab_runner_docker_apt is succeeded
+
+- name: "Runner | Docker service enabled + started"
+  ansible.builtin.systemd_service:
+    name: docker
+    state: started
+    enabled: true
+
+# --- 3. gitlab-runner package -------------------------------------------------
+- name: "Runner | Add gitlab-runner apt signing key"
+  ansible.builtin.get_url:
+    url: "{{ gitlab_runner_apt_repo_url }}/gpgkey"
+    dest: /etc/apt/keyrings/gitlab-runner.asc
+    mode: "0644"
+
+- name: "Runner | Add gitlab-runner apt repository"
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/gitlab-runner.asc] {{ gitlab_runner_apt_repo_url }}/debian/ {{ ansible_distribution_release }} main"
+    filename: gitlab-runner
+    state: present
+    update_cache: true
+
+- name: "Runner | Install gitlab-runner"
+  ansible.builtin.apt:
+    name: "gitlab-runner{{ ('=' + gitlab_runner_version) if gitlab_runner_version else '' }}"
+    state: present
+  register: gitlab_runner_pkg_apt
+  retries: 5
+  delay: 15
+  until: gitlab_runner_pkg_apt is succeeded
+
+# --- 4. config.toml (declarative; no repeated register) -----------------------
+- name: "Runner | Render /etc/gitlab-runner/config.toml"
+  ansible.builtin.template:
+    src: config.toml.j2
+    dest: /etc/gitlab-runner/config.toml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart gitlab-runner
+
+- name: "Runner | Apply config now (flush handlers)"
+  ansible.builtin.meta: flush_handlers
+
+# --- 5. Service + verify it registered/online --------------------------------
+- name: "Runner | gitlab-runner enabled + started"
+  ansible.builtin.systemd_service:
+    name: gitlab-runner
+    state: started
+    enabled: true
+
+- name: "Runner | Verify the runner is registered/verified against GitLab"
+  ansible.builtin.command: gitlab-runner verify
+  register: gitlab_runner_verify
+  changed_when: false
+  failed_when: "'is alive' not in gitlab_runner_verify.stdout and 'Verifying' not in gitlab_runner_verify.stdout and gitlab_runner_verify.rc != 0"

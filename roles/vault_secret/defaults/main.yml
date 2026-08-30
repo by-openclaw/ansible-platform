@@ -1,0 +1,28 @@
+---
+# ==============================================================================
+# Role: vault_secret — Vault IS the secret store (no local files).
+# include_role this to get/create ONE KV v2 secret. Idempotent: if the path
+# exists, its value is returned; if absent, `vault_secret_init` is written once.
+# All access is via the vault container on lxc-vault-01 (the controller has no
+# direct route to Vault); values live only in Vault + Ansible run-memory (no_log).
+#
+#   - include_role: { name: vault_secret }
+#     vars:
+#       vault_secret_path: "fabric/db-pgsql-gitlab"
+#       vault_secret_init:                 # written ONLY when the path is absent
+#         host: lxc-pgsql-01.by-research.be
+#         user: gitlab
+#         password: "{{ lookup('community.general.random_string', length=28, special=false) }}"
+#   -> registers `vault_secret_result` (fields dict), e.g. vault_secret_result.password
+#
+# The ONLY secret allowed outside Vault is Vault's OWN bootstrap (unseal + root
+# token) — chicken-and-egg. It stays in the secret folder (+ Vaultwarden break-glass).
+# ==============================================================================
+vault_secret_host: "lxc-vault-01"          # host running the vault container (delegate target)  # pragma: allowlist secret
+vault_secret_container: "vault"  # pragma: allowlist secret
+vault_secret_mount: "secret"               # KV v2 mount  # pragma: allowlist secret
+vault_secret_bootstrap_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
+vault_secret_bootstrap_file: "vault-init.json"   # root_token lives here (bootstrap only)  # pragma: allowlist secret
+
+vault_secret_path: ""                      # REQUIRED — KV path, e.g. fabric/db-pgsql-gitlab
+vault_secret_init: {}                      # fields written ONLY if the path is absent

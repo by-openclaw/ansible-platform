@@ -15,7 +15,14 @@ postgres_db_container: "postgres"
 postgres_db_listen_ip: "10.1.3.110"
 postgres_db_port: 5432
 
-# Controller-side secret store. The generated password is written here as
-# db-pgsql-<name>.json and consumed by the app (sslmode=verify-full).
+# --- Secret source -----------------------------------------------------------
+# Vault IS the store. Set postgres_db_vault_path (e.g. "prod/gitlab/db-pgsql")
+# to make this DB fully Vault-native: the password is read from Vault, or minted
+# INTO Vault on first run (get-or-create). The password is then ALTER'd onto the
+# role every run so a rebuilt/re-pointed app always matches Vault.
+postgres_db_vault_path: ""     # set to go Vault-native; empty = legacy file mode
+
+# Legacy file store (fallback while a service is not yet migrated to Vault).
+# Ignored when postgres_db_vault_path is set.
 postgres_db_secret_dir: "~/.openclaw/workspace/infra/secrets"
 postgres_db_secret_file: "db-pgsql-{{ postgres_db_name }}.json"

@@ -4,20 +4,44 @@
     that:
       - seaweedfs_bucket_identity | length > 0
       - seaweedfs_bucket_names | length > 0
-      - seaweedfs_bucket_secret_file | length > 0
-    fail_msg: "seaweedfs_bucket requires identity, names, and secret_file"
+      - (seaweedfs_bucket_vault_path | length > 0) or (seaweedfs_bucket_secret_file | length > 0)
+    fail_msg: "seaweedfs_bucket requires identity, names, and either vault_path or secret_file"
 
+# --- Access key: Vault-native (get-or-create) OR legacy file ------------------
+- name: "SeaweedFS bucket | Resolve access key from Vault (get-or-create)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ seaweedfs_bucket_vault_path }}"
+    vault_secret_init:
+      access_key: "{{ lookup('community.general.random_string', length=20, special=false, upper=true, numbers=true) }}"
+      secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+      endpoint: "https://s3.by-research.be"
+      buckets: "{{ seaweedfs_bucket_names }}"
+      identity: "{{ seaweedfs_bucket_identity }}"
+  when: seaweedfs_bucket_vault_path | length > 0
+
+- name: "SeaweedFS bucket | Adopt the Vault access key"
+  ansible.builtin.set_fact:
+    seaweedfs_bucket_key: "{{ vault_secret_result }}"
+  no_log: true
+  when: seaweedfs_bucket_vault_path | length > 0
+
+# Legacy file mode (only while a consumer is not yet migrated to Vault).
 - name: "SeaweedFS bucket | Stat the consumer secret on the controller"
   ansible.builtin.stat:
     path: "{{ seaweedfs_bucket_secret_dir }}/{{ seaweedfs_bucket_secret_file }}"
   register: seaweedfs_bucket_secret_stat
   delegate_to: localhost
   become: false
+  when: seaweedfs_bucket_vault_path | length == 0
 
 - name: "SeaweedFS bucket | Load existing access key"
   ansible.builtin.set_fact:
     seaweedfs_bucket_key: "{{ (lookup('file', seaweedfs_bucket_secret_dir + '/' + seaweedfs_bucket_secret_file) | from_json).fields }}"
-  when: seaweedfs_bucket_secret_stat.stat.exists
+  when:
+    - seaweedfs_bucket_vault_path | length == 0
+    - seaweedfs_bucket_secret_stat.stat.exists
   no_log: true
 
 - name: "SeaweedFS bucket | Generate a scoped access key"
@@ -28,7 +52,9 @@
       endpoint: "https://s3.{{ platform_domain }}"
       buckets: "{{ seaweedfs_bucket_names }}"
       identity: "{{ seaweedfs_bucket_identity }}"
-  when: not seaweedfs_bucket_secret_stat.stat.exists
+  when:
+    - seaweedfs_bucket_vault_path | length == 0
+    - not seaweedfs_bucket_secret_stat.stat.exists
   no_log: true
 
 - name: "SeaweedFS bucket | Persist the consumer secret (0600)"
@@ -36,7 +62,9 @@
     dest: "{{ seaweedfs_bucket_secret_dir }}/{{ seaweedfs_bucket_secret_file }}"
     content: "{{ {'fields': seaweedfs_bucket_key} | to_nice_json }}\n"
     mode: "0600"
-  when: not seaweedfs_bucket_secret_stat.stat.exists
+  when:
+    - seaweedfs_bucket_vault_path | length == 0
+    - not seaweedfs_bucket_secret_stat.stat.exists
   delegate_to: localhost
   become: false
   no_log: true

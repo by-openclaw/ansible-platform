@@ -51,8 +51,25 @@
   when: mailcow_deploy_stack | bool
   tags: [mailcow, route]
 
+- name: Provision the SeaweedFS backup bucket + scoped key (dependency composition)
+  ansible.builtin.include_role:
+    name: seaweedfs_bucket
+    apply:
+      tags: [mailcow, backup]
+  vars:
+    seaweedfs_bucket_identity: mailcow
+    seaweedfs_bucket_names: [mailcow-backups]
+    seaweedfs_bucket_secret_file: "{{ mailcow_backup_s3_secret_file }}"
+  when:
+    - mailcow_deploy_stack | bool
+    - mailcow_backup_enabled | bool
+  tags: [mailcow, backup]
+
 - name: Configure mailcow backups (dump -> S3)
-  ansible.builtin.include_tasks: backup.yml
+  ansible.builtin.include_tasks:
+    file: backup.yml
+    apply:
+      tags: [mailcow, backup]
   when:
     - mailcow_deploy_stack | bool
     - mailcow_backup_enabled | bool

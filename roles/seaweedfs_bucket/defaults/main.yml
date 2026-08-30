@@ -22,5 +22,13 @@ seaweedfs_bucket_identity: ""                   # REQUIRED — the S3 user name
 seaweedfs_bucket_names: []                      # REQUIRED — bucket(s) for this identity
 seaweedfs_bucket_actions: ["Read", "Write", "List", "Tagging"]
 
+# --- Secret source -----------------------------------------------------------
+# Vault IS the store. Set seaweedfs_bucket_vault_path (e.g.
+# "fabric/infra-seaweedfs-gitlab") to go Vault-native: the access/secret key is
+# read from Vault, or minted INTO Vault on first run (get-or-create).
+seaweedfs_bucket_vault_path: ""                 # set to go Vault-native; empty = legacy file mode
+
+# Legacy file store (fallback while a consumer is not yet migrated to Vault).
+# Ignored when seaweedfs_bucket_vault_path is set.
 seaweedfs_bucket_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
-seaweedfs_bucket_secret_file: ""               # REQUIRED — e.g. fabric/infra-seaweedfs-<svc>.json
+seaweedfs_bucket_secret_file: ""               # e.g. fabric/infra-seaweedfs-<svc>.json (file mode)
