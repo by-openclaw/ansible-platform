@@ -262,7 +262,7 @@ opnsense_plugins:
 # --- Dynamic DNS (os-ddclient) -------------------------------------------------
 # Apex-anchor model (failover-ready, no ISP identity exposed — ISO 27001 A.5.7 /
 # NIS2 attack-surface minimisation):
-#   * by-research.be (apex) A/AAAA holds the ACTIVE WAN public IP — DynDNS updates
+#   * {{ platform_domain }} (apex) A/AAAA holds the ACTIVE WAN public IP — DynDNS updates
 #     ONLY this record. Service names (vpn, nextcloud, …) are CNAME -> apex
 #     (managed separately via Cloudflare-CRUD), so they all follow automatically.
 #   * checkip=cloudflare is a WEB method = the active-default-route egress IP, so on
@@ -282,8 +282,8 @@ opnsense_dyndns_seed_ip: "192.0.2.1"
 opnsense_dyndns_seed_ip6: "2001:db8::1"   # RFC 3849 doc range; ddclient overwrites
 
 opnsense_dyndns_accounts:
-  # Proximus DYNAMIC anchor = `dyn.by-research.be` (neutral name, no ISP identity).
-  # Telenet is the static default anchor (the apex by-research.be, NOT DynDNS).
+  # Proximus DYNAMIC anchor = `dyn.{{ platform_domain }}` (neutral name, no ISP identity).
+  # Telenet is the static default anchor (the apex {{ platform_domain }}, NOT DynDNS).
   # Only services explicitly bound to Proximus CNAME to `dyn` (+ outbound PBR).
   # Dual-stack: one account per family (os-ddclient resolves ONE address each;
   # record type follows the checkip family).
@@ -293,8 +293,8 @@ opnsense_dyndns_accounts:
   - description: "cloudflare-dyn-proximus"
     service: cloudflare
     username: ""                     # empty (no '@') => Cloudflare Bearer-token auth
-    zone: "by-research.be"
-    hostnames: "dyn.by-research.be"  # Proximus dynamic anchor
+    zone: "{{ platform_domain }}"
+    hostnames: "dyn.{{ platform_domain }}"  # Proximus dynamic anchor
     checkip: "if"
     interface: "opt12"               # Proximus pppoe0
     record_type: "A"
@@ -305,8 +305,8 @@ opnsense_dyndns_accounts:
   - description: "cloudflare-dyn-proximus-v6"
     service: cloudflare
     username: ""
-    zone: "by-research.be"
-    hostnames: "dyn.by-research.be"
+    zone: "{{ platform_domain }}"
+    hostnames: "dyn.{{ platform_domain }}"
     checkip: "if6"                    # Interface [IPv6] -> Proximus GUA on opt12
     interface: "opt12"
     record_type: "AAAA"

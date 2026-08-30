@@ -2,13 +2,13 @@
 # ==============================================================================
 # Role: traefik — defaults (PROD lxc-traefik-01, DMZ 10.1.2.110 / fd01:2::110)
 # Single HTTPS ingress / reverse proxy for the platform cluster.
-# Certs via ACME DNS-01 (Cloudflare) wildcard *.by-research.be — reuses the
+# Certs via ACME DNS-01 (Cloudflare) wildcard *.{{ platform_domain }} — reuses the
 # lego flow from roles/adguard. Public exposure (Telenet WAN2 .222, dual-stack)
 # is wired separately at WAN2 bring-up; this role is internal-complete.
 # ==============================================================================
 
 # Identity / addressing
-traefik_domain: "by-research.be"
+traefik_domain: "{{ platform_domain }}"
 traefik_ip: "10.1.2.110"
 traefik_ip6: "fd01:2::110"
 traefik_dashboard_host: "traefik.{{ traefik_domain }}"
@@ -46,7 +46,7 @@ traefik_authentik_auth_headers:
   - X-authentik-meta-version
 
 # HSTS (applied to every websecure response). 1 year ≥ the 15552000 NC minimum.
-# includeSubdomains covers every *.by-research.be app (all are HTTPS via Traefik).
+# includeSubdomains covers every *.{{ platform_domain }} app (all are HTTPS via Traefik).
 # preload left OFF (submitting to the browser preload list is hard to reverse).
 traefik_hsts_seconds: 31536000
 traefik_hsts_include_subdomains: true
