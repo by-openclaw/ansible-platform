@@ -9,3 +9,18 @@ _os_svc_ansible_secret: "~/.openclaw/workspace/infra/secrets/fabric/os-svc-ansib
 ansible_become_password: >-
   {{ ((lookup('file', _os_svc_ansible_secret, errors='ignore') or '{"fields":{}}')
       | from_json).fields.password | default(omit) }}
+
+# --- Platform jump path (single source — was hardcoded 20x in hosts.yml) ------
+# SVC/DMZ guests are reached through the prod FW. During the by-rune ->
+# svc-ansible-prod migration (naming/0002 §3) flip ONLY these two vars.
+platform_jump_user: "by-rune"
+# extra ssh options for the hop (legacy keyed jump; emptied when the
+# svc-ansible agent key takes over)
+platform_jump_identity: "-i ~/.ssh/id_ed25519_opnsense"
+platform_jump_host: "10.6.239.196"
+platform_jump_args: >-
+  -o ProxyCommand="ssh -W %h:%p {{ platform_jump_identity }}
+  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+  {{ platform_jump_user }}@{{ platform_jump_host }}"
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
