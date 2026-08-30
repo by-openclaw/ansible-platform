@@ -30,9 +30,9 @@ gitlab_version: "19.3.0-ce.0"          # latest stable on trixie (verified via a
 gitlab_apt_repo_url: "https://packages.gitlab.com/gitlab/gitlab-ce"
 
 # --- Identity / URLs ----------------------------------------------------------
-gitlab_external_url: "https://gitlab.by-research.be"
-gitlab_registry_external_url: "https://registry.by-research.be"
-gitlab_pages_external_url: "https://pages.by-research.be"   # wildcard TLS route = follow-up
+gitlab_external_url: "https://gitlab.{{ platform_domain }}"
+gitlab_registry_external_url: "https://registry.{{ platform_domain }}"
+gitlab_pages_external_url: "https://pages.{{ platform_domain }}"   # wildcard TLS route = follow-up
 gitlab_svc_ip: "10.1.3.210"
 
 # Backends Traefik routes to (GitLab nginx serves plaintext; Traefik does TLS).
@@ -43,30 +43,30 @@ gitlab_registry_backend_port: 5050
 # sshd. Current LXC sshd = port 22 (not yet hardened to 22222). If hardening moves
 # it, bump this too.
 gitlab_ssh_port: 22
-# Clone URLs advertise this SSH host. gitlab.by-research.be resolves to Traefik
+# Clone URLs advertise this SSH host. gitlab.{{ platform_domain }} resolves to Traefik
 # (web/registry over 443 only) — SSH can't traverse Traefik, so SSH must target the
-# LXC directly. lxc-gitlab-01.by-research.be → 10.1.3.210 (VPN→SVC:22 already allowed).
-gitlab_ssh_host: "lxc-gitlab-01.by-research.be"
+# LXC directly. lxc-gitlab-01.{{ platform_domain }} → 10.1.3.210 (VPN→SVC:22 already allowed).
+gitlab_ssh_host: "lxc-gitlab-01.{{ platform_domain }}"
 
 # --- Persistent git storage (the ZFS bind-mount target) -----------------------
 gitlab_git_data_dir: "/var/opt/gitlab/git-data"
 
 # --- Shared PostgreSQL --------------------------------------------------------
-gitlab_pg_host: "lxc-pgsql-01.by-research.be"
+gitlab_pg_host: "lxc-pgsql-01.{{ platform_domain }}"
 gitlab_pg_port: 5432
 gitlab_pg_name: "gitlabhq_production"
 gitlab_pg_user: "gitlab"
 gitlab_pg_sslmode: "require"           # verify-full = hardening follow-up (needs CA path)
 
 # --- Shared Redis (TLS) -------------------------------------------------------
-gitlab_redis_host: "lxc-redis-01.by-research.be"
+gitlab_redis_host: "lxc-redis-01.{{ platform_domain }}"
 gitlab_redis_port: 6379
 gitlab_redis_ssl: true
 
 # --- S3 object storage (SeaweedFS, direct same-VLAN endpoint) -----------------
-# Host FQDN (same-VLAN direct, no IP, no Traefik hairpin; s3.by-research.be would
+# Host FQDN (same-VLAN direct, no IP, no Traefik hairpin; s3.{{ platform_domain }} would
 # hairpin via the DMZ Traefik). TLS-direct to SeaweedFS = a hardening follow-up.
-gitlab_s3_endpoint: "http://lxc-seaweedfs-01.by-research.be:8333"
+gitlab_s3_endpoint: "http://lxc-seaweedfs-01.{{ platform_domain }}:8333"
 gitlab_s3_region: "us-east-1"                   # SeaweedFS ignores it; GitLab requires one
 # One scoped key, access to all of these. Consolidated object storage + registry +
 # backups. seaweedfs_bucket creates the buckets and the gitlab-scoped identity.
@@ -84,7 +84,7 @@ gitlab_registry_bucket: "gitlab-registry"
 gitlab_backup_bucket: "gitlab-backups"
 
 # --- SSO (Authentik OIDC) -----------------------------------------------------
-gitlab_oidc_issuer: "https://authentik.by-research.be/application/o/gitlab/"
+gitlab_oidc_issuer: "https://authentik.{{ platform_domain }}/application/o/gitlab/"
 gitlab_oidc_required_groups: ["gitlab-users"]   # only these may sign in (CE, from claim)
 gitlab_oidc_admin_groups: ["gitlab-admins"]     # these become GitLab admins (CE)
 gitlab_oidc_block_auto_created: false           # auto-provision on first SSO login
@@ -96,7 +96,7 @@ gitlab_disable_password_login: false
 # email is left OFF. GitLab runs fine without it, but notifications/resets need it.
 
 # --- Pages --------------------------------------------------------------------
-# Pages ENABLED: prerequisites now in place — *.pages.by-research.be wildcard cert
+# Pages ENABLED: prerequisites now in place — *.pages.{{ platform_domain }} wildcard cert
 # (on Traefik) + Unbound wildcard override + Traefik wildcard router. Pages nginx
 # runs as a plaintext HTTP backend (Traefik terminates TLS) so it needs no local
 # cert (that was the earlier crash-loop). Backend port below.

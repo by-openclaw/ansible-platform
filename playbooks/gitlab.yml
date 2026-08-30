@@ -95,26 +95,26 @@
         name: traefik_route
       vars:
         traefik_route_name: gitlab
-        traefik_route_fqdn: gitlab.by-research.be
-        traefik_route_backend_url: "http://lxc-gitlab-01.by-research.be:80"
+        traefik_route_fqdn: gitlab.{{ platform_domain }}
+        traefik_route_backend_url: "http://lxc-gitlab-01.{{ platform_domain }}:80"
 
     - name: "Traefik route — Container registry"
       ansible.builtin.include_role:
         name: traefik_route
       vars:
         traefik_route_name: gitlab-registry
-        traefik_route_fqdn: registry.by-research.be
-        traefik_route_backend_url: "http://lxc-gitlab-01.by-research.be:5050"
+        traefik_route_fqdn: registry.{{ platform_domain }}
+        traefik_route_backend_url: "http://lxc-gitlab-01.{{ platform_domain }}:5050"
 
     - name: "Traefik route — GitLab Pages (apex + wildcard)"
       ansible.builtin.include_role:
         name: traefik_route
       vars:
         traefik_route_name: gitlab-pages
-        traefik_route_fqdn: pages.by-research.be
-        # apex pages.by-research.be + every <project>.pages.by-research.be.
+        traefik_route_fqdn: pages.{{ platform_domain }}
+        # apex pages.{{ platform_domain }} + every <project>.pages.{{ platform_domain }}.
         # Use [.] (literal-dot char class) NOT \. — a backslash is an invalid YAML
         # escape in the rendered double-quoted route file and makes Traefik reject
         # the whole dynamic dir (outage). [.] is backslash-free and YAML-safe.
         traefik_route_rule: 'HostRegexp(`^([a-zA-Z0-9-]+[.])?pages[.]by-research[.]be$`)'
-        traefik_route_backend_url: "http://lxc-gitlab-01.by-research.be:8091"
+        traefik_route_backend_url: "http://lxc-gitlab-01.{{ platform_domain }}:8091"

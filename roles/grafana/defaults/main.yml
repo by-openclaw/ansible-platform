@@ -1,8 +1,8 @@
 ---
 # Grafana — dashboards on lxc-monitoring-01. Official APT repo (pinned channel),
 # systemd. SSO via Authentik OIDC (generic_oauth); datasource = local Prometheus
-# (+ Loki when it exists). Behind Traefik (grafana.by-research.be, VPN-only).
-grafana_fqdn: "grafana.by-research.be"
+# (+ Loki when it exists). Behind Traefik (grafana.{{ platform_domain }}, VPN-only).
+grafana_fqdn: "grafana.{{ platform_domain }}"
 grafana_port: 3000
 grafana_listen: "0.0.0.0"          # Traefik (DMZ) reaches it; route is VPN-gated
 grafana_secret_dir: "~/.openclaw/workspace/infra/secrets"
@@ -18,7 +18,7 @@ grafana_admin_secret_file: "fabric/app-grafana-admin.json"
 # --- Authentik OIDC -----------------------------------------------------------
 grafana_oidc_enabled: true
 grafana_oidc_secret_file: "fabric/app-oidc-grafana.json"   # written by the authentik role
-grafana_authentik_base: "https://authentik.by-research.be"
+grafana_authentik_base: "https://authentik.{{ platform_domain }}"
 grafana_oidc_slug: "grafana"
 grafana_admin_group: "grafana-admins"   # members -> Grafana Admin (role_attribute_path)
 
@@ -29,7 +29,7 @@ grafana_loki_url: "http://localhost:3100"   # Loki is co-located on this host
 # --- database: cluster Postgres (NOT local sqlite) ----------------------------
 # Keeps Grafana's state (dashboards/users) off the LXC disk, on the shared PG.
 grafana_db_enabled: true
-grafana_pg_host: "lxc-pgsql-01.by-research.be"
+grafana_pg_host: "lxc-pgsql-01.{{ platform_domain }}"
 grafana_pg_port: 5432
 grafana_pg_name: "grafana"
 grafana_pg_user: "grafana"
