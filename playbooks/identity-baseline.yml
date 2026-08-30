@@ -1,0 +1,24 @@
+---
+# ==============================================================================
+# Identity/SSH baseline — identity/0004 §9 roles in contract order:
+#   1 user-mgmt      accounts/groups/sudo/keys ({org}, svc-rune-{env}, svc-ansible-{env})
+#   2 sshd-hardening port 22222, key-only, PermitRootLogin no, AllowGroups
+#   3 banner         /etc/issue.net
+#   6 fail2ban       SSH jail + OOB allow-list
+# (roles 4 git-config + 5 key-mgmt are dev-VM-only — no dev VMs exist yet.)
+#
+# CUTOVER: the play's SSH session survives the sshd restart (ControlMaster), so
+# everything applies in one run — but the NEXT connection needs the flipped
+# host vars (ansible_port: 22222, ansible_user: svc-ansible-<env>, become).
+# Roll out canary-first: -e target=<host>, verify, flip inventory, batch.
+#
+#   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/identity-baseline.yml -e target=lxc-pgadmin-01
+# ==============================================================================
+- name: "Identity/SSH baseline (identity/0004 §9)"
+  hosts: "{{ target | default('none') }}"
+  become: true
+  roles:
+    - user-mgmt
+    - sshd-hardening
+    - banner
+    - fail2ban

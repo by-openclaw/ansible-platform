@@ -1,0 +1,85 @@
+---
+# Per-account provisioning. loop_var: acct.
+# state: absent -> DISABLE (lock + expire + nologin), NEVER delete (identity/0004 §1).
+
+- name: "User-mgmt | Disable (lock + expire), never delete — {{ acct.name }}"
+  ansible.builtin.user:
+    name: "{{ acct.name }}"
+    password_lock: true
+    expires: 1
+    shell: /usr/sbin/nologin
+  when: acct.state | default('present') == 'absent'
+
+- name: "User-mgmt | Provision — {{ acct.name }}"
+  when: acct.state | default('present') == 'present'
+  block:
+    - name: "User-mgmt | Ensure primary group — {{ acct.name }}"
+      ansible.builtin.group:
+        name: "{{ acct.primary_group }}"
+        state: present
+
+    # --- password (sudo / break-glass): fabric stat -> generate-if-absent -> load ---
+    - name: "User-mgmt | Stat the password secret — {{ acct.name }}"
+      ansible.builtin.stat:
+        path: "{{ user_mgmt_secret_dir }}/fabric/os-{{ acct.name }}.json"
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      register: um_pw_stat
+      when: acct.password | default(false)
+
+    - name: "User-mgmt | Generate + persist the password (fabric 0600) — {{ acct.name }}"
+      vars:
+        um_pw_record:
+          fields:
+            username: "{{ acct.name }}"
+            password: "{{ lookup('community.general.random_string', length=28, special=false) }}"  # pragma: allowlist secret
+      ansible.builtin.copy:
+        dest: "{{ user_mgmt_secret_dir }}/fabric/os-{{ acct.name }}.json"
+        mode: "0600"
+        content: "{{ um_pw_record | to_nice_json }}"
+      delegate_to: localhost
+      become: false
+      no_log: true
+      check_mode: false          # controller-local secret; generate even in --check so the load below works
+      when:
+        - acct.password | default(false)
+        - not (um_pw_stat.stat.exists | default(false))
+
+    - name: "User-mgmt | Load the password — {{ acct.name }}"
+      ansible.builtin.set_fact:
+        um_acct_pw: "{{ (lookup('file', user_mgmt_secret_dir + '/fabric/os-' + acct.name + '.json') | from_json).fields.password }}"
+      no_log: true
+      when: acct.password | default(false)
+
+    - name: "User-mgmt | Ensure the account — {{ acct.name }}"
+      ansible.builtin.user:
+        name: "{{ acct.name }}"
+        comment: "{{ acct.comment | default('') }}"
+        group: "{{ acct.primary_group }}"
+        groups: "{{ (acct.groups | default([])) + ([user_mgmt_docker_group] if ((acct.docker | default(false)) and um_dockerd.rc == 0) else []) }}"
+        append: false
+        shell: "{{ acct.shell | default('/bin/bash') }}"
+        password: "{{ (um_acct_pw | password_hash('sha512')) if (acct.password | default(false)) else omit }}"  # pragma: allowlist secret
+        update_password: on_create  # pragma: allowlist secret
+        create_home: true
+        state: present
+      no_log: true
+
+    - name: "User-mgmt | Install the authorized key (one per identity) — {{ acct.name }}"
+      ansible.posix.authorized_key:
+        user: "{{ acct.name }}"
+        key: "{{ lookup('file', user_mgmt_key_dir + '/' + acct.pubkey) }}"
+        state: present
+        exclusive: true
+      # authorized_key can't verify a not-yet-created user in check mode (module
+      # limitation); the account exists by this point in a real run.
+      when: acct.pubkey is defined and not ansible_check_mode
+
+    - name: "User-mgmt | Sudoers (password required — NOPASSWD forbidden) — {{ acct.name }}"
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ acct.name }}"
+        mode: "0440"
+        content: "{{ acct.name }} ALL=(ALL:ALL) ALL\n"
+        validate: "visudo -cf %s"
+      when: acct.sudo | default(false)

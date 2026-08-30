@@ -1,0 +1,11 @@
+---
+# ==============================================================================
+# Identity cutover vars (identity/0004) — used by hosts flipped to the
+# svc-ansible-{env} access model (ansible_user/port set per host). The become
+# password comes from the controller fabric working copy (mirrored to Vault at
+# secret/{env}/svc-ansible/os — security/0001).
+# ==============================================================================
+_os_svc_ansible_secret: "~/.openclaw/workspace/infra/secrets/fabric/os-svc-ansible-{{ platform_env | default('prod') }}.json"
+ansible_become_password: >-
+  {{ ((lookup('file', _os_svc_ansible_secret, errors='ignore') or '{"fields":{}}')
+      | from_json).fields.password | default(omit) }}

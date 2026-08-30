@@ -1,0 +1,48 @@
+---
+# Store ONE rotated key's passphrase (+created metadata for the 365-day rule)
+# and the private/public pair backup into Vault. loop_var: keyres.
+- name: "Keystore | Slurp the pair — {{ keyres.item.name }}"
+  ansible.builtin.slurp:
+    src: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_{{ keyres.item.name }}{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop: ["", ".pub"]
+  register: keystore_pair
+  no_log: true
+
+- name: "Keystore | Fingerprint — {{ keyres.item.name }}"
+  ansible.builtin.command: "ssh-keygen -lf {{ lookup('env', 'HOME') }}/.ssh/id_ed25519_{{ keyres.item.name }}.pub"
+  delegate_to: localhost
+  become: false
+  register: keystore_fp
+  changed_when: false
+
+- name: "Keystore | Write ssh-passphrase (+rotation metadata) — {{ keyres.item.name }}"
+  vars:
+    keystore_pass_doc:
+      passphrase: "{{ hostvars['localhost'].keys_pass[keyres.item.name] }}"  # pragma: allowlist secret
+      created: "{{ '%Y-%m-%d' | strftime }}"
+      fingerprint: "{{ keystore_fp.stdout.split(' ')[1] }}"
+      key_file: "id_ed25519_{{ keyres.item.name }}"
+  ansible.builtin.command:
+    argv: ["docker", "exec", "-i", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+           "vault", "kv", "put", "-mount={{ vault_kv_path }}",
+           "prod/{{ keyres.item.vault_svc }}/ssh-passphrase", "-"]
+    stdin: "{{ keystore_pass_doc | to_json }}"
+    stdin_add_newline: false
+  changed_when: true
+  no_log: true
+
+- name: "Keystore | Write the key-pair backup — {{ keyres.item.name }}"
+  vars:
+    keystore_key_doc:
+      private_b64: "{{ keystore_pair.results[0].content }}"  # pragma: allowlist secret
+      public: "{{ keystore_pair.results[1].content | b64decode }}"
+  ansible.builtin.command:
+    argv: ["docker", "exec", "-i", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+           "vault", "kv", "put", "-mount={{ vault_kv_path }}",
+           "prod/{{ keyres.item.vault_svc }}/ssh-key", "-"]
+    stdin: "{{ keystore_key_doc | to_json }}"
+    stdin_add_newline: false
+  changed_when: true
+  no_log: true

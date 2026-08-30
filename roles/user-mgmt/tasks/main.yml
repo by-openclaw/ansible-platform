@@ -1,0 +1,35 @@
+---
+# sudo package first (minimal LXC images may lack it), then groups (role groups
+# + docker where Docker runs), then each account.
+- name: "User-mgmt | Ensure sudo is installed"
+  ansible.builtin.apt:
+    name: sudo
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "User-mgmt | Ensure role groups exist"
+  ansible.builtin.group:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ user_mgmt_role_groups }}"
+
+- name: "User-mgmt | Detect Docker (gates the docker group)"
+  ansible.builtin.command: "command -v dockerd"
+  register: um_dockerd
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "User-mgmt | Ensure the docker group where Docker runs"
+  ansible.builtin.group:
+    name: "{{ user_mgmt_docker_group }}"
+    state: present
+  when: um_dockerd.rc == 0
+
+- name: "User-mgmt | Provision each account"
+  ansible.builtin.include_tasks: account.yml
+  loop: "{{ user_mgmt_accounts }}"
+  loop_control:
+    loop_var: acct
+    label: "{{ acct.name }} ({{ acct.state }})"
