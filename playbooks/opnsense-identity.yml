@@ -91,11 +91,109 @@
         fw_seed_new: >-
           {{ fw_seed_boot | combine({'fields': fw_seed_boot.fields | combine({
                'byresearch_password_hash': fw_bg_password | password_hash('bcrypt'),
-               'byresearch_authorizedkeys': lookup('file', '~/.ssh/id_ed25519_by-research.pub') | b64encode
+               'byresearch_authorizedkeys': lookup('file', '~/.ssh/id_ed25519_by-research.pub') | b64encode,
+               'svcansible_authorizedkeys': lookup('file', '~/.ssh/id_ed25519_svc-ansible-prod.pub') | b64encode
              })}, recursive=true) }}
       ansible.builtin.copy:
         dest: "{{ '~/.openclaw/workspace/infra/secrets/fabric/OPNsense.seed-bootstrap.json' | expanduser }}"
         mode: "0600"
         content: "{{ fw_seed_new | to_nice_json }}"
-      when: fw_seed_boot.fields.byresearch_password_hash is not defined
+      when: fw_seed_boot.fields.svcansible_authorizedkeys is not defined
       no_log: true
+
+    # ---- svc-ansible-prod: the contract-named automation account (jump + API) --
+    # (naming/0002 §3 — replaces the pre-contract 'by-rune'; retired via (c).)
+    - name: "Fwid | Ensure svc-ansible-prod (key-only automation account)"
+      by_systems.opnsense.opnsense_auth_user:
+        host: "{{ opn_host }}"
+        port: "{{ opn_port }}"
+        key: "{{ opn_key }}"
+        secret: "{{ opn_secret }}"
+        verify_ssl: false
+        name: "svc-ansible-prod"
+        description: "Automation (Ansible jump + API) — naming/0002 §3; key-only"
+        password: "{{ lookup('community.general.random_string', length=28, special=false) }}"  # pragma: allowlist secret
+        group_memberships: "{{ fw_admins_gid }}"
+        state: present
+      register: fw_svc_user
+
+    - name: "Fwid | Resolve svc-ansible-prod uuid"
+      ansible.builtin.uri:
+        url: "https://{{ opn_host }}:{{ opn_port }}/api/auth/user/search"
+        url_username: "{{ opn_key }}"
+        url_password: "{{ opn_secret }}"
+        force_basic_auth: true
+        validate_certs: false
+      register: fw_users_all
+      no_log: true
+
+    - name: "Fwid | Extract uuid"
+      ansible.builtin.set_fact:
+        fw_svc_uuid: "{{ (fw_users_all.json.rows | selectattr('name', 'equalto', 'svc-ansible-prod') | first).uuid }}"
+
+    # shell + authorizedkeys are not exposed by the lib auth_user module yet
+    # (FW-2 delta list) — set them via the MVC API directly (plaintext write,
+    # the documented authuser behaviour).
+    - name: "Fwid | Set shell + authorized key (API set)"
+      ansible.builtin.uri:
+        url: "https://{{ opn_host }}:{{ opn_port }}/api/auth/user/set/{{ fw_svc_uuid }}"
+        method: POST
+        url_username: "{{ opn_key }}"
+        url_password: "{{ opn_secret }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body:
+          user:
+            shell: "/bin/sh"
+            authorizedkeys: "{{ lookup('file', '~/.ssh/id_ed25519_svc-ansible-prod.pub') }}"
+        status_code: [200]
+      register: fw_svc_set
+      changed_when: (fw_svc_set.json.result | default('')) == 'saved'
+      no_log: true
+
+    - name: "Fwid | Stat the svc API-key secret (create once)"
+      ansible.builtin.stat:
+        path: "{{ '~/.openclaw/workspace/infra/secrets/fabric/net-opnsense-prod-svc-ansible.json' | expanduser }}"
+      register: fw_svc_key_stat
+
+    - name: "Fwid | Mint the svc-ansible-prod API key"
+      by_systems.opnsense.opnsense_auth_api_key:
+        host: "{{ opn_host }}"
+        port: "{{ opn_port }}"
+        key: "{{ opn_key }}"
+        secret: "{{ opn_secret }}"
+        verify_ssl: false
+        username: "svc-ansible-prod"
+        state: present
+      register: fw_svc_apikey
+      when: not fw_svc_key_stat.stat.exists
+      no_log: true
+
+    - name: "Fwid | Persist the API creds (fabric, load_credentials format)"
+      vars:
+        fw_svc_cred_record:
+          fields:
+            host: "{{ opn_host }}"
+            port: "{{ opn_port }}"
+            key: "{{ fw_svc_apikey.api_key | default(fw_svc_apikey.key | default('')) }}"
+            secret: "{{ fw_svc_apikey.api_secret | default(fw_svc_apikey.secret | default('')) }}"  # pragma: allowlist secret
+            verify_ssl: false
+      ansible.builtin.copy:
+        dest: "{{ '~/.openclaw/workspace/infra/secrets/fabric/net-opnsense-prod-svc-ansible.json' | expanduser }}"
+        mode: "0600"
+        content: "{{ fw_svc_cred_record | to_nice_json }}"
+      when: fw_svc_apikey is not skipped
+      no_log: true
+
+    # The MVC user API saves config.xml but does NOT materialise the unix
+    # account (AllowGroups wheel gates SSH) — boot-time seeding does, live
+    # changes need the configd sync. Idempotent ({"status":"updated"} either way).
+    - name: "Fwid | Sync the unix account (configctl — via the FW jump user)"
+      ansible.builtin.command: >-
+        ssh -o IdentityAgent={{ lookup('env', 'HOME') }}/.ssh/rune-agent.sock
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ platform_jump_user }}@{{ opn_host }}
+        "configctl auth sync user svc-ansible-prod"
+      register: fw_svc_sync
+      changed_when: false
