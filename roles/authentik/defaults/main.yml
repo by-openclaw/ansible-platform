@@ -148,7 +148,7 @@ authentik_oidc_apps:
     redirect_uris_regex:
       - "https://pbs\\.by-research\\.be/.*"
   - slug: grafana
-    launch_url: "https://grafana.by-research.be"
+    launch_url: "https://grafana.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/grafana.svg"
     name: "Grafana"
     group: "grafana-admins"         # ACCESS group — only members may SSO into Grafana
@@ -156,7 +156,7 @@ authentik_oidc_apps:
     restrict_to_group: true         # IdP-enforced: only grafana-admins can log in
     # Grafana generic_oauth callback. role_attribute_path maps the groups claim.
     redirect_uris:
-      - "https://grafana.by-research.be/login/generic_oauth"
+      - "https://grafana.{{ platform_domain }}/login/generic_oauth"
   - slug: gitlab
     launch_url: "https://gitlab.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/gitlab.svg"
@@ -172,9 +172,9 @@ authentik_oidc_apps:
     #   grants admin — configured on the GitLab side (roles/gitlab). gitlab-admins
     #   members MUST also be in gitlab-users to pass this IdP access policy.
     redirect_uris:
-      - "https://gitlab.by-research.be/users/auth/openid_connect/callback"
+      - "https://gitlab.{{ platform_domain }}/users/auth/openid_connect/callback"
   - slug: jumpserver
-    launch_url: "https://jumpserver.by-research.be"
+    launch_url: "https://jumpserver.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/jumpserver.svg"
     name: "JumpServer"
     group: "jumpserver-users"        # ACCESS group — only members may SSO into the bastion
@@ -185,7 +185,7 @@ authentik_oidc_apps:
     # auto-discover Authentik; the role feeds it the explicit Authentik endpoints.
     # Callback is /core/auth/openid/callback/ (confirmed from the running core).
     redirect_uris:
-      - "https://jumpserver.by-research.be/core/auth/openid/callback/"
+      - "https://jumpserver.{{ platform_domain }}/core/auth/openid/callback/"
 
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
