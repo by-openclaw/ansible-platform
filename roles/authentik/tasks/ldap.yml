@@ -1,0 +1,343 @@
+---
+# LDAP outpost orchestration (imperative — a blueprint can't set a password or read
+# back the outpost token). Runs after blueprints.yml created the LDAP provider + bind
+# service account. Sets the bind password, ensures the outpost instance, retrieves its
+# token, persists it, and deploys the outpost container that serves LDAP/LDAPS so
+# OPNsense can authenticate WebGUI users against Authentik.
+- name: "ldap | API base + auth header"
+  ansible.builtin.set_fact:
+    _ak_api: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3"
+    _ak_hdr: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}" }
+  no_log: true
+
+# 1) Bind service account — set its password (the blueprint created the user).
+- name: "ldap | Resolve the bind service-account pk"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/core/users/?username={{ authentik_ldap_bind_account }}"
+    headers: "{{ _ak_hdr }}"
+  register: _ldap_bind_user
+  retries: 24
+  delay: 5
+  until: (_ldap_bind_user.json.results | default([])) | length > 0
+  no_log: true
+
+- name: "ldap | Set the bind service-account password"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/core/users/{{ _ldap_bind_user.json.results[0].pk }}/set_password/"
+    method: POST
+    headers: "{{ _ak_hdr }}"
+    body_format: json
+    body: { password: "{{ authentik_ldap_bind.password }}" }
+    status_code: [204]
+  no_log: true
+
+# 1b) Grant the bind account "Search full LDAP directory" so it can resolve ANY login
+# user (else search returns 0 entries → OPNsense can't authenticate anyone). Authentik
+# attaches global permissions to ROLES → groups → users, not to a user directly, so:
+# role (perm) → group (role + bind account member). Must be in place before the outpost
+# builds its cached directory (the container starts after this).
+- name: "ldap | List RBAC roles"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/rbac/roles/?page_size=200"
+    headers: "{{ _ak_hdr }}"
+  register: _ldap_roles
+  changed_when: false
+  no_log: true
+
+- name: "ldap | Create the LDAP-search role (absent)"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/rbac/roles/"
+    method: POST
+    headers: "{{ _ak_hdr }}"
+    body_format: json
+    body: { name: "{{ authentik_ldap_search_role }}" }
+    status_code: [201]
+  when: (_ldap_roles.json.results | selectattr('name', 'equalto', authentik_ldap_search_role) | list | length) == 0
+  register: _ldap_role_created
+  no_log: true
+
+- name: "ldap | Re-list roles + pin the LDAP-search role pk"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/rbac/roles/?page_size=200"
+    headers: "{{ _ak_hdr }}"
+  register: _ldap_roles2
+  changed_when: false
+  no_log: true
+
+- name: "ldap | Pin the role pk"
+  ansible.builtin.set_fact:
+    _ldap_role_pk: "{{ (_ldap_roles2.json.results | selectattr('name', 'equalto', authentik_ldap_search_role) | first).pk }}"
+  no_log: true
+
+- name: "ldap | Assign 'Search full LDAP directory' to the role"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/rbac/permissions/assigned_by_roles/{{ _ldap_role_pk }}/assign/"
+    method: POST
+    headers: "{{ _ak_hdr }}"
+    body_format: json
+    body: { permissions: ["authentik_providers_ldap.search_full_directory"] }
+    status_code: [200]
+  changed_when: false        # re-assigning an already-held permission is a no-op
+  no_log: true
+
+- name: "ldap | List groups (for the search group)"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/core/groups/?page_size=200"
+    headers: "{{ _ak_hdr }}"
+  register: _ldap_groups
+  changed_when: false
+  no_log: true
+
+- name: "ldap | Create the LDAP-search group with role + bind member (absent)"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/core/groups/"
+    method: POST
+    headers: "{{ _ak_hdr }}"
+    body_format: json
+    body:
+      name: "{{ authentik_ldap_search_role }}"
+      roles: ["{{ _ldap_role_pk }}"]
+      users: "{{ [_ldap_bind_user.json.results[0].pk] }}"
+    status_code: [201]
+  when: (_ldap_groups.json.results | selectattr('name', 'equalto', authentik_ldap_search_role) | list | length) == 0
+  register: _ldap_group_created
+  no_log: true
+
+- name: "ldap | Converge the LDAP-search group (role + member present)"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/core/groups/{{ (_ldap_groups.json.results | selectattr('name', 'equalto', authentik_ldap_search_role) | first).pk }}/"
+    method: PATCH
+    headers: "{{ _ak_hdr }}"
+    body_format: json
+    body:
+      roles: ["{{ _ldap_role_pk }}"]
+      users: "{{ [_ldap_bind_user.json.results[0].pk] }}"
+    status_code: [200]
+  when: (_ldap_groups.json.results | selectattr('name', 'equalto', authentik_ldap_search_role) | list | length) > 0
+  changed_when: false
+  no_log: true
+
+# 2) Resolve the LDAP provider pk (created by the blueprint).
+- name: "ldap | Resolve the LDAP provider pk"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/providers/ldap/?name={{ authentik_ldap_slug }}"
+    headers: "{{ _ak_hdr }}"
+  register: _ldap_provider
+  retries: 24
+  delay: 5
+  until: (_ldap_provider.json.results | default([])) | length > 0
+  no_log: true
+
+# 2b) Serve LDAPS with the platform wildcard *.by-research.be cert (Let's Encrypt),
+# imported from the cert-authority host — NOT a self-signed cert. OPNsense then connects
+# to {{ authentik_ldap_fqdn }} with certificate validation ON. Renewal-safe: the keypair
+# is refreshed only when the source cert actually changed (content compare).
+- name: "ldap | Read the wildcard cert + key from the cert-authority host"
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  delegate_to: "{{ authentik_ldap_cert_source_host }}"
+  loop:
+    - "{{ authentik_ldap_cert_source_crt }}"
+    - "{{ authentik_ldap_cert_source_key }}"
+  register: _ldap_cert_slurp
+  no_log: true
+
+- name: "ldap | Pin the wildcard cert + key PEM"
+  ansible.builtin.set_fact:
+    _ldap_crt_pem: "{{ _ldap_cert_slurp.results[0].content | b64decode }}"
+    _ldap_key_pem: "{{ _ldap_cert_slurp.results[1].content | b64decode }}"
+  no_log: true
+
+- name: "ldap | List Authentik keypairs"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/crypto/certificatekeypairs/?page_size=200"
+    headers: "{{ _ak_hdr }}"
+  register: _ldap_kp
+  changed_when: false
+  no_log: true
+
+- name: "ldap | Import the wildcard keypair (absent)"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/crypto/certificatekeypairs/"
+    method: POST
+    headers: "{{ _ak_hdr }}"
+    body_format: json
+    body:
+      name: "{{ authentik_ldap_cert_keypair_name }}"
+      certificate_data: "{{ _ldap_crt_pem }}"
+      key_data: "{{ _ldap_key_pem }}"
+    status_code: [201]
+  when: (_ldap_kp.json.results | selectattr('name', 'equalto', authentik_ldap_cert_keypair_name) | list | length) == 0
+  register: _ldap_kp_created
+  no_log: true
+
+- name: "ldap | Re-list keypairs + pin ours"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/crypto/certificatekeypairs/?page_size=200"
+    headers: "{{ _ak_hdr }}"
+  register: _ldap_kp2
+  changed_when: false
+  no_log: true
+
+- name: "ldap | Pin the keypair pk"
+  ansible.builtin.set_fact:
+    _ldap_kp_pk: "{{ (_ldap_kp2.json.results | selectattr('name', 'equalto', authentik_ldap_cert_keypair_name) | first).pk }}"
+  no_log: true
+
+- name: "ldap | Read the stored cert (renewal check)"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/crypto/certificatekeypairs/{{ _ldap_kp_pk }}/view_certificate/"
+    headers: "{{ _ak_hdr }}"
+  register: _ldap_kp_view
+  changed_when: false
+  no_log: true
+
+- name: "ldap | Refresh the keypair when the source cert changed (renewal)"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/crypto/certificatekeypairs/{{ _ldap_kp_pk }}/"
+    method: PATCH
+    headers: "{{ _ak_hdr }}"
+    body_format: json
+    body:
+      certificate_data: "{{ _ldap_crt_pem }}"
+      key_data: "{{ _ldap_key_pem }}"
+    status_code: [200]
+  when: (_ldap_kp_view.json.data | default('') | regex_replace('\s', '')) != (_ldap_crt_pem | regex_replace('\s', ''))
+  register: _ldap_kp_refreshed
+  no_log: true
+
+- name: "ldap | Assign the wildcard cert to the LDAP provider"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/providers/ldap/{{ _ldap_provider.json.results[0].pk }}/"
+    method: PATCH
+    headers: "{{ _ak_hdr }}"
+    body_format: json
+    body: { certificate: "{{ _ldap_kp_pk }}" }
+    status_code: [200]
+  when: _ldap_provider.json.results[0].certificate != _ldap_kp_pk
+  register: _ldap_provider_cert_set
+  no_log: true
+
+# 3) Ensure the outpost instance (manual deploy — no service connection).
+# NOTE: the /outposts/instances/ ?name= query does NOT filter server-side (it returns
+# every outpost), so we always list all + match by EXACT name client-side. Getting this
+# wrong picks the embedded proxy outpost → the container runs embedded → panics with
+# "no ldap provider defined".
+- name: "ldap | List all outposts"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/outposts/instances/?page_size=100"
+    headers: "{{ _ak_hdr }}"
+  register: _ldap_outpost_all
+  changed_when: false
+  no_log: true
+
+- name: "ldap | Create the LDAP outpost (absent)"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/outposts/instances/"
+    method: POST
+    headers: "{{ _ak_hdr }}"
+    body_format: json
+    body:
+      name: "{{ authentik_ldap_outpost_name }}"
+      type: ldap
+      providers: "{{ [_ldap_provider.json.results[0].pk] }}"
+      config:
+        log_level: info
+        authentik_host: "https://{{ authentik_fqdn }}/"
+        authentik_host_insecure: false
+        object_naming_template: "ak-outpost-%(name)s"
+    status_code: [201]
+  when: (_ldap_outpost_all.json.results | selectattr('name', 'equalto', authentik_ldap_outpost_name) | list | length) == 0
+  no_log: true
+
+- name: "ldap | Re-list outposts + select ours by exact name"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/outposts/instances/?page_size=100"
+    headers: "{{ _ak_hdr }}"
+  register: _ldap_outpost_all2
+  changed_when: false
+  no_log: true
+
+- name: "ldap | Pin our outpost record"
+  ansible.builtin.set_fact:
+    _ldap_outpost_mine: "{{ _ldap_outpost_all2.json.results | selectattr('name', 'equalto', authentik_ldap_outpost_name) | first }}"
+  no_log: true
+
+# 4) Retrieve + persist the outpost token (fed to the container as AUTHENTIK_TOKEN).
+- name: "ldap | Fetch the outpost token key"
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/core/tokens/{{ _ldap_outpost_mine.token_identifier }}/view_key/"
+    headers: "{{ _ak_hdr }}"
+  register: _ldap_token
+  changed_when: false
+  no_log: true
+
+- name: "ldap | Persist the outpost token to the secret store (0600)"
+  ansible.builtin.copy:
+    dest: "{{ authentik_secret_dir }}/{{ authentik_ldap_outpost_token_file }}"
+    content: >-
+      {{ {'fields': {
+            'host': 'http://' + authentik_listen_ip + ':' + (authentik_host_port | string),
+            'token': _ldap_token.json.key,
+            '_note': 'authentik-ldap outpost API token — read back from Authentik'
+         }} | to_nice_json }}
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+# 5) Deploy the LDAP outpost container — serves LDAP :389 / LDAPS :636 on the SVC host.
+- name: "ldap | Pull the pinned LDAP outpost image"
+  community.docker.docker_image:
+    name: "{{ authentik_ldap_image }}"
+    source: pull
+    state: present
+
+- name: "ldap | Run the authentik-ldap outpost container"
+  community.docker.docker_container:
+    name: "{{ authentik_ldap_outpost_name }}"
+    image: "{{ authentik_ldap_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    # LDAPS ONLY (636) — plain LDAP (389) is NOT published. OPNsense binds over
+    # ldaps:// with strict TLS (REQCERT HARD), so cleartext 389 is never used and must
+    # not be exposed. Dual-stack (ADR): bind BOTH families explicitly — Docker does NOT
+    # auto-publish IPv6 for a bare "636:6636" even with daemon ip6tables enabled
+    # (verified: it bound 0.0.0.0 only).
+    published_ports:
+      - "0.0.0.0:{{ authentik_ldap_host_ldaps_port }}:6636"
+      - "[::]:{{ authentik_ldap_host_ldaps_port }}:6636"
+    # strict: recreate if the running container has ANY port we no longer publish
+    # (default allows extra ports → a removed 389 would otherwise linger). Ensures the
+    # LDAPS-only posture is enforced, not just additive.
+    comparisons:
+      published_ports: strict
+    env:
+      AUTHENTIK_HOST: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}"
+      AUTHENTIK_INSECURE: "true"      # plain HTTP to core over the loopback/SVC host
+      AUTHENTIK_TOKEN: "{{ _ldap_token.json.key }}"
+  no_log: true
+
+# The outpost caches the directory + loads its TLS cert at startup, so changes to the
+# search permission or the LDAPS cert only take effect on restart. Restart only when one
+# of those actually changed (keeps steady-state runs idempotent / no needless restart).
+- name: "ldap | Restart the outpost to pick up cert / permission changes"
+  community.docker.docker_container:
+    name: "{{ authentik_ldap_outpost_name }}"
+    state: started
+    restart: true
+  when: >-
+    (_ldap_kp_created is defined and _ldap_kp_created is changed) or
+    (_ldap_kp_refreshed is defined and _ldap_kp_refreshed is changed) or
+    (_ldap_provider_cert_set is defined and _ldap_provider_cert_set is changed) or
+    (_ldap_role_created is defined and _ldap_role_created is changed) or
+    (_ldap_group_created is defined and _ldap_group_created is changed)
+  no_log: true
+
+- name: "ldap | Wait for the outpost to serve LDAPS"
+  ansible.builtin.wait_for:
+    host: "{{ authentik_listen_ip }}"
+    port: "{{ authentik_ldap_host_ldaps_port }}"
+    timeout: 90
+  changed_when: false

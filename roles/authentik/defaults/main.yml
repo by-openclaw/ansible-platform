@@ -177,3 +177,35 @@ authentik_users:
 
 # Outbound email (password resets / MFA / notifications) via Resend (by-research).
 authentik_resend_secret_file: "app-resend-by-research.json"
+
+# --- LDAP provider + outpost (OPNsense WebGUI SSO; OPNsense can't speak OIDC) ------
+# Authentik exposes LDAP via a dedicated LDAP outpost container that connects back to
+# core with an outpost token. OPNsense binds as a service account and searches the
+# directory to authenticate WebGUI users + read their group membership.
+authentik_ldap_enabled: true
+authentik_ldap_image: "ghcr.io/goauthentik/ldap:2026.5.2"   # pinned; match the server tag
+authentik_ldap_slug: "ldap"
+authentik_ldap_name: "LDAP"
+authentik_ldap_base_dn: "dc=ldap,dc=by-research,dc=be"
+# Bind/search service account: cn=<bind_account>,ou=users,<base_dn>. Password
+# ansible-generated into the secret store (app-ldap-bind.json), set via the API.
+authentik_ldap_bind_account: "ldapservice"
+authentik_ldap_bind_secret_file: "app-ldap-bind.json"
+# The bind account must search the whole directory to resolve any login user. Authentik
+# grants the global "Search full LDAP directory" permission to ROLES (→ groups → users),
+# not to a user directly, so we bind it through this role + same-named group.
+authentik_ldap_search_role: "ldap-search"
+# The outpost instance (manual deploy — no Docker service connection registered).
+authentik_ldap_outpost_name: "authentik-ldap"
+authentik_ldap_outpost_token_file: "app-ldap-outpost.json"   # outpost API token (read back)
+# LDAPS is served with the platform wildcard *.by-research.be cert (Let's Encrypt via
+# lego/Cloudflare on the cert-authority host) — NOT self-signed. OPNsense then connects
+# by FQDN with certificate validation ON. Source mirrors the tls_cert role.
+authentik_ldap_fqdn: "ldap.by-research.be"
+authentik_ldap_cert_keypair_name: "wildcard-by-research"
+authentik_ldap_cert_source_host: "lxc-traefik-01"
+authentik_ldap_cert_source_crt: "/etc/lego/cert/certificates/_.by-research.be.crt"
+authentik_ldap_cert_source_key: "/etc/lego/cert/certificates/_.by-research.be.key"
+# Ports published on the SVC host (10.1.3.130) so OPNsense can reach them.
+authentik_ldap_host_ldaps_port: 636    # → container 6636 (LDAPS / SSL)
+authentik_ldap_host_ldap_port: 389     # → container 3389 (plain / StartTLS)
