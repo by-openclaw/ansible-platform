@@ -1,0 +1,26 @@
+---
+# Install + run the Prometheus node-exporter on every host (fleet-wide).
+- name: "Node-exporter | Install prometheus-node-exporter"
+  ansible.builtin.apt:
+    name: prometheus-node-exporter
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Node-exporter | Bind address + port (systemd drop-in)"
+  ansible.builtin.copy:
+    dest: /etc/default/prometheus-node-exporter
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (role: node_exporter)
+      ARGS="--web.listen-address={{ node_exporter_listen }}:{{ node_exporter_port }}"
+  notify: Restart node-exporter
+
+- name: "Node-exporter | Enabled + running"
+  ansible.builtin.systemd_service:
+    name: prometheus-node-exporter
+    enabled: true
+    state: started
+  when: not ansible_check_mode
