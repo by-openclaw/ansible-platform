@@ -79,3 +79,23 @@
     - name: "Fwid | Result"
       ansible.builtin.debug:
         msg: "by-research local admin: {{ 'CREATED/UPDATED' if fw_bg_user_result.changed else 'already present (idempotent)' }}"
+
+    # ---- FW-4b: seed bootstrap fields (a REBUILT FW must reproduce this user) --
+    - name: "Fwid | Load the seed bootstrap secret"
+      ansible.builtin.set_fact:
+        fw_seed_boot: "{{ lookup('file', '~/.openclaw/workspace/infra/secrets/fabric/OPNsense.seed-bootstrap.json') | from_json }}"
+      no_log: true
+
+    - name: "Fwid | Add the by-research seed fields (once — hash is stable after)"
+      vars:
+        fw_seed_new: >-
+          {{ fw_seed_boot | combine({'fields': fw_seed_boot.fields | combine({
+               'byresearch_password_hash': fw_bg_password | password_hash('bcrypt'),
+               'byresearch_authorizedkeys': lookup('file', '~/.ssh/id_ed25519_by-research.pub') | b64encode
+             })}, recursive=true) }}
+      ansible.builtin.copy:
+        dest: "{{ '~/.openclaw/workspace/infra/secrets/fabric/OPNsense.seed-bootstrap.json' | expanduser }}"
+        mode: "0600"
+        content: "{{ fw_seed_new | to_nice_json }}"
+      when: fw_seed_boot.fields.byresearch_password_hash is not defined
+      no_log: true
