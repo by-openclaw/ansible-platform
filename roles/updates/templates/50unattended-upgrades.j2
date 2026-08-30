@@ -1,0 +1,35 @@
+// {{ ansible_managed }}
+// Security-only unattended upgrades. Point releases stay gated behind an
+// explicit run of the `updates` role so the operator picks the window.
+
+Unattended-Upgrade::Origins-Pattern {
+{% for origin in updates_unattended_origins %}
+    "{{ origin }}";
+{% endfor %}
+};
+
+// The container runtime is never upgraded unattended — restarting it would
+// bounce every service on the host.
+Unattended-Upgrade::Package-Blacklist {
+{% for pkg in updates_unattended_blacklist %}
+    "{{ pkg }}";
+{% endfor %}
+};
+
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "{{ 'true' if updates_unattended_remove_unused_deps else 'false' }}";
+Unattended-Upgrade::Remove-Unused-Dependencies "{{ 'true' if updates_unattended_remove_unused_deps else 'false' }}";
+Unattended-Upgrade::Automatic-Reboot "{{ 'true' if updates_unattended_auto_reboot else 'false' }}";
+Unattended-Upgrade::Automatic-Reboot-Time "03:30";
+
+// Restart services linked against upgraded libraries, otherwise the host keeps
+// the old libssl/libc mapped and only reads as patched.
+Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
+Unattended-Upgrade::MinimalSteps "true";
+
+{% if updates_unattended_mail %}
+Unattended-Upgrade::Mail "{{ updates_unattended_mail }}";
+Unattended-Upgrade::MailReport "on-change";
+{% endif %}
+
+Unattended-Upgrade::SyslogEnable "true";
+Unattended-Upgrade::SyslogFacility "daemon";

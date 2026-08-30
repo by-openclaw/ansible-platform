@@ -1,0 +1,26 @@
+---
+# ==============================================================================
+# Role: updates — dispatcher
+#   preflight (capture running state) -> apt (backlog) -> needrestart
+#   -> unattended (mechanism) -> verify (same services still up)
+# The verify pass is what makes this safe to run unattended-ish: it fails the
+# play if a service that was running before the upgrade is not running after.
+# ==============================================================================
+
+- name: Capture pre-upgrade service state
+  ansible.builtin.import_tasks: preflight.yml
+  tags: [updates, preflight, always]
+
+- name: Apply the pending package upgrades
+  ansible.builtin.import_tasks: apt.yml
+  when: updates_apply | bool
+  tags: [updates, apt]
+
+- name: Install and configure unattended-upgrades
+  ansible.builtin.import_tasks: unattended.yml
+  when: updates_unattended_enabled | bool
+  tags: [updates, unattended]
+
+- name: Verify the host came back the way it went in
+  ansible.builtin.import_tasks: verify.yml
+  tags: [updates, verify, always]

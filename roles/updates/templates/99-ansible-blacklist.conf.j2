@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+# needrestart restarts every service linked against an upgraded library. On a
+# Docker host that would include docker.service — bouncing every container on
+# the box. Vault in particular RE-SEALS when its container restarts, so we
+# never let that happen silently: these units are reported, never auto-restarted.
+$nrconf{override_rc} = {
+{% for svc in updates_needrestart_blacklist_services %}
+    qr({{ svc }}) => 0,
+{% endfor %}
+};
