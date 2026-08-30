@@ -15,6 +15,24 @@
     name: openssh-server
     state: present
 
+# Debian 13 templates ship systemd socket activation: ssh.socket pins port 22
+# and IGNORES sshd_config's Port — the service must own the listener.
+- name: "Sshd | Disable ssh.socket activation (it pins port 22)"
+  ansible.builtin.systemd_service:
+    name: ssh.socket
+    enabled: false
+    state: stopped
+  register: sshd_socket_off
+  failed_when:
+    - sshd_socket_off is failed
+    - "'Could not find' not in (sshd_socket_off.msg | default(''))"
+  notify: Validate and restart sshd
+
+- name: "Sshd | Ensure ssh.service is enabled"
+  ansible.builtin.systemd_service:
+    name: ssh.service
+    enabled: true
+
 - name: "Sshd | Remove conflicting sshd_config.d fragments (re-open port 22)"
   ansible.builtin.find:
     paths: /etc/ssh/sshd_config.d/
