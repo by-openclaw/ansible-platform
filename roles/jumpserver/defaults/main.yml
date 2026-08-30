@@ -1,0 +1,149 @@
+---
+# ==============================================================================
+# Role: jumpserver — self-contained JumpServer CE bastion/PAM (Docker-in-LXC).
+#
+# Break-glass tool: runs its OWN bundled Postgres + Redis (NOT the shared
+# cluster) so it still grants access if the cluster is down. Non-privileged
+# multi-container compose (privileged containers are unsafe nested in an
+# unprivileged LXC). All secrets are Vault-native (fabric/app-jumpserver +
+# fabric/app-oidc-jumpserver); the on-host .env (0600) is rendered from Vault,
+# same pattern as gitlab.rb — no repo/controller secret files.
+#
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/jumpserver.yml
+# ==============================================================================
+
+# --- Pinned images (never :latest) — installer GA tag v4.10.19 --------------
+jumpserver_version: "v4.10.19-ce"
+jumpserver_image_core: "jumpserver/core:{{ jumpserver_version }}"
+jumpserver_image_koko: "jumpserver/koko:{{ jumpserver_version }}"
+jumpserver_image_lion: "jumpserver/lion:{{ jumpserver_version }}"
+jumpserver_image_web: "jumpserver/web:{{ jumpserver_version }}"
+jumpserver_image_postgres: "postgres:16"
+jumpserver_image_redis: "redis:7-alpine"
+
+# --- Layout on the LXC ------------------------------------------------------
+# Root-owned components (core/koko/lion/nginx) use host BIND MOUNTS (container
+# root = LXC root, works fine). Postgres + Redis run as uid 999 inside their
+# containers: in an UNPRIVILEGED LXC a host bind mount hits the userns uid-remap
+# mismatch (server can't reopen its own files -> "Permission denied"), so they
+# use DOCKER NAMED VOLUMES, which docker uid-maps consistently within the LXC.
+jumpserver_base_dir: "/opt/jumpserver"
+jumpserver_compose_dir: "{{ jumpserver_base_dir }}"          # compose + .env live here
+jumpserver_data_dir: "{{ jumpserver_base_dir }}/core"        # app data + session recordings
+jumpserver_pgdata_volume: "jumpserver_pgdata"                # bundled Postgres (named volume)
+jumpserver_redisdata_volume: "jumpserver_redisdata"          # bundled Redis (named volume)
+jumpserver_docker_network: "jumpserver-net"
+
+# --- Web front — browser-only; only this port is published + proxied ---------
+jumpserver_web_host_port: 8090                                # host:8090 -> web container:80
+jumpserver_fqdn: "jumpserver.by-research.be"
+jumpserver_base_site_url: "https://{{ jumpserver_fqdn }}"     # OIDC redirect base (BASE_SITE_URL)
+jumpserver_domains: "{{ jumpserver_fqdn }}"                   # DOMAINS allow-list
+
+# --- Bundled DB / Redis (self-contained; compose-internal only) --------------
+jumpserver_db_name: "jumpserver"
+jumpserver_db_user: "jumpserver"
+jumpserver_db_engine: "postgresql"
+
+# --- Vault-native secrets (get-or-create; minted here on first run) ----------
+# fabric/app-jumpserver: secret_key(>=50 alnum), bootstrap_token(>=24 alnum),
+# db_password, redis_password. no special chars (JumpServer rule) + no quotes.
+jumpserver_vault_path: "fabric/app-jumpserver"
+
+# --- OIDC (Authentik) — client creds minted by the authentik role into Vault -
+# JumpServer's OIDC backend does not auto-discover Authentik, so feed the explicit
+# endpoints. In Authentik authorize/token/userinfo are GLOBAL; issuer + jwks +
+# end-session are per-application (slug `jumpserver`).
+jumpserver_oidc_enabled: false                               # flip true in group_vars to enable
+jumpserver_oidc_vault_path: "fabric/app-oidc-jumpserver"
+jumpserver_authentik_base: "https://authentik.by-research.be"
+jumpserver_oidc_provider_endpoint: "{{ jumpserver_authentik_base }}/application/o/jumpserver/"
+jumpserver_oidc_authorization_endpoint: "{{ jumpserver_authentik_base }}/application/o/authorize/"
+jumpserver_oidc_token_endpoint: "{{ jumpserver_authentik_base }}/application/o/token/"
+jumpserver_oidc_jwks_endpoint: "{{ jumpserver_authentik_base }}/application/o/jumpserver/jwks/"
+jumpserver_oidc_userinfo_endpoint: "{{ jumpserver_authentik_base }}/application/o/userinfo/"
+jumpserver_oidc_end_session_endpoint: "{{ jumpserver_authentik_base }}/application/o/jumpserver/end-session/"
+
+# --- Locale / misc -----------------------------------------------------------
+jumpserver_tz: "Europe/Brussels"
+jumpserver_log_level: "ERROR"
+
+# --- RBAC / assets reconcile (idempotent Django reconcile; like gitlab_rbac) --
+# adm_yboujraf = System Admin (reaches all) + member of the bastion-admins group.
+# Regular users get NO grant here (least-privilege; added per-need later).
+jumpserver_reconcile_enabled: true
+jumpserver_bastion_admin:
+  username: adm_yboujraf
+  name: "adm_yboujraf"
+  email: "adm_yboujraf@by-research.be"
+jumpserver_bastion_group: "bastion-admins"
+jumpserver_permission_name: "bastion-admins-all"
+jumpserver_s3_storage_name: "seaweedfs"
+jumpserver_s3_vault_path: "fabric/infra-seaweedfs-jumpserver"
+jumpserver_s3_bucket: "jumpserver-replays"
+# Email notifications -> mailcow (optional; the jumpserver@ mailbox + this Vault
+# path are provisioned via roles/mailcow config). Empty creds -> email stays off.
+jumpserver_smtp_vault_path: "fabric/app-smtp-jumpserver"
+
+# JumpServer dynamic feature settings reconciled into the DB (idempotent).
+# ANSIBLE_DOCKER_ENABLED=false -> asset connectivity/account tasks run inside the
+# celery container (we don't mount docker.sock, so the per-task ansible-executor
+# Docker container can't spawn — the default would fail every connectivity test).
+jumpserver_settings:
+  ANSIBLE_DOCKER_ENABLED: false
+
+# The single automation key JumpServer vaults as each asset's account (encrypted
+# in JumpServer's own store — the "one credential, root on all" pattern).
+jumpserver_rune_key_path: "~/.ssh/id_ed25519_rune_nopass"
+# The Proxmox node rejects the standard rune key — it uses the automation key on
+# port 22222 (asset key_file: /tmp/jms_key_automation).
+jumpserver_node_key_path: "~/.ssh/id_ed25519_rune_automation"
+# OPNsense blocks root SSH by design; the break-glass login is by-rune with the
+# dedicated OPNsense key on port 22 (asset key_file: /tmp/jms_key_opnsense). The
+# firewall config stays API-managed — this asset is for AUDITED shell/console
+# access via the bastion (session-recorded), not for editing config over SSH.
+jumpserver_opnsense_key_path: "~/.ssh/id_ed25519_opnsense"
+
+# Assets to register (SSH). SVC (10.1.3.x) are same-subnet as the bastion →
+# reachable now; DMZ (10.1.2.x) needs the SVC→DMZ FW rule (Phase 4). LXCs log in
+# as root (privileged); VMs as by-systems (sudo). The OOB Proxmox node and the
+# OPNsense firewall are the special cases (own key/port, non-root login) — both
+# now registered below. Only the jumpserver bastion itself is excluded.
+# Organised by SERVICE TYPE (the JumpServer node tree groups by function, not
+# network zone). LXCs log in as root (privileged); VMs as by-systems (sudo).
+# The Proxmox node is the special case: OOB, port 22222, and the AUTOMATION key
+# (it rejects the standard rune key) -> key_file override.
+jumpserver_assets:
+  # --- Databases ---
+  - { name: lxc-pgsql-01, address: 10.1.3.110, node: Databases, account: root, privileged: true }
+  - { name: lxc-redis-01, address: 10.1.3.117, node: Databases, account: root, privileged: true }
+  - { name: lxc-pgadmin-01, address: 10.1.3.140, node: Databases, account: root, privileged: true }
+  # --- Identity & Secrets ---
+  - { name: lxc-authentik-01, address: 10.1.3.130, node: Identity, account: root, privileged: true }
+  - { name: lxc-vault-01, address: 10.1.3.150, node: Identity, account: root, privileged: true }
+  - { name: lxc-vaultwarden-01, address: 10.1.3.160, node: Identity, account: root, privileged: true }
+  # --- Storage & Backup ---
+  - { name: lxc-seaweedfs-01, address: 10.1.3.200, node: Storage, account: root, privileged: true }
+  - { name: vm-pbs-01, address: 10.1.3.222, node: Storage, account: by-systems, privileged: false }
+  - { name: lxc-nextcloud-01, address: 10.1.3.170, node: Storage, account: root, privileged: true }
+  # --- Networking ---
+  - { name: lxc-traefik-01, address: 10.1.2.110, node: Networking, account: root, privileged: true }
+  - { name: lxc-netbird-01, address: 10.1.3.181, node: Networking, account: root, privileged: true }
+  - { name: vm-adguard-01, address: 10.1.3.101, node: Networking, account: by-systems, privileged: false }
+  # OPNsense firewall — special: by-rune login (root SSH blocked), dedicated key,
+  # port 22. Reachable from the SVC bastion via the FW's own OOB IP. Shell/console
+  # access is audited here; firewall config remains API-managed (not via SSH).
+  - { name: vm-opns-01, address: 10.6.239.196, node: Networking, account: by-rune, privileged: false, port: 22, key_file: /tmp/jms_key_opnsense }
+  # --- DevOps / CI ---
+  - { name: lxc-gitlab-01, address: 10.1.3.210, node: DevOps, account: root, privileged: true }
+  - { name: vm-gitlab-runner-01, address: 10.1.3.211, node: DevOps, account: by-systems, privileged: false }
+  - { name: lxc-diagrams-01, address: 10.1.3.220, node: DevOps, account: root, privileged: true }
+  # --- Monitoring & Security ---
+  - { name: lxc-monitoring-01, address: 10.1.3.230, node: Monitoring, account: root, privileged: true }
+  - { name: lxc-crowdsec-01, address: 10.1.3.190, node: Monitoring, account: root, privileged: true }
+  # --- Mail ---
+  - { name: vm-mailcow-01, address: 10.1.2.120, node: Mail, account: by-systems, privileged: false }
+  # --- IPAM ---
+  - { name: lxc-nbox-01, address: 10.1.3.120, node: IPAM, account: root, privileged: true }
+  # --- Hypervisor (OOB, port 22222, automation key) ---
+  - { name: srv-proxmox-poc-01, address: 10.6.224.105, node: Hypervisor, account: root, privileged: true, port: 22222, key_file: /tmp/jms_key_automation }
