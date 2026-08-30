@@ -10,7 +10,10 @@
             "SharedUsername": "{{ pgadmin_pg_shared_username }}",
             "SSLMode": "{{ pgadmin_pg_sslmode }}",
             "Shared": true,
-            "Comment": "Provisioned by Ansible (pgadmin role). Password not stored — supplied on connect (Vault later)."
+{% if pgadmin_register_pg_server | bool %}
+            "PasswordExecCommand": "{{ pgadmin_pg_passexec_cmd }}",
+{% endif %}
+            "Comment": "Provisioned by Ansible (pgadmin role). Password not stored — pgAdmin runs PasswordExecCommand at connect to read it from the deploy-populated passfile."
         }
     }
 }
