@@ -1,0 +1,74 @@
+---
+# Install Harbor from its pinned online installer, render harbor.yml, run ./prepare
+# (generates docker-compose.yml + configs), then bring the stack up. Idempotent:
+# the installer is downloaded once (creates=), ./prepare only re-runs when the
+# config or installer changed, and `compose up -d` is a no-op when already current.
+- name: "Container | Ensure Harbor dirs exist"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ harbor_install_dir | dirname }}"
+    - "{{ harbor_data_dir }}"
+
+# Platform base image ships Debian's docker.io (docker-cli) WITHOUT the compose
+# plugin — `docker compose` is not a subcommand here. Debian packages Compose v2
+# as the standalone `docker-compose` binary; Harbor is the only compose-based
+# service, so we pull it in here rather than in the shared docker role.
+- name: "Container | Ensure Compose v2 (Debian standalone docker-compose) is present"
+  ansible.builtin.apt:
+    name: docker-compose
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Container | Download the Harbor installer (pinned {{ harbor_version }})"
+  ansible.builtin.get_url:
+    url: "{{ harbor_installer_url }}"
+    dest: "/opt/harbor-online-installer-{{ harbor_version }}.tgz"
+    mode: "0644"
+  register: harbor_dl
+
+- name: "Container | Extract the installer"
+  ansible.builtin.unarchive:
+    src: "/opt/harbor-online-installer-{{ harbor_version }}.tgz"
+    dest: "/opt/"
+    remote_src: true
+    creates: "{{ harbor_install_dir }}/prepare"
+
+- name: "Container | Render harbor.yml"
+  ansible.builtin.template:
+    src: harbor.yml.j2
+    dest: "{{ harbor_install_dir }}/harbor.yml"
+    mode: "0600"
+  register: harbor_cfg
+  no_log: true
+
+- name: "Container | Run ./prepare (regenerate compose + configs)"
+  ansible.builtin.command:
+    cmd: ./prepare --with-trivy
+    chdir: "{{ harbor_install_dir }}"
+  register: harbor_prepare
+  changed_when: true
+  when: harbor_cfg is changed or harbor_dl is changed
+
+- name: "Container | Bring up the Harbor stack"
+  ansible.builtin.command:
+    cmd: docker-compose up -d --remove-orphans
+    chdir: "{{ harbor_install_dir }}"
+  register: harbor_up
+  changed_when: >-
+    ('Started' in (harbor_up.stderr | default('')))
+    or ('Created' in (harbor_up.stderr | default('')))
+    or ('Recreated' in (harbor_up.stderr | default('')))
+
+- name: "Container | Wait for the Harbor API to report healthy"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/health"
+    status_code: [200]
+  register: harbor_health
+  retries: 40
+  delay: 6
+  until: harbor_health.status == 200
+  changed_when: false

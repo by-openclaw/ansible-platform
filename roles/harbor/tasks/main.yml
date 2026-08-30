@@ -1,0 +1,59 @@
+---
+# ==============================================================================
+# Role: harbor — dispatcher. Order mirrors roles/nextcloud + roles/pbs:
+# DB -> S3 bucket -> secrets -> install/containers -> OIDC post-install -> route.
+# PREREQ: run playbooks/authentik.yml first so fabric/app-oidc-harbor.json exists.
+# ==============================================================================
+- name: "Provision the Harbor database (cluster Postgres)"
+  ansible.builtin.include_role:
+    name: postgres_db
+  vars:
+    postgres_db_name: "{{ harbor_pg_name }}"
+    postgres_db_user: "{{ harbor_pg_user }}"
+    postgres_db_secret_file: "{{ harbor_pg_secret_file }}"   # fabric/db-pgsql-harbor.json (convention + Vault)
+  tags: [harbor, database]
+
+- name: "Provision the SeaweedFS S3 bucket + scoped identity"
+  ansible.builtin.include_role:
+    name: seaweedfs_bucket
+  vars:
+    seaweedfs_bucket_identity: "{{ harbor_s3_identity }}"
+    seaweedfs_bucket_names: ["{{ harbor_s3_bucket }}"]
+    seaweedfs_bucket_secret_file: "{{ harbor_s3_secret_file }}"
+  tags: [harbor, s3]
+
+- name: "Resolve / generate Harbor secrets + load dependencies' creds"
+  ansible.builtin.import_tasks: secrets.yml
+  tags: [harbor, secrets]
+
+- name: "Install + run the Harbor stack"
+  ansible.builtin.import_tasks: containers.yml
+  tags: [harbor, container]
+
+- name: "Post-install — switch auth to Authentik OIDC"
+  ansible.builtin.import_tasks: post-install.yml
+  when: harbor_oidc_enabled | bool
+  tags: [harbor, oidc]
+
+- name: "Configure pull-through proxy caches (Docker Hub etc.)"
+  ansible.builtin.import_tasks: proxy-cache.yml
+  when: (harbor_proxy_caches | default([])) | length > 0
+  tags: [harbor, proxy]
+
+- name: "Provision the GitLab CI push target (project + scoped system robot)"
+  ansible.builtin.import_tasks: gitlab-ci.yml
+  when: harbor_ci_enabled | bool
+  tags: [harbor, ci]
+
+- name: "Publish Harbor via Traefik (internal-only, TLS at the edge)"
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: harbor
+    traefik_route_fqdn: "{{ harbor_fqdn }}"
+    traefik_route_backend_url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}"
+    traefik_route_internal_only: true       # registry = internal infra (VPN/LAN + CI + k3s all on-net)
+    traefik_route_forward_auth: false       # Harbor has native OIDC
+  tags: [harbor, route]

@@ -1,0 +1,92 @@
+---
+# Pull-through proxy-cache projects (Docker Hub etc.). Fully idempotent via
+# look-up-then-create: we GET the current state, then POST only what's absent, so
+# a re-run issues no writes at all when everything already exists. (A looped uri
+# task can't reliably reference the current item's `status`/`.results` inside
+# changed_when under ansible-core 2.20, which is why we don't lean on 409s.)
+# Uses the local admin API creds — still valid after the OIDC switch.
+
+# --- Upstream registry endpoints (the pull-through source) --------------------
+- name: "Proxy | Look up existing upstream registries"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/registries?name={{ item.name }}"
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  loop: "{{ harbor_proxy_caches }}"
+  loop_control: { label: "{{ item.name }}" }
+  register: harbor_reg_lookup
+  changed_when: false
+  no_log: true
+
+- name: "Proxy | Create the missing upstream registry endpoints"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/registries"
+    method: POST
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      type: "{{ item.type }}"
+      url: "{{ item.url }}"
+      insecure: false
+    status_code: [201]
+  loop: "{{ harbor_proxy_caches }}"
+  loop_control: { label: "{{ item.name }}", index_var: idx }
+  when: >-
+    (harbor_reg_lookup.results[idx].json | default([])
+      | selectattr('name', 'equalto', item.name) | list | length) == 0
+  changed_when: true
+  no_log: true
+
+# --- Resolve endpoint ids (every configured registry now exists) --------------
+- name: "Proxy | Resolve the registry endpoint ids"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/registries?name={{ item.name }}"
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  loop: "{{ harbor_proxy_caches }}"
+  loop_control: { label: "{{ item.name }}" }
+  register: harbor_reg_ids
+  changed_when: false
+  no_log: true
+
+# --- Proxy-cache projects bound to those endpoints ----------------------------
+- name: "Proxy | Look up existing proxy-cache projects"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/projects?name={{ item.project }}"
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  loop: "{{ harbor_proxy_caches }}"
+  loop_control: { label: "{{ item.project }}" }
+  register: harbor_proj_lookup
+  changed_when: false
+  no_log: true
+
+- name: "Proxy | Create the missing proxy-cache projects"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/projects"
+    method: POST
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      project_name: "{{ item.project }}"
+      registry_id: "{{ (harbor_reg_ids.results[idx].json | selectattr('name', 'equalto', item.name) | list | first).id }}"
+      metadata: { public: "true" }
+    status_code: [201]
+  loop: "{{ harbor_proxy_caches }}"
+  loop_control: { label: "{{ item.project }}", index_var: idx }
+  when: >-
+    (harbor_proj_lookup.results[idx].json | default([])
+      | selectattr('name', 'equalto', item.project) | list | length) == 0
+  changed_when: true
+  no_log: true
