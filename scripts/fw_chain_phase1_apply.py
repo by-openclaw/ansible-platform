@@ -26,9 +26,9 @@ Steps it performs, with a verification gate after each:
 
 Defaults: dry-run. Pass --apply to write changes. Each gate prints diff before doing.
 """
+
 from __future__ import annotations
 import argparse
-import asyncio
 import json
 import sys
 import time
@@ -38,6 +38,8 @@ import requests
 import urllib3
 import yaml
 
+from deployment_vars import render_deployment_tokens
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -46,19 +48,29 @@ SECRETS = Path.home() / ".openclaw/workspace/infra/secrets"
 
 
 def load_secret():
-    d = json.loads((SECRETS / "net-opnsense-vm-opns-test-01.json").read_text())["fields"]
+    d = json.loads((SECRETS / "net-opnsense-vm-opns-test-01.json").read_text())[
+        "fields"
+    ]
     return d
 
 
 def fw_get(s, path, t=10):
-    return requests.get(f"https://{s['host']}:{s.get('port',443)}/api{path}",
-                        auth=(s["key"], s["secret"]), verify=False, timeout=t)
+    return requests.get(
+        f"https://{s['host']}:{s.get('port',443)}/api{path}",
+        auth=(s["key"], s["secret"]),
+        verify=False,
+        timeout=t,
+    )
 
 
 def fw_post(s, path, body=None, t=30):
-    return requests.post(f"https://{s['host']}:{s.get('port',443)}/api{path}",
-                         auth=(s["key"], s["secret"]), verify=False, timeout=t,
-                         json=body or {})
+    return requests.post(
+        f"https://{s['host']}:{s.get('port',443)}/api{path}",
+        auth=(s["key"], s["secret"]),
+        verify=False,
+        timeout=t,
+        json=body or {},
+    )
 
 
 def header(msg):
@@ -96,17 +108,33 @@ def step1_snapshot(s):
     print(f"  unbound DoT/forward entries = {len(dot_rows)}")
     for r in dot_rows:
         is_dot = (r.get("type") or "").lower() == "dot" or r.get("port") == "853"
-        print(f"    [{r['uuid'][:8]}] type={'dot' if is_dot else 'fwd':3s} {r.get('server'):28s}:{r['port']} enabled={r['enabled']}")
+        print(
+            f"    [{r['uuid'][:8]}] type={'dot' if is_dot else 'fwd':3s} {r.get('server'):28s}:{r['port']} enabled={r['enabled']}"
+        )
     # dnscrypt
     dc = fw_get(s, "/dnscryptproxy/general/get").json()["general"]
-    listen = [k for k, v in dc.get("listen_addresses", {}).items() if isinstance(v, dict) and v.get("selected") == 1] if isinstance(dc.get("listen_addresses"), dict) else dc.get("listen_addresses")
+    listen = (
+        [
+            k
+            for k, v in dc.get("listen_addresses", {}).items()
+            if isinstance(v, dict) and v.get("selected") == 1
+        ]
+        if isinstance(dc.get("listen_addresses"), dict)
+        else dc.get("listen_addresses")
+    )
     print(f"  dnscrypt.enabled  = {dc.get('enabled')}")
     print(f"  dnscrypt.listen   = {listen}")
     print(f"  dnscrypt.ipv6     = {dc.get('ipv6_servers')}")
     # service
     ds = fw_get(s, "/dnscryptproxy/service/status").json()
     print(f"  dnscrypt.service  = {ds.get('status')}")
-    return {"dot_rows": dot_rows, "unbound_general": g, "unbound_fwd": fw_state, "dnscrypt": dc, "dnscrypt_svc": ds}
+    return {
+        "dot_rows": dot_rows,
+        "unbound_general": g,
+        "unbound_fwd": fw_state,
+        "dnscrypt": dc,
+        "dnscrypt_svc": ds,
+    }
 
 
 def step2_dnscrypt_general(s, catalog, apply):
@@ -124,10 +152,20 @@ def step2_dnscrypt_general(s, catalog, apply):
             body_general[k] = v
 
     # Diff
-    cur_listen = list(current.get("listen_addresses", {}).keys()) if isinstance(current.get("listen_addresses"), dict) else current.get("listen_addresses")
+    cur_listen = (
+        list(current.get("listen_addresses", {}).keys())
+        if isinstance(current.get("listen_addresses"), dict)
+        else current.get("listen_addresses")
+    )
     print(f"  current listen: {cur_listen}")
     print(f"  target  listen: {target['listen_addresses']}")
-    for k in ("enabled", "ipv4_servers", "ipv6_servers", "require_dnssec", "cache_size"):
+    for k in (
+        "enabled",
+        "ipv4_servers",
+        "ipv6_servers",
+        "require_dnssec",
+        "cache_size",
+    ):
         cv = current.get(k)
         tv = target.get(k)
         if cv != tv:
@@ -176,7 +214,9 @@ def step3_dnscrypt_start_verify(s, apply):
 
 
 def step4_unbound_forwarding_enable(s, apply):
-    header("Step 4 — ensure unbound.forwarding.enabled=0 (counter-intuitive but correct)")
+    header(
+        "Step 4 — ensure unbound.forwarding.enabled=0 (counter-intuitive but correct)"
+    )
     # WHY 0: On OPNsense, `forwarding.enabled=1` makes Unbound generate a
     # forward-zone that points at `<system><dnsserver>` (the WAN gateway plain DNS),
     # and IGNORES the catalog's forward entries. With `enabled=0`, catch-all
@@ -186,7 +226,9 @@ def step4_unbound_forwarding_enable(s, apply):
     r = fw_get(s, "/unbound/settings/get").json()["unbound"]
     cur = r.get("forwarding", {}).get("enabled")
     print(f"  current: forwarding.enabled = {cur!r}")
-    print(f"  target:  forwarding.enabled = '0' (chain works via catch-all forward-zone, not generic forwarding)")
+    print(
+        "  target:  forwarding.enabled = '0' (chain works via catch-all forward-zone, not generic forwarding)"
+    )
     if cur == "0":
         print("  [NOOP] already disabled")
         return
@@ -202,7 +244,7 @@ def step5_drop_dot(s, apply):
     rows = fw_get(s, "/unbound/settings/searchDot").json().get("rows", [])
     dot_uuids = []
     for r in rows:
-        is_dot = (r.get("port") == "853")  # cheap heuristic; could probe getDot per uuid
+        is_dot = r.get("port") == "853"  # cheap heuristic; could probe getDot per uuid
         if is_dot and r.get("enabled") == "1":
             dot_uuids.append((r["uuid"], r.get("server"), r.get("port")))
     print(f"  {len(dot_uuids)} DoT entries to disable:")
@@ -233,7 +275,11 @@ def step6_apply_unbound_reconfigure(s, apply):
 def step7_verify_chain(s):
     header("Step 7 — verify chain end-to-end")
     # dumpInfra should show forwarders, NOT DoT
-    di = fw_get(s, "/diagnostics/dns/get") if False else fw_get(s, "/unbound/diagnostics/dumpInfra")
+    di = (
+        fw_get(s, "/diagnostics/dns/get")
+        if False
+        else fw_get(s, "/unbound/diagnostics/dumpInfra")
+    )
     if di.status_code == 200:
         print(f"  dumpInfra:\n{json.dumps(di.json(), indent=2)[:1200]}")
     # dig via FW Unbound (port 53) — should resolve and route through dnscrypt-proxy
@@ -243,19 +289,34 @@ def step7_verify_chain(s):
 
 def qm_exec(argv):
     """Run a command in the FW via qemu-guest-agent (returns stdout or None)."""
-    pve = json.loads((SECRETS / "infra-proxmox-poc.json").read_text())["fields"]
-    headers = {"Authorization": f"PVEAPIToken={pve['admin_token_id']}={pve['admin_token_secret']}",
-               "Content-Type": "application/json"}
-    base = f"https://{pve['host']}:8006/api2/json/nodes/srv-proxmox-poc-01/qemu/199/agent"
-    r = requests.post(f"{base}/exec", headers=headers, verify=False, timeout=15,
-                      data=json.dumps({"command": argv}))
+    pve = json.loads((SECRETS / "fabric/infra-proxmox-poc.json").read_text())["fields"]
+    headers = {
+        "Authorization": f"PVEAPIToken={pve['admin_token_id']}={pve['admin_token_secret']}",
+        "Content-Type": "application/json",
+    }
+    base = (
+        f"https://{pve['host']}:8006/api2/json/nodes/srv-proxmox-poc-01/qemu/199/agent"
+    )
+    r = requests.post(
+        f"{base}/exec",
+        headers=headers,
+        verify=False,
+        timeout=15,
+        data=json.dumps({"command": argv}),
+    )
     if r.status_code != 200:
         return None
     pid = r.json().get("data", {}).get("pid")
     h2 = {k: v for k, v in headers.items() if k != "Content-Type"}
     for _ in range(15):
         time.sleep(1)
-        s = requests.get(f"{base}/exec-status", headers=h2, verify=False, timeout=10, params={"pid": pid})
+        s = requests.get(
+            f"{base}/exec-status",
+            headers=h2,
+            verify=False,
+            timeout=10,
+            params={"pid": pid},
+        )
         if s.status_code != 200:
             continue
         b = s.json()["data"]
@@ -266,13 +327,30 @@ def qm_exec(argv):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--apply", action="store_true", help="write changes (default: dry-run)")
-    p.add_argument("--only", choices=["1", "2", "3", "4", "5", "6", "7", "snapshot", "dnscrypt", "unbound", "verify"],
-                   help="run only a subset")
+    p.add_argument(
+        "--apply", action="store_true", help="write changes (default: dry-run)"
+    )
+    p.add_argument(
+        "--only",
+        choices=[
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "snapshot",
+            "dnscrypt",
+            "unbound",
+            "verify",
+        ],
+        help="run only a subset",
+    )
     args = p.parse_args()
 
     s = load_secret()
-    catalog = yaml.safe_load(CATALOG.read_text())
+    catalog = yaml.safe_load(render_deployment_tokens(CATALOG))
     print(f"FW = {s['host']}  apply = {args.apply}  only = {args.only}")
 
     if args.only in (None, "1", "snapshot"):

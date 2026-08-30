@@ -1,0 +1,101 @@
+---
+# Install ansible-core locally, seed the unseal shares (ONCE, from the
+# controller init file), deploy the local cold-start playbook + systemd unit.
+- name: "Warden | Install ansible-core (local execution engine)"
+  ansible.builtin.apt:
+    name: ansible-core
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Warden | Ensure the warden dir"
+  ansible.builtin.file:
+    path: "{{ warden_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: "Warden | Stat the local share file"
+  ansible.builtin.stat:
+    path: "{{ warden_share_file }}"
+  register: warden_shares_stat
+
+- name: "Warden | Seed the unseal shares (threshold only — once, 0600)"
+  vars:
+    warden_shares_doc:
+      shares: "{{ (lookup('file', warden_controller_init) | from_json).fields.unseal_keys_b64[:warden_key_threshold] }}"  # pragma: allowlist secret
+  ansible.builtin.copy:
+    dest: "{{ warden_share_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ warden_shares_doc | to_json }}"
+  when: not warden_shares_stat.stat.exists
+  no_log: true
+
+- name: "Warden | Deploy the local cold-start playbook"
+  ansible.builtin.template:
+    src: coldstart.yml.j2
+    dest: "{{ warden_dir }}/coldstart.yml"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart warden-coldstart
+
+- name: "Warden | Systemd unit (runs on every boot, retries until success)"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/warden-coldstart.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/warden)
+      [Unit]
+      Description=Warden platform cold-start reconciliation (vault unseal + verify)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/bin/ansible-playbook -c local {{ warden_dir }}/coldstart.yml
+      Restart=on-failure
+      RestartSec=60
+      TimeoutStartSec=30min
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: Restart warden-coldstart
+
+- name: "Warden | Watchdog timer (heals a re-sealed Vault anytime, not just boot)"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/warden-coldstart.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/warden)
+      [Unit]
+      Description=Warden reconciliation watchdog (5-min cadence, idempotent)
+
+      [Timer]
+      OnBootSec=30
+      OnUnitActiveSec=5min
+
+      [Install]
+      WantedBy=timers.target
+  notify: Restart warden-coldstart
+
+- name: "Warden | Enable the service (runs via boot + timer)"
+  ansible.builtin.systemd_service:
+    name: warden-coldstart.service
+    enabled: true
+    daemon_reload: true
+
+- name: "Warden | Enable AND start the watchdog timer (enabled alone arms only next boot)"
+  ansible.builtin.systemd_service:
+    name: warden-coldstart.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode

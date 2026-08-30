@@ -1,0 +1,34 @@
+---
+# Enrol the firewall's own CrowdSec agent to the CENTRAL LAPI. Idempotent: only
+# registers when the agent is not already logged in under its machine name (a
+# fresh plugin install leaves login=localhost, which cannot auth to the remote
+# LAPI). The token is the guests' shared auto-registration token from the store.
+- name: "Agent | Read the current LAPI login on the firewall"
+  ansible.builtin.command: awk '/^login:/{print $2}' /usr/local/etc/crowdsec/local_api_credentials.yaml
+  register: crowdsec_fw_bouncer_login
+  changed_when: false
+
+- name: "Agent | Enrol the firewall agent to the central LAPI"
+  ansible.builtin.command: >-
+    cscli lapi register
+      --machine {{ crowdsec_fw_bouncer_machine_name }}
+      --url {{ crowdsec_fw_bouncer_lapi_url }}
+      --token {{ crowdsec_fw_bouncer_reg_token }}
+  when: (crowdsec_fw_bouncer_login.stdout | trim) != crowdsec_fw_bouncer_machine_name
+  changed_when: true
+  no_log: true
+
+- name: "Agent | Install the firewall's own detection collections"
+  ansible.builtin.command: "cscli collections install {{ item }} --error"
+  loop: "{{ crowdsec_fw_bouncer_collections }}"
+  register: crowdsec_fw_bouncer_coll
+  changed_when: "'Enabled' in (crowdsec_fw_bouncer_coll.stdout | default(''))"
+  failed_when:
+    - crowdsec_fw_bouncer_coll.rc != 0
+    - "'already' not in ((crowdsec_fw_bouncer_coll.stderr | default('')) ~ (crowdsec_fw_bouncer_coll.stdout | default('')))"
+
+- name: "Agent | Flag reconfigure if enrolment or collections changed"
+  ansible.builtin.set_fact:
+    crowdsec_fw_bouncer_dirty: >-
+      {{ crowdsec_fw_bouncer_dirty | default(false)
+         or (crowdsec_fw_bouncer_coll is defined and crowdsec_fw_bouncer_coll is changed) }}

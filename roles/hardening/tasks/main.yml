@@ -3,14 +3,6 @@
 # Role: hardening — main task dispatcher
 # ==============================================================================
 
-- name: Apply SSH hardening
-  ansible.builtin.import_tasks: sshd.yml
-  tags: [hardening, ssh]
-
-- name: Apply fail2ban
-  ansible.builtin.import_tasks: fail2ban.yml
-  tags: [hardening, fail2ban]
-
 - name: Apply firewall (ufw)
   ansible.builtin.import_tasks: firewall.yml
   tags: [hardening, firewall, ufw]
@@ -19,3 +11,45 @@
   ansible.builtin.import_tasks: email-relay.yml
   when: hardening_email_relay_enabled | bool
   tags: [hardening, email, postfix]
+
+# --- Part-B baseline (CIS-L1 ≈ NIS2/GDPR) — added 2026-08 --------------------
+- name: "Hardening | Detect unprivileged LXC vs VM"
+  ansible.builtin.set_fact:
+    hardening_is_container: "{{ ansible_virtualization_type in ['lxc', 'systemd-nspawn', 'container', 'docker'] }}"
+  tags: [hardening, always]
+
+- name: Apply userspace baseline (sudoers secure_path, umask)
+  ansible.builtin.import_tasks: baseline.yml
+  tags: [hardening, baseline]
+
+- name: Apply automatic security patching
+  ansible.builtin.import_tasks: patching.yml
+  when: hardening_auto_updates | bool
+  tags: [hardening, patching]
+
+# Kernel-level controls: VMs + host only (unprivileged LXC can't set these —
+# shared host kernel governs sysctl/time/audit for containers).
+- name: Apply kernel sysctl hardening
+  ansible.builtin.import_tasks: sysctl.yml
+  when:
+    - hardening_sysctl_enabled | bool
+    - not hardening_is_container | bool
+  tags: [hardening, sysctl]
+
+- name: Apply time sync (chrony)
+  ansible.builtin.import_tasks: time.yml
+  when:
+    - hardening_ntp_enabled | bool
+    - not hardening_is_container | bool
+  tags: [hardening, ntp]
+
+- name: Apply auditd
+  ansible.builtin.import_tasks: auditd.yml
+  when:
+    - hardening_auditd_enabled | bool
+    - not hardening_is_container | bool
+  tags: [hardening, auditd]
+
+- name: "Hardening | Lynis audit gate (security/0003 §5)"
+  ansible.builtin.import_tasks: lynis.yml
+  tags: [hardening, lynis]

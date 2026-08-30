@@ -7,7 +7,7 @@
 #
 # Required (pass via include_role vars):
 #   traefik_route_name        e.g. "pgadmin"   (router/service id, file name)
-#   traefik_route_fqdn        e.g. "pgadmin.by-research.be"
+#   traefik_route_fqdn        e.g. "pgadmin.{{ platform_domain }}"
 #   traefik_route_backend_url e.g. "http://10.1.3.140:8080"
 # ==============================================================================
 traefik_route_host: "lxc-traefik-01"        # inventory hostname of the Traefik host
@@ -16,6 +16,12 @@ traefik_route_dynamic_dir: "/etc/traefik/dynamic"
 # Internal-only services get an ipAllowList (no public exposure). Public services
 # (a Cloudflare record + DNAT exist) set this false.
 traefik_route_internal_only: true
+# Backend speaks its own TLS with a NON-Traefik-verifiable cert (e.g. PBS's
+# self-signed cert on :8007). true -> emit a per-route serversTransport with
+# insecureSkipVerify so Traefik still proxies over TLS but skips cert validation
+# (acceptable on the trusted internal SVC hop). Default false = verify the cert
+# (the Vault pattern: point the backend at the FQDN so the wildcard validates).
+traefik_route_backend_insecure_skip_verify: false
 traefik_route_internal_cidrs:
   - "10.1.0.0/16"
   - "fd01::/16"
@@ -36,3 +42,10 @@ traefik_route_public_hardening: true
 # CrowdSec bouncer, follow-up). Tune per-route via these vars if needed.
 traefik_route_ratelimit_average: 300   # req/s per client IP (sustained)
 traefik_route_ratelimit_burst: 600     # short burst allowance
+
+# forwardAuth (Authentik SSO gate) for apps with no native OIDC (e.g. weed admin,
+# the Traefik dashboard). true -> the route carries the global `authentik` forwardAuth
+# middleware + a per-host /outpost.goauthentik.io/ sub-router (login callback/assets).
+# Access is IdP-gated by the app's proxy-provider group (authentik_proxy_apps).
+# Combine with internal_only=true so it's also network-gated (VPN/LAN).
+traefik_route_forward_auth: false

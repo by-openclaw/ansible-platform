@@ -5,38 +5,38 @@
 
 [DEFAULT]
 # Whitelist: localhost + OOB/MGMT networks
-ignoreip = {{ hardening_fail2ban_ssh_ignoreip }}
+ignoreip = {{ fail2ban_ssh_ignoreip }}
 
 # Ban duration: 1 hour
-bantime  = {{ hardening_fail2ban_ssh_bantime }}
+bantime  = {{ fail2ban_ssh_bantime }}
 
 # Detection window
-findtime = {{ hardening_fail2ban_ssh_findtime }}
+findtime = {{ fail2ban_ssh_findtime }}
 
 # Max attempts before ban
-maxretry = {{ hardening_fail2ban_ssh_maxretry }}
+maxretry = {{ fail2ban_ssh_maxretry }}
 
 # Use systemd backend when available
 backend  = systemd
 
 # ---- SSH jail ----
-# Note: port is {{ hardening_fail2ban_ssh_port }} (NOT 22)
+# Note: port is {{ fail2ban_ssh_port }} (NOT 22)
 [sshd]
 enabled  = true
-port     = {{ hardening_fail2ban_ssh_port }}
+port     = {{ fail2ban_ssh_port }}
 filter   = sshd
 logpath  = %(sshd_log)s
-maxretry = {{ hardening_fail2ban_ssh_maxretry }}
-bantime  = {{ hardening_fail2ban_ssh_bantime }}
+maxretry = {{ fail2ban_ssh_maxretry }}
+bantime  = {{ fail2ban_ssh_bantime }}
 
-{% for jail in hardening_fail2ban_extra_jails | default([]) %}
+{% for jail in fail2ban_extra_jails | default([]) %}
 # ---- Extra jail: {{ jail.name }} ----
 [{{ jail.name }}]
 enabled  = true
 port     = {{ jail.port }}
 filter   = {{ jail.filter | default(jail.name) }}
 logpath  = /var/log/syslog
-maxretry = {{ jail.maxretry | default(hardening_fail2ban_ssh_maxretry) }}
-bantime  = {{ jail.bantime | default(hardening_fail2ban_ssh_bantime) }}
+maxretry = {{ jail.maxretry | default(fail2ban_ssh_maxretry) }}
+bantime  = {{ jail.bantime | default(fail2ban_ssh_bantime) }}
 
 {% endfor %}

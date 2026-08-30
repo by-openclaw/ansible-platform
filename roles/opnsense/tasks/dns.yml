@@ -23,6 +23,7 @@
   register: opnsense_unbound_forwards
   delegate_to: localhost
   become: false
+  check_mode: false  # read-only GET; must run under --check so .json is populated
   tags: [dns, unbound]
 
 # NOTE: forwards + DoT share the same model — the body is wrapped in `dot` with a
@@ -52,7 +53,7 @@
   loop_control:
     label: "{{ item }}:{{ opnsense_unbound_dnscrypt_port }}"
   when: >-
-    opnsense_unbound_forwards.json.rows
+    (opnsense_unbound_forwards.json | default({})).rows | default([])
     | selectattr('server', 'equalto', item)
     | selectattr('port', 'equalto', opnsense_unbound_dnscrypt_port | string)
     | list | length == 0
@@ -75,6 +76,7 @@
   register: opnsense_unbound_dots
   delegate_to: localhost
   become: false
+  check_mode: false  # read-only GET; must run under --check so .json is populated
   tags: [dns, unbound]
 
 - name: DNS | Remove DoT entries (unbound must not do TLS in the dnscrypt chain)
@@ -88,7 +90,7 @@
     body_format: json
     body: {}
     status_code: [200, 400, 404]
-  loop: "{{ opnsense_unbound_dots.json.rows | default([]) }}"
+  loop: "{{ (opnsense_unbound_dots.json | default({})).rows | default([]) }}"
   loop_control:
     label: "DoT {{ item.server }}:{{ item.port }}"
   register: opnsense_unbound_dot_removed

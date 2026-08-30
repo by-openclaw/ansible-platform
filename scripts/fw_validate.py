@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import ipaddress
 import json
 import sys
 from pathlib import Path
@@ -31,13 +30,15 @@ from typing import Any
 
 import yaml
 
+from deployment_vars import render_deployment_tokens
+
 from opnsense.client import OpnsenseClient
 
 VLANS = ["mgmt", "dmz", "svc", "vpn", "iot", "voip", "storage", "media", "gaming", "cctv"]
 
 
 def load_expected(catalog_path: Path) -> dict[str, dict[str, str]]:
-    cat = yaml.safe_load(catalog_path.read_text())
+    cat = yaml.safe_load(render_deployment_tokens(catalog_path))
     aliases = cat.get("opn_aliases", []) or cat.get("opn_alias", [])
     iface_map = cat.get("opn_interface_map", {})
     expected: dict[str, dict[str, str]] = {v: {} for v in VLANS}

@@ -1,0 +1,210 @@
+---
+- name: "SeaweedFS | Install prerequisites"
+  ansible.builtin.apt:
+    name: [curl, tar, ca-certificates]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "SeaweedFS | Create system group"
+  ansible.builtin.group:
+    name: "{{ seaweedfs_group }}"
+    system: true
+
+- name: "SeaweedFS | Create system user"
+  ansible.builtin.user:
+    name: "{{ seaweedfs_user }}"
+    group: "{{ seaweedfs_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false
+
+- name: "SeaweedFS | Own the data dir (persistent ZFS bind-mount)"
+  ansible.builtin.file:
+    path: "{{ seaweedfs_data_dir }}"
+    state: directory
+    owner: "{{ seaweedfs_user }}"
+    group: "{{ seaweedfs_group }}"
+    mode: "0750"
+
+- name: "SeaweedFS | Ensure config dir"
+  ansible.builtin.file:
+    path: "{{ seaweedfs_config_dir }}"
+    state: directory
+    owner: root
+    group: "{{ seaweedfs_group }}"
+    mode: "0750"
+
+- name: "SeaweedFS | Detect installed weed version"
+  ansible.builtin.command: "{{ seaweedfs_bin }} version"
+  register: seaweedfs_version_check
+  changed_when: false
+  failed_when: false
+
+- name: "SeaweedFS | Download + install weed (pinned) when absent/mismatched"
+  when: seaweedfs_version_check.rc != 0 or seaweedfs_version not in seaweedfs_version_check.stdout
+  block:
+    - name: "SeaweedFS | Download release tarball"
+      ansible.builtin.get_url:
+        url: "{{ seaweedfs_url }}"
+        dest: "/tmp/seaweedfs_{{ seaweedfs_version }}.tar.gz"
+        mode: "0644"
+
+    - name: "SeaweedFS | Extract weed binary"
+      ansible.builtin.unarchive:
+        src: "/tmp/seaweedfs_{{ seaweedfs_version }}.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [weed]
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart seaweedfs
+
+- name: "SeaweedFS | Load S3 identity credentials"
+  ansible.builtin.set_fact:
+    seaweedfs_creds: "{{ (lookup('file', seaweedfs_secret_dir + '/' + seaweedfs_secret_file) | from_json).fields }}"
+  no_log: true
+
+- name: "SeaweedFS | Render S3 identities config"
+  ansible.builtin.template:
+    src: s3.json.j2
+    dest: "{{ seaweedfs_config_dir }}/s3.json"
+    owner: root
+    group: "{{ seaweedfs_group }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart seaweedfs
+
+- name: "SeaweedFS | Render systemd unit"
+  ansible.builtin.template:
+    src: seaweedfs.service.j2
+    dest: /etc/systemd/system/seaweedfs.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart seaweedfs
+
+- name: "SeaweedFS | Enable + start service"
+  ansible.builtin.systemd_service:
+    name: seaweedfs
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: "SeaweedFS | Apply any pending restart now"
+  ansible.builtin.meta: flush_handlers
+
+- name: "SeaweedFS | Wait for the S3 gateway to answer"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ seaweedfs_s3_port }}/"
+    status_code: [200, 403]
+  register: seaweedfs_s3_ready
+  until: seaweedfs_s3_ready.status in [200, 403]
+  retries: 20
+  delay: 3
+
+
+- name: "SeaweedFS | Publish the S3 API via Traefik (internal-only)"
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: seaweedfs-s3
+    traefik_route_fqdn: "{{ seaweedfs_fqdn }}"
+    traefik_route_backend_url: "http://{{ seaweedfs_ip }}:{{ seaweedfs_s3_port }}"
+    traefik_route_internal_only: true
+  tags: [seaweedfs, route]
+
+# --- weed admin dashboard (Authentik-gated via Traefik forwardAuth) -------------
+- name: "SeaweedFS | Admin dashboard"
+  when: seaweedfs_admin_enabled | bool
+  block:
+    - name: "SeaweedFS | Admin data dir"
+      ansible.builtin.file:
+        path: "{{ seaweedfs_admin_data_dir }}"
+        state: directory
+        owner: "{{ seaweedfs_user }}"
+        group: "{{ seaweedfs_group }}"
+        mode: "0750"
+
+    - name: "SeaweedFS | Render admin systemd unit"
+      ansible.builtin.template:
+        src: seaweedfs-admin.service.j2
+        dest: /etc/systemd/system/seaweedfs-admin.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart seaweedfs-admin
+
+    - name: "SeaweedFS | Enable + start admin dashboard"
+      ansible.builtin.systemd_service:
+        name: seaweedfs-admin
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: "SeaweedFS | Apply pending admin restart now"
+      ansible.builtin.meta: flush_handlers
+
+    - name: "SeaweedFS | Wait for the admin dashboard to answer"
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seaweedfs_admin_port }}/"
+        status_code: [200, 302, 401, 403]
+      register: seaweedfs_admin_ready
+      until: seaweedfs_admin_ready.status in [200, 302, 401, 403]
+      retries: 15
+      delay: 3
+
+    - name: "SeaweedFS | Publish the admin UI via Traefik (Authentik SSO + internal)"
+      ansible.builtin.include_role:
+        name: traefik_route
+        apply:
+          tags: [route]
+      vars:
+        traefik_route_name: seaweedfs-admin
+        traefik_route_fqdn: "{{ seaweedfs_admin_fqdn }}"
+        traefik_route_backend_url: "http://{{ seaweedfs_ip }}:{{ seaweedfs_admin_port }}"
+        traefik_route_internal_only: true
+        traefik_route_forward_auth: true
+      tags: [seaweedfs, route]
+
+# --- Tier 3: offsite backup to Contabo (weed filer.backup) -----------------------
+- name: "SeaweedFS | Offsite backup to Contabo"
+  when: seaweedfs_offsite_enabled | bool
+  block:
+    - name: "SeaweedFS | Load offsite (Contabo) credentials"
+      ansible.builtin.set_fact:
+        seaweedfs_offsite: "{{ (lookup('file', seaweedfs_secret_dir + '/' + seaweedfs_offsite_secret_file) | from_json).fields }}"
+      no_log: true
+
+    - name: "SeaweedFS | Render replication.toml (S3 sink)"
+      ansible.builtin.template:
+        src: replication.toml.j2
+        dest: "{{ seaweedfs_config_dir }}/replication.toml"
+        owner: root
+        group: "{{ seaweedfs_group }}"
+        mode: "0640"
+      no_log: true
+      notify: Restart seaweedfs-backup
+
+    - name: "SeaweedFS | Render offsite backup systemd unit"
+      ansible.builtin.template:
+        src: seaweedfs-backup.service.j2
+        dest: /etc/systemd/system/seaweedfs-backup.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart seaweedfs-backup
+
+    - name: "SeaweedFS | Enable + start offsite backup"
+      ansible.builtin.systemd_service:
+        name: seaweedfs-backup
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: "SeaweedFS | Apply pending backup restart now"
+      ansible.builtin.meta: flush_handlers

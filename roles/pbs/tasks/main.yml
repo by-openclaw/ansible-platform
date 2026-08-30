@@ -1,0 +1,49 @@
+---
+# ==============================================================================
+# Role: pbs — Proxmox Backup Server 4 (S3 datastore on SeaweedFS)
+# Runs ON vm-pbs-01. The PVE-side storage wiring + 2nd backup job are a separate
+# play (playbooks/pbs.yml delegates that to the node) so this role stays host-local.
+# ==============================================================================
+
+- name: "PBS | Install proxmox-backup-server"
+  ansible.builtin.import_tasks: install.yml
+  tags: [install]
+
+- name: "PBS | S3-backed datastore (SeaweedFS)"
+  ansible.builtin.import_tasks: datastore.yml
+  tags: [datastore, s3]
+
+- name: "PBS | Stat the Authentik OIDC client secret (controller)"
+  ansible.builtin.stat:
+    path: "{{ pbs_secret_dir | expanduser }}/{{ pbs_oidc_secret_file }}"
+  delegate_to: localhost
+  become: false
+  register: pbs_oidc_stat
+  tags: [oidc, sso]
+
+- name: "PBS | Authentik OIDC SSO (only once the authentik role wrote the secret)"
+  ansible.builtin.import_tasks: oidc.yml
+  when:
+    - pbs_oidc_enabled | bool
+    - pbs_oidc_stat.stat.exists
+  tags: [oidc, sso]
+
+- name: "PBS | Publish the web UI via Traefik (internal / VPN-only)"
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: pbs
+    traefik_route_fqdn: "{{ pbs_fqdn }}"
+    traefik_route_backend_url: "{{ pbs_traefik_backend_url }}"
+    traefik_route_backend_insecure_skip_verify: true   # PBS serves its own self-signed TLS on 8007
+    traefik_route_internal_only: true
+    traefik_route_internal_cidrs:
+      - "10.1.0.0/16"
+      - "100.64.0.0/10"     # NetBird overlay (CGNAT) — VPN peers
+      - "fd01::/16"
+      - "127.0.0.1/32"
+      - "::1/128"
+  when: pbs_traefik_enabled | bool
+  tags: [route]

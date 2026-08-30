@@ -1,0 +1,114 @@
+---
+# Install automated Vault raft snapshots on the vault host. The timer runs with a
+# low-privilege, self-renewing periodic token (snapshot-read only), never root.
+- name: "vault_backup | Load the Vault root token (controller secret)"
+  ansible.builtin.set_fact:
+    vault_root_token: "{{ (lookup('file', (vault_secret_dir | expanduser) + '/' + vault_init_secret) | from_json).fields.root_token }}"
+  no_log: true
+
+- name: "vault_backup | Write the snapshot policy (raft snapshot read only)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "-i"
+      - "-e"
+      - "VAULT_TOKEN={{ vault_root_token }}"
+      - "{{ vault_container_name }}"
+      - vault
+      - policy
+      - write
+      - "{{ vault_backup_policy_name }}"
+      - "-"
+    stdin: |
+      path "sys/storage/raft/snapshot" {
+        capabilities = ["read"]
+      }
+  changed_when: true
+  no_log: true
+
+- name: "vault_backup | Existing snapshot token on the host?"
+  ansible.builtin.stat:
+    path: "{{ vault_backup_token_file }}"
+  register: _tok_stat
+
+- name: "vault_backup | Validate the existing token"
+  ansible.builtin.shell:
+    cmd: >-
+      docker exec -e VAULT_TOKEN="$(cat {{ vault_backup_token_file }})"
+      {{ vault_container_name }} vault token lookup >/dev/null 2>&1 && echo valid || echo invalid
+  register: _tok_valid
+  changed_when: false
+  when: _tok_stat.stat.exists
+  no_log: true
+
+- name: "vault_backup | Create a periodic snapshot token (absent or invalid)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "-e"
+      - "VAULT_TOKEN={{ vault_root_token }}"
+      - "{{ vault_container_name }}"
+      - vault
+      - token
+      - create
+      - "-policy={{ vault_backup_policy_name }}"
+      - "-period={{ vault_backup_token_period }}"
+      - "-orphan"
+      - "-format=json"
+  register: _newtok
+  changed_when: true
+  no_log: true
+  when: (not _tok_stat.stat.exists) or ((_tok_valid.stdout | default('invalid')) == 'invalid')
+
+- name: "vault_backup | Token dir (0700)"
+  ansible.builtin.file:
+    path: "{{ vault_backup_token_file | dirname }}"
+    state: directory
+    mode: "0700"
+
+- name: "vault_backup | Store the snapshot token (0600)"
+  ansible.builtin.copy:
+    dest: "{{ vault_backup_token_file }}"
+    content: "{{ (_newtok.stdout | from_json).auth.client_token }}"
+    mode: "0600"
+  when: _newtok is defined and (_newtok is not skipped)
+  no_log: true
+
+- name: "vault_backup | Snapshot dir (0700)"
+  ansible.builtin.file:
+    path: "{{ vault_backup_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: "vault_backup | Install the snapshot script"
+  ansible.builtin.template:
+    src: vault-snapshot.sh.j2
+    dest: /usr/local/bin/vault-snapshot.sh
+    mode: "0755"
+
+- name: "vault_backup | Install the systemd units"
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - vault-snapshot.service
+    - vault-snapshot.timer
+
+- name: "vault_backup | Enable + start the daily timer"
+  ansible.builtin.systemd:
+    name: vault-snapshot.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: "vault_backup | Take an initial snapshot now (verify the chain works)"
+  ansible.builtin.command: /usr/local/bin/vault-snapshot.sh
+  register: _firstsnap
+  changed_when: true
+
+- name: "vault_backup | Initial snapshot result"
+  ansible.builtin.debug:
+    msg: "{{ _firstsnap.stdout }}"

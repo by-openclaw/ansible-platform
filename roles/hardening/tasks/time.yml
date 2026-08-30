@@ -1,0 +1,37 @@
+---
+- name: "Time | Install chrony"
+  ansible.builtin.apt:
+    name: chrony
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Time | Disable the distro default NTP pool (FW-only NTP)"
+  # The FW (OPNsense chrony) serves NTP on every VLAN gateway and the catalog
+  # BLOCKS internal->non-FW :123, so the public Debian pool is both unwanted and
+  # unreachable. Neutralise it so chrony uses ONLY the FW gateway below.
+  ansible.builtin.replace:
+    path: /etc/chrony/chrony.conf
+    regexp: '^(pool\s+.*)$'
+    replace: '# \1  # disabled by hardening — FW-only NTP'
+  notify: Restart chrony
+
+- name: "Time | Configure NTP servers (the FW gateway)"
+  ansible.builtin.copy:
+    dest: /etc/chrony/conf.d/10-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (role: hardening)
+      {% for s in hardening_ntp_servers %}
+      server {{ s }} iburst
+      {% endfor %}
+  notify: Restart chrony
+
+- name: "Time | Ensure chrony enabled + running"
+  ansible.builtin.systemd_service:
+    name: chrony
+    enabled: true
+    state: started
+  when: not ansible_check_mode

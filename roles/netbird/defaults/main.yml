@@ -27,19 +27,15 @@
 # ==============================================================================
 
 # --- Pinned images (never :latest) ----------------------------------------------
-# NetBird ships its compose with EMPTY tags, which resolve to :latest for every
-# component — upstream publishes no pinned matrix. These are the current release
-# of each component, recorded here so a redeploy is reproducible.
-# Current release, paired with management 0.77.0.
-netbird_dashboard_image: "netbirdio/dashboard:v2.91.1"
-netbird_management_image: "netbirdio/management:0.77.0"
-netbird_signal_image: "netbirdio/signal:0.77.0"
-netbird_relay_image: "netbirdio/relay:0.77.0"
+netbird_dashboard_image: "netbirdio/dashboard:v2.39.0"
+netbird_management_image: "netbirdio/management:0.72.3"
+netbird_signal_image: "netbirdio/signal:0.72.3"
+netbird_relay_image: "netbirdio/relay:0.72.3"
 netbird_coturn_image: "coturn/coturn:4.6.2"
 
 # --- Identity / addressing ------------------------------------------------------
-# Public name = vpn.by-research.be (CNAME -> apex/Telenet; see cloudflare_dns role).
-netbird_fqdn: "vpn.by-research.be"
+# Public name = vpn.{{ platform_domain }} (CNAME -> apex/Telenet; see cloudflare_dns role).
+netbird_fqdn: "vpn.{{ platform_domain }}"
 netbird_listen_ip: "10.1.3.181"                # SVC IP the containers publish on
 netbird_public_port: 443                        # TLS terminated by our Traefik
 netbird_http_protocol: "https"
@@ -58,17 +54,17 @@ netbird_stun_port: 3478                          # coturn STUN/TURN (host networ
 # These two secret files already exist (the Authentik side is provisioned):
 #   app-oidc-netbird.json     -> fields.client_id / client_secret (public client)
 #   netbird-authentik-sa.json -> fields.username (NetBird) / password (app token)
-netbird_oidc_secret_file: "app-oidc-netbird.json"
+netbird_oidc_secret_file: "fabric/app-oidc-netbird.json"
 netbird_authentik_sa_file: "netbird-authentik-sa.json"
 netbird_oidc_app_slug: "netbird"
-netbird_oidc_base: "https://authentik.by-research.be/application/o/{{ netbird_oidc_app_slug }}"
+netbird_oidc_base: "https://authentik.{{ platform_domain }}/application/o/{{ netbird_oidc_app_slug }}"
 netbird_oidc_config_endpoint: "{{ netbird_oidc_base }}/.well-known/openid-configuration"
 
 # Scopes — exactly as the goauthentik.io doc prescribes.
 netbird_auth_supported_scopes: "openid profile email offline_access entitlements goauthentik.io/api"
 netbird_device_auth_scope: "openid"              # doc default (device flow)
 # Dashboard redirect paths (doc: /auth + /silent-auth). Covered by the Authentik
-# provider redirect regex https://vpn.by-research.be/.*
+# provider redirect regex https://vpn.{{ platform_domain }}/.*
 netbird_auth_redirect_uri: "/auth"
 netbird_auth_silent_redirect_uri: "/silent-auth"
 netbird_pkce_redirect_url: "http://localhost:53000"   # CLI/device PKCE loopback
@@ -81,26 +77,13 @@ netbird_mgmt_idp: "authentik"
 netbird_idp_extra_username: "NetBird"            # = service account username
 
 # --- Management server knobs ----------------------------------------------------
-# single-account mode: every @by-research.be user joins ONE NetBird org (prevents
+# single-account mode: every @{{ platform_domain }} user joins ONE NetBird org (prevents
 # the per-user tenant forking the bundled-IdP model produced).
-netbird_single_account_mode_domain: "by-research.be"
+netbird_single_account_mode_domain: "{{ platform_domain }}"
 netbird_mgmt_dns_domain: "netbird.selfhosted"
 netbird_disable_anonymous_metrics: true
 netbird_disable_default_policy: false
-# Store engine. services/0004-database-strategy puts every platform service on
-# the centralised PostgreSQL with its own database and scoped user — SQLite in a
-# container volume was outside that contract, and NetBird's own docs call
-# PostgreSQL "recommended for production deployments".
-#
-# NOTE: NetBird ships NO sqlite->postgres migration (the binary only offers
-# `sqlite-migration`, which is JSON->SQLite). Switching engines therefore starts
-# from an EMPTY store: peers must re-enrol. The SQLite store is left in place in
-# the netbird-mgmt volume so the change is reversible.
-netbird_store_engine: "postgres"
-
-# Credentials come from the same secret-file pattern every other service uses;
-# the `netbird` database and its scoped user already exist.
-netbird_pg_secret_file: "db-pgsql-netbird.json"
+netbird_store_engine: "sqlite"
 
 # --- TURN -----------------------------------------------------------------------
 netbird_turn_domain: "{{ netbird_fqdn }}"
@@ -123,7 +106,7 @@ netbird_signal_volume: "netbird-signal"
 
 # --- Controller secret store ----------------------------------------------------
 netbird_secret_dir: "~/.openclaw/workspace/infra/secrets"
-netbird_core_secret_file: "netbird-core.json"    # datastore_enc_key / relay_auth_secret / turn_password
+netbird_core_secret_file: "fabric/netbird-core.json"    # datastore_enc_key / relay_auth_secret / turn_password
 # NetBird automation token. The role uses a DEDICATED service user (never a human's
 # PAT) for all API automation (routing peer + tiers). Bootstrap (one-time): NetBird
 # has no token-bootstrap, so the first token must come from a human owner — drop it
@@ -132,7 +115,7 @@ netbird_core_secret_file: "netbird-core.json"    # datastore_enc_key / relay_aut
 # revoked. Once the service token exists, the bootstrap PAT is no longer needed.
 netbird_setup_secret_file: "netbird-setup.json"         # bootstrap PAT (human, one-time)
 netbird_automation_user: "netbird-automation"           # dedicated service user (admin)
-netbird_automation_token_file: "netbird-automation.json"  # service-user PAT (role-managed)
+netbird_automation_token_file: "fabric/netbird-automation.json"  # service-user PAT (role-managed)
 netbird_pat_expire_days: 365
 
 # --- coturn toggle (optional optimisation; relay covers hard-NAT regardless) -----
@@ -163,7 +146,7 @@ netbird_vpn_web_routes:
   - { network_id: "web-traefik", network: "10.1.2.110/32" }   # Traefik -> web apps
   - { network_id: "web-dns", network: "10.1.3.101/32" }       # AdGuard -> DNS
 netbird_vpn_full_users:
-  - "adm_yboujraf@by-research.be"                 # admin -> full internal reach
+  - "adm_yboujraf@{{ platform_domain }}"                 # admin -> full internal reach
 
 # --- Account session policy (NIS2) ----------------------------------------------
 # Force a fresh interactive Authentik login (+TOTP) after this long. NIS2 is
@@ -176,67 +159,3 @@ netbird_peer_login_expiration: 86400             # seconds (24h baseline; tune f
 # "user pending approval cannot add peers". Authentik's netbird-users group is already
 # the access gate, so disable NetBird's redundant user approval → members auto-join.
 netbird_user_approval_required: false
-
-# --- approval notification ------------------------------------------------------
-# NetBird holds a new user's first login for admin approval but notifies nobody,
-# so the user just fails to connect. This mails the admins instead, which is what
-# makes leaving approval ENABLED a safe choice.
-netbird_approval_notify_enabled: true
-netbird_approval_api: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}"
-netbird_approval_dashboard_url: "https://{{ netbird_fqdn }}"
-netbird_approval_interval: "5min"
-netbird_approval_script_path: "/usr/local/bin/netbird-approval-notify"
-netbird_approval_token_path: "/etc/netbird/automation-token.json"
-netbird_approval_state_path: "/var/lib/netbird-approval-notified.json"
-
-# Mail via the same Resend relay the rest of the platform uses.
-netbird_approval_smtp_secret_file: "app-resend-by-research.json"
-netbird_approval_smtp_host: "{{ netbird_resend.smtp_host | default('smtp.resend.com') }}"
-netbird_approval_smtp_port: "{{ netbird_resend.smtp_port | default(465) }}"
-netbird_approval_smtp_user: "{{ netbird_resend.smtp_username | default('resend') }}"
-netbird_approval_smtp_pass: "{{ netbird_resend.smtp_api_key | default('') }}"
-netbird_approval_mail_from: "{{ netbird_resend.from_address | default('') }}"
-netbird_approval_mail_to: "{{ netbird_resend.to_address | default('') }}"
-
-# --- combined architecture -------------------------------------------------------
-# Upstream superseded the multi-container model. The combined server runs
-# management + signal + relay + STUN in one process, and the current dashboard is
-# built against it. Toggle: true = combined, false = legacy five-container.
-netbird_combined_enabled: true
-netbird_server_image: "netbirdio/netbird-server:0.77.0"
-netbird_config_dir: "/opt/netbird"
-netbird_server_port: 33073
-netbird_stun_port: 3478
-netbird_metrics_port: 9090
-netbird_health_port: 9000
-netbird_log_level: "info"
-
-# Local users stay ENABLED: they are the way in before any external IdP is
-# attached, and the break-glass path if Authentik is ever unavailable.
-netbird_local_auth_disabled: false
-
-# Traefik fronts the server; trust it for client IPs and the auth flow.
-# Reuse the relay auth secret already persisted in netbird-core.json rather than
-# minting a second one — the combined server uses it for relay authentication.
-netbird_auth_secret: "{{ netbird_core.relay_auth_secret }}"
-
-# The store encryption key protects sensitive columns at rest.
-netbird_store_encryption_key: "{{ netbird_core.datastore_enc_key }}"
-
-# The embedded-IdP store driver verifies the server cert strictly (libpq only
-# 'prefer's TLS), so sslmode is explicit for all three stores. Postgres presents
-# a cert chaining to the system bundle, which is mounted into the container.
-# Connect by FQDN, never the IP: the Postgres certificate carries a DNS SAN and
-# no IP SAN, so verify-full against 10.1.3.110 fails by definition.
-netbird_pg_host: "lxc-pgsql-01.by-research.be"
-netbird_pg_sslmode: "verify-full"
-netbird_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"
-
-netbird_trusted_proxy_cidr: "10.1.2.0/24"
-netbird_peer_cidr: "100.64.0.0/10"
-
-# --- external identity provider ---------------------------------------------------
-# Authentik attached to the combined server so users sign in with their platform
-# identity rather than a NetBird-local account. The local owner stays as break-glass.
-netbird_external_idp_enabled: true
-netbird_idp_name: "Authentik"

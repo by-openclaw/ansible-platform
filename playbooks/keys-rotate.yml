@@ -1,0 +1,72 @@
+---
+# ==============================================================================
+# SSH key rotation — identity/0004 §2: ED25519 only, passphrase MANDATORY,
+# one key per identity, comment {username}@{domain}, private key + passphrase
+# backed up in Vault (passphrase lives in Vault EXCLUSIVELY — never on disk),
+# `created` metadata stored for the 365-day rotation rule (NIS2 21(2)(j)).
+#
+# Idempotent: a key whose file already exists is left alone (rotation = delete
+# the local pair, re-run). If the Vault write fails after generation, delete
+# the local pair and re-run (the passphrase exists only in that run's memory).
+#
+#   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/keys-rotate.yml
+# ==============================================================================
+- name: "Generate rotated keys (controller)"
+  hosts: localhost
+  gather_facts: true
+  become: false
+  vars:
+    platform_domain_v: "{{ platform_domain | default('by-research.be') }}"
+    rotate_keys:
+      - { name: "svc-ansible-prod", vault_svc: "svc-ansible" }
+      - { name: "svc-rune-prod", vault_svc: "svc-rune" }
+      - { name: "by-research", vault_svc: "break-glass" }
+  tasks:
+    - name: "Keys | Stat existing key files"
+      ansible.builtin.stat:
+        path: "{{ ansible_env.HOME }}/.ssh/id_ed25519_{{ item.name }}"
+      loop: "{{ rotate_keys }}"
+      loop_control: { label: "{{ item.name }}" }
+      register: keys_stat
+
+    - name: "Keys | Generate passphrases (memory only — Vault is the sole store)"
+      ansible.builtin.set_fact:
+        keys_pass: >-
+          {{ (keys_pass | default({})) | combine({item.item.name:
+              lookup('community.general.random_string', length=28, special=false)}) }}
+      loop: "{{ keys_stat.results }}"
+      loop_control: { label: "{{ item.item.name }}" }
+      when: not item.stat.exists
+      no_log: true
+
+    - name: "Keys | Generate the ED25519 pairs (passphrase-protected)"
+      community.crypto.openssh_keypair:
+        path: "{{ ansible_env.HOME }}/.ssh/id_ed25519_{{ item.item.name }}"
+        type: ed25519
+        passphrase: "{{ keys_pass[item.item.name] }}"
+        comment: "{{ item.item.name }}@{{ platform_domain_v }}"
+        mode: "0600"
+      loop: "{{ keys_stat.results }}"
+      loop_control: { label: "{{ item.item.name }}" }
+      when: not item.stat.exists
+      no_log: true
+
+- name: "Store passphrases + key backups in Vault (exclusive store)"
+  hosts: vault
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../roles/vault/defaults/main.yml
+  tasks:
+    - name: "Keys | Load the Vault root token"
+      ansible.builtin.set_fact:
+        vault_root_token: "{{ (lookup('file', (vault_secret_dir | expanduser) + '/' + vault_init_secret) | from_json).fields.root_token }}"
+      no_log: true
+
+    - name: "Keys | Store passphrase + metadata + key backup per rotated key"
+      ansible.builtin.include_tasks: tasks/vault_key_store_one.yml
+      loop: "{{ hostvars['localhost'].keys_stat.results }}"
+      loop_control:
+        loop_var: keyres
+        label: "{{ keyres.item.name }}"
+      when: not keyres.stat.exists

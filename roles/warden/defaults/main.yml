@@ -1,0 +1,27 @@
+---
+# ==============================================================================
+# Role: warden — boot-time platform orchestrator on lxc-warden-01.
+# On every boot a systemd unit runs a LOCAL ansible playbook that:
+#   1. waits for Vault and UNSEALS it (shares held on the warden, 0600 —
+#      moved OFF the controller; unseal via HTTPS API body, never argv);
+#   2. verifies the platform cold-start (DNS, Vault health, Traefik edge);
+#   3. logs the outcome to the journal (Discord notify when a webhook is set).
+# Approved model: single-host platform — the warden is the machine trust point
+# for unseal; the printed kit remains the DR path. See platform-setup
+# tools/vault/runbooks/unseal.md.
+# ==============================================================================
+warden_dir: /etc/warden
+warden_vault_url: "https://lxc-vault-01.{{ platform_domain | default('by-research.be') }}:8200"
+warden_share_file: "{{ warden_dir }}/unseal.json"
+warden_key_threshold: 3
+
+# Shares source (controller-side, used ONCE at deploy to seed the warden):
+warden_controller_init: "~/.openclaw/workspace/infra/secrets/vault-init.json"
+
+# Cold-start verification probes (name + url + expected status list)
+warden_probes:
+  - { name: "traefik-edge (harbor health)", url: "https://harbor.{{ platform_domain | default('by-research.be') }}/api/v2.0/health", status: [200] }
+  - { name: "authentik", url: "https://authentik.{{ platform_domain | default('by-research.be') }}/-/health/live/", status: [200, 204] }
+
+# Optional Discord webhook (empty = journal only)
+warden_discord_webhook: ""

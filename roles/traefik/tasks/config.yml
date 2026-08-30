@@ -3,6 +3,18 @@
 # Role: traefik — static + dynamic configuration
 # ==============================================================================
 
+# --- CrowdSec bouncer: LAPI key file (referenced by crowdsecLapiKeyFile) --------
+- name: "config | Write the CrowdSec LAPI key for the Traefik bouncer"
+  ansible.builtin.copy:
+    content: "{{ (lookup('file', traefik_crowdsec_secret) | from_json).fields.api_key }}\n"
+    dest: "{{ traefik_crowdsec_keyfile }}"
+    owner: "{{ traefik_user | default('root') }}"
+    group: "{{ traefik_group | default('root') }}"
+    mode: "0600"
+  when: traefik_crowdsec_enabled | default(false) | bool
+  no_log: true
+  notify: Restart traefik
+
 - name: "config | Render static config (traefik.yml)"
   ansible.builtin.template:
     src: traefik.yml.j2

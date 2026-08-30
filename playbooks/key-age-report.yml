@@ -1,0 +1,64 @@
+---
+# ==============================================================================
+# SSH key rotation compliance — identity/0004 §2 (365-day rotation, NIS2
+# Art. 21(2)(j) / ISO A.5.17). Reads the `created` metadata stored beside each
+# key's passphrase in Vault: WARN >= 335 days (renewal window), FAIL >= 365.
+# Schedule via cron/CI; also part of the compliance evidence trail.
+#
+#   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/key-age-report.yml
+# ==============================================================================
+- name: "SSH key age report (identity/0004 §2)"
+  hosts: vault
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../roles/vault/defaults/main.yml
+  vars:
+    key_age_services: [svc-ansible, svc-rune, break-glass]
+    key_age_warn_days: 335
+    key_age_max_days: 365
+    approle_secret_file: "{{ (vault_secret_dir | expanduser) }}/fabric/app-vault-ansible-controller.json"
+  tasks:
+    - name: "Keyage | Load the Vault root token (metadata read)"
+      ansible.builtin.set_fact:
+        vault_root_token: "{{ (lookup('file', (vault_secret_dir | expanduser) + '/' + vault_init_secret) | from_json).fields.root_token }}"
+      no_log: true
+
+    - name: "Keyage | Read created stamps"
+      ansible.builtin.command:
+        argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+               "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-field=created",
+               "prod/{{ item }}/ssh-passphrase"]
+      loop: "{{ key_age_services }}"
+      register: key_age_reads
+      changed_when: false
+      failed_when: false
+
+    - name: "Keyage | Compute ages"
+      ansible.builtin.set_fact:
+        key_age_rows: >-
+          {{ (key_age_rows | default([])) + [{
+               'service': item.item,
+               'created': (item.stdout if item.rc == 0 else 'MISSING'),
+               'age_days': (((ansible_date_time.epoch | int) -
+                             ((item.stdout + ' 00:00:00') | to_datetime).strftime('%s') | int) // 86400)
+                            if item.rc == 0 else -1 }] }}
+      loop: "{{ key_age_reads.results }}"
+      loop_control: { label: "{{ item.item }}" }
+
+    - name: "Keyage | Report"
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.service }}: created={{ item.created }} age={{ item.age_days }}d
+          {{ 'ROTATE NOW (>=365)' if item.age_days >= key_age_max_days
+             else ('renewal window (>=335)' if item.age_days >= key_age_warn_days else 'ok') }}
+      loop: "{{ key_age_rows }}"
+      loop_control: { label: "{{ item.service }}" }
+
+    - name: "Keyage | Enforce the 365-day rule"
+      ansible.builtin.assert:
+        that: key_age_rows | selectattr('age_days', 'ge', key_age_max_days | int) | list | length == 0
+        fail_msg: >-
+          Keys past 365 days:
+          {{ key_age_rows | selectattr('age_days', 'ge', key_age_max_days | int)
+             | map(attribute='service') | list }} — rotate via playbooks/keys-rotate.yml
