@@ -1,0 +1,21 @@
+---
+# ==============================================================================
+# Proxmox Backup Server 4 — vm-pbs-01 (SVC 10.1.3.222)
+# SECOND, independent backup copy (SeaweedFS S3 datastore) alongside the existing
+# PVE vzdump -> NFS (Synology) job, which stays enabled.
+#
+#   Dry run: ansible-playbook -i inventories/prod/hosts.yml playbooks/pbs.yml --check --diff
+#   Apply:   ansible-playbook -i inventories/prod/hosts.yml playbooks/pbs.yml
+#   Subsets: --tags install | datastore | oidc | route
+#
+# Order of operations across the platform:
+#   1) authentik role (creates the pbs provider + writes fabric/app-oidc-pbs.json)
+#   2) this playbook (install PBS, S3 datastore, OIDC realm, Traefik edge)
+#   3) the PVE-storage play (playbooks/pbs-pve-storage.yml) — pvesm add + 2nd job
+# ==============================================================================
+- name: Configure Proxmox Backup Server (vm-pbs-01)
+  hosts: pbs
+  become: true
+  gather_facts: true
+  roles:
+    - role: pbs

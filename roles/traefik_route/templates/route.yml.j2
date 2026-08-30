@@ -1,15 +1,20 @@
 {# Managed by Ansible role `traefik_route`. Do not edit by hand.
    internal_only=true  -> ipAllowList (LAN + VPN).
    internal_only=false -> public: per-client rateLimit (brute-force throttle).
-   FW CrowdSec/Suricata + the app login + host fail2ban are the other layers;
-   a Traefik CrowdSec bouncer (HTTP-layer bans) is the next hardening add. #}
+   forward_auth=true    -> add the global Authentik `authentik` forwardAuth middleware
+                           + a per-host outpost sub-router (login callback/assets).
+   The `authentik` middleware and `authentik-outpost` service are defined globally in
+   the traefik role's dynamic.yml.j2 (file provider) — referenced here by name. #}
 {% if traefik_route_internal_only | bool %}
-{%   set _mw = traefik_route_name ~ '-internal' %}
+{%   set _net_mw = traefik_route_name ~ '-internal' %}
 {% elif traefik_route_public_hardening | bool %}
-{%   set _mw = traefik_route_name ~ '-ratelimit' %}
+{%   set _net_mw = traefik_route_name ~ '-ratelimit' %}
 {% else %}
-{%   set _mw = '' %}
+{%   set _net_mw = '' %}
 {% endif %}
+{% set _mws = [] %}
+{% if _net_mw %}{% set _ = _mws.append(_net_mw) %}{% endif %}
+{% if traefik_route_forward_auth | bool %}{% set _ = _mws.append('authentik') %}{% endif %}
 http:
   routers:
     {{ traefik_route_name }}:
@@ -17,18 +22,45 @@ http:
       entryPoints:
         - websecure
       service: {{ traefik_route_name }}
-{% if _mw %}
+{% if _mws %}
       middlewares:
-        - {{ _mw }}
+{% for m in _mws %}
+        - {{ m }}
+{% endfor %}
 {% endif %}
       tls: {}
+{% if traefik_route_forward_auth | bool %}
+
+    # Authentik outpost endpoints on this host (login callback + assets). MUST NOT
+    # carry the `authentik` middleware (it IS the auth flow) — only the network gate.
+    {{ traefik_route_name }}-outpost:
+      rule: "Host(`{{ traefik_route_fqdn }}`) && PathPrefix(`/outpost.goauthentik.io/`)"
+      priority: 100
+      entryPoints:
+        - websecure
+      service: authentik-outpost
+{% if _net_mw %}
+      middlewares:
+        - {{ _net_mw }}
+{% endif %}
+      tls: {}
+{% endif %}
 
   services:
     {{ traefik_route_name }}:
       loadBalancer:
         servers:
           - url: "{{ traefik_route_backend_url }}"
-{% if _mw %}
+{% if traefik_route_backend_insecure_skip_verify | bool %}
+        serversTransport: {{ traefik_route_name }}-transport
+{% endif %}
+{% if traefik_route_backend_insecure_skip_verify | bool %}
+
+  serversTransports:
+    {{ traefik_route_name }}-transport:
+      insecureSkipVerify: true
+{% endif %}
+{% if _net_mw %}
 
   middlewares:
 {% if traefik_route_internal_only | bool %}

@@ -1,0 +1,26 @@
+---
+# ==============================================================================
+# Role: seaweedfs_bucket — provision an S3 bucket + a scoped access key for ONE
+# consuming service (the S3 analogue of `postgres_db`). Call it from a service's
+# OWN playbook at install time so the service's storage exists before it starts:
+#
+#   - include_role: { name: seaweedfs_bucket }
+#     vars:
+#       seaweedfs_bucket_identity: gitlab
+#       seaweedfs_bucket_names: [gitlab-artifacts, gitlab-lfs, gitlab-registry, gitlab-backups]
+#       seaweedfs_bucket_secret_file: fabric/infra-seaweedfs-gitlab.json
+#
+# Creates the buckets + a dedicated S3 identity whose access is SCOPED to exactly
+# those buckets (Read/Write/List/Tagging), via `weed shell` (dynamic, no restart).
+# The generated access/secret key is persisted to the consumer's own secret file.
+# ==============================================================================
+seaweedfs_bucket_host: "lxc-seaweedfs-01"      # host running weed (delegate target)
+seaweedfs_bucket_master: "localhost:9333"
+seaweedfs_bucket_bin: "/usr/local/bin/weed"
+
+seaweedfs_bucket_identity: ""                   # REQUIRED — the S3 user name
+seaweedfs_bucket_names: []                      # REQUIRED — bucket(s) for this identity
+seaweedfs_bucket_actions: ["Read", "Write", "List", "Tagging"]
+
+seaweedfs_bucket_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
+seaweedfs_bucket_secret_file: ""               # REQUIRED — e.g. fabric/infra-seaweedfs-<svc>.json

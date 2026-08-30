@@ -1,0 +1,42 @@
+---
+# ==============================================================================
+# Vault DR backup: install the daily raft-snapshot timer on the vault host and
+# pull the newest snapshot to the controller store for an immediate off-host copy.
+# On-host snapshots also ride the node's vzdump jobs → Synology (NFS) + SeaweedFS
+# (S3). Restore: see roles/vault_backup/README.md (or playbooks/vault-restore.yml).
+#
+#   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/vault-backup.yml
+# ==============================================================================
+- name: "Vault raft-snapshot backups"
+  hosts: vault
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../roles/vault/defaults/main.yml     # vault_container_name, vault_secret_dir, vault_init_secret
+  roles:
+    - vault_backup
+  post_tasks:
+    - name: "vault_backup | Find snapshots on the host"
+      ansible.builtin.find:
+        paths: "{{ vault_backup_dir }}"
+        patterns: "vault-*.snap"
+      register: _snaps
+      when: vault_backup_pull_to_controller | bool
+
+    - name: "vault_backup | Ensure the controller backup dir exists"
+      ansible.builtin.file:
+        path: "{{ vault_backup_controller_dir }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+      when: vault_backup_pull_to_controller | bool
+
+    - name: "vault_backup | Pull the newest snapshot to the controller (off-host copy)"
+      ansible.builtin.fetch:
+        src: "{{ (_snaps.files | sort(attribute='mtime') | last).path }}"
+        dest: "{{ vault_backup_controller_dir }}/"
+        flat: true
+      when:
+        - vault_backup_pull_to_controller | bool
+        - _snaps.files | default([]) | length > 0

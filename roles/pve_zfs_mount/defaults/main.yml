@@ -1,0 +1,16 @@
+---
+# ==============================================================================
+# Role: pve_zfs_mount — persistent ZFS dataset + LXC bind-mount (runs on the PVE
+# host). Decouples DATA lifecycle from the container: `terraform destroy` of the
+# LXC leaves the dataset intact (Proxmox only deletes its own subvol-<vmid>
+# volumes, never bind-mount targets). Reusable for any svc needing durable data.
+#
+# Each entry:
+#   dataset     ZFS dataset path, e.g. "tank/data/seaweedfs"
+#   quota       ZFS quota, e.g. "250G"
+#   vmid        target LXC id
+#   mp_index    mount-point index (0 -> mp0, ...)
+#   mount_path  path inside the container, e.g. "/data"
+#   uid/gid     owner on the host (unprivileged CT: container root = host 100000)
+# ==============================================================================
+pve_zfs_mount_items: []

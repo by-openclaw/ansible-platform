@@ -19,6 +19,10 @@ entryPoints:
       # HSTS on every HTTPS response (middleware defined in the file provider).
       middlewares:
         - hsts@file
+{% if traefik_crowdsec_enabled | default(false) %}
+        # CrowdSec L7 bouncer — blocks IPs with an active decision before any app.
+        - crowdsec@file
+{% endif %}
     # Long-lived gRPC + WebSocket streams (NetBird management/signal/relay) require
     # the responding timeouts disabled — mirrors the official NetBird reverse-proxy
     # guide (readTimeout/writeTimeout/idleTimeout = 0). Harmless for the other apps.
@@ -42,3 +46,13 @@ log:
 
 accessLog:
   filePath: {{ traefik_log_dir }}/access.log
+
+{% if traefik_crowdsec_enabled | default(false) %}
+# CrowdSec bouncer plugin — downloaded from GitHub at startup (Yaegi). The
+# middleware itself is defined in the file provider (dynamic.yml).
+experimental:
+  plugins:
+    bouncer:
+      moduleName: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+      version: {{ traefik_crowdsec_plugin_version }}
+{% endif %}

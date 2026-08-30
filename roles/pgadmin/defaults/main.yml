@@ -6,7 +6,7 @@
 # ==============================================================================
 pgadmin_image: "dpage/pgadmin4:9.15"   # pinned (never :latest)
 
-pgadmin_fqdn: "pgadmin.by-research.be"
+pgadmin_fqdn: "pgadmin.{{ platform_domain }}"
 
 # Bind the container to the SVC IP so Traefik (on the DMZ host) can reach it.
 pgadmin_listen_ip: "10.1.3.140"
@@ -15,9 +15,9 @@ pgadmin_container_port: 80
 pgadmin_traefik_backend: "http://{{ pgadmin_listen_ip }}:{{ pgadmin_host_port }}"
 
 # Initial admin login (password generated once + stored in the controller store).
-pgadmin_default_email: "admin@by-research.be"
+pgadmin_default_email: "admin@{{ platform_domain }}"
 pgadmin_secret_dir: "~/.openclaw/workspace/infra/secrets"
-pgadmin_secret_file: "pgadmin-admin.json"
+pgadmin_secret_file: "fabric/pgadmin-admin.json"
 
 # Persistent data (server list, prefs) across container re-creation.
 pgadmin_data_volume: "pgadmin-data"
@@ -25,8 +25,8 @@ pgadmin_data_volume: "pgadmin-data"
 # --- Authentik OIDC SSO (optional) ---------------------------------------------
 # Wired only when the OIDC client secret file exists (created by the SSO phase).
 # The Authentik app/provider is declared in the authentik role (authentik_oidc_apps).
-pgadmin_oidc_secret_file: "app-oidc-pgadmin.json"
-pgadmin_authentik_base: "https://authentik.by-research.be"
+pgadmin_oidc_secret_file: "fabric/app-oidc-pgadmin.json"
+pgadmin_authentik_base: "https://authentik.{{ platform_domain }}"
 pgadmin_oidc_app_slug: "pgadmin"
 pgadmin_oidc_display_name: "BY-RESEARCH SSO"
 # Only members of this Authentik group may log into pgAdmin (group-based access).
@@ -37,7 +37,7 @@ pgadmin_oidc_access_group: "pgadmin-admins"
 # Password is NOT stored — entered on connect (sourced from Vault later).
 pgadmin_register_pg_server: true
 pgadmin_pg_server_name: "BY-RESEARCH PostgreSQL"
-pgadmin_pg_host: "lxc-pgsql-01.by-research.be"   # FQDN so verify-full matches the cert
+pgadmin_pg_host: "lxc-pgsql-01.{{ platform_domain }}"   # FQDN so verify-full matches the cert
 pgadmin_pg_port: 5432
 pgadmin_pg_maintenance_db: "postgres"
 pgadmin_pg_username: "postgres"                   # superuser → sees all service DBs
@@ -46,6 +46,16 @@ pgadmin_pg_username: "postgres"                   # superuser → sees all servi
 pgadmin_pg_shared_username: "postgres"
 pgadmin_pg_sslmode: "verify-full"
 pgadmin_servers_host_path: "/etc/pgadmin/servers.json"
+# The shared server connects WITHOUT prompting for the postgres password: pgAdmin
+# runs a "password exec command" at connect time that cats a file in the (persistent)
+# data volume. That file is populated at deploy from the superuser secret — so the
+# password is never baked into servers.json and is re-asserted after any container
+# recreate (which is what made the old live-only fix regress on restart).
+# Source of truth for the superuser password (fabric secret; Vault migration = TODO,
+# tracked platform-wide for ALL db-pgsql-*.json, not just pgAdmin).
+pgadmin_pg_superuser_secret_file: "fabric/db-pgsql-superuser.json"  # pragma: allowlist secret
+pgadmin_pg_passfile_container: "/var/lib/pgadmin/.pgpass-pg"   # in the persistent volume
+pgadmin_pg_passexec_cmd: "/bin/cat {{ pgadmin_pg_passfile_container }}"
 # libpq (used by pgAdmin to reach Postgres) looks for the verify-full CA at
 # ~/.postgresql/root.crt by default. The container HOME is /home/pgadmin; point
 # that path at the system bundle (ISRG Root X1 → trusts the LE server cert).

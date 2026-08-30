@@ -1,36 +1,36 @@
 ---
-# Declarative Cloudflare DNS for the public exposure model (by-research.be).
+# Declarative Cloudflare DNS for the public exposure model ({{ platform_domain }}).
 # Controller-side (community.general.cloudflare_dns). The API token is read at
 # runtime from the workspace secret store (never committed).
 #
 # Anchors:
-#   by-research.be (apex)  = Telenet STATIC dual-stack  -> the DEFAULT anchor
-#   dyn.by-research.be     = Proximus DYNAMIC (os-ddclient; see opnsense role)
+#   {{ platform_domain }} (apex)  = Telenet STATIC dual-stack  -> the DEFAULT anchor
+#   dyn.{{ platform_domain }}     = Proximus DYNAMIC (os-ddclient; see opnsense role)
 # Public services CNAME to the apex by default; Proximus-bound services CNAME to
 # `dyn` (+ outbound PBR). No ISP identity in any public name (ISO 27001 / NIS2).
 #
 # SCOPE / OWNERSHIP: this role is ADDITIVE — it manages only the records listed in
-# `cloudflare_dns_records` and never prunes the zone. The `resend.by-research.be`
+# `cloudflare_dns_records` and never prunes the zone. The `resend.{{ platform_domain }}`
 # subtree (SES bounce MX, send.* SPF, resend._domainkey DKIM) is provisioned and
 # owned by RESEND's own domain-setup flow — it is OUT OF SCOPE here. Do NOT add
 # those names, and never put a `solo`/`absent` entry on a name that overlaps them.
 # This repo owns the apex + mailcow (mail/MX/SPF/DKIM/DMARC) records; Resend owns
 # its subdomain. The two senders are deliberately separate (apex=mailcow,
-# resend.by-research.be=Resend), each with its own SPF/DKIM.
-cloudflare_dns_secret: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/app-cloudflare-by-research-be.json"
-cloudflare_dns_zone: "by-research.be"
+# resend.{{ platform_domain }}=Resend), each with its own SPF/DKIM.
+cloudflare_dns_secret: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/shared/app-cloudflare-by-research-be.json"
+cloudflare_dns_zone: "{{ platform_domain }}"
 
 # Telenet static WAN IPs (public; mirror catalog host4/6_wan_pub). Could move to
 # vault (vault_telenet_ipv4/ipv6) — kept inline to match the existing catalog.
 cloudflare_dns_apex_v4: "213.214.47.222"
 cloudflare_dns_apex_v6: "2a02:1802:21::5"
 
-# mailcow mail TXT payloads for by-research.be. Public DNS data, not secrets. DKIM is
-# sourced from mailcow `GET /api/v1/get/dkim/by-research.be` → `dkim_txt` (update here
+# mailcow mail TXT payloads for {{ platform_domain }}. Public DNS data, not secrets. DKIM is
+# sourced from mailcow `GET /api/v1/get/dkim/{{ platform_domain }}` → `dkim_txt` (update here
 # only on key rotation). SPF/DMARC are STRICT (-all / p=reject) with postmaster reports.
 # yamllint disable rule:line-length
 cloudflare_dns_mailcow_dkim: "v=DKIM1;k=rsa;t=s;s=email;p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA+bL/qEZ9Jzzt5c4bIU0te7tonnrkuyvnl5XayKNoF6pxhqzLbLD/Muc3CXE7W//24zF0D0T+79JXrKrK3x506hL6oFxWauPRyGmRa31uCJHGvUAOExrakuAJpipQy+ODJmNNQ7fBq6Ha/wU5fx/LklJctEp3u61xvOnvHN1LiTdjPKzZwEJoNZ0JcJlFOSIKiofl9VaFOMj5o2kbKXODaYX2w6q1Rp6o2M1ZeE5a0vC+sOXAQJjtLDtPabvgtnuvtFDb3n1yDj2UXDeMpZIzBoTIyNuJe60ynPqPzaSE9IlhtRe2CX3RVSWAbzPjHNeHtG8Z3Nupndc5X1sj1qKspwIDAQAB"
-cloudflare_dns_mailcow_dmarc: "v=DMARC1; p=reject; rua=mailto:postmaster@by-research.be; ruf=mailto:postmaster@by-research.be; adkim=s; aspf=s; fo=1"
+cloudflare_dns_mailcow_dmarc: "v=DMARC1; p=reject; rua=mailto:postmaster@{{ platform_domain }}; ruf=mailto:postmaster@{{ platform_domain }}; adkim=s; aspf=s; fo=1"
 # yamllint enable rule:line-length
 
 cloudflare_dns_records:
@@ -41,24 +41,24 @@ cloudflare_dns_records:
   # --- vpn: convert from Telenet direct A/AAAA to CNAME -> apex (delete first) ---
   - {record: "vpn", type: A, state: absent}
   - {record: "vpn", type: AAAA, state: absent}
-  - {record: "vpn", type: CNAME, value: "by-research.be", state: present, solo: true}
+  - {record: "vpn", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}
 
   # --- public services -> Telenet apex (dual-stack inherited via CNAME) ---
-  - {record: "nextcloud", type: CNAME, value: "by-research.be", state: present, solo: true}
-  - {record: "vaultwarden", type: CNAME, value: "by-research.be", state: present, solo: true}
-  - {record: "authentik", type: CNAME, value: "by-research.be", state: present, solo: true}
+  - {record: "nextcloud", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}
+  - {record: "vaultwarden", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}
+  - {record: "authentik", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}
 
   # --- admin tool: remove public record (VPN-only via internal split-DNS) ---
   - {record: "traefik", type: A, state: absent}
   - {record: "traefik", type: AAAA, state: absent}
 
-  # --- mailcow mail (by-research.be PUBLIC mail; egress + ingress via Telenet) ---
+  # --- mailcow mail ({{ platform_domain }} PUBLIC mail; egress + ingress via Telenet) ---
   # mail host: DIRECT A/AAAA (an MX target must not be a CNAME — RFC 2181). Same
   # Telenet apex IPs that front the web UI (Traefik :443) and the SMTP/IMAP DNATs.
   - {record: "mail", type: A, value: "{{ cloudflare_dns_apex_v4 }}", state: present, solo: true}
   - {record: "mail", type: AAAA, value: "{{ cloudflare_dns_apex_v6 }}", state: present, solo: true}
   # receive mail → the mail host (single MX)
-  - {record: "@", type: MX, value: "mail.by-research.be", priority: 10, state: present, solo: true}
+  - {record: "@", type: MX, value: "mail.{{ platform_domain }}", priority: 10, state: present, solo: true}
   # SPF — STRICT (-all hard-fail). `mx` authorises the MX host's A+AAAA (dual-stack,
   # Telenet) — exactly one SPF record is allowed (RFC 7208), so remove the older
   # IPv4-only SPF that pre-dated this and would otherwise cause a permerror.
@@ -69,5 +69,5 @@ cloudflare_dns_records:
   # DMARC — STRICT alignment (adkim/aspf=s), p=reject; reports → postmaster.
   - {record: "_dmarc", type: TXT, value: "{{ cloudflare_dns_mailcow_dmarc }}", state: present, solo: true}
   # client autoconfiguration: Outlook (autodiscover) + Thunderbird (autoconfig)
-  - {record: "autodiscover", type: CNAME, value: "mail.by-research.be", state: present, solo: true}
-  - {record: "autoconfig", type: CNAME, value: "mail.by-research.be", state: present, solo: true}
+  - {record: "autodiscover", type: CNAME, value: "mail.{{ platform_domain }}", state: present, solo: true}
+  - {record: "autoconfig", type: CNAME, value: "mail.{{ platform_domain }}", state: present, solo: true}

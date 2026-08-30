@@ -1,0 +1,70 @@
+---
+# Deploy the hardened sshd_config (identity/0004 §5). Guard rails:
+#  * ASSERT the accounts/groups from user-mgmt exist BEFORE locking root out;
+#  * validate with sshd -t before restart;
+#  * verify the new port ON-HOST (SVC-net guests are not directly reachable
+#    from the controller — the FW ProxyJump only carries the current session).
+- name: "Sshd | Assert user-mgmt ran (AllowGroups members exist — lockout guard)"
+  ansible.builtin.command: "getent group {{ item }}"
+  loop: "{{ sshd_hardening_allow_groups + [sshd_hardening_break_glass_group] }}"
+  changed_when: false
+  register: sshd_hardening_groups_check
+
+- name: "Sshd | Ensure openssh-server is installed"
+  ansible.builtin.package:
+    name: openssh-server
+    state: present
+
+# Debian 13 templates ship systemd socket activation: ssh.socket pins port 22
+# and IGNORES sshd_config's Port — the service must own the listener.
+- name: "Sshd | Disable ssh.socket activation (it pins port 22)"
+  ansible.builtin.systemd_service:
+    name: ssh.socket
+    enabled: false
+    state: stopped
+  register: sshd_socket_off
+  failed_when:
+    - sshd_socket_off is failed
+    - "'Could not find' not in (sshd_socket_off.msg | default(''))"
+  notify: Validate and restart sshd
+
+- name: "Sshd | Ensure ssh.service is enabled"
+  ansible.builtin.systemd_service:
+    name: ssh.service
+    enabled: true
+
+- name: "Sshd | Remove conflicting sshd_config.d fragments (re-open port 22)"
+  ansible.builtin.find:
+    paths: /etc/ssh/sshd_config.d/
+    patterns: "*.conf"
+  register: sshd_hardening_fragments
+  failed_when: false
+
+- name: "Sshd | Delete the fragments"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ sshd_hardening_fragments.files | default([]) }}"
+  loop_control: { label: "{{ item.path }}" }
+  notify: Validate and restart sshd
+
+- name: "Sshd | Deploy hardened sshd_config"
+  ansible.builtin.template:
+    src: sshd_config.j2
+    dest: /etc/ssh/sshd_config
+    owner: root
+    group: root
+    mode: "0600"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Validate and restart sshd
+
+- name: "Sshd | Flush handlers (restart now, verify below)"
+  ansible.builtin.meta: flush_handlers
+
+- name: "Sshd | Verify the hardened port answers (on-host)"
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ sshd_hardening_port }}"
+    timeout: 30
+    state: started
+  when: not ansible_check_mode

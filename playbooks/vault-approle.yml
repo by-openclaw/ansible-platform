@@ -1,0 +1,95 @@
+---
+# ==============================================================================
+# One-time bootstrap: a minimal AppRole for the Ansible controller — the first
+# R-29 closure step (no more root token for runtime reads). Scope: READ-ONLY on
+# the svc SSH passphrases (naming/0002 §5.1 "ssh-agent populated via Vault").
+# The role_id+secret_id land in a 0600 controller file — compromise of the
+# controller then yields exactly two passphrase paths, not root.
+#
+#   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/vault-approle.yml
+# ==============================================================================
+- name: "Vault AppRole bootstrap (ansible-controller)"
+  hosts: vault
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../roles/vault/defaults/main.yml
+  vars:
+    approle_name: ansible-controller
+    approle_secret_file: "{{ (vault_secret_dir | expanduser) }}/fabric/app-vault-ansible-controller.json"
+    approle_policy: |
+      # read-only: svc SSH passphrases for the controller's ssh-agent
+      path "secret/data/prod/svc-ansible/ssh-passphrase" { capabilities = ["read"] }
+      path "secret/data/prod/svc-rune/ssh-passphrase"    { capabilities = ["read"] }
+  tasks:
+    - name: "Approle | Stat the credential file (idempotence gate)"
+      ansible.builtin.stat:
+        path: "{{ approle_secret_file }}"
+      delegate_to: localhost
+      become: false
+      register: approle_stat
+
+    - name: "Approle | Bootstrap (only when the credential file is absent)"
+      when: not approle_stat.stat.exists
+      block:
+        - name: "Approle | Load the Vault root token (one-time bootstrap use)"
+          ansible.builtin.set_fact:
+            vault_root_token: "{{ (lookup('file', (vault_secret_dir | expanduser) + '/' + vault_init_secret) | from_json).fields.root_token }}"
+          no_log: true
+
+        - name: "Approle | Write the read-only policy"
+          ansible.builtin.command:
+            argv: ["docker", "exec", "-i", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+                   "vault", "policy", "write", "{{ approle_name }}", "-"]
+            stdin: "{{ approle_policy }}"
+          changed_when: true
+          no_log: true
+
+        - name: "Approle | Enable the approle auth method (ok if already enabled)"
+          ansible.builtin.command:
+            argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+                   "vault", "auth", "enable", "approle"]
+          register: approle_enable
+          changed_when: approle_enable.rc == 0
+          failed_when:
+            - approle_enable.rc != 0
+            - "'already in use' not in approle_enable.stderr"
+          no_log: true
+
+        - name: "Approle | Create the role (short-lived tokens, policy-scoped)"
+          ansible.builtin.command:
+            argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+                   "vault", "write", "auth/approle/role/{{ approle_name }}",
+                   "token_policies={{ approle_name }}", "token_ttl=15m", "token_max_ttl=30m"]
+          changed_when: true
+          no_log: true
+
+        - name: "Approle | Fetch role_id"
+          ansible.builtin.command:
+            argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+                   "vault", "read", "-field=role_id", "auth/approle/role/{{ approle_name }}/role-id"]
+          register: approle_role_id
+          changed_when: false
+          no_log: true
+
+        - name: "Approle | Mint a secret_id"
+          ansible.builtin.command:
+            argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
+                   "vault", "write", "-f", "-field=secret_id", "auth/approle/role/{{ approle_name }}/secret-id"]
+          register: approle_secret_id
+          changed_when: true
+          no_log: true
+
+        - name: "Approle | Persist the credentials (controller, 0600)"
+          vars:
+            approle_record:
+              fields:
+                role_id: "{{ approle_role_id.stdout }}"
+                secret_id: "{{ approle_secret_id.stdout }}"  # pragma: allowlist secret
+          ansible.builtin.copy:
+            dest: "{{ approle_secret_file }}"
+            mode: "0600"
+            content: "{{ approle_record | to_nice_json }}"
+          delegate_to: localhost
+          become: false
+          no_log: true

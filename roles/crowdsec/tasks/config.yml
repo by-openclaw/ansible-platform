@@ -9,6 +9,20 @@
     replace: '\g<1>{{ crowdsec_lapi_listen_uri }}'
   notify: Restart crowdsec
 
+# Documented onboarding path (CrowdSec multi-server guide): log processors
+# self-register with a shared token, restricted to our own ranges. Both `token`
+# and `allowed_ranges` are mandatory. A processor can push arbitrary alerts, so
+# the ranges are deliberately narrow — a compromised agent must not be able to
+# ban us out of our own platform.
+- name: "config | Enable LAPI auto-registration for log processors"
+  ansible.builtin.blockinfile:
+    path: /etc/crowdsec/config.yaml
+    marker: "    # {mark} ANSIBLE MANAGED auto_registration"
+    insertafter: '^\s+listen_uri:'
+    block: "{{ crowdsec_auto_registration_block }}"
+  no_log: true
+  notify: Restart crowdsec
+
 - name: "config | AppSec acquisition (the WAF the Traefik bouncer feeds)"
   ansible.builtin.copy:
     dest: /etc/crowdsec/acquis.d/appsec.yaml

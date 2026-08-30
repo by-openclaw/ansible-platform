@@ -13,39 +13,87 @@
   until: pgadmin_ready.status == 200
   changed_when: false
 
-- name: "servers | Check whether the shared server already matches"
-  community.docker.docker_container_exec:
-    container: pgadmin
-    command: >-
-      /venv/bin/python3 -c "import sqlite3,sys;
-      c=sqlite3.connect('/var/lib/pgadmin/pgadmin4.db');
-      r=c.execute('select 1 from server where name=:n and host=:h and port=:p and shared_username=:s',
-      {'n':'{{ pgadmin_pg_server_name }}','h':'{{ pgadmin_pg_host }}','p':{{ pgadmin_pg_port }},'s':'{{ pgadmin_pg_shared_username }}'}).fetchone();
-      sys.stdout.write('present' if r else 'absent')"
-  register: pgadmin_server_check
+# pgAdmin runs a server's PasswordExecCommand ONLY for that server's OWNER, so a
+# single SHARED server can never connect passwordless for non-owner SSO users
+# (they get a "Connect to Server" password prompt / HTTP 428, sharedserverbad).
+# Provision a PER-USER server (owned by each pgAdmin user) with passexec instead.
+# pg_provision.py is idempotent — matches by (user_id, name), converges on drift,
+# and un-shares any legacy shared copy of the same name.
+- name: "servers | Stage the per-user provisioner config"
+  ansible.builtin.copy:
+    dest: /tmp/pg_provision.json
+    mode: "0644"
+    content: >-
+      {{ {'name': pgadmin_pg_server_name, 'host': pgadmin_pg_host, 'port': pgadmin_pg_port,
+          'maintenance_db': pgadmin_pg_maintenance_db, 'username': pgadmin_pg_username,
+          'sslmode': pgadmin_pg_sslmode, 'passexec': pgadmin_pg_passexec_cmd,
+          'comment': 'Per-user server (pgadmin role) — passexec, passwordless connect.'} | to_json }}
+
+- name: "servers | Stage the provisioner script"
+  ansible.builtin.copy:
+    src: pg_provision.py
+    dest: /tmp/pg_provision.py
+    mode: "0644"
+
+- name: "servers | Copy provisioner + config into the container"
+  ansible.builtin.command:
+    cmd: "docker cp {{ item }} pgadmin:{{ item }}"
+  loop:
+    - /tmp/pg_provision.json
+    - /tmp/pg_provision.py
   changed_when: false
 
-- name: "servers | Load the shared servers.json into pgAdmin"
+- name: "servers | Provision a per-user passexec server for every pgAdmin user"
   community.docker.docker_container_exec:
     container: pgadmin
-    command: >-
-      /venv/bin/python3 /pgadmin4/setup.py load-servers
-      /pgadmin4/servers.json --user {{ pgadmin_default_email }} --replace
-  register: pgadmin_load
-  changed_when: true
-  when: "'present' not in pgadmin_server_check.stdout"
+    command: /venv/bin/python3 /tmp/pg_provision.py
+  register: pgadmin_provision
+  changed_when: "'CHANGED=0' not in pgadmin_provision.stdout"
 
-# The CLI load-servers does not set shared_username (only the web import does),
-# so non-owner SSO users get "Username must be specified". Set it directly;
-# idempotent via rowcount (only changes when it actually differs).
-- name: "servers | Ensure shared_username on the shared server"
+# --- Passexec connect flow: no password prompt, survives container recreate ------
+# pgAdmin runs PasswordExecCommand (cat the passfile) at connect. Populate that
+# passfile from the superuser secret INTO the persistent data volume, then point
+# the server row at the passexec command. This is what makes the fix durable: an
+# old live-only edit was lost whenever the container was recreated; here every
+# deploy re-asserts both. Idempotent — the passfile is rewritten only when its
+# content drifts (sha256 compare, no secret printed) and the row update only fires
+# on an actual change.
+- name: "servers | Hash the desired superuser password (idempotency probe)"
+  ansible.builtin.set_fact:
+    _pgadmin_pw_sha: "{{ pgadmin_pg_superuser_password | hash('sha256') }}"
+  no_log: true
+  when: pgadmin_pg_superuser_password is defined
+
+- name: "servers | Read the current passfile hash inside the container"
   community.docker.docker_container_exec:
     container: pgadmin
+    user: root        # the volume dir + passfile are pgadmin-owned 0600; read as root
     command: >-
-      /venv/bin/python3 -c "import sqlite3,sys;
-      c=sqlite3.connect('/var/lib/pgadmin/pgadmin4.db');
-      cur=c.execute('update server set shared_username=:s where name=:n and shared=1 and (shared_username is null or shared_username != :s)',
-      {'s':'{{ pgadmin_pg_shared_username }}','n':'{{ pgadmin_pg_server_name }}'});
-      c.commit(); sys.stdout.write('updated' if cur.rowcount else 'nochange')"
-  register: pgadmin_shared_u
-  changed_when: "'updated' in pgadmin_shared_u.stdout"
+      /venv/bin/python3 -c "import hashlib,os,sys; p='{{ pgadmin_pg_passfile_container }}';
+      sys.stdout.write(hashlib.sha256(open(p,'rb').read()).hexdigest() if os.path.exists(p) else 'absent')"
+  register: pgadmin_passfile_now
+  changed_when: false
+  when: pgadmin_pg_superuser_password is defined
+
+# Write via the exec module's stdin (password never appears in argv / ps / logs)
+# AND as root — the image's default exec user is the unprivileged `pgadmin`, which
+# cannot create files in the volume dir or chown; root can, then hands ownership
+# back to pgadmin. stdin_add_newline:false keeps the file byte-identical to the
+# secret so the hash probe above stays idempotent and `cat` returns the exact pw.
+- name: "servers | Write the passfile into the container (root, stdin, no newline)"
+  community.docker.docker_container_exec:
+    container: pgadmin
+    user: root
+    command: >-
+      sh -c "cat > {{ pgadmin_pg_passfile_container }}
+      && chown pgadmin {{ pgadmin_pg_passfile_container }}
+      && chmod 600 {{ pgadmin_pg_passfile_container }}"
+    stdin: "{{ pgadmin_pg_superuser_password }}"
+    stdin_add_newline: false
+  no_log: true
+  changed_when: true
+  when:
+    - pgadmin_pg_superuser_password is defined
+    - (pgadmin_passfile_now.stdout | default('absent')) != _pgadmin_pw_sha
+
+# (passexec_cmd is set per-user by pg_provision.py above — no separate task needed.)

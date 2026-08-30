@@ -34,8 +34,8 @@ netbird_relay_image: "netbirdio/relay:0.72.3"
 netbird_coturn_image: "coturn/coturn:4.6.2"
 
 # --- Identity / addressing ------------------------------------------------------
-# Public name = vpn.by-research.be (CNAME -> apex/Telenet; see cloudflare_dns role).
-netbird_fqdn: "vpn.by-research.be"
+# Public name = vpn.{{ platform_domain }} (CNAME -> apex/Telenet; see cloudflare_dns role).
+netbird_fqdn: "vpn.{{ platform_domain }}"
 netbird_listen_ip: "10.1.3.181"                # SVC IP the containers publish on
 netbird_public_port: 443                        # TLS terminated by our Traefik
 netbird_http_protocol: "https"
@@ -54,17 +54,17 @@ netbird_stun_port: 3478                          # coturn STUN/TURN (host networ
 # These two secret files already exist (the Authentik side is provisioned):
 #   app-oidc-netbird.json     -> fields.client_id / client_secret (public client)
 #   netbird-authentik-sa.json -> fields.username (NetBird) / password (app token)
-netbird_oidc_secret_file: "app-oidc-netbird.json"
+netbird_oidc_secret_file: "fabric/app-oidc-netbird.json"
 netbird_authentik_sa_file: "netbird-authentik-sa.json"
 netbird_oidc_app_slug: "netbird"
-netbird_oidc_base: "https://authentik.by-research.be/application/o/{{ netbird_oidc_app_slug }}"
+netbird_oidc_base: "https://authentik.{{ platform_domain }}/application/o/{{ netbird_oidc_app_slug }}"
 netbird_oidc_config_endpoint: "{{ netbird_oidc_base }}/.well-known/openid-configuration"
 
 # Scopes — exactly as the goauthentik.io doc prescribes.
 netbird_auth_supported_scopes: "openid profile email offline_access entitlements goauthentik.io/api"
 netbird_device_auth_scope: "openid"              # doc default (device flow)
 # Dashboard redirect paths (doc: /auth + /silent-auth). Covered by the Authentik
-# provider redirect regex https://vpn.by-research.be/.*
+# provider redirect regex https://vpn.{{ platform_domain }}/.*
 netbird_auth_redirect_uri: "/auth"
 netbird_auth_silent_redirect_uri: "/silent-auth"
 netbird_pkce_redirect_url: "http://localhost:53000"   # CLI/device PKCE loopback
@@ -77,9 +77,9 @@ netbird_mgmt_idp: "authentik"
 netbird_idp_extra_username: "NetBird"            # = service account username
 
 # --- Management server knobs ----------------------------------------------------
-# single-account mode: every @by-research.be user joins ONE NetBird org (prevents
+# single-account mode: every @{{ platform_domain }} user joins ONE NetBird org (prevents
 # the per-user tenant forking the bundled-IdP model produced).
-netbird_single_account_mode_domain: "by-research.be"
+netbird_single_account_mode_domain: "{{ platform_domain }}"
 netbird_mgmt_dns_domain: "netbird.selfhosted"
 netbird_disable_anonymous_metrics: true
 netbird_disable_default_policy: false
@@ -106,7 +106,7 @@ netbird_signal_volume: "netbird-signal"
 
 # --- Controller secret store ----------------------------------------------------
 netbird_secret_dir: "~/.openclaw/workspace/infra/secrets"
-netbird_core_secret_file: "netbird-core.json"    # datastore_enc_key / relay_auth_secret / turn_password
+netbird_core_secret_file: "fabric/netbird-core.json"    # datastore_enc_key / relay_auth_secret / turn_password
 # NetBird automation token. The role uses a DEDICATED service user (never a human's
 # PAT) for all API automation (routing peer + tiers). Bootstrap (one-time): NetBird
 # has no token-bootstrap, so the first token must come from a human owner — drop it
@@ -115,7 +115,7 @@ netbird_core_secret_file: "netbird-core.json"    # datastore_enc_key / relay_aut
 # revoked. Once the service token exists, the bootstrap PAT is no longer needed.
 netbird_setup_secret_file: "netbird-setup.json"         # bootstrap PAT (human, one-time)
 netbird_automation_user: "netbird-automation"           # dedicated service user (admin)
-netbird_automation_token_file: "netbird-automation.json"  # service-user PAT (role-managed)
+netbird_automation_token_file: "fabric/netbird-automation.json"  # service-user PAT (role-managed)
 netbird_pat_expire_days: 365
 
 # --- coturn toggle (optional optimisation; relay covers hard-NAT regardless) -----
@@ -146,7 +146,7 @@ netbird_vpn_web_routes:
   - { network_id: "web-traefik", network: "10.1.2.110/32" }   # Traefik -> web apps
   - { network_id: "web-dns", network: "10.1.3.101/32" }       # AdGuard -> DNS
 netbird_vpn_full_users:
-  - "adm_yboujraf@by-research.be"                 # admin -> full internal reach
+  - "adm_yboujraf@{{ platform_domain }}"                 # admin -> full internal reach
 
 # --- Account session policy (NIS2) ----------------------------------------------
 # Force a fresh interactive Authentik login (+TOTP) after this long. NIS2 is

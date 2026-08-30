@@ -1,0 +1,40 @@
+---
+# ==============================================================================
+# Role: sshd-hardening — identity/0004 §5 + security/0003 §9 (split out of the
+# monolithic hardening role per identity/0004 §9 role 2).
+# PREREQ: roles/user-mgmt has run (accounts/groups exist) — otherwise
+# PermitRootLogin no + AllowGroups locks the host out. The play's existing SSH
+# connection survives the restart (ControlMaster), so the cutover to
+# port {{ sshd_hardening_port }} + svc-ansible happens on the NEXT connection.
+# ==============================================================================
+sshd_hardening_port: 22222
+sshd_hardening_password_auth: "no"
+sshd_hardening_permit_root_login: "no"
+sshd_hardening_pubkey_auth: "yes"
+sshd_hardening_challenge_response: "no"
+sshd_hardening_x11_forwarding: "no"
+sshd_hardening_max_auth_tries: 3
+sshd_hardening_login_grace_time: 30
+sshd_hardening_client_alive_interval: 300
+sshd_hardening_client_alive_count_max: 2
+
+# AllowGroups = bare primary groups (naming/0002 §5.1 — NO sshuser group):
+# {org} break-glass admin, rune (svc-rune-{env}), ansible (svc-ansible-{env}).
+# break-glass is appended by the template (§5.3 — one group, two jobs).
+sshd_hardening_allow_groups:
+  - "{{ platform_org | default('by-research') }}"
+  - rune
+  - ansible
+
+sshd_hardening_break_glass_group: "break-glass"
+# OOB management networks — password fallback reachable ONLY from here.
+sshd_hardening_break_glass_networks:
+  - 10.6.224.0/20
+  - 10.6.240.0/20
+
+# Banner file (written by roles/banner) referenced from sshd_config.
+sshd_hardening_banner: /etc/issue.net
+
+# PVE-only carve-out (empty everywhere else): networks from which root may SSH
+# KEY-ONLY — Proxmox cluster join/migration are hardcoded to root. Set per-host.
+sshd_hardening_root_allowed_from: []

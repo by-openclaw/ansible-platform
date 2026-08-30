@@ -1,0 +1,11 @@
+---
+# Kernel sysctl hardening. Skipped in unprivileged LXC (namespaced/read-only — the
+# Proxmox HOST kernel governs these for containers). VMs + host only.
+- name: "Sysctl | Deploy kernel hardening drop-in"
+  ansible.builtin.template:
+    src: 99-hardening-sysctl.conf.j2
+    dest: /etc/sysctl.d/99-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload sysctl
