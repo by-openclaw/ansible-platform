@@ -48,14 +48,14 @@ jumpserver_db_engine: "postgresql"
 # --- Vault-native secrets (get-or-create; minted here on first run) ----------
 # fabric/app-jumpserver: secret_key(>=50 alnum), bootstrap_token(>=24 alnum),
 # db_password, redis_password. no special chars (JumpServer rule) + no quotes.
-jumpserver_vault_path: "fabric/app-jumpserver"
+jumpserver_vault_path: "prod/jumpserver/app"
 
 # --- OIDC (Authentik) — client creds minted by the authentik role into Vault -
 # JumpServer's OIDC backend does not auto-discover Authentik, so feed the explicit
 # endpoints. In Authentik authorize/token/userinfo are GLOBAL; issuer + jwks +
 # end-session are per-application (slug `jumpserver`).
 jumpserver_oidc_enabled: false                               # flip true in group_vars to enable
-jumpserver_oidc_vault_path: "fabric/app-oidc-jumpserver"
+jumpserver_oidc_vault_path: "prod/jumpserver/oidc"
 jumpserver_authentik_base: "https://authentik.by-research.be"
 jumpserver_oidc_provider_endpoint: "{{ jumpserver_authentik_base }}/application/o/jumpserver/"
 jumpserver_oidc_authorization_endpoint: "{{ jumpserver_authentik_base }}/application/o/authorize/"
@@ -79,11 +79,11 @@ jumpserver_bastion_admin:
 jumpserver_bastion_group: "bastion-admins"
 jumpserver_permission_name: "bastion-admins-all"
 jumpserver_s3_storage_name: "seaweedfs"
-jumpserver_s3_vault_path: "fabric/infra-seaweedfs-jumpserver"
+jumpserver_s3_vault_path: "prod/jumpserver/s3"
 jumpserver_s3_bucket: "jumpserver-replays"
 # Email notifications -> mailcow (optional; the jumpserver@ mailbox + this Vault
 # path are provisioned via roles/mailcow config). Empty creds -> email stays off.
-jumpserver_smtp_vault_path: "fabric/app-smtp-jumpserver"
+jumpserver_smtp_vault_path: "prod/jumpserver/smtp"
 
 # JumpServer dynamic feature settings reconciled into the DB (idempotent).
 # ANSIBLE_DOCKER_ENABLED=false -> asset connectivity/account tasks run inside the
