@@ -30,7 +30,7 @@ KbdInteractiveAuthentication no
 
 # ---- Access control ----
 # Only members of these groups can connect (key-based by default)
-AllowGroups {{ sshd_hardening_allow_groups | join(' ') }} {{ sshd_hardening_break_glass_group }}
+AllowGroups {{ sshd_hardening_allow_groups | join(' ') }} {{ sshd_hardening_break_glass_group }}{% if sshd_hardening_root_allowed_from | default([]) | length > 0 %} root{% endif %}
 
 # ---- Limits ----
 MaxAuthTries {{ sshd_hardening_max_auth_tries }}
@@ -68,3 +68,11 @@ Match Group {{ sshd_hardening_break_glass_group }} Address {{ sshd_hardening_bre
     # No key forwarding even for break-glass
     AllowAgentForwarding no
     AllowTcpForwarding no
+
+{% if sshd_hardening_root_allowed_from | default([]) | length > 0 %}
+# PVE cluster/lifeline carve-out: Proxmox cluster join + live-migration are
+# hardcoded to root (official docs) — root stays reachable KEY-ONLY from these
+# networks exclusively. Everywhere else PermitRootLogin no applies.
+Match Address {{ sshd_hardening_root_allowed_from | join(',') }}
+    PermitRootLogin prohibit-password
+{% endif %}
