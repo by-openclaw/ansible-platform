@@ -9,6 +9,35 @@
 # so we do that, then reload management so the running instance drops any
 # in-memory copy. Idempotent: after the first pass there is nothing to delete
 # (rowcount 0 -> changed=false, no reload). Toggle: netbird_enforce_no_human_pat.
+#
+# Also enforces the single-principal invariant: the ONLY API service user is the
+# convention-named svc-{function}-{env} (naming/0002 §3). Any other service user
+# (e.g. a legacy 'netbird-automation') is deleted via the API.
+
+- name: "No-human-PAT | List users (bootstrap JWT) for stray service-user cleanup"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/users"
+    headers: { Authorization: "{{ netbird_boot_auth }}" }
+    status_code: [200]
+  register: netbird_enforce_users
+  changed_when: false
+  no_log: true
+
+- name: "No-human-PAT | Delete stray service users (only the convention-named one may exist)"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/users/{{ item.id }}"
+    method: DELETE
+    headers: { Authorization: "{{ netbird_boot_auth }}" }
+    status_code: [200, 204, 404]
+  loop: >-
+    {{ netbird_enforce_users.json | default([])
+       | selectattr('is_service_user', 'defined') | selectattr('is_service_user')
+       | rejectattr('name', 'equalto', netbird_automation_user) | list }}
+  loop_control:
+    label: "{{ item.name }}"
+  register: netbird_stray_del
+  changed_when: netbird_stray_del.status | default(0) in [200, 204]
+  no_log: true
 
 - name: "No-human-PAT | Revoke PATs held by any non-service user (store-level)"
   ansible.builtin.command:
