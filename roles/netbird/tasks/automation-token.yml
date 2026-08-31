@@ -1,21 +1,20 @@
 ---
-# Machine authentication for the NetBird public API — NON-HUMAN, no PAT.
+# Dedicated NetBird SERVICE USER for API automation (contract: a svc, never a
+# human — memory[netbird_authentik_redeploy]: "dedicated SA not human PAT").
 #
-# NetBird accepts two auth schemes (docs.netbird.io/api/guides/authentication):
-# a Personal Access Token, OR an OAuth2 Bearer JWT from the configured IdP — and
-# the docs recommend a SERVICE USER for "all organization-wide flows calling the
-# API". We use the second: a client-credentials grant against Authentik with the
-# dedicated NetBird service account (group 'authentik Admins'). The JWT is minted
-# fresh every run and used within the run, so there is nothing to persist, expire,
-# or rotate — and no human is ever in the loop. Sets `netbird_auth_header`, the
-# Authorization value consumed by routing-peer / vpn-tiers / account-settings.
+# NetBird's docs recommend a service user for org-wide API flows. We bootstrap
+# the admin auth NON-HUMANLY with an OAuth2 client-credentials JWT (Authentik
+# OIDC client app-oidc-netbird + the netbird-authentik-sa service account), then
+# GET-or-CREATE a dedicated NetBird service user (is_service_user=true, admin)
+# and mint its token. The token is persisted (fabric working copy → synced to
+# Vault by secrets-to-vault) and REUSED; it is only (re)minted when absent or no
+# longer valid. No human is ever in the loop.
 #
-# Inputs (already loaded by secrets.yml + oidc-discovery.yml):
-#   netbird_oidc.client_id / .client_secret  — Authentik OIDC app (app-oidc-netbird)
-#   netbird_sa.username / .password           — service account (netbird-authentik-sa)
-#   netbird_oidc_token                        — discovered token endpoint
+# Sets `netbird_auth_header` = "Token <service-user PAT>", consumed by
+# routing-peer / vpn-tiers / account-settings.
 
-- name: "automation-token | Mint a client-credentials JWT from Authentik (machine auth)"
+# --- 0) Non-human bootstrap: client-credentials JWT (admin) ---------------------
+- name: "automation-token | Mint bootstrap JWT (Authentik service account, non-human)"
   ansible.builtin.uri:
     url: "{{ netbird_oidc_token }}"
     method: POST
@@ -31,24 +30,128 @@
   register: netbird_cc_token
   changed_when: false
   no_log: true
-  when:
-    - netbird_oidc.client_id | default('') | length > 0
-    - netbird_sa.username | default('') | length > 0
 
-- name: "automation-token | Bind the API Authorization header (Bearer JWT)"
+- name: "automation-token | Bind the bootstrap header (Bearer JWT)"
   ansible.builtin.set_fact:
-    netbird_auth_header: "Bearer {{ netbird_cc_token.json.access_token }}"
+    netbird_boot_auth: "Bearer {{ netbird_cc_token.json.access_token }}"
+  no_log: true
+
+# --- 1) Reuse a persisted service-user token when it still authenticates ---------
+- name: "automation-token | Stat the persisted service-user token"
+  ansible.builtin.stat:
+    path: "{{ netbird_secret_dir }}/{{ netbird_automation_token_file }}"
+  delegate_to: localhost
+  become: false
+  register: netbird_at_stat
+
+- name: "automation-token | Load the persisted token (only if flagged a service user)"
+  ansible.builtin.set_fact:
+    netbird_saved_pat: >-
+      {{ (lookup('file', netbird_secret_dir + '/' + netbird_automation_token_file) | from_json).fields.personal_access_token
+         if ((lookup('file', netbird_secret_dir + '/' + netbird_automation_token_file) | from_json).fields.is_service_user | default(false) | bool)
+         else '' }}
+  no_log: true
+  when: netbird_at_stat.stat.exists
+
+- name: "automation-token | Verify the saved token authenticates"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/users"
+    headers: { Authorization: "Token {{ netbird_saved_pat }}" }
+    status_code: [200, 401, 403]
+  register: netbird_saved_probe
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: netbird_saved_pat | default('') | length > 0
+
+- name: "automation-token | Adopt the saved service-user token when valid"
+  ansible.builtin.set_fact:
+    netbird_auth_header: "Token {{ netbird_saved_pat }}"
   no_log: true
   when:
-    - netbird_cc_token is defined
-    - netbird_cc_token.json is defined
-    - netbird_cc_token.json.access_token is defined
+    - netbird_saved_pat | default('') | length > 0
+    - netbird_saved_probe.status | default(0) == 200
+
+# --- 2) Otherwise get-or-create the service user + mint its token (via JWT) ------
+- name: "automation-token | List service users (bootstrap JWT)"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/users"
+    headers: { Authorization: "{{ netbird_boot_auth }}" }
+    status_code: [200]
+  register: netbird_users_all
+  changed_when: false
+  no_log: true
+  when: netbird_auth_header is not defined
+
+- name: "automation-token | Resolve the existing dedicated service-user id"
+  ansible.builtin.set_fact:
+    netbird_su_uid: >-
+      {{ (netbird_users_all.json
+          | selectattr('is_service_user', 'defined')
+          | selectattr('is_service_user')
+          | selectattr('name', 'equalto', netbird_automation_user)
+          | map(attribute='id') | first) | default('') }}
+  no_log: true
+  when: netbird_auth_header is not defined
+
+- name: "automation-token | Create the dedicated service user (admin) if absent"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/users"
+    method: POST
+    headers: { Authorization: "{{ netbird_boot_auth }}" }
+    body_format: json
+    body: { name: "{{ netbird_automation_user }}", role: "admin", is_service_user: true, auto_groups: [] }
+    status_code: [200, 201]
+  register: netbird_su_new
+  no_log: true
+  when:
+    - netbird_auth_header is not defined
+    - netbird_su_uid | default('') | length == 0
+
+- name: "automation-token | Settle the service-user id"
+  ansible.builtin.set_fact:
+    netbird_su_uid: "{{ netbird_su_uid if (netbird_su_uid | default('') | length > 0) else netbird_su_new.json.id }}"
+  no_log: true
+  when: netbird_auth_header is not defined
+
+- name: "automation-token | Mint a token for the service user"
+  ansible.builtin.uri:
+    url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/users/{{ netbird_su_uid }}/tokens"
+    method: POST
+    headers: { Authorization: "{{ netbird_boot_auth }}" }
+    body_format: json
+    body: { name: "ansible-automation", expires_in: "{{ netbird_pat_expire_days | int }}" }
+    status_code: [200, 201]
+  register: netbird_su_tok
+  no_log: true
+  when: netbird_auth_header is not defined
+
+- name: "automation-token | Persist the service-user token (0600 working copy → Vault via sync)"
+  ansible.builtin.copy:
+    dest: "{{ netbird_secret_dir }}/{{ netbird_automation_token_file }}"
+    mode: "0600"
+    content: >-
+      {{ {'fields': {'service_user': netbird_automation_user,
+                     'user_id': netbird_su_uid,
+                     'personal_access_token': netbird_su_tok.json.plain_token,
+                     'is_service_user': true,
+                     '_note': 'Dedicated NetBird service user (is_service_user=true); token minted by ansible via the non-human Authentik SA JWT bootstrap.'}}
+         | to_nice_json }}
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: netbird_auth_header is not defined
+
+- name: "automation-token | Adopt the freshly minted service-user token"
+  ansible.builtin.set_fact:
+    netbird_auth_header: "Token {{ netbird_su_tok.json.plain_token }}"
+  no_log: true
+  when: netbird_auth_header is not defined
 
 - name: "automation-token | Summary"
   ansible.builtin.debug:
     msg: >-
-      NetBird API auth: {{ 'client-credentials JWT for service account '
-        + netbird_sa.username + ' (non-human, minted this run)'
-        if (netbird_auth_header is defined)
-        else 'UNAVAILABLE — check the Authentik OIDC client (app-oidc-netbird) and '
-             + 'the NetBird service account (netbird-authentik-sa) in group authentik Admins' }}
+      NetBird API principal: dedicated SERVICE USER '{{ netbird_automation_user }}'
+      (is_service_user=true){{ ' — reused persisted token'
+        if (netbird_saved_probe.status | default(0) == 200)
+        else ' — created/minted this run via non-human JWT bootstrap' }}
