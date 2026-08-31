@@ -114,10 +114,11 @@ netbird_core_secret_file: "fabric/netbird-core.json"    # datastore_enc_key / re
 # mints the service-user token (netbird-automation.json) and the human PAT can be
 # revoked. Once the service token exists, the bootstrap PAT is no longer needed.
 netbird_setup_secret_file: "netbird-setup.json"         # bootstrap PAT (human, one-time)
-netbird_automation_user: "netbird-automation"           # dedicated service user (admin)
+netbird_automation_user: "svc-netbird-{{ platform_env | default('prod') }}"  # naming/0002 §3 svc-{function}-{env}
 # Contract: only the service user may hold a NetBird API token. Any PAT on a
 # non-service user is revoked at the store (the API can't address the legacy
-# local owner's tokens). See tasks/enforce-no-human-pat.yml.
+# local owner's tokens); any stray service user (a differently-named one) is
+# deleted via the API. See tasks/enforce-no-human-pat.yml.
 netbird_enforce_no_human_pat: true
 netbird_pg_container: "postgres"       # shared cluster PG container on the DB host
 netbird_pg_database: "netbird"

@@ -64,13 +64,22 @@
   no_log: true
   when: netbird_saved_pat | default('') | length > 0
 
-- name: "automation-token | Adopt the saved service-user token when valid"
+# Adopt only when the token authenticates AND its current identity is the
+# convention-named service user — so a rename (naming/0002 §3) forces a clean
+# re-create under the new name instead of silently reusing the old identity.
+- name: "automation-token | Adopt the saved token only if it is the convention-named service user"
   ansible.builtin.set_fact:
     netbird_auth_header: "Token {{ netbird_saved_pat }}"
+    netbird_token_source: reused
   no_log: true
   when:
     - netbird_saved_pat | default('') | length > 0
     - netbird_saved_probe.status | default(0) == 200
+    - (netbird_saved_probe.json | default([])
+       | selectattr('is_current', 'defined') | selectattr('is_current')
+       | selectattr('is_service_user', 'defined') | selectattr('is_service_user')
+       | selectattr('name', 'equalto', netbird_automation_user)
+       | list | length) > 0
 
 # --- 2) Otherwise get-or-create the service user + mint its token (via JWT) ------
 - name: "automation-token | List service users (bootstrap JWT)"
@@ -145,6 +154,7 @@
 - name: "automation-token | Adopt the freshly minted service-user token"
   ansible.builtin.set_fact:
     netbird_auth_header: "Token {{ netbird_su_tok.json.plain_token }}"
+    netbird_token_source: minted
   no_log: true
   when: netbird_auth_header is not defined
 
@@ -153,5 +163,5 @@
     msg: >-
       NetBird API principal: dedicated SERVICE USER '{{ netbird_automation_user }}'
       (is_service_user=true){{ ' — reused persisted token'
-        if (netbird_saved_probe.status | default(0) == 200)
+        if (netbird_token_source | default('') == 'reused')
         else ' — created/minted this run via non-human JWT bootstrap' }}
