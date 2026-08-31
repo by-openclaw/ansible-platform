@@ -65,3 +65,13 @@ user_mgmt_accounts:
     password: true
     docker: false
     state: present
+
+# --- Foreign account PURGE (identity/0004 exception) --------------------------
+# The disable-never-delete rule (account.yml, state:absent) protects MANAGED
+# identities for the audit trail. FOREIGN accounts that were never part of the
+# identity model — e.g. the cloud-init install user 'by-systems' left with sudo
+# + stale keys — are DELETED here instead. Only names listed here are purged,
+# and a guard refuses to purge any managed account name (see purge.yml).
+# Idempotent: userdel only runs when the account is present.
+user_mgmt_purge_accounts:
+  - "by-systems"          # default cloud-init install user; superseded by identity/0004 accounts
