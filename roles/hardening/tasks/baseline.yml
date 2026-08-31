@@ -131,3 +131,19 @@
   register: hardening_audit_rules
   when: "'auditd' in ansible_facts.packages | default({})"
   notify: Reload auditd rules
+
+- name: "Baseline | Detect networkd-managed links (apt-daily wait-online guard)"
+  ansible.builtin.shell: |
+    set -o pipefail
+    networkctl list --no-legend 2>/dev/null | awk '$4 != "unmanaged" && $2 != "lo"' | wc -l
+  args: { executable: /bin/bash }
+  register: hardening_networkd_managed
+  changed_when: false
+  failed_when: false
+
+- name: "Baseline | Mask systemd-networkd-wait-online when networkd manages no links (ifupdown guests: it can never succeed and silently aborts apt-daily-upgrade)"
+  ansible.builtin.systemd_service:
+    name: systemd-networkd-wait-online.service
+    enabled: false
+    masked: true
+  when: (hardening_networkd_managed.stdout | default('1') | trim | int) == 0
