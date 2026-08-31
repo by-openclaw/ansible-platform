@@ -12,10 +12,11 @@
 
 - name: "routing-peer | Require the automation token (set by automation-token.yml)"
   ansible.builtin.assert:
-    that: netbird_pat is defined and (netbird_pat | length > 0)
+    that: netbird_auth_header is defined and (netbird_auth_header | length > 0)
     fail_msg: >-
-      netbird_pat not set — automation-token.yml must run first (it loads/mints the
-      dedicated service-user token). Drop a bootstrap PAT in {{ netbird_setup_secret_file }}.
+      netbird_auth_header not set — automation-token.yml must run first (it mints a
+      client-credentials JWT for the NetBird service account). Check the Authentik
+      OIDC client + service account.
     quiet: true
 
 - name: "routing-peer | Local NetBird API base + peer-match facts"
@@ -28,7 +29,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_rp_api }}/api/groups"
     method: GET
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_rp_groups
   no_log: true
@@ -37,7 +38,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_rp_api }}/api/groups"
     method: POST
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     body_format: json
     body: { name: "{{ netbird_routers_group }}" }
     status_code: [200, 201]
@@ -58,7 +59,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_rp_api }}/api/setup-keys"
     method: GET
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_rp_keys
   no_log: true
@@ -67,7 +68,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_rp_api }}/api/setup-keys"
     method: POST
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     body_format: json
     body:
       name: "{{ netbird_router_setup_key_name }}"
@@ -147,7 +148,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_rp_api }}/api/peers"
     method: GET
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_rp_peers
   no_log: true
@@ -163,7 +164,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_rp_api }}/api/routes"
     method: GET
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_rp_routes
   no_log: true
@@ -172,7 +173,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_rp_api }}/api/routes"
     method: POST
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     body_format: json
     body:
       network_id: "{{ netbird_route_network_id }}"
@@ -191,7 +192,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_rp_api }}/api/dns/nameservers"
     method: GET
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_rp_ns
   no_log: true
@@ -200,7 +201,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_rp_api }}/api/dns/nameservers"
     method: POST
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     body_format: json
     body:
       name: "{{ netbird_dns_nameserver_name }}"
