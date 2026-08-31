@@ -28,6 +28,13 @@
   ansible.builtin.import_tasks: automation-token.yml
   tags: [netbird, routing, tiers]
 
+- name: Enforce no-human-PAT (only the service user may hold an API token)
+  ansible.builtin.import_tasks: enforce-no-human-pat.yml
+  when:
+    - netbird_auth_header is defined
+    - netbird_enforce_no_human_pat | default(true) | bool
+  tags: [netbird, routing, tiers, compliance]
+
 - name: Enroll this host as a routing peer (advertise internal LAN + AdGuard DNS)
   ansible.builtin.import_tasks: routing-peer.yml
   when:

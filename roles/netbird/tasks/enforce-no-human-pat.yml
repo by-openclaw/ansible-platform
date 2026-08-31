@@ -1,0 +1,45 @@
+---
+# Contract invariant: only a dedicated SERVICE USER may hold a NetBird API
+# token. Any PAT on a NON-service user (e.g. the legacy 'local' account owner's
+# stale human token 'adm_yboujraf_pat') is revoked.
+#
+# Why at the store, not the API: NetBird's API cannot address tokens on the
+# legacy local owner (owner-context token list returns empty; DELETE by id
+# 404s). Deleting the hashed row is exactly what an API revoke does internally,
+# so we do that, then reload management so the running instance drops any
+# in-memory copy. Idempotent: after the first pass there is nothing to delete
+# (rowcount 0 -> changed=false, no reload). Toggle: netbird_enforce_no_human_pat.
+
+- name: "No-human-PAT | Revoke PATs held by any non-service user (store-level)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ netbird_pg_container | default('postgres') }}"
+      - psql
+      - -U
+      - postgres
+      - -d
+      - "{{ netbird_pg_database | default('netbird') }}"
+      - -At
+      - -c
+      - >-
+        WITH d AS (
+          DELETE FROM personal_access_tokens p USING users u
+          WHERE p.user_id = u.id AND u.is_service_user = false
+          RETURNING p.id
+        ) SELECT count(*) FROM d;
+  delegate_to: "{{ netbird_pg_delegate | default('lxc-pgsql-01') }}"
+  register: netbird_pat_revoked
+  changed_when: (netbird_pat_revoked.stdout | trim | int) > 0
+  notify: "Restart netbird management"
+  when: netbird_enforce_no_human_pat | default(true) | bool
+
+- name: "No-human-PAT | Report"
+  ansible.builtin.debug:
+    msg: >-
+      Non-service-user PATs revoked this run:
+      {{ netbird_pat_revoked.stdout | default('0') | trim }}
+      (0 = already compliant). Only service user '{{ netbird_automation_user }}'
+      may hold an API token.
+  when: netbird_enforce_no_human_pat | default(true) | bool
