@@ -52,6 +52,7 @@
   ansible.builtin.command:
     cmd: >-
       /usr/local/bin/lego
+      --email {{ adguard_acme_email }}
       --dns cloudflare
       --dns.propagation-wait 60s
       --domains "*.{{ adguard_domain }}"
@@ -68,6 +69,6 @@
   changed_when: >-
     'no renewal' not in ((adguard_renew.stdout | default('') + adguard_renew.stderr | default('')) | lower)
     and 'is not due' not in ((adguard_renew.stdout | default('') + adguard_renew.stderr | default('')) | lower)
-  failed_when: false
+  failed_when: adguard_renew.rc | default(0) != 0
   no_log: true
   notify: Restart AdGuardHome
