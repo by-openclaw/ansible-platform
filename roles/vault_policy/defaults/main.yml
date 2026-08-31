@@ -1,0 +1,38 @@
+---
+# ==============================================================================
+# Role: vault_policy — per-service Vault policy + AppRole (SEC-04, SEC-05).
+# Gives ONE service a least-privilege identity scoped to its OWN secret prefix:
+#   * a policy  {service}-{env}  that can read only secret/{env}/{service}/*
+#   * an AppRole {service}-{env} bound to that policy
+#   * role_id + secret_id persisted (fabric working copy -> Vault) so the
+#     service authenticates to Vault as ITSELF, not via the controller.
+#
+# present/absent (SVC-47): state=present provisions, state=absent removes the
+# AppRole + policy. Idempotent — writes only on drift; secret_id minted once.
+#
+# Reuses the vault_secret connection vars (host/container/mount/bootstrap).
+# ==============================================================================
+
+vault_policy_service: ""                    # REQUIRED: service short name (e.g. vaultwarden)
+vault_policy_env: "{{ platform_env | default('prod') }}"
+vault_policy_state: present                  # present | absent
+
+# Capabilities the service gets on its own KV prefix. Read-only by default;
+# a service that rotates its own secrets can be given create/update explicitly.
+vault_policy_capabilities: ["read"]
+
+# Token lifetimes for the AppRole (short-lived; renewable up to max).
+vault_policy_token_ttl: "1h"
+vault_policy_token_max_ttl: "4h"
+vault_policy_secret_id_ttl: "0"              # 0 = non-expiring secret_id (rotated on incident)
+
+# Where the AppRole creds are persisted (fabric working copy → synced to Vault).
+vault_policy_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
+vault_policy_creds_file: "fabric/app-vault-approle-{{ vault_policy_service }}.json"  # pragma: allowlist secret
+
+# --- Vault connection (mirror vault_secret) -----------------------------------
+vault_policy_host: "lxc-vault-01"
+vault_policy_container: "vault"
+vault_policy_mount: "secret"
+vault_policy_bootstrap_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
+vault_policy_bootstrap_file: "vault-init.json"

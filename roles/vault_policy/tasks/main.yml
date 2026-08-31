@@ -1,0 +1,170 @@
+---
+- name: "Vault policy | Validate input"
+  ansible.builtin.assert:
+    that: vault_policy_service | length > 0
+    fail_msg: "vault_policy requires vault_policy_service"
+    quiet: true
+
+- name: "Vault policy | Load Vault root token (bootstrap — the one allowed local secret)"
+  ansible.builtin.set_fact:
+    vault_policy_token: "{{ (lookup('file', vault_policy_bootstrap_dir + '/' + vault_policy_bootstrap_file) | from_json).fields.root_token }}"
+  no_log: true
+
+- name: "Vault policy | Set the identity name ({service}-{env})"
+  ansible.builtin.set_fact:
+    vault_policy_name: "{{ vault_policy_service }}-{{ vault_policy_env }}"
+
+# ============================ ABSENT ==========================================
+- name: "Vault policy | Remove AppRole + policy (state=absent)"
+  when: vault_policy_state == 'absent'
+  delegate_to: "{{ vault_policy_host }}"
+  become: true
+  block:
+    - name: "Vault policy | Delete the AppRole — {{ vault_policy_name }}"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
+          vault delete auth/approle/role/{{ vault_policy_name }}
+      register: vault_policy_del_role
+      changed_when: "'Success' in vault_policy_del_role.stdout or vault_policy_del_role.rc == 0"
+      failed_when: false
+      no_log: true
+
+    - name: "Vault policy | Delete the policy — {{ vault_policy_name }}"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
+          vault policy delete {{ vault_policy_name }}
+      register: vault_policy_del_pol
+      changed_when: vault_policy_del_pol.rc == 0
+      failed_when: false
+      no_log: true
+
+# ============================ PRESENT =========================================
+- name: "Vault policy | Provision policy + AppRole (state=present)"
+  when: vault_policy_state == 'present'
+  block:
+    - name: "Vault policy | Render the desired policy HCL"
+      ansible.builtin.set_fact:
+        vault_policy_hcl: "{{ lookup('template', 'policy.hcl.j2') }}"
+
+    - name: "Vault policy | Read the current policy (tolerate absent)"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
+          vault policy read {{ vault_policy_name }}
+      delegate_to: "{{ vault_policy_host }}"
+      become: true
+      register: vault_policy_current
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: "Vault policy | Write the policy only on drift — {{ vault_policy_name }}"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -i -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
+          vault policy write {{ vault_policy_name }} -
+        stdin: "{{ vault_policy_hcl }}"
+      delegate_to: "{{ vault_policy_host }}"
+      become: true
+      when: (vault_policy_current.stdout | default('') | trim) != (vault_policy_hcl | trim)
+      changed_when: true
+      no_log: true
+
+    - name: "Vault policy | Ensure the approle auth method is enabled"
+      ansible.builtin.shell: |
+        set -o pipefail
+        docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }} \
+          sh -c 'vault auth list -format=json | grep -q "approle/" || vault auth enable approle'
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ vault_policy_host }}"
+      become: true
+      register: vault_policy_approle_enable
+      changed_when: "'Success' in (vault_policy_approle_enable.stderr | default('')) or 'enabled' in (vault_policy_approle_enable.stdout | default(''))"
+      no_log: true
+
+    - name: "Vault policy | Read the current AppRole (tolerate absent)"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
+          vault read -format=json auth/approle/role/{{ vault_policy_name }}
+      delegate_to: "{{ vault_policy_host }}"
+      become: true
+      register: vault_policy_role_read
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: "Vault policy | Create/update the AppRole bound to the policy — {{ vault_policy_name }}"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
+          vault write auth/approle/role/{{ vault_policy_name }}
+          token_policies={{ vault_policy_name }}
+          token_ttl={{ vault_policy_token_ttl }}
+          token_max_ttl={{ vault_policy_token_max_ttl }}
+          secret_id_ttl={{ vault_policy_secret_id_ttl }}
+      delegate_to: "{{ vault_policy_host }}"
+      become: true
+      register: vault_policy_role_write
+      when: >-
+        vault_policy_role_read.rc != 0
+        or (vault_policy_role_read.stdout | default('{}') | from_json).data.token_policies | default([]) != [vault_policy_name]
+      changed_when: vault_policy_role_write.rc == 0
+      no_log: true
+
+    - name: "Vault policy | Read the role_id"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
+          vault read -field=role_id auth/approle/role/{{ vault_policy_name }}/role-id
+      delegate_to: "{{ vault_policy_host }}"
+      become: true
+      register: vault_policy_role_id
+      changed_when: false
+      no_log: true
+
+    # secret_id is minted ONCE (each mint creates a new one) — reuse the persisted
+    # copy so the role is idempotent; rotate by deleting the fabric file.
+    - name: "Vault policy | Stat the persisted AppRole creds"
+      ansible.builtin.stat:
+        path: "{{ vault_policy_secret_dir }}/{{ vault_policy_creds_file }}"
+      delegate_to: localhost
+      become: false
+      register: vault_policy_creds_stat
+
+    - name: "Vault policy | Mint a secret_id (first run only)"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
+          vault write -field=secret_id -f auth/approle/role/{{ vault_policy_name }}/secret-id
+      delegate_to: "{{ vault_policy_host }}"
+      become: true
+      register: vault_policy_secret_id
+      changed_when: true
+      no_log: true
+      when: not vault_policy_creds_stat.stat.exists
+
+    - name: "Vault policy | Persist role_id + secret_id (0600 fabric working copy)"
+      ansible.builtin.copy:
+        dest: "{{ vault_policy_secret_dir }}/{{ vault_policy_creds_file }}"
+        mode: "0600"
+        content: >-
+          {{ {'fields': {'role_id': vault_policy_role_id.stdout | trim,
+                         'secret_id': vault_policy_secret_id.stdout | trim,
+                         'policy': vault_policy_name,
+                         'mount': 'approle'}} | to_nice_json }}
+      delegate_to: localhost
+      become: false
+      no_log: true
+      when: not vault_policy_creds_stat.stat.exists
+
+    - name: "Vault policy | Summary"
+      ansible.builtin.debug:
+        msg: >-
+          Vault identity '{{ vault_policy_name }}': policy scoped to
+          {{ vault_policy_mount }}/{{ vault_policy_env }}/{{ vault_policy_service }}/*
+          ({{ vault_policy_capabilities | join('+') }}); AppRole
+          {{ '(creds reused)' if vault_policy_creds_stat.stat.exists else '(creds minted this run)' }}.
