@@ -56,6 +56,13 @@
         postgres_db_user: gitlab
         postgres_db_vault_path: prod/gitlab/db-pgsql
 
+    - name: "Read installed Postgres extensions (gitlab db)"
+      ansible.builtin.command:
+        cmd: docker exec postgres psql -tAU postgres -d gitlabhq_production -c "SELECT extname FROM pg_extension"
+      delegate_to: lxc-pgsql-01
+      register: gitlab_pg_ext
+      changed_when: false
+
     - name: "Enable required Postgres extensions for GitLab (superuser)"
       ansible.builtin.command:
         cmd: >-
@@ -65,6 +72,7 @@
       loop:
         - pg_trgm
         - btree_gist
+      when: item not in gitlab_pg_ext.stdout_lines
       changed_when: true
 
     - name: "Provision GitLab S3 buckets + scoped key (SeaweedFS)"
