@@ -67,6 +67,7 @@
     dest: /tmp/jms_key_rune
     mode: "0600"
   no_log: true
+  changed_when: false  # transient scaffolding, shredded below
 
 - name: "JumpServer reconcile | Stage the automation key (Proxmox node) on the LXC (0600)"
   ansible.builtin.copy:
@@ -74,6 +75,7 @@
     dest: /tmp/jms_key_automation
     mode: "0600"
   no_log: true
+  changed_when: false  # transient scaffolding, shredded below
 
 - name: "JumpServer reconcile | Stage the OPNsense key (by-rune) on the LXC (0600)"
   ansible.builtin.copy:
@@ -81,6 +83,7 @@
     dest: /tmp/jms_key_opnsense
     mode: "0600"
   no_log: true
+  changed_when: false  # transient scaffolding, shredded below
 
 - name: "JumpServer reconcile | Stage the desired-state config on the LXC (0600)"
   ansible.builtin.copy:
@@ -88,12 +91,14 @@
     dest: /tmp/jms_reconcile.json
     mode: "0600"
   no_log: true
+  changed_when: false  # transient scaffolding, shredded below
 
 - name: "JumpServer reconcile | Stage reconcile.py on the LXC"
   ansible.builtin.copy:
     src: reconcile.py
     dest: /tmp/jms_reconcile.py
     mode: "0644"
+  changed_when: false  # transient scaffolding, shredded below
 
 - name: "JumpServer reconcile | Copy key + config + script into jms_core"
   ansible.builtin.command:
@@ -104,7 +109,7 @@
     - { src: /tmp/jms_key_opnsense, dst: /tmp/jms_key_opnsense }
     - { src: /tmp/jms_reconcile.json, dst: /tmp/jms_reconcile.json }
     - { src: /tmp/jms_reconcile.py, dst: /tmp/reconcile.py }
-  changed_when: true
+  changed_when: false  # transient scaffolding, shredded below
 
 - name: "JumpServer reconcile | Run the reconcile (idempotent)"
   ansible.builtin.command:
@@ -112,7 +117,7 @@
       docker exec jms_core sh -c
       'cd /opt/jumpserver/apps && python manage.py shell < /tmp/reconcile.py'
   register: jumpserver_reconcile_out
-  changed_when: "'RECONCILE_OK' in jumpserver_reconcile_out.stdout"
+  changed_when: "'RECONCILE_CHANGED' in jumpserver_reconcile_out.stdout"
   failed_when: "'RECONCILE_OK' not in jumpserver_reconcile_out.stdout"
 
 - name: "JumpServer reconcile | Summary"
@@ -126,4 +131,4 @@
     - "docker exec jms_core rm -f /tmp/jms_key_rune /tmp/jms_key_automation /tmp/jms_key_opnsense /tmp/jms_reconcile.json"
     - "shred -u /tmp/jms_key_rune /tmp/jms_key_automation /tmp/jms_key_opnsense"
     - "rm -f /tmp/jms_reconcile.json /tmp/jms_reconcile.py"
-  changed_when: true
+  changed_when: false  # transient scaffolding, shredded below

@@ -179,6 +179,7 @@ if s3:
         st.meta = meta
         st.type = "s3"
         st.save(update_fields=["meta", "type"])
+        summary.append("replay_storage_meta updated=True")
     # make it the only default
     ReplayStorage.objects.exclude(pk=st.pk).filter(is_default=True).update(is_default=False)
     if not st.is_default:
@@ -227,6 +228,9 @@ if email and email.get("smtp_host"):
             pass
     summary.append(f"email: SMTP -> {email['smtp_host']}:{email['smtp_port']} as {email['smtp_user']}")
 
+_changed = ("created=True" in "\n".join(summary)) or ("updated=True" in "\n".join(summary))
+if _changed:
+    print("RECONCILE_CHANGED")
 print("RECONCILE_OK")
 for line in summary:
     print("  -", line)
