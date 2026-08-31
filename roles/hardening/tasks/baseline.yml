@@ -81,3 +81,53 @@
   poll: 0
   register: hardening_aideinit
   changed_when: hardening_aideinit is changed
+
+- name: "Baseline | Password hashing rounds (AUTH-9230)"
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: "^#?\\s*{{ item.key }}\\s"
+    line: "{{ item.key }}\t{{ item.value }}"
+  loop:
+    - { key: SHA_CRYPT_MIN_ROUNDS, value: "640000" }
+    - { key: SHA_CRYPT_MAX_ROUNDS, value: "640000" }
+  loop_control: { label: "{{ item.key }}" }
+
+- name: "Baseline | Accounting + password-strength tooling (ACCT-9622/9626, AUTH-9262)"
+  ansible.builtin.apt:
+    name: [acct, sysstat, libpam-pwquality, needrestart]
+    state: present
+
+- name: "Baseline | Enable sysstat collection"
+  ansible.builtin.lineinfile:
+    path: /etc/default/sysstat
+    regexp: "^ENABLED="
+    line: 'ENABLED="true"'
+  notify: Restart sysstat
+
+- name: "Baseline | AIDE checksums SHA512 (FINT-4316)"
+  ansible.builtin.lineinfile:
+    path: /etc/aide/aide.conf
+    regexp: "^Checksums\\s*="
+    line: "Checksums = sha512"
+  failed_when: false
+
+- name: "Baseline | Gather package facts (for conditional auditd rules)"
+  ansible.builtin.package_facts:
+    manager: apt
+
+- name: "Baseline | Minimal auditd ruleset when auditd is present (ACCT-9630)"
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/hardening.rules
+    mode: "0640"
+    content: |
+      ## identity/0004 baseline audit trail (shipped to Loki via promtail — see #12)
+      -w /etc/passwd -p wa -k identity
+      -w /etc/group -p wa -k identity
+      -w /etc/shadow -p wa -k identity
+      -w /etc/sudoers -p wa -k privilege
+      -w /etc/sudoers.d/ -p wa -k privilege
+      -w /etc/ssh/sshd_config -p wa -k sshd
+      -a always,exit -F arch=b64 -S adjtimex,settimeofday -k time-change
+  register: hardening_audit_rules
+  when: "'auditd' in ansible_facts.packages | default({})"
+  notify: Reload auditd rules
