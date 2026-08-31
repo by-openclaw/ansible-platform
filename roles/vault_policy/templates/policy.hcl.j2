@@ -1,0 +1,8 @@
+# Managed by Ansible role `vault_policy` for service {{ vault_policy_service }} ({{ vault_policy_env }}).
+# Least-privilege: {{ vault_policy_service }} may access only its own KV prefix.
+path "{{ vault_policy_mount }}/data/{{ vault_policy_env }}/{{ vault_policy_service }}/*" {
+  capabilities = [{{ vault_policy_capabilities | map('to_json') | join(', ') }}]
+}
+path "{{ vault_policy_mount }}/metadata/{{ vault_policy_env }}/{{ vault_policy_service }}/*" {
+  capabilities = ["read", "list"]
+}
