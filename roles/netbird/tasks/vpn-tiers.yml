@@ -11,8 +11,8 @@
 
 - name: "vpn-tiers | Require the automation token (set by automation-token.yml)"
   ansible.builtin.assert:
-    that: netbird_pat is defined and (netbird_pat | length > 0)
-    fail_msg: "netbird_pat not set — automation-token.yml must run first."
+    that: netbird_auth_header is defined and (netbird_auth_header | length > 0)
+    fail_msg: "netbird_auth_header not set — automation-token.yml must run first."
     quiet: true
 
 - name: "vpn-tiers | Local NetBird API base"
@@ -24,7 +24,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_vt_api }}/api/groups"
     method: GET
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_vt_groups
   no_log: true
@@ -33,7 +33,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_vt_api }}/api/groups"
     method: POST
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     body_format: json
     body: { name: "{{ netbird_vpn_full_group }}" }
     status_code: [200, 201]
@@ -54,7 +54,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_vt_api }}/api/routes"
     method: GET
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_vt_routes
   no_log: true
@@ -67,7 +67,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_vt_api }}/api/routes/{{ netbird_vt_full_route.id }}"
     method: PUT
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     body_format: json
     body:
       network_id: "{{ netbird_vt_full_route.network_id }}"
@@ -88,7 +88,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_vt_api }}/api/routes"
     method: POST
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     body_format: json
     body:
       network_id: "{{ item.network_id }}"
@@ -111,7 +111,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_vt_api }}/api/users"
     method: GET
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_vt_users
   no_log: true
@@ -120,7 +120,7 @@
   ansible.builtin.uri:
     url: "{{ netbird_vt_api }}/api/users/{{ item.id }}"
     method: PUT
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     body_format: json
     body:
       role: "{{ item.role }}"

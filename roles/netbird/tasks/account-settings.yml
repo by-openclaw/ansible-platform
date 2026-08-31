@@ -2,14 +2,14 @@
 # Account-level session policy (NIS2): set peer_login_expiration so peers must
 # re-authenticate interactively via Authentik (+TOTP) after the configured window.
 # Idempotent: GET current settings, PUT only when they differ. Uses the automation
-# token (netbird_pat, set by automation-token.yml). Gated by
+# client-credentials JWT (netbird_auth_header, set by automation-token.yml). Gated by
 # netbird_account_settings_enabled.
 
 - name: "account-settings | Get the account + current settings"
   ansible.builtin.uri:
     url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/accounts"
     method: GET
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_as_acc
   no_log: true
@@ -23,7 +23,7 @@
   ansible.builtin.uri:
     url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/accounts/{{ netbird_as_id }}"
     method: PUT
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     body_format: json
     body:
       settings: >-

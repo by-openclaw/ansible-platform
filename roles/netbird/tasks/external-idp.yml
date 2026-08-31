@@ -20,7 +20,7 @@
 - name: "external-idp | List existing identity providers"
   ansible.builtin.uri:
     url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/identity-providers"
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_idp_list
   no_log: true
@@ -29,7 +29,7 @@
   ansible.builtin.uri:
     url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/identity-providers"
     method: POST
-    headers: { Authorization: "Token {{ netbird_pat }}" }
+    headers: { Authorization: "{{ netbird_auth_header }}" }
     body_format: json
     body:
       name: "{{ netbird_idp_name }}"
