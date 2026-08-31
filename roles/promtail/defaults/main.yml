@@ -1,0 +1,25 @@
+---
+# ==============================================================================
+# Role: promtail — ship journald + auditd logs from every guest to the central
+# Loki on lxc-monitoring-01 (infra/0006 logging; NIS2 Art.21(2)(h), ISO27001
+# A.8.16: off-host log retention). Grafana apt repo (same keyring as loki).
+# ==============================================================================
+
+# Central Loki push endpoint (loki role, lxc-monitoring-01, no-auth intra-SVC —
+# reachability is segmented by the OPNsense firewall).
+promtail_loki_url: "http://{{ hostvars['lxc-monitoring-01'].ansible_host }}:3100/loki/api/v1/push"
+
+promtail_apt_key_url: "https://apt.grafana.com/gpg.key"
+promtail_apt_repo: "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://apt.grafana.com stable main"
+
+promtail_config_dir: "/etc/promtail"
+promtail_positions_file: "/var/lib/promtail/positions.yaml"
+
+# Ship the systemd journal (covers sshd, sudo, services) and the auditd trail
+# (identity/privilege watches from the hardening baseline ruleset).
+promtail_ship_journal: true
+promtail_ship_auditd: true
+promtail_auditd_log: "/var/log/audit/audit.log"
+
+# Journal labels kept low-cardinality: host + systemd unit only.
+promtail_env_label: "{{ platform_env | default('prod') }}"

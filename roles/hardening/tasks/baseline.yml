@@ -149,3 +149,14 @@
     enabled: false
     masked: true
   when: (hardening_networkd_managed.stdout | default('1') | trim | int) == 0
+
+- name: "Baseline | auditd log readable by group adm (promtail ships the trail)"
+  ansible.builtin.lineinfile:
+    path: /etc/audit/auditd.conf
+    regexp: "^log_group\\s*="
+    line: "log_group = adm"
+  register: hardening_auditd_group
+  failed_when:
+    - hardening_auditd_group is failed
+    - "'does not exist' not in (hardening_auditd_group.msg | default(''))"
+  notify: Reload auditd rules
