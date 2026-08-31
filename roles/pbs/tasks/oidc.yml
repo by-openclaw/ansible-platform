@@ -47,11 +47,23 @@
     - pbs_user_create.rc != 0
     - "'already exists' not in (pbs_user_create.stderr | default(''))"
 
+- name: "OIDC | Read the current ACL"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, acl, list, --output-format, json]
+  register: pbs_acl_list
+  changed_when: false
+
 - name: "OIDC | Grant Admin ACL to the privileged account"
   ansible.builtin.command:
     argv: [proxmox-backup-manager, acl, update, /, Admin, "--auth-id", "{{ pbs_admin_auth_id }}"]
   register: pbs_acl
   changed_when: pbs_acl.rc == 0
+  when: >-
+    (pbs_acl_list.stdout | from_json
+     | selectattr('ugid', 'equalto', pbs_admin_auth_id)
+     | selectattr('roleid', 'equalto', 'Admin')
+     | selectattr('path', 'equalto', '/')
+     | list | length) == 0
   failed_when:
     - pbs_acl.rc != 0
     - "'already' not in (pbs_acl.stderr | default(''))"
