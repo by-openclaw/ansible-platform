@@ -1,0 +1,12 @@
+---
+# ==============================================================================
+# Playbook: promtail.yml — journald + auditd shipping from every guest to the
+# central Loki (lxc-monitoring-01:3100). infra/0006 logging; closes the
+# "external logging host" Lynis suggestion (LOGG-2154) fleet-wide.
+#   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/promtail.yml
+# ==============================================================================
+- name: "Promtail log shipping on every guest"
+  hosts: "{{ target | default('cluster:adguard:mailcow:gitlab_runner:!monitoring') }}"
+  become: true
+  roles:
+    - promtail

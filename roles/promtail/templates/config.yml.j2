@@ -1,0 +1,33 @@
+# Managed by Ansible role `promtail`. Do not edit by hand.
+server:
+  disable: true
+
+positions:
+  filename: {{ promtail_positions_file }}
+
+clients:
+  - url: {{ promtail_loki_url }}
+
+scrape_configs:
+{% if promtail_ship_journal %}
+  - job_name: journal
+    journal:
+      max_age: 12h
+      labels:
+        job: journal
+        host: {{ inventory_hostname }}
+        env: {{ promtail_env_label }}
+    relabel_configs:
+      - source_labels: ["__journal__systemd_unit"]
+        target_label: unit
+{% endif %}
+{% if promtail_ship_auditd %}
+  - job_name: auditd
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: auditd
+          host: {{ inventory_hostname }}
+          env: {{ promtail_env_label }}
+          __path__: {{ promtail_auditd_log }}
+{% endif %}

@@ -1,0 +1,89 @@
+---
+- name: "Promtail | Grafana APT signing key (dearmored)"
+  ansible.builtin.shell:
+    cmd: "set -o pipefail; curl -fsSL {{ promtail_apt_key_url }} | gpg --dearmor -o /usr/share/keyrings/grafana.gpg"
+    creates: /usr/share/keyrings/grafana.gpg
+  args:
+    executable: /bin/bash
+  register: promtail_apt_key
+  changed_when: "'skipped' not in (promtail_apt_key.stdout | default(''))"
+
+- name: "Promtail | Keyring world-readable (apt's sandboxed verifier)"
+  ansible.builtin.file:
+    path: /usr/share/keyrings/grafana.gpg
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: "Promtail | Grafana APT repo"
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/grafana.list
+    content: "{{ promtail_apt_repo }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  register: promtail_apt_repo_file
+
+- name: "Promtail | Install promtail"
+  ansible.builtin.apt:
+    name: promtail
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Promtail | Config + positions directories"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: promtail
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ promtail_config_dir }}"
+    - "{{ promtail_positions_file | dirname }}"
+
+# Journal + auditd access without running as root: the packaged promtail user
+# joins systemd-journal (journal) and adm (auditd trail; the hardening baseline
+# sets auditd log_group=adm for exactly this).
+- name: "Promtail | Group membership for journal + auditd access"
+  ansible.builtin.user:
+    name: promtail
+    groups: [systemd-journal, adm]
+    append: true
+  notify: Restart promtail
+
+- name: "Promtail | Render config"
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ promtail_config_dir }}/config.yml"
+    owner: promtail
+    group: root
+    mode: "0640"
+  notify: Restart promtail
+
+- name: "Promtail | Override directory exists first"
+  ansible.builtin.file:
+    path: /etc/systemd/system/promtail.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "Promtail | Point the packaged service at our config"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/promtail.service.d/override.conf
+    content: |
+      [Service]
+      User=promtail
+      SupplementaryGroups=systemd-journal adm
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart promtail
+
+- name: "Promtail | Enabled + started"
+  ansible.builtin.systemd_service:
+    name: promtail
+    enabled: true
+    state: started
+    daemon_reload: true
