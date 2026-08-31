@@ -12,14 +12,33 @@
     group: root
     mode: "0755"
 
-- name: "config | Render /opt/AdGuardHome/AdGuardHome.yaml"
+# AdGuardHome rewrites its own yaml at runtime (schema fields, ordering), so a
+# straight template diff would restart the DNS server on EVERY run. Render to a
+# managed marker instead and only overwrite the live file when OUR input changed.
+- name: "config | Render the managed config marker"
   ansible.builtin.template:
     src: AdGuardHome.yaml.j2
-    dest: "{{ adguard_home_dir }}/AdGuardHome.yaml"
+    dest: "{{ adguard_home_dir }}/AdGuardHome.yaml.managed"
     owner: root
     group: root
     mode: "0640"
   no_log: true
+  register: adguard_managed_render
+
+- name: "config | Stat the live config"
+  ansible.builtin.stat:
+    path: "{{ adguard_home_dir }}/AdGuardHome.yaml"
+  register: adguard_live_stat
+
+- name: "config | Apply the managed config to the live file (input changed or first run)"
+  ansible.builtin.copy:
+    src: "{{ adguard_home_dir }}/AdGuardHome.yaml.managed"
+    dest: "{{ adguard_home_dir }}/AdGuardHome.yaml"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0640"
+  when: adguard_managed_render.changed or not adguard_live_stat.stat.exists
   notify: Restart AdGuardHome
 
 - name: "config | Ensure AdGuardHome is enabled and started"
