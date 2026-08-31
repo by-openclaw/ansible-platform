@@ -56,6 +56,7 @@
   ansible.builtin.command:
     cmd: >-
       /usr/local/bin/lego
+      --email {{ traefik_acme_email }}
       --dns cloudflare
       --dns.propagation-wait 60s
       --domains "*.{{ traefik_domain }}"
@@ -70,7 +71,9 @@
     LEGO_PATH: /etc/lego/cert
   when: traefik_cert_stat.stat.exists
   register: traefik_renew
-  changed_when: "'no renewal' not in (traefik_renew.stdout | lower) and 'is not due' not in (traefik_renew.stdout | lower)"
-  failed_when: false
+  changed_when: >-
+    'no renewal' not in ((traefik_renew.stdout | default('') + traefik_renew.stderr | default('')) | lower)
+    and 'is not due' not in ((traefik_renew.stdout | default('') + traefik_renew.stderr | default('')) | lower)
+  failed_when: traefik_renew.rc | default(0) != 0
   no_log: true
   notify: Reload traefik
