@@ -57,3 +57,27 @@
     - hardening_postfix_banner is failed
     - "'does not exist' not in (hardening_postfix_banner.msg | default(''))"
   notify: Restart postfix
+
+- name: "Baseline | Password aging policy (AUTH-9286) — key-only accounts, aging is inert but audited"
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: "^{{ item.key }}\\s"
+    line: "{{ item.key }}\t{{ item.value }}"
+  loop:
+    - { key: PASS_MAX_DAYS, value: "365" }
+    - { key: PASS_MIN_DAYS, value: "1" }
+  loop_control: { label: "{{ item.key }}" }
+
+- name: "Baseline | PAM tmpdir isolation (DEB-0280)"
+  ansible.builtin.apt:
+    name: libpam-tmpdir
+    state: present
+
+- name: "Baseline | Initialise the AIDE database (FINT-4402 — once)"
+  ansible.builtin.command: aideinit -y -f
+  args:
+    creates: /var/lib/aide/aide.db
+  async: 900
+  poll: 0
+  register: hardening_aideinit
+  changed_when: hardening_aideinit is changed
