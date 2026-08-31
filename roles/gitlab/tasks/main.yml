@@ -254,6 +254,18 @@
   failed_when: false
   no_log: true
 
+- name: "GitLab | Read the currently stored secrets from Vault"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ gitlab_vault_token }} vault
+      vault kv get -mount=secret -field=gitlab_secrets -format=json {{ gitlab_secrets_vault_path }}
+  delegate_to: lxc-vault-01
+  become: true
+  register: gitlab_vault_stored
+  changed_when: false
+  failed_when: false
+  no_log: true
+
 - name: "GitLab | Write GitLab-generated secrets to Vault ({{ gitlab_secrets_vault_path }})"
   ansible.builtin.command:
     cmd: >-
@@ -267,6 +279,10 @@
   delegate_to: lxc-vault-01
   become: true
   changed_when: true
+  when: >-
+    gitlab_vault_stored.rc != 0
+    or (gitlab_vault_stored.stdout | default('') | from_json)
+       != (gitlab_secrets_raw.content | b64decode | from_json)
   no_log: true
 
 # --- Nightly backup → SeaweedFS gitlab-backups (pure gitlab command, no .sh) ---
