@@ -1,0 +1,92 @@
+---
+# ==============================================================================
+# Role: contract_audit — idempotent, READ-ONLY compliance audit of each host
+# against the ADR contract (docs/audits/adr-compliance-checklist.md). It runs
+# probes and scores PASS/FAIL/SKIP per check ID; it changes NOTHING (every task
+# is changed_when:false), so it is idempotent by construction. Set
+# contract_audit_enforce=true to make the play FAIL on any FAIL (CI gate).
+#
+# Each check:
+#   id      stable ADR check ID (NAM-17, SEC-25a, ...)
+#   desc    one-line human description
+#   probe   shell run on the target host (stdout is matched)
+#   expect  regex the probe stdout MUST match to PASS (case-insensitive)
+#   groups  optional list of inventory groups the check applies to; omitted or
+#           ['all'] = every audited host. A host not in `groups` -> SKIP.
+#   absent  optional: PASS when `expect` is NOT found (invert), for "must not"
+# Add a requirement = add a row here. Non-automatable ADR clauses stay in the
+# checklist doc for manual review; this role covers the machine-checkable ones.
+# ==============================================================================
+
+contract_audit_enforce: false          # true = fail the play on any FAIL (gate)
+
+contract_audit_checks:
+  # --- logging (infra/0006) ---------------------------------------------------
+  - id: INF-27
+    desc: "Promtail agent running (every host)"
+    probe: "systemctl is-active promtail 2>/dev/null || echo inactive"
+    expect: "^active$"
+
+  - id: SEC-23
+    desc: "auditd enabled (audit trail)"
+    probe: "systemctl is-active auditd 2>/dev/null || echo inactive"
+    expect: "^active$"
+
+  # --- hardening / SSH (security/0003 §9, identity/0004 §5) --------------------
+  - id: SEC-25a
+    desc: "sshd listens on port 22222"
+    probe: "sshd -T 2>/dev/null | awk '/^port /{print}'"
+    expect: "port 22222"
+
+  - id: SEC-25b
+    desc: "sshd PermitRootLogin no (PVE break-glass carve-out excepted)"
+    probe: "sshd -T 2>/dev/null | awk '/^permitrootlogin /{print}'"
+    expect: "permitrootlogin no"
+    groups: ["cluster", "adguard", "mailcow", "gitlab_runner"]
+
+  - id: IDN-29
+    desc: "sshd PasswordAuthentication no (global)"
+    probe: "sshd -T 2>/dev/null | awk '/^passwordauthentication /{print}'"
+    expect: "passwordauthentication no"
+
+  - id: SEC-25c
+    desc: "fail2ban active"
+    probe: "systemctl is-active fail2ban 2>/dev/null || echo inactive"
+    expect: "^active$"
+
+  - id: SEC-20
+    desc: "Lynis hardening index >= 80"
+    probe: >-
+      awk -F= '/hardening_index/{print ($2>=80)?"PASS":"FAIL "$2}'
+      /var/log/lynis-report.dat 2>/dev/null | head -1 || echo NOREPORT
+    expect: "^PASS$"
+
+  # --- identity naming (naming/0002 §3) — no human/non-svc login accounts -----
+  - id: NAM-15
+    desc: "No ad-hoc human login accounts (uid>=1000) beyond by-research + svc-*"
+    probe: >-
+      awk -F: '$3>=1000 && $3<65534 && $1!="nobody"{print $1}' /etc/passwd
+      | grep -vE '^(by-research|svc-[a-z0-9-]+)$' | tr '\n' ' ' || true
+    expect: "^\\s*$"
+
+  # SEC-30 (step-ca root CA in every trust store) is deferred to v2 — step-ca is
+  # parked (P5); internal TLS currently rides the publicly-trusted LE wildcard,
+  # so the check would be noise until step-ca is deployed.
+
+# Per-service checks (only run on the owning group) — extend freely.
+contract_audit_service_checks:
+  - id: SVC-62
+    desc: "GitLab DB connection uses sslmode=verify-full"
+    probe: "grep -h db_sslmode /etc/gitlab/gitlab.rb 2>/dev/null || echo none"
+    expect: "verify-full"
+    groups: ["gitlab"]
+
+  - id: NAM-17-nb
+    desc: "NetBird API principal is a svc-{function}-{env} service user"
+    probe: >-
+      grep -o 'svc-netbird-[a-z]*'
+      {{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric/netbird-automation.json 2>/dev/null
+      | head -1 || echo none
+    expect: "svc-netbird-"
+    groups: ["netbird"]
+    delegate_localhost: true

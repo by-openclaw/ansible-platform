@@ -1,0 +1,56 @@
+---
+# Idempotent, read-only compliance audit. Every task is changed_when:false —
+# this role never mutates a host. It scores each check PASS/FAIL/SKIP and, when
+# contract_audit_enforce is true, fails the play if any check FAILs.
+
+- name: "Contract-audit | Run each applicable probe (read-only)"
+  ansible.builtin.shell: "{{ item.probe }}"
+  args:
+    executable: /bin/bash
+  loop: "{{ contract_audit_checks + contract_audit_service_checks }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: contract_audit_runs
+  changed_when: false
+  failed_when: false
+  when: >-
+    (item.groups is not defined)
+    or ('all' in item.groups)
+    or ((item.groups | intersect(group_names)) | length > 0)
+  delegate_to: "{{ 'localhost' if (item.delegate_localhost | default(false)) else inventory_hostname }}"
+  become: "{{ not (item.delegate_localhost | default(false)) }}"   # controller checks run without sudo
+
+- name: "Contract-audit | Build the scorecard"
+  ansible.builtin.set_fact:
+    contract_audit_scorecard: >-
+      {{ contract_audit_scorecard | default([]) + [{
+           'id': item.item.id,
+           'desc': item.item.desc,
+           'status': ('SKIP' if (item.skipped | default(false))
+             else ('PASS'
+               if (((item.stdout | default('') | regex_search(item.item.expect, ignorecase=True)) is not none)
+                    != (item.item.absent | default(false) | bool))
+               else 'FAIL'))
+         }] }}
+  loop: "{{ contract_audit_runs.results }}"
+  loop_control:
+    label: "{{ item.item.id }}"
+
+- name: "Contract-audit | Per-host report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      PASS={{ contract_audit_scorecard | selectattr('status', 'equalto', 'PASS') | list | length }}
+      FAIL={{ contract_audit_scorecard | selectattr('status', 'equalto', 'FAIL') | list | length }}
+      SKIP={{ contract_audit_scorecard | selectattr('status', 'equalto', 'SKIP') | list | length }}
+      :: fails=[{{ contract_audit_scorecard | selectattr('status', 'equalto', 'FAIL') | map(attribute='id') | join(', ') }}]
+
+- name: "Contract-audit | Enforce (fail the play on any FAIL)"
+  ansible.builtin.assert:
+    that: (contract_audit_scorecard | selectattr('status', 'equalto', 'FAIL') | list | length) == 0
+    fail_msg: >-
+      Contract violations on {{ inventory_hostname }}:
+      {{ contract_audit_scorecard | selectattr('status', 'equalto', 'FAIL')
+         | map(attribute='id') | join(', ') }}
+    success_msg: "{{ inventory_hostname }} — all applicable contract checks PASS"
+  when: contract_audit_enforce | bool

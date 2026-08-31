@@ -1,0 +1,14 @@
+---
+# ==============================================================================
+# Playbook: contract-audit.yml — score every host against the ADR contract
+# (docs/audits/adr-compliance-checklist.md) via the read-only, idempotent
+# contract_audit role. Changes nothing.
+#   Report only:  ansible-playbook -i inventories/prod/hosts.yml playbooks/contract-audit.yml
+#   As a gate:    ... -e contract_audit_enforce=true      # fails on any violation
+# ==============================================================================
+- name: "ADR contract compliance audit (read-only)"
+  hosts: "{{ target | default('cluster:adguard:mailcow:gitlab_runner') }}"
+  become: true
+  gather_facts: true
+  roles:
+    - contract_audit
