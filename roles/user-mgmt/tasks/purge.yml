@@ -1,0 +1,30 @@
+---
+# Delete FOREIGN accounts (never part of the identity model). Distinct from the
+# disable-never-delete path for managed identities (account.yml). Idempotent.
+
+- name: "User-mgmt | Guard — never purge a managed identity"
+  ansible.builtin.assert:
+    that:
+      - user_mgmt_purge_accounts | intersect([user_mgmt_org, 'svc-rune-' + user_mgmt_env, 'svc-ansible-' + user_mgmt_env]) | length == 0
+    fail_msg: >-
+      Refusing to purge a managed identity — user_mgmt_purge_accounts may only
+      list foreign/install-artifact accounts, never {{ user_mgmt_org }} or svc-*.
+    quiet: true
+
+- name: "User-mgmt | Delete foreign account (+ home, mail spool)"
+  ansible.builtin.user:
+    name: "{{ item }}"
+    state: absent
+    remove: true
+    force: true
+  loop: "{{ user_mgmt_purge_accounts }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: "User-mgmt | Remove any leftover sudoers file for the purged account"
+  ansible.builtin.file:
+    path: "/etc/sudoers.d/{{ item }}"
+    state: absent
+  loop: "{{ user_mgmt_purge_accounts }}"
+  loop_control:
+    label: "{{ item }}"
