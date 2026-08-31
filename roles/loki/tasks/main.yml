@@ -13,7 +13,8 @@
   ansible.builtin.shell:
     cmd: "set -o pipefail; curl -fsSL {{ loki_apt_key_url }} | gpg --dearmor -o /usr/share/keyrings/grafana.gpg"
     creates: /usr/share/keyrings/grafana.gpg
-  changed_when: true
+  register: loki_apt_key
+  changed_when: "'skipped' not in (loki_apt_key.stdout | default(''))"
 
 - name: "Loki | APT repo"
   ansible.builtin.copy:
