@@ -65,7 +65,9 @@
     LEGO_PATH: /etc/lego/cert
   when: adguard_cert_stat.stat.exists
   register: adguard_renew
-  changed_when: "'no renewal' not in (adguard_renew.stdout | lower) and 'is not due' not in (adguard_renew.stdout | lower)"
+  changed_when: >-
+    'no renewal' not in ((adguard_renew.stdout | default('') + adguard_renew.stderr | default('')) | lower)
+    and 'is not due' not in ((adguard_renew.stdout | default('') + adguard_renew.stderr | default('')) | lower)
   failed_when: false
   no_log: true
   notify: Restart AdGuardHome
