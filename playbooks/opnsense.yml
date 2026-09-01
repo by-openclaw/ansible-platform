@@ -67,6 +67,39 @@
       when: opnsense_use_tunnel | default(false) | bool
       tags: always
 
+- name: "Monit mail creds — Vault read outside the connection:local play"
+  hosts: lxc-vault-01
+  become: true
+  gather_facts: false
+  tags: [services, monit]
+  tasks:
+    - name: "Monit | Read the opnsense mailbox creds (read-only)"
+      ansible.builtin.include_role:
+        name: vault_secret
+        apply:
+          tags: [services, monit]
+      vars:
+        vault_secret_path: "{{ platform_env | default('prod') }}/mail/opnsense"
+        vault_secret_init: {}
+      tags: [services, monit]
+
+    - name: "Monit | Hand the SMTP settings to the firewall hosts"
+      ansible.builtin.set_fact:
+        opnsense_monitchk_smtp:
+          # Asset FQDN, not mail. (which split-DNS maps to Traefik / public IP;
+          # SMTP is NOT proxied). Wildcard cert *.{domain} covers it -> TLS verify stays ON.
+          smtp_host: "vm-mailcow-01.{{ platform_domain | default('by-research.be') }}"
+          smtp_port: "{{ vault_secret_result.smtp_port }}"
+          smtp_username: "{{ vault_secret_result.address }}"
+          smtp_password: "{{ vault_secret_result.password }}"
+          from_address: "{{ vault_secret_result.address }}"
+          to_address: "alerts@{{ platform_domain | default('by-research.be') }}"
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ groups['opnsense'] }}"
+      no_log: true
+      tags: [services, monit]
+
 - name: Configure OPNsense
   hosts: opnsense
   gather_facts: false

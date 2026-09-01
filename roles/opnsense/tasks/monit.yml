@@ -1,22 +1,26 @@
 ---
-# Monit — system/service monitoring with email alerts via Resend SMTP relay.
-# Idempotent via OPNsense REST API (root SSH blocked → API only). Mirrors the
-# proven live config: general SMTP, one enabled alert (recipient + verified
-# from-domain), process-down checks for the critical services, plus the default
-# system (CPU/load/mem) + RootFs (disk) monitors.
+# Monit — system/service monitoring with email alerts via OUR Mailcow (same
+# flow as every service: opnsense@{domain} submits on 587/STARTTLS, alerts go
+# to the central alerts@ sink). Resend is retired from this path (its creds
+# stay in Vault under resend/by-research for other uses).
+# Idempotent via OPNsense REST API (root SSH blocked → API only).
 #
-# SMTP creds are read from the secret store at apply time (never committed).
-# The from-address MUST be on a Resend-verified domain or sends are rejected.
+# SMTP creds = the opnsense service mailbox, read from Vault at apply time
+# (prod/mail/opnsense, written by the mailbox concern-role — SVC-11).
 
-- name: Monit | Load Resend SMTP secret
-  ansible.builtin.set_fact:
-    opnsense_monitchk_smtp: "{{ (lookup('file', opnsense_monit_smtp_secret_path) | from_json).fields }}"
-  no_log: true
-  delegate_to: localhost
-  become: false
+# opnsense_monitchk_smtp is assembled by the pre-play in playbooks/opnsense.yml
+# (hosts: vault) — the Configure play runs connection:local, which overrides
+# delegation transport, so Vault reads cannot happen from inside this play.
+- name: Monit | Require the SMTP settings (set by the vault pre-play)
+  ansible.builtin.assert:
+    that: opnsense_monitchk_smtp is defined
+    fail_msg: >-
+      opnsense_monitchk_smtp not set — run playbooks/opnsense.yml (its vault
+      pre-play reads prod/mail/opnsense), not the role in isolation.
+    quiet: true
   tags: [services, monit]
 
-- name: Monit | Configure general (SMTP relay to Resend + enable)
+- name: Monit | Configure general (SMTP via our Mailcow + enable)
   ansible.builtin.uri:
     url: "{{ opnsense_api_url }}/api/monit/settings/set"
     method: POST
@@ -34,8 +38,8 @@
           mailserver: "{{ opnsense_monitchk_smtp.smtp_host }}"
           port: "{{ opnsense_monitchk_smtp.smtp_port }}"
           username: "{{ opnsense_monitchk_smtp.smtp_username }}"
-          password: "{{ opnsense_monitchk_smtp.smtp_api_key }}"
-          ssl: "{{ '1' if opnsense_monitchk_smtp.smtp_tls == 'ssl' else '0' }}"
+          password: "{{ opnsense_monitchk_smtp.smtp_password }}"
+          ssl: "1"                       # 587 STARTTLS (monit negotiates TLS; SVC-12 no plaintext)
           sslversion: "auto"
           sslverify: "1"
           httpdEnabled: "0"
