@@ -24,13 +24,24 @@
         - r_user.rc != 0
         - "'already exists' not in (r_user.stderr | default(''))"
 
+    - name: "PVE-wire | Read the current ACL (read-first idempotency)"
+      ansible.builtin.command:
+        argv: [proxmox-backup-manager, acl, list, --output-format, json]
+      register: r_acl_list
+      changed_when: false
+
     - name: "PVE-wire | Grant DatastoreBackup on the datastore"
       ansible.builtin.command:
         argv: [proxmox-backup-manager, acl, update, "/datastore/{{ pbs_datastore_name }}",
                DatastoreBackup, "--auth-id", "{{ pbs_pve_backup_user }}"]
       register: r_acl
       changed_when: r_acl.rc == 0
+      when: >-
+        (r_acl_list.stdout | from_json
+         | selectattr('ugid', 'equalto', pbs_pve_backup_user)
+         | selectattr('roleid', 'equalto', 'DatastoreBackup') | list | length) == 0
       failed_when:
+        - r_acl is not skipped
         - r_acl.rc != 0
         - "'already' not in (r_acl.stderr | default(''))"
 
@@ -80,7 +91,12 @@
                DatastoreBackup, "--auth-id", "{{ pbs_pve_backup_user }}!{{ pbs_pve_backup_token }}"]
       register: r_tokacl
       changed_when: r_tokacl.rc == 0
+      when: >-
+        (r_acl_list.stdout | from_json
+         | selectattr('ugid', 'equalto', pbs_pve_backup_user + '!' + pbs_pve_backup_token)
+         | selectattr('roleid', 'equalto', 'DatastoreBackup') | list | length) == 0
       failed_when:
+        - r_tokacl is not skipped
         - r_tokacl.rc != 0
         - "'already' not in (r_tokacl.stderr | default(''))"
 
@@ -167,6 +183,33 @@
         - r_add.rc != 0
         - "'already defined' not in (r_add.stderr | default(''))"
       when: pbs_pve_storage_id not in r_pvesm.stdout
+
+    # Converge credentials on an EXISTING storage (e.g. the backup-user rename):
+    # pvesm add can't update; compare the configured username and set on drift.
+    - name: "PVE-wire | Current storage username"
+      ansible.builtin.shell: |
+        set -o pipefail
+        awk '/^pbs: {{ pbs_pve_storage_id }}$/{f=1} f&&/username/{print $2; exit}' /etc/pve/storage.cfg
+      args: { executable: /bin/bash }
+      register: r_user
+      changed_when: false
+
+    - name: "PVE-wire | Converge storage credentials (username/token drift)"
+      ansible.builtin.command:
+        argv:
+          - pvesm
+          - set
+          - "{{ pbs_pve_storage_id }}"
+          - "--username"
+          - "{{ pbs_tok.tokenid }}"
+          - "--password"
+          - "{{ pbs_tok.value }}"
+      no_log: true
+      when:
+        - pbs_pve_storage_id in r_pvesm.stdout
+        - (r_user.stdout | trim) != pbs_tok.tokenid
+      register: r_set
+      changed_when: r_set is not skipped
 
     - name: "PVE-wire | Stat the storage encryption key"
       ansible.builtin.stat:
