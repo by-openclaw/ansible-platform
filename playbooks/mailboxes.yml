@@ -3,11 +3,9 @@
 # Per-service rx/tx mailboxes (SVC-16) + the mandatory catchall@ (SVC-09), via
 # the reusable mailbox concern-role. Idempotent.
 #
-# NOT here (pre-existing boxes with creds wired elsewhere — converging them into
-# the {env}/mail/{svc} convention is a tracked follow-up, NOT a re-mint, to
-# avoid the "get-or-create minted over live creds" incident class):
-#   gitlab@ (gitlab role), jumpserver@ (prod/jumpserver/smtp), alerts@
-#   (monitoring), postmaster@/abuse@ (RFC, mailcow role), mailcow itself.
+# NOT here: postmaster@/abuse@ (RFC boxes, mailcow role) and mailcow itself.
+# gitlab@/jumpserver@/alerts@ WERE pre-existing: converged 2026-09-01 by seeding
+# Vault prod/mail/{svc} with their live passwords BEFORE adding them (no re-mint).
 #
 #   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/mailboxes.yml
 # ==============================================================================
@@ -18,6 +16,13 @@
   vars:
     mailboxes_default_delegates: ["adm_yboujraf@{{ platform_domain | default('by-research.be') }}"]
     mailboxes_services:
+      # Pre-existing boxes, CONVERGED 2026-09-01: Vault prod/mail/{svc} was
+      # seeded with their EXISTING passwords first, so nothing is re-minted —
+      # the role's get-or-create reads, add/mailbox hits object_exists, and only
+      # delegates/reconcile apply.
+      - { svc: alerts }
+      - { svc: gitlab }
+      - { svc: jumpserver }
       - { svc: adguard }
       - { svc: authentik }
       - { svc: crowdsec }
