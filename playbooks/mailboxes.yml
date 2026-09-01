@@ -1,0 +1,72 @@
+---
+# ==============================================================================
+# Per-service rx/tx mailboxes (SVC-16) + the mandatory catchall@ (SVC-09), via
+# the reusable mailbox concern-role. Idempotent.
+#
+# NOT here (pre-existing boxes with creds wired elsewhere — converging them into
+# the {env}/mail/{svc} convention is a tracked follow-up, NOT a re-mint, to
+# avoid the "get-or-create minted over live creds" incident class):
+#   gitlab@ (gitlab role), jumpserver@ (prod/jumpserver/smtp), alerts@
+#   (monitoring), postmaster@/abuse@ (RFC, mailcow role), mailcow itself.
+#
+#   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/mailboxes.yml
+# ==============================================================================
+- name: "Service mailboxes (rx/tx) + catchall"
+  hosts: vm-mailcow-01
+  become: true
+  gather_facts: false
+  vars:
+    mailboxes_default_delegates: ["yboujraf@{{ platform_domain | default('by-research.be') }}"]
+    mailboxes_services:
+      - { svc: adguard }
+      - { svc: authentik }
+      - { svc: crowdsec }
+      - { svc: grafana }
+      - { svc: harbor }
+      - { svc: netbird, aliases: [] }     # vpn.by-research.be is the app; mail stays netbird@
+      - { svc: netbox }
+      - { svc: nextcloud }
+      - { svc: pbs }
+      - { svc: pgadmin }
+      - { svc: seaweedfs }
+      - { svc: vaultwarden }
+  tasks:
+    - name: "Provision each service mailbox (delegates: co-delivery + send-as)"
+      ansible.builtin.include_role:
+        name: mailbox
+      vars:
+        mailbox_service: "{{ item.svc }}"
+        mailbox_aliases: "{{ item.aliases | default([]) }}"
+        mailbox_delegates: "{{ item.delegates | default(mailboxes_default_delegates) }}"
+      loop: "{{ mailboxes_services }}"
+      loop_control:
+        label: "{{ item.svc }}"
+
+    # --- catchall@ (SVC-09): a REAL delivery path for the whole domain ---------
+    - name: "Catchall | Load the Mailcow API key"
+      ansible.builtin.set_fact:
+        mailboxes_api: "https://{{ mailcow_listen_ip | default('10.1.2.120') }}:{{ mailcow_https_port | default(8443) }}/api/v1"
+        mailboxes_api_hdr:
+          X-API-Key: "{{ (lookup('file', lookup('env', 'HOME') + '/.openclaw/workspace/infra/secrets/fabric/mailcow.json') | from_json).fields.api_key }}"
+          Content-Type: "application/json"
+      no_log: true
+
+    - name: "Catchall | Domain catch-all alias → postmaster (SVC-09)"
+      ansible.builtin.uri:
+        url: "{{ mailboxes_api }}/add/alias"
+        method: POST
+        headers: "{{ mailboxes_api_hdr }}"
+        body_format: json
+        body:
+          address: "@{{ platform_domain | default('by-research.be') }}"
+          goto: "postmaster@{{ platform_domain | default('by-research.be') }}"
+          active: "1"
+        validate_certs: false
+        status_code: [200]
+      register: mailboxes_catchall
+      changed_when: "'alias_added' in (mailboxes_catchall.json | default([]) | string)"
+      failed_when: >-
+        mailboxes_catchall.json is defined and
+        (mailboxes_catchall.json | string is search('danger')) and
+        not (mailboxes_catchall.json | string is search('object_exists|is_alias_or_mailbox'))
+      no_log: true
