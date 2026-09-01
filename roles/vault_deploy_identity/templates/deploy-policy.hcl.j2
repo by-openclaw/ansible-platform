@@ -1,0 +1,23 @@
+# Managed by Ansible role `vault_deploy_identity`. The controller's deploy
+# identity — everything the Ansible run needs, WITHOUT being root (no seal,
+# rekey, root-token, or audit-device control). Replaces the root token (SEC-06).
+
+# Service secrets (KV v2): full CRUD under {env}, plus archive.
+path "{{ vdi_mount }}/data/{{ vdi_env }}/*"     { capabilities = ["create","read","update","delete","list"] }
+path "{{ vdi_mount }}/metadata/{{ vdi_env }}/*" { capabilities = ["create","read","update","delete","list"] }
+path "{{ vdi_mount }}/data/archive/*"           { capabilities = ["create","read","update","list"] }
+path "{{ vdi_mount }}/metadata/archive/*"       { capabilities = ["read","list","delete"] }
+path "{{ vdi_mount }}/metadata"                 { capabilities = ["list"] }
+path "{{ vdi_mount }}/metadata/{{ vdi_env }}"   { capabilities = ["list"] }
+
+# Manage per-service policies + AppRoles (the vault_policy role).
+path "sys/policies/acl/*"                        { capabilities = ["create","read","update","delete","list"] }
+path "auth/approle/role/*"                       { capabilities = ["create","read","update","delete","list"] }
+
+# Read-only introspection the deploy path uses.
+path "sys/auth"                                  { capabilities = ["read"] }
+path "sys/auth/approle"                          { capabilities = ["read","sudo"] }
+path "sys/mounts"                                { capabilities = ["read"] }
+
+# Raft snapshot for the backup playbook (data path, not root-only config).
+path "sys/storage/raft/snapshot"                 { capabilities = ["read"] }
