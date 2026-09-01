@@ -143,13 +143,14 @@ opnsense_ntp_servers:
   - "0.pool.ntp.org"
   - "1.pool.ntp.org"
 
-# ── Monit (os-monit) — monitoring + email alerts via Resend SMTP relay ────────
-# SMTP creds read from the secret file at apply time (never committed). The
-# from-address MUST be on a Resend-verified domain (e.g. resend.by-systems.be).
+# ── Monit (os-monit) — monitoring + email alerts via OUR Mailcow ──────────────
+# Sender = the opnsense service mailbox (Vault prod/mail/opnsense, mailbox
+# concern-role); recipient = the central alerts@ sink. Resend retired from this
+# path (creds remain in Vault: resend/by-research).
 opnsense_monit_enabled: true
 opnsense_monit_interval: 120
 opnsense_monit_startdelay: 120
-opnsense_monit_smtp_secret_path: "/home/by-systems/.openclaw/workspace/infra/secrets/fabric/monit-smtp-resend.json"
+opnsense_monit_alert_to: "alerts@{{ platform_domain | default('by-research.be') }}"
 # Process-down checks — pidfiles verified on vm-opns-01. ntpd is intentionally
 # NOT here (chrony replaced it). Gateways are covered by dpinger, not Monit.
 opnsense_monit_processes:
