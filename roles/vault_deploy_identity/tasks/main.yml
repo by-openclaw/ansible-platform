@@ -1,0 +1,117 @@
+---
+# Provision the controller's deploy identity: policy `ansible-deploy` + an
+# AppRole bound to it. This is what replaces the root token for every Ansible
+# deploy. Idempotent; secret_id minted once (rotate by deleting the fabric file).
+# Bootstrap: still uses the root token to CREATE the deploy identity (one of the
+# last legitimate root uses); after this, deploys authenticate as ansible-deploy.
+
+- name: "Deploy identity | Load root token (bootstrap — creating the replacement)"
+  ansible.builtin.set_fact:
+    vdi_root_token: "{{ (lookup('file', vdi_bootstrap_dir + '/' + vdi_bootstrap_file) | from_json).fields.root_token }}"
+  no_log: true
+
+- name: "Deploy identity | Render the deploy policy"
+  ansible.builtin.set_fact:
+    vdi_hcl: "{{ lookup('template', 'deploy-policy.hcl.j2') }}"
+
+- name: "Deploy identity | Read current policy (tolerate absent)"
+  ansible.builtin.command:
+    cmd: docker exec -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }} vault policy read {{ vdi_name }}
+  delegate_to: "{{ vdi_host }}"
+  become: true
+  register: vdi_current
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: "Deploy identity | Write the policy on drift"
+  ansible.builtin.command:
+    cmd: docker exec -i -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }} vault policy write {{ vdi_name }} -
+    stdin: "{{ vdi_hcl }}"
+  delegate_to: "{{ vdi_host }}"
+  become: true
+  when: (vdi_current.stdout | default('') | trim) != (vdi_hcl | trim)
+  changed_when: true
+  no_log: true
+
+- name: "Deploy identity | Ensure approle auth is enabled"
+  ansible.builtin.shell: |
+    set -o pipefail
+    docker exec -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }} \
+      sh -c 'vault auth list -format=json | grep -q "approle/" || vault auth enable approle'
+  args: { executable: /bin/bash }
+  delegate_to: "{{ vdi_host }}"
+  become: true
+  register: vdi_approle_en
+  changed_when: "'Success' in (vdi_approle_en.stderr | default('')) or 'enabled' in (vdi_approle_en.stdout | default(''))"
+  no_log: true
+
+- name: "Deploy identity | Read current AppRole (tolerate absent)"
+  ansible.builtin.command:
+    cmd: docker exec -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }} vault read -format=json auth/approle/role/{{ vdi_name }}
+  delegate_to: "{{ vdi_host }}"
+  become: true
+  register: vdi_role_read
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: "Deploy identity | Create/update the AppRole"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }}
+      vault write auth/approle/role/{{ vdi_name }}
+      token_policies={{ vdi_name }}
+      token_ttl={{ vdi_token_ttl }} token_max_ttl={{ vdi_token_max_ttl }}
+      secret_id_ttl={{ vdi_secret_id_ttl }}
+  delegate_to: "{{ vdi_host }}"
+  become: true
+  register: vdi_role_write
+  when: >-
+    vdi_role_read.rc != 0
+    or (vdi_role_read.stdout | default('{}') | from_json).data.token_policies | default([]) != [vdi_name]
+  changed_when: vdi_role_write.rc == 0
+  no_log: true
+
+- name: "Deploy identity | Read role_id"
+  ansible.builtin.command:
+    cmd: docker exec -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }} vault read -field=role_id auth/approle/role/{{ vdi_name }}/role-id
+  delegate_to: "{{ vdi_host }}"
+  become: true
+  register: vdi_role_id
+  changed_when: false
+  no_log: true
+
+- name: "Deploy identity | Stat persisted creds"
+  ansible.builtin.stat:
+    path: "{{ vdi_secret_dir }}/{{ vdi_creds_file }}"
+  delegate_to: localhost
+  become: false
+  register: vdi_creds_stat
+
+- name: "Deploy identity | Mint secret_id (first run only)"
+  ansible.builtin.command:
+    cmd: docker exec -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }} vault write -field=secret_id -f auth/approle/role/{{ vdi_name }}/secret-id
+  delegate_to: "{{ vdi_host }}"
+  become: true
+  register: vdi_secret_id
+  changed_when: true
+  no_log: true
+  when: not vdi_creds_stat.stat.exists
+
+- name: "Deploy identity | Persist role_id + secret_id (0600)"
+  ansible.builtin.copy:
+    dest: "{{ vdi_secret_dir }}/{{ vdi_creds_file }}"
+    mode: "0600"
+    content: >-
+      {{ {'fields': {'role_id': vdi_role_id.stdout | trim,
+                     'secret_id': vdi_secret_id.stdout | trim,
+                     'policy': vdi_name}} | to_nice_json }}
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: not vdi_creds_stat.stat.exists
+
+- name: "Deploy identity | Summary"
+  ansible.builtin.debug:
+    msg: "Deploy identity '{{ vdi_name }}' ready {{ '(creds reused)' if vdi_creds_stat.stat.exists else '(creds minted)' }} — the root-token replacement for deploys."
