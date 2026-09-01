@@ -6,9 +6,13 @@
 # ==============================================================================
 
 # --- 1. Runner authentication token (GitLab 17+ instance runner) — Vault store --
-- name: "Runner | Load Vault root token (bootstrap)"
+- name: "Runner | Authenticate to Vault (ansible-deploy AppRole; root fallback)"
+  ansible.builtin.include_role:
+    name: vault_login
+
+- name: "Runner | Use the deploy token"
   ansible.builtin.set_fact:
-    gitlab_runner_vault_token: "{{ (lookup('file', gitlab_runner_vault_bootstrap) | from_json).fields.root_token }}"
+    gitlab_runner_vault_token: "{{ vault_deploy_token }}"
   no_log: true
 
 - name: "Runner | Read the auth token from Vault (if already minted)"
