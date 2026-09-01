@@ -111,6 +111,12 @@
     line: "Checksums = sha512"
   failed_when: false
 
+- name: "Baseline | Install auditd on VMs (SEC-23; kernel audit is host-scoped, so not in LXCs)"
+  ansible.builtin.apt:
+    name: [auditd, audispd-plugins]
+    state: present
+  when: ansible_virtualization_type | default('') != 'lxc'
+
 - name: "Baseline | Gather package facts (for conditional auditd rules)"
   ansible.builtin.package_facts:
     manager: apt
