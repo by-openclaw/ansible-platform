@@ -1,0 +1,34 @@
+---
+# ==============================================================================
+# Role: mailbox — per-service rx/tx mailbox on Mailcow (SVC-16), the reusable
+# mailbox concern-role. present/absent (SVC-47), Mailcow API only (SVC-15).
+#
+#   * mailbox {service}@{domain} with a Vault-native password
+#     (secret/{env}/mail/{service} — SVC-11; get-or-create, minted once)
+#   * aliases[]        extra addresses delivering to the same box
+#   * delegates[]      admin mailboxes that (a) receive a COPY of all incoming
+#                      mail (bcc map, type rcpt) and (b) may SEND AS the service
+#                      address (sender_acl) — access without shared passwords
+#   * plus-addressing  {service}+tag@{domain} works platform-wide already
+#                      (postfix recipient_delimiter=+); nothing per-mailbox
+#
+# absent: deactivate the mailbox (archive-before-destroy — mail retained),
+# remove aliases + bcc + sender_acl entries. Vault secret stays (history).
+# ==============================================================================
+
+mailbox_service: ""                          # REQUIRED, e.g. netbird
+mailbox_domain: "{{ platform_domain | default('by-research.be') }}"
+mailbox_env: "{{ platform_env | default('prod') }}"
+mailbox_state: present                       # present | absent
+mailbox_display_name: "{{ mailbox_service }} service"
+mailbox_quota_mb: 1024
+
+mailbox_aliases: []                          # extra local-parts -> this box
+mailbox_delegates: []                        # full addresses (adm_x@..., ops@...)
+
+# --- Mailcow API (mirrors roles/mailcow) --------------------------------------
+mailbox_mailcow_host: "vm-mailcow-01"
+mailbox_listen_ip: "{{ mailcow_listen_ip | default('10.1.2.120') }}"
+mailbox_https_port: "{{ mailcow_https_port | default(8443) }}"
+mailbox_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
+mailbox_mailcow_secret_file: "fabric/mailcow.json"   # api_key  # pragma: allowlist secret
