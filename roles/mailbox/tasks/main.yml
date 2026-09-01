@@ -1,0 +1,201 @@
+---
+- name: "Mailbox | Validate input"
+  ansible.builtin.assert:
+    that: mailbox_service | length > 0
+    fail_msg: "mailbox requires mailbox_service"
+    quiet: true
+
+- name: "Mailbox | Address facts"
+  ansible.builtin.set_fact:
+    mailbox_address: "{{ mailbox_service }}@{{ mailbox_domain }}"
+
+- name: "Mailbox | Load the Mailcow API key"
+  ansible.builtin.set_fact:
+    mailbox_api: "https://{{ mailbox_listen_ip }}:{{ mailbox_https_port }}/api/v1"
+    mailbox_api_hdr:
+      X-API-Key: "{{ (lookup('file', mailbox_secret_dir + '/' + mailbox_mailcow_secret_file) | from_json).fields.api_key }}"
+      Content-Type: "application/json"
+  no_log: true
+
+# --- credentials: Vault-native, minted once (SVC-11) ---------------------------
+- name: "Mailbox | Get-or-create the mailbox credential in Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ mailbox_env }}/mail/{{ mailbox_service }}"
+    vault_secret_init:
+      address: "{{ mailbox_address }}"
+      smtp_host: "mail.{{ mailbox_domain }}"
+      smtp_port: 587
+      imap_host: "mail.{{ mailbox_domain }}"
+      imap_port: 993
+      password: "{{ lookup('community.general.random_string', length=28, special=false) }}"
+  when: mailbox_state == 'present'
+
+- name: "Mailbox | Bind the credential"
+  ansible.builtin.set_fact:
+    mailbox_password: "{{ vault_secret_result.password }}"
+  no_log: true
+  when: mailbox_state == 'present'
+
+# ============================ PRESENT =========================================
+- name: "Mailbox | Provision (state=present)"
+  when: mailbox_state == 'present'
+  delegate_to: "{{ mailbox_mailcow_host }}"
+  become: true
+  block:
+    - name: "Mailbox | Create the mailbox — {{ mailbox_address }}"
+      ansible.builtin.uri:
+        url: "{{ mailbox_api }}/add/mailbox"
+        method: POST
+        headers: "{{ mailbox_api_hdr }}"
+        body_format: json
+        body:
+          local_part: "{{ mailbox_service }}"
+          domain: "{{ mailbox_domain }}"
+          name: "{{ mailbox_display_name }}"
+          password: "{{ mailbox_password }}"
+          password2: "{{ mailbox_password }}"
+          quota: "{{ mailbox_quota_mb }}"
+          active: "1"
+        validate_certs: false
+        status_code: [200]
+      register: mailbox_add
+      changed_when: "'mailbox_added' in (mailbox_add.json | default([]) | string)"
+      failed_when: >-
+        mailbox_add.json is defined and
+        (mailbox_add.json | string is search('danger')) and
+        not (mailbox_add.json | string is search('object_exists'))
+      no_log: true
+
+    - name: "Mailbox | Ensure the mailbox is active (idempotent re-activate)"
+      ansible.builtin.uri:
+        url: "{{ mailbox_api }}/edit/mailbox"
+        method: POST
+        headers: "{{ mailbox_api_hdr }}"
+        body_format: json
+        body:
+          items: ["{{ mailbox_address }}"]
+          attr: { active: "1" }
+        validate_certs: false
+        status_code: [200]
+      register: mailbox_activate
+      changed_when: false
+      no_log: true
+
+    - name: "Mailbox | Aliases → {{ mailbox_address }}"
+      ansible.builtin.uri:
+        url: "{{ mailbox_api }}/add/alias"
+        method: POST
+        headers: "{{ mailbox_api_hdr }}"
+        body_format: json
+        body:
+          address: "{{ item }}@{{ mailbox_domain }}"
+          goto: "{{ mailbox_address }}"
+          active: "1"
+        validate_certs: false
+        status_code: [200]
+      loop: "{{ mailbox_aliases }}"
+      register: mailbox_alias_add
+      changed_when: "'alias_added' in (mailbox_alias_add.json | default([]) | string)"
+      failed_when: >-
+        mailbox_alias_add.json is defined and
+        (mailbox_alias_add.json | string is search('danger')) and
+        not (mailbox_alias_add.json | string is search('object_exists'))
+      no_log: true
+
+    # Delegates (a): incoming copies via a recipient bcc map (rx access).
+    - name: "Mailbox | Delegate rx copies (bcc map) — {{ mailbox_delegates | join(', ') }}"
+      ansible.builtin.uri:
+        url: "{{ mailbox_api }}/add/bcc"
+        method: POST
+        headers: "{{ mailbox_api_hdr }}"
+        body_format: json
+        body:
+          local_dest: "{{ mailbox_address }}"
+          bcc_dest: "{{ item }}"
+          type: "rcpt"
+          active: "1"
+        validate_certs: false
+        status_code: [200]
+      loop: "{{ mailbox_delegates }}"
+      register: mailbox_bcc_add
+      changed_when: "'bcc_saved' in (mailbox_bcc_add.json | default([]) | string) or 'added' in (mailbox_bcc_add.json | default([]) | string)"
+      failed_when: >-
+        mailbox_bcc_add.json is defined and
+        (mailbox_bcc_add.json | string is search('danger')) and
+        not (mailbox_bcc_add.json | string is search('exists'))
+      no_log: true
+
+    # Delegates (b): send-as via sender_acl (tx access, no shared password).
+    - name: "Mailbox | Delegate send-as (sender_acl, idempotent insert)"
+      ansible.builtin.shell: |
+        set -o pipefail
+        C=$(docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -iE 'mysql|mariadb' | head -1)
+        P=$(grep -oP 'DBROOT=\K.*' /opt/mailcow-dockerized/mailcow.conf)
+        docker exec "$C" mysql -u root -p"$P" mailcow -N -e \
+          "INSERT INTO sender_acl (logged_in_as, send_as, external)
+           SELECT '{{ item }}', '{{ mailbox_address }}', 0
+           WHERE NOT EXISTS (SELECT 1 FROM sender_acl
+             WHERE logged_in_as='{{ item }}' AND send_as='{{ mailbox_address }}');
+           SELECT ROW_COUNT();" | tail -1
+      args: { executable: /bin/bash }
+      loop: "{{ mailbox_delegates }}"
+      register: mailbox_sacl
+      changed_when: (mailbox_sacl.stdout | default('0') | trim) == '1'
+      no_log: true
+
+# ============================ ABSENT ==========================================
+- name: "Mailbox | Decommission (state=absent — deactivate, keep mail)"
+  when: mailbox_state == 'absent'
+  delegate_to: "{{ mailbox_mailcow_host }}"
+  become: true
+  block:
+    - name: "Mailbox | Deactivate the mailbox (archive-before-destroy)"
+      ansible.builtin.uri:
+        url: "{{ mailbox_api }}/edit/mailbox"
+        method: POST
+        headers: "{{ mailbox_api_hdr }}"
+        body_format: json
+        body:
+          items: ["{{ mailbox_address }}"]
+          attr: { active: "0" }
+        validate_certs: false
+        status_code: [200]
+      changed_when: true
+      no_log: true
+
+    - name: "Mailbox | Remove aliases"
+      ansible.builtin.shell: |
+        set -o pipefail
+        C=$(docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -iE 'mysql|mariadb' | head -1)
+        P=$(grep -oP 'DBROOT=\K.*' /opt/mailcow-dockerized/mailcow.conf)
+        docker exec "$C" mysql -u root -p"$P" mailcow -N -e \
+          "DELETE FROM alias WHERE address='{{ item }}@{{ mailbox_domain }}' AND goto='{{ mailbox_address }}'; SELECT ROW_COUNT();" | tail -1
+      args: { executable: /bin/bash }
+      loop: "{{ mailbox_aliases }}"
+      register: mailbox_alias_del
+      changed_when: (mailbox_alias_del.stdout | default('0') | trim) != '0'
+      no_log: true
+
+    - name: "Mailbox | Remove delegate bcc + sender_acl entries"
+      ansible.builtin.shell: |
+        set -o pipefail
+        C=$(docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -iE 'mysql|mariadb' | head -1)
+        P=$(grep -oP 'DBROOT=\K.*' /opt/mailcow-dockerized/mailcow.conf)
+        docker exec "$C" mysql -u root -p"$P" mailcow -N -e \
+          "DELETE FROM bcc_maps WHERE local_dest='{{ mailbox_address }}';
+           DELETE FROM sender_acl WHERE send_as='{{ mailbox_address }}';
+           SELECT ROW_COUNT();" | tail -1
+      args: { executable: /bin/bash }
+      register: mailbox_deleg_del
+      changed_when: (mailbox_deleg_del.stdout | default('0') | trim) != '0'
+      no_log: true
+
+- name: "Mailbox | Summary"
+  ansible.builtin.debug:
+    msg: >-
+      mailbox {{ mailbox_address }} state={{ mailbox_state }}
+      aliases={{ mailbox_aliases | length }} delegates={{ mailbox_delegates | length }}
+      (plus-addressing {{ mailbox_service }}+tag@{{ mailbox_domain }} active platform-wide;
+      creds in Vault {{ mailbox_env }}/mail/{{ mailbox_service }})
