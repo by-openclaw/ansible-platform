@@ -127,6 +127,27 @@
         not (mailbox_bcc_add.json | string is search('exists'))
       no_log: true
 
+    # Reconcile: delegates is DECLARATIVE — remove rx-copy/send-as grants for
+    # anyone no longer in the list (e.g. the yboujraf@ -> adm_yboujraf@ flip).
+    - name: "Mailbox | Build the delegate keep-list (SQL-quoted)"
+      ansible.builtin.set_fact:
+        mailbox_keep_sql: >-
+          {% for d in (mailbox_delegates + ['__none__']) %}'{{ d }}'{% if not loop.last %},{% endif %}{% endfor %}
+
+    - name: "Mailbox | Reconcile delegates (drop grants not in the list)"
+      ansible.builtin.shell: |
+        set -o pipefail
+        C=$(docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -iE 'mysql|mariadb' | head -1)
+        P=$(grep -oP 'DBROOT=\K.*' /opt/mailcow-dockerized/mailcow.conf)
+        docker exec "$C" mysql -u root -p"$P" mailcow -N -e \
+          "DELETE FROM bcc_maps WHERE local_dest='{{ mailbox_address }}' AND bcc_dest NOT IN ({{ mailbox_keep_sql }});
+           DELETE FROM sender_acl WHERE send_as='{{ mailbox_address }}' AND logged_in_as NOT IN ({{ mailbox_keep_sql }});
+           SELECT ROW_COUNT();" | tail -1
+      args: { executable: /bin/bash }
+      register: mailbox_deleg_rec
+      changed_when: (mailbox_deleg_rec.stdout | default('0') | trim) != '0'
+      no_log: true
+
     # Delegates (b): send-as via sender_acl (tx access, no shared password).
     - name: "Mailbox | Delegate send-as (sender_acl, idempotent insert)"
       ansible.builtin.shell: |
