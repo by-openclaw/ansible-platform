@@ -58,9 +58,12 @@
   vars_files:
     - ../roles/vault/defaults/main.yml
   tasks:
-    - name: "Keys | Load the Vault root token"
+    - name: "Vault login (ansible-deploy AppRole; root fallback)"
+      ansible.builtin.include_role:
+        name: vault_login
+    - name: "Use the deploy token"
       ansible.builtin.set_fact:
-        vault_root_token: "{{ (lookup('file', (vault_secret_dir | expanduser) + '/' + vault_init_secret) | from_json).fields.root_token }}"
+        vault_root_token: "{{ vault_deploy_token }}"
       no_log: true
 
     - name: "Keys | Store passphrase + metadata + key backup per rotated key"
