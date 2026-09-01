@@ -2,6 +2,10 @@
 # Enable the KV v2 secrets engine so the platform can store keys in Vault.
 # Idempotent: only enable when the mount is absent.
 - name: "kv | Load root token (controller secret)"
+  # ROOT REQUIRED: enabling a mount / auth method is a root-only op and runs
+  # ONLY on a fresh Vault deploy (idempotent-skipped once configured). After
+  # root revocation (SEC-06), regenerate root from the unseal keys before a
+  # Vault rebuild: vault operator generate-root. Not used in steady-state deploys.
   ansible.builtin.set_fact:
     vault_root_token: "{{ (lookup('file', vault_secret_dir + '/' + vault_init_secret) | from_json).fields.root_token }}"
   no_log: true
