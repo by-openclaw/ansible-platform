@@ -129,7 +129,7 @@
 # Same relay the other cluster apps send through (verified). Stored in config.php
 # via occ (the official image exposes no mail_* env). All idempotent. Port 465 =>
 # implicit TLS (ssl), otherwise STARTTLS (tls).
-- name: "post-install | Configure SMTP mail (Resend)"
+- name: "post-install | Configure SMTP mail (own mailbox via Mailcow)"
   ansible.builtin.command:
     cmd: >-
       docker exec -u www-data nextcloud php occ config:system:set
@@ -137,27 +137,27 @@
   loop:
     - { key: "mail_smtpmode", value: "smtp" }
     - { key: "mail_sendmailmode", value: "smtp" }
-    - { key: "mail_smtphost", value: "{{ nextcloud_resend.smtp_host }}" }
-    - { key: "mail_smtpport", value: "{{ nextcloud_resend.smtp_port }}", type: "--type=integer" }
-    - { key: "mail_smtpsecure", value: "{{ 'ssl' if (nextcloud_resend.smtp_port | int) == 465 else 'tls' }}" }
+    - { key: "mail_smtphost", value: "{{ nextcloud_mail.smtp_host }}" }
+    - { key: "mail_smtpport", value: "{{ nextcloud_mail.smtp_port }}", type: "--type=integer" }
+    - { key: "mail_smtpsecure", value: "{{ 'ssl' if (nextcloud_mail.smtp_port | int) == 465 else 'tls' }}" }
     - { key: "mail_smtpauth", value: "true", type: "--type=boolean" }
     - { key: "mail_smtpauthtype", value: "LOGIN" }
-    - { key: "mail_smtpname", value: "{{ nextcloud_resend.smtp_username }}" }
-    - { key: "mail_from_address", value: "{{ nextcloud_resend.from_address.split('@')[0] }}" }
-    - { key: "mail_domain", value: "{{ nextcloud_resend.from_address.split('@')[1] }}" }
+    - { key: "mail_smtpname", value: "{{ nextcloud_mail.smtp_username }}" }
+    - { key: "mail_from_address", value: "{{ nextcloud_mail.from_address.split('@')[0] }}" }
+    - { key: "mail_domain", value: "{{ nextcloud_mail.from_address.split('@')[1] }}" }
   loop_control:
     label: "{{ item.key }}"
   changed_when: true
-  when: nextcloud_resend is defined
+  when: nextcloud_mail is defined
 
-- name: "post-install | Configure SMTP password (Resend API key)"
+- name: "post-install | Configure SMTP password (mailbox credential)"
   ansible.builtin.command:
     cmd: >-
       docker exec -u www-data nextcloud php occ config:system:set
-      mail_smtppassword --value="{{ nextcloud_resend.smtp_api_key }}"
+      mail_smtppassword --value="{{ nextcloud_mail.smtp_password }}"
   no_log: true
   changed_when: true
-  when: nextcloud_resend is defined
+  when: nextcloud_mail is defined
 
 # --- Sharing policy -----------------------------------------------------------
 # Public link shares: default + enforced expiry, mandatory password, share-by-email
