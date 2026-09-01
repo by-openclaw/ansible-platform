@@ -1,0 +1,50 @@
+---
+# Sets: vault_deploy_token (a Vault token) + vault_deploy_auth (approle|root).
+
+- name: "Vault login | Stat the ansible-deploy AppRole creds"
+  ansible.builtin.stat:
+    path: "{{ vault_login_secret_dir }}/{{ vault_login_approle_file }}"
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  register: vault_login_ar_stat
+
+- name: "Vault login | Load AppRole creds (when present)"
+  ansible.builtin.set_fact:
+    vault_login_ar: "{{ (lookup('file', vault_login_secret_dir + '/' + vault_login_approle_file) | from_json).fields }}"
+  no_log: true
+  when: vault_login_ar_stat.stat.exists
+
+- name: "Vault login | AppRole login → token"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_ADDR=https://127.0.0.1:8200 -e VAULT_SKIP_VERIFY=1 {{ vault_login_container }}
+      vault write -field=token auth/approle/login
+      role_id={{ vault_login_ar.role_id }} secret_id={{ vault_login_ar.secret_id }}
+  delegate_to: "{{ vault_login_host }}"
+  become: true
+  register: vault_login_result
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: vault_login_ar_stat.stat.exists
+
+- name: "Vault login | Adopt the AppRole token"
+  ansible.builtin.set_fact:
+    vault_deploy_token: "{{ vault_login_result.stdout | trim }}"
+    vault_deploy_auth: approle
+  no_log: true
+  when:
+    - vault_login_ar_stat.stat.exists
+    - (vault_login_result.stdout | default('') | trim) | length > 0
+
+- name: "Vault login | Fall back to the root token (AppRole unavailable)"
+  ansible.builtin.set_fact:
+    vault_deploy_token: "{{ (lookup('file', vault_login_secret_dir + '/' + vault_login_bootstrap_file) | from_json).fields.root_token }}"
+    vault_deploy_auth: root
+  no_log: true
+  when: vault_deploy_token is not defined
+
+- name: "Vault login | Report auth method (no token)"
+  ansible.builtin.debug:
+    msg: "Vault deploy auth = {{ vault_deploy_auth }}"

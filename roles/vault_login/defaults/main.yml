@@ -1,0 +1,10 @@
+---
+# Shared Vault auth for the deploy path: log in via the ansible-deploy AppRole
+# and expose a short-lived token as `vault_deploy_token`. Falls back to the root
+# token only while the AppRole is unavailable (transition safety); once root is
+# revoked the fallback is dead and AppRole is the sole path.
+vault_login_host: "lxc-vault-01"
+vault_login_container: "vault"
+vault_login_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
+vault_login_approle_file: "app-vault-approle-ansible-deploy.json"   # pragma: allowlist secret
+vault_login_bootstrap_file: "vault-init.json"   # root fallback (bootstrap only)  # pragma: allowlist secret

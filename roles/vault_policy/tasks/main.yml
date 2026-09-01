@@ -5,9 +5,13 @@
     fail_msg: "vault_policy requires vault_policy_service"
     quiet: true
 
-- name: "Vault policy | Load Vault root token (bootstrap — the one allowed local secret)"
+- name: "Vault policy | Authenticate to Vault (ansible-deploy AppRole; root fallback)"
+  ansible.builtin.include_role:
+    name: vault_login
+
+- name: "Vault policy | Use the deploy token"
   ansible.builtin.set_fact:
-    vault_policy_token: "{{ (lookup('file', vault_policy_bootstrap_dir + '/' + vault_policy_bootstrap_file) | from_json).fields.root_token }}"
+    vault_policy_token: "{{ vault_deploy_token }}"
   no_log: true
 
 - name: "Vault policy | Set the identity name ({service}-{env})"
