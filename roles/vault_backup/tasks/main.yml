@@ -1,9 +1,13 @@
 ---
 # Install automated Vault raft snapshots on the vault host. The timer runs with a
 # low-privilege, self-renewing periodic token (snapshot-read only), never root.
-- name: "vault_backup | Load the Vault root token (controller secret)"
+- name: "vault_backup | Authenticate to Vault (ansible-deploy AppRole; root fallback)"
+  ansible.builtin.include_role:
+    name: vault_login
+
+- name: "vault_backup | Use the deploy token"
   ansible.builtin.set_fact:
-    vault_root_token: "{{ (lookup('file', (vault_secret_dir | expanduser) + '/' + vault_init_secret) | from_json).fields.root_token }}"
+    vault_root_token: "{{ vault_deploy_token }}"
   no_log: true
 
 - name: "vault_backup | Write the snapshot policy (raft snapshot read only)"
