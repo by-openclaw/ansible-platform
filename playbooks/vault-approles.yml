@@ -1,0 +1,44 @@
+---
+# ==============================================================================
+# Provision a per-service Vault identity (policy + AppRole) for every service
+# (SEC-04 least-privilege policy scoped to its own prefix, SEC-05 AppRole auth).
+# Foundation for retiring the root token: once services authenticate as
+# themselves, the controller no longer needs the root token to deploy.
+# Idempotent (vault_policy writes only on drift; secret_id minted once).
+#   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/vault-approles.yml
+# ==============================================================================
+- name: "Per-service Vault policy + AppRole (SEC-04/05)"
+  hosts: lxc-vault-01
+  become: true
+  gather_facts: false
+  vars:
+    # Real services that consume their own secrets. Shared/cross-cutting paths
+    # (cloudflare, resend, ci, discord, geoip, synology, backup, net, vpn, monit,
+    # proxmox, break-glass) and identity accounts (svc-ansible/svc-rune) are NOT
+    # given a service AppRole here.
+    vault_approle_services:
+      - adguard
+      - authentik
+      - crowdsec
+      - gitlab
+      - grafana
+      - harbor
+      - jumpserver
+      - mailcow
+      - netbird
+      - netbox
+      - nextcloud
+      - pbs
+      - pgadmin
+      - seaweedfs
+      - vaultwarden
+  tasks:
+    - name: "Provision {service}-{env} policy + AppRole"
+      ansible.builtin.include_role:
+        name: vault_policy
+      vars:
+        vault_policy_service: "{{ svc }}"
+      loop: "{{ vault_approle_services }}"
+      loop_control:
+        loop_var: svc
+        label: "{{ svc }}"
