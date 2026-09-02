@@ -56,9 +56,10 @@ contract_audit_checks:
     expect: "^active$"
 
   - id: SEC-20
-    desc: "Lynis hardening index >= 80"
+    desc: "Lynis hardening index >= the host's gate (default 80; documented exceptions via hardening_lynis_min_score)"
     probe: >-
-      awk -F= '/hardening_index/{print ($2>=80)?"PASS":"FAIL "$2}'
+      awk -F= -v MIN={{ hardening_lynis_min_score | default(80) }}
+      '/hardening_index/{print ($2>=MIN)?"PASS":"FAIL "$2}'
       /var/log/lynis-report.dat 2>/dev/null | head -1 || echo NOREPORT
     expect: "^PASS$"
 
@@ -66,7 +67,7 @@ contract_audit_checks:
   - id: NAM-15
     desc: "No ad-hoc human login accounts (uid>=1000) beyond by-research + svc-*"
     probe: >-
-      awk -F: '$3>=1000 && $3<65534 && $1!="nobody"{print $1}' /etc/passwd
+      awk -F: '$3>=1000 && $3<65534 && $1!="nobody" && $7!~/(nologin|false)$/{print $1}' /etc/passwd
       | grep -vE '^(by-research|svc-[a-z0-9-]+)$' | tr '\n' ' ' || true
     expect: "^\\s*$"
 
