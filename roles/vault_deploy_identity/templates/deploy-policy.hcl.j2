@@ -13,6 +13,10 @@ path "{{ vdi_mount }}/metadata/{{ vdi_env }}"   { capabilities = ["list"] }
 # Manage per-service policies + AppRoles (the vault_policy role).
 path "sys/policies/acl/*"                        { capabilities = ["create","read","update","delete","list"] }
 path "auth/approle/role/*"                       { capabilities = ["create","read","update","delete","list"] }
+# SEC-07: manage audit devices (enable/list the file audit log) — deliberately
+# NO delete on sys/audit so a compromised deploy identity cannot silence auditing.
+path "sys/audit"                                 { capabilities = ["read","list","sudo"] }
+path "sys/audit/*"                               { capabilities = ["create","read","update","list","sudo"] }
 
 # Read-only introspection the deploy path uses.
 path "sys/auth"                                  { capabilities = ["read"] }

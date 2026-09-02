@@ -5,6 +5,31 @@
     source: pull
     state: present
 
+- name: "container | Audit log directory on the host (SEC-07)"
+  ansible.builtin.file:
+    path: /var/log/vault
+    state: directory
+    owner: "100"          # vault user uid in the container
+    group: adm            # promtail reads via group adm (hardening standard)
+    mode: "0750"
+
+# The audit file's owner/group are the CONTAINER's uid/gid (host-mapped) — an
+# ACL gives promtail read regardless; the default ACL covers re-created files.
+- name: "container | ACL tooling present"
+  ansible.builtin.apt:
+    name: acl
+    state: present
+
+- name: "container | Promtail read ACL on the audit dir (default, inherited)"
+  ansible.posix.acl:
+    path: /var/log/vault
+    entity: promtail
+    etype: user
+    permissions: rX
+    default: "{{ item }}"
+    state: present
+  loop: [true, false]
+
 - name: "container | Run Vault"
   community.docker.docker_container:
     name: "{{ vault_container_name }}"
@@ -18,6 +43,7 @@
       - "127.0.0.1:{{ vault_port }}:8200"
     volumes:
       - "{{ vault_data_host_dir }}:/vault/data"
+      - "/var/log/vault:/vault/logs"        # SEC-07: file audit device, shipped by promtail
       - "{{ vault_config_host_dir }}:/vault/config:ro"
       - "{{ vault_cert_host_dir }}:{{ vault_cert_host_dir }}:ro"
       - "/etc/ssl/certs:/etc/ssl/certs:ro"
