@@ -4,8 +4,9 @@
 import urllib.request, json, ssl, sys
 
 TOKEN = open("/tmp/.vt").read().strip()
-BASE = "https://127.0.0.1:8200/v1/secret"
-ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+import os
+BASE = os.environ.get("VAULT_ADDR", "https://lxc-vault-01.by-research.be:8200") + "/v1/secret"
+ctx = ssl.create_default_context()   # verified TLS — skip-verify banned
 
 
 def req(method, path, data=None):
