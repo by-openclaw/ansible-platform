@@ -82,6 +82,48 @@ contract_audit_service_checks:
     expect: "verify-full"
     groups: ["gitlab"]
 
+  - id: SVC-28a
+    desc: "NetBox DB connection sslmode=verify-full"
+    probe: "docker exec netbox env 2>/dev/null | grep -o 'DB_SSLMODE=verify-full' || echo none"
+    expect: "verify-full"
+    groups: ["netbox"]
+
+  - id: SVC-28b
+    desc: "Nextcloud PG sslmode=verify-full (env)"
+    probe: "docker exec nextcloud env 2>/dev/null | grep -o 'PGSSLMODE=verify-full' || echo none"
+    expect: "verify-full"
+    groups: ["nextcloud"]
+
+  - id: SVC-28c
+    desc: "Grafana DB ssl_mode=verify-full"
+    probe: "grep -E '^ssl_mode' /etc/grafana/grafana.ini 2>/dev/null || echo none"
+    expect: "verify-full"
+    groups: ["monitoring"]
+
+  - id: SVC-62a
+    desc: "Harbor external DB ssl_mode=verify-full"
+    probe: "grep -E 'ssl_mode' /opt/harbor/harbor.yml 2>/dev/null | head -1 || echo none"
+    expect: "verify-full"
+    groups: ["harbor"]
+
+  - id: SVC-28d
+    desc: "Vaultwarden DATABASE_URL sslmode=verify-full"
+    probe: "docker exec vaultwarden env 2>/dev/null | grep -o 'sslmode=verify-full' || echo none"
+    expect: "verify-full"
+    groups: ["vaultwarden"]
+
+  - id: IDN-20-vw
+    desc: "Vaultwarden native SSO enabled, signups closed"
+    probe: "docker exec vaultwarden env 2>/dev/null | grep -cE 'SSO_ENABLED=true|SIGNUPS_ALLOWED=false' || echo 0"
+    expect: "^2$"
+    groups: ["vaultwarden"]
+
+  - id: SEC-33-runner
+    desc: "GitLab runner docker executor is NOT privileged"
+    probe: "grep -c 'privileged = false' /etc/gitlab-runner/config.toml 2>/dev/null || echo 0"
+    expect: "^[1-9]"
+    groups: ["gitlab_runner"]
+
   - id: NAM-17-nb
     desc: "NetBird API principal is a svc-{function}-{env} service user"
     probe: >-
