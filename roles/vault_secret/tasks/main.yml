@@ -59,9 +59,25 @@
   no_log: true
   when: vault_secret_get.rc != 0
 
+# Rotation mode (SEC-09): when vault_secret_force_fields is set, OVERWRITE the
+# secret with exactly those fields (a new KV v2 version — old versions retained).
+- name: "Vault secret | Force-write rotated fields (SEC-09 rotation)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -i -e VAULT_TOKEN={{ vault_secret_token }} {{ vault_secret_container }}
+      vault kv put -mount={{ vault_secret_mount }} {{ vault_secret_path }} -
+    stdin: "{{ vault_secret_force_fields | to_json }}"
+  delegate_to: "{{ vault_secret_host }}"
+  become: true
+  when: vault_secret_force_fields | default({}) | length > 0
+  changed_when: true
+  no_log: true
+
 - name: "Vault secret | Publish the secret fields as `vault_secret_result`"
   ansible.builtin.set_fact:
     vault_secret_result: >-
-      {{ ((vault_secret_get2 if (vault_secret_get.rc != 0) else vault_secret_get).stdout
-          | from_json).data.data }}
+      {{ vault_secret_force_fields
+         if (vault_secret_force_fields | default({}) | length > 0)
+         else ((vault_secret_get2 if (vault_secret_get.rc != 0) else vault_secret_get).stdout
+               | from_json).data.data }}
   no_log: true
