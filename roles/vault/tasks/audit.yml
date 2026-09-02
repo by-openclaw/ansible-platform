@@ -27,3 +27,13 @@
   when: "'file/' not in (vault_audit_list.stdout | default(''))"
   register: vault_audit_enable
   changed_when: vault_audit_enable is not skipped
+
+- name: "audit | Rotate the audit log (copytruncate — the device keeps its fd)"
+  ansible.builtin.include_role:
+    name: logrotate
+  vars:
+    logrotate_entries:
+      - name: vault-audit
+        paths: ["/var/log/vault/audit.log"]
+        rotate: 30
+        copytruncate: true

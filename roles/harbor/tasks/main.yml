@@ -58,3 +58,15 @@
     traefik_route_internal_only: true       # registry = internal infra (VPN/LAN + CI + k3s all on-net)
     traefik_route_forward_auth: false       # Harbor has native OIDC
   tags: [harbor, route]
+
+- name: "Harbor | Rotate the syslog-driven component logs"
+  ansible.builtin.include_role:
+    name: logrotate
+    apply:
+      tags: [harbor, logs]
+  vars:
+    logrotate_entries:
+      - name: harbor
+        paths: ["/var/log/harbor/*.log"]
+        rotate: 14
+  tags: [harbor, logs]
