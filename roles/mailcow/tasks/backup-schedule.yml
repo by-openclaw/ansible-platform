@@ -1,0 +1,45 @@
+---
+# Daily APP-CONSISTENT snapshot on the host (mailcow's own helper), landing in
+# {{ mailcow_backup_dir }} BEFORE the nightly PBS run picks up the VM — same
+# pattern as pg-backup (no secrets on the host; the S3+offsite copies stay with
+# the on-demand `--tags backup` play / continuous filer.backup).
+- name: "backup-schedule | Service unit"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/mailcow-backup.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Daily mailcow app-consistent backup (helper script, local)
+      [Service]
+      Type=oneshot
+      Environment=MAILCOW_BACKUP_LOCATION={{ mailcow_backup_dir }}
+      WorkingDirectory={{ mailcow_install_dir }}
+      ExecStart={{ mailcow_install_dir }}/helper-scripts/backup_and_restore.sh \
+        backup {{ mailcow_backup_components }} --delete-days {{ mailcow_backup_retention_days }}
+  register: mailcow_bkp_svc
+
+- name: "backup-schedule | Timer (01:00, before the 01:30 PBS job)"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/mailcow-backup.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Daily mailcow backup timer
+      [Timer]
+      OnCalendar=*-*-* 01:00:00
+      RandomizedDelaySec=300
+      Persistent=true
+      [Install]
+      WantedBy=timers.target
+  register: mailcow_bkp_tmr
+
+- name: "backup-schedule | Enabled + started"
+  ansible.builtin.systemd_service:
+    name: mailcow-backup.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ mailcow_bkp_svc is changed or mailcow_bkp_tmr is changed }}"
