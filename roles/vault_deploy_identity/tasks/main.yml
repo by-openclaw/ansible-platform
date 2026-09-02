@@ -5,9 +5,28 @@
 # Bootstrap: still uses the root token to CREATE the deploy identity (one of the
 # last legitimate root uses); after this, deploys authenticate as ansible-deploy.
 
-- name: "Deploy identity | Load root token (bootstrap — creating the replacement)"
+# Post-SEC-06 model: the deploy AppRole maintains ITSELF (its policy grants
+# sys/policies/acl/* and auth/approle/role/*). Root is only for TRUE genesis —
+# when the AppRole creds file does not exist yet (fresh Vault).
+- name: "Deploy identity | Stat the AppRole creds (self-maintenance possible?)"
+  ansible.builtin.stat:
+    path: >-
+      {{ vdi_secret_dir | default(lookup('env', 'HOME')
+         + '/.openclaw/workspace/infra/secrets') }}/app-vault-approle-ansible-deploy.json
+  delegate_to: localhost
+  become: false
+  register: vdi_self_creds
+
+- name: "Deploy identity | Login via the AppRole (steady-state)"
+  ansible.builtin.include_role:
+    name: vault_login
+  when: vdi_self_creds.stat.exists
+
+- name: "Deploy identity | Choose the working token"
   ansible.builtin.set_fact:
-    vdi_root_token: "{{ (lookup('file', vdi_bootstrap_dir + '/' + vdi_bootstrap_file) | from_json).fields.root_token }}"
+    vdi_root_token: >-
+      {{ vault_deploy_token if vdi_self_creds.stat.exists
+         else (lookup('file', vdi_bootstrap_dir + '/' + vdi_bootstrap_file) | from_json).fields.root_token }}
   no_log: true
 
 - name: "Deploy identity | Render the deploy policy"

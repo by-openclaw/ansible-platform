@@ -18,13 +18,22 @@
   ansible.builtin.import_tasks: init.yml
   tags: [vault, init]
 
-- name: Enable the KV v2 secrets engine
+# GENESIS-ONLY (root required; root is REVOKED in steady state — SEC-06).
+# Run with -e vault_genesis=true after `vault operator generate-root` during a
+# rebuild. Normal deploys skip: the mount/auth already exist.
+- name: Enable the KV v2 secrets engine (genesis only)
   ansible.builtin.import_tasks: kv.yml
   tags: [vault, kv]
+  when: vault_genesis | default(false) | bool
 
-- name: Wire Vault login to Authentik OIDC (SSO)
+- name: Enable audit logging (SEC-07)
+  ansible.builtin.import_tasks: audit.yml
+  tags: [vault, audit]
+
+- name: Wire Vault login to Authentik OIDC (SSO) (genesis only)
   ansible.builtin.import_tasks: oidc.yml
   tags: [vault, oidc, sso]
+  when: vault_genesis | default(false) | bool
 
 - name: Publish Vault via Traefik (internal-only)
   ansible.builtin.include_role:

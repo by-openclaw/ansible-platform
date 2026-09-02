@@ -1,0 +1,29 @@
+---
+# SEC-07: Vault audit logging (file device -> /vault/logs/audit.log, bind-mounted
+# to /var/log/vault on the host, shipped to Loki by promtail). Enabling an audit
+# device needs sys/audit — granted to the ansible-deploy policy (see
+# vault_deploy_identity); NOT a root operation anymore.
+- name: "audit | Login (AppRole via vault_login)"
+  ansible.builtin.include_role:
+    name: vault_login
+
+- name: "audit | List audit devices"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_ADDR=https://127.0.0.1:{{ vault_port }} -e VAULT_SKIP_VERIFY=1
+      -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
+      vault audit list -format=json
+  register: vault_audit_list
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: "audit | Enable the file audit device (idempotent)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_ADDR=https://127.0.0.1:{{ vault_port }} -e VAULT_SKIP_VERIFY=1
+      -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
+      vault audit enable file file_path=/vault/logs/audit.log mode=0640
+  when: "'file/' not in (vault_audit_list.stdout | default(''))"
+  register: vault_audit_enable
+  changed_when: vault_audit_enable is not skipped
