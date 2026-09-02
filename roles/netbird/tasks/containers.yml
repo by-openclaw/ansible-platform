@@ -88,8 +88,7 @@
     published_ports:
       - "{{ netbird_listen_ip }}:{{ netbird_dashboard_port }}:80"
     env_file: "{{ netbird_build_dir }}/dashboard.env"
-    log_options: { max-size: "500m", max-file: "2" }
-    log_driver: json-file
+    log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
 
 - name: "containers | Run netbird-management (control plane + API)"
   community.docker.docker_container:
@@ -122,8 +121,7 @@
     env:
       NETBIRD_STORE_ENGINE_POSTGRES_DSN: ""
       NETBIRD_STORE_ENGINE_MYSQL_DSN: ""
-    log_options: { max-size: "500m", max-file: "2" }
-    log_driver: json-file
+    log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
 
 - name: "containers | Run netbird-signal (peer signalling; gRPC h2c + ws)"
   community.docker.docker_container:
@@ -139,8 +137,7 @@
       - "{{ netbird_listen_ip }}:{{ netbird_signal_ws_host_port }}:{{ netbird_signal_ws_port }}"
     volumes:
       - "{{ netbird_signal_volume }}:/var/lib/netbird"
-    log_options: { max-size: "500m", max-file: "2" }
-    log_driver: json-file
+    log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
 
 - name: "containers | Run netbird-relay (relayed data path; wss)"
   community.docker.docker_container:
@@ -158,8 +155,7 @@
       NB_LISTEN_ADDRESS: ":{{ netbird_relay_port }}"
       NB_EXPOSED_ADDRESS: "rels://{{ netbird_fqdn }}:{{ netbird_public_port }}/relay"
       NB_AUTH_SECRET: "{{ netbird_core.relay_auth_secret }}"
-    log_options: { max-size: "500m", max-file: "2" }
-    log_driver: json-file
+    log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
   no_log: true
 
 - name: "containers | Run netbird-coturn (STUN/TURN; host network)"
@@ -173,8 +169,7 @@
     volumes:
       - "{{ netbird_build_dir }}/turnserver.conf:/etc/turnserver.conf:ro"
     command: ["-c", "/etc/turnserver.conf"]
-    log_options: { max-size: "500m", max-file: "2" }
-    log_driver: json-file
+    log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
 
 - name: "containers | Flush handlers (apply config restarts before readiness)"
   ansible.builtin.meta: flush_handlers
