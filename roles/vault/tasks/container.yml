@@ -48,10 +48,9 @@
       - "{{ vault_cert_host_dir }}:{{ vault_cert_host_dir }}:ro"
       - "/etc/ssl/certs:/etc/ssl/certs:ro"
     env:
-      # In-container CLI (init/unseal via docker exec) talks to loopback; skip
-      # hostname verify there (the wildcard cert is for the FQDN, not 127.0.0.1).
-      VAULT_ADDR: "https://127.0.0.1:{{ vault_port }}"
-      VAULT_SKIP_VERIFY: "true"
+      # In-container CLI (init/unseal/status via docker exec) uses the FQDN so
+      # the wildcard cert VERIFIES (CA bundle is the mounted /etc/ssl/certs).
+      VAULT_ADDR: "{{ vault_api_addr }}"
 
 - name: "container | Wait for Vault to respond"
   ansible.builtin.command:

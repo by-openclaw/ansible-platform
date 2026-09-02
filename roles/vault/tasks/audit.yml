@@ -10,7 +10,7 @@
 - name: "audit | List audit devices"
   ansible.builtin.command:
     cmd: >-
-      docker exec -e VAULT_ADDR=https://127.0.0.1:{{ vault_port }} -e VAULT_SKIP_VERIFY=1
+      docker exec -e VAULT_ADDR={{ vault_api_addr }}
       -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
       vault audit list -format=json
   register: vault_audit_list
@@ -21,7 +21,7 @@
 - name: "audit | Enable the file audit device (idempotent)"
   ansible.builtin.command:
     cmd: >-
-      docker exec -e VAULT_ADDR=https://127.0.0.1:{{ vault_port }} -e VAULT_SKIP_VERIFY=1
+      docker exec -e VAULT_ADDR={{ vault_api_addr }}
       -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
       vault audit enable file file_path=/vault/logs/audit.log mode=0640
   when: "'file/' not in (vault_audit_list.stdout | default(''))"
