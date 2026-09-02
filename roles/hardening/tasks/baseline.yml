@@ -176,3 +176,33 @@
         paths: ["/var/log/aide/*.log"]
         rotate: 8
         frequency: weekly
+
+# With docker's journald log driver, the journal is the rotation control for
+# ALL container output — pin explicit caps instead of the 10%-of-disk default.
+- name: "Baseline | journald conf dir exists first"
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "Baseline | journald disk caps (containers log here now)"
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/10-caps.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/hardening)
+      [Journal]
+      SystemMaxUse={{ hardening_journald_max_use }}
+      SystemKeepFree={{ hardening_journald_keep_free }}
+      MaxRetentionSec={{ hardening_journald_retention }}
+  register: hardening_journald_caps
+
+- name: "Baseline | Apply journald caps"  # noqa: no-handler
+  ansible.builtin.systemd_service:
+    name: systemd-journald
+    state: restarted
+  when: hardening_journald_caps is changed
