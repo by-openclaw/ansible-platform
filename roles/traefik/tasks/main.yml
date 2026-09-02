@@ -21,6 +21,27 @@
   ansible.builtin.import_tasks: config.yml
   tags: [traefik, config]
 
+- name: Rotate the edge logs (unbounded access.log otherwise)
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/traefik
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/traefik). USR1 makes traefik reopen its logs.
+      /var/log/traefik/*.log {
+          daily
+          rotate 14
+          compress
+          delaycompress
+          missingok
+          notifempty
+          postrotate
+              systemctl kill -s USR1 traefik.service 2>/dev/null || true
+          endscript
+      }
+  tags: [traefik, logs]
+
 - name: Install certificate renewal automation
   ansible.builtin.import_tasks: renew.yml
   tags: [traefik, renew]
