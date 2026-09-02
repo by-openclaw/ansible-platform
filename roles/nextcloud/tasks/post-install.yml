@@ -127,6 +127,25 @@
 
 # --- Outbound email (Resend SMTP) ---------------------------------------------
 # Same relay the other cluster apps send through (verified). Stored in config.php
+# DB password rotation (SVC-28/SEC-09): config.php owns dbpassword after the
+# first-run install — the env var no longer applies. Converge it to the current
+# credential so a rotation only needs the play rerun (learned 2026-09-02: a
+# rotation left config.php stale and Nextcloud answered 500 until fixed).
+- name: "post-install | Converge config.php dbpassword to the current credential"
+  ansible.builtin.shell: |
+    docker exec -e NP="$NP" -u www-data nextcloud php -r '
+      $f = "/var/www/html/config/config.php";
+      include $f;
+      if (($CONFIG["dbpassword"] ?? "") === getenv("NP")) { echo "OK\n"; exit; }
+      $CONFIG["dbpassword"] = getenv("NP");
+      file_put_contents($f, "<?php\n\$CONFIG = " . var_export($CONFIG, true) . ";\n");
+      echo "UPDATED\n";'
+  environment:
+    NP: "{{ nextcloud_pg_password }}"
+  register: nextcloud_dbpw_conv
+  changed_when: "'UPDATED' in nextcloud_dbpw_conv.stdout"
+  no_log: true
+
 # via occ (the official image exposes no mail_* env). All idempotent. Port 465 =>
 # implicit TLS (ssl), otherwise STARTTLS (tls).
 - name: "post-install | Configure SMTP mail (own mailbox via Mailcow)"
