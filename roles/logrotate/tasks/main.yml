@@ -1,0 +1,42 @@
+---
+- name: "Logrotate | Package present"
+  ansible.builtin.apt:
+    name: logrotate
+    state: present
+
+- name: "Logrotate | Render present entries"
+  ansible.builtin.copy:
+    dest: "/etc/logrotate.d/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/logrotate) — entry: {{ item.name }}
+      {{ item.paths | join(' ') }} {
+          {{ item.frequency | default('daily') }}
+          rotate {{ item.rotate | default(14) }}
+          compress
+          delaycompress
+          missingok
+          notifempty
+      {% if item.copytruncate | default(false) %}
+          copytruncate
+      {% endif %}
+      {% if item.postrotate | default('') %}
+          postrotate
+              {{ item.postrotate }}
+          endscript
+      {% endif %}
+      }
+  loop: "{{ logrotate_entries | selectattr('state', 'undefined') | list
+            + logrotate_entries | selectattr('state', 'defined') | selectattr('state', 'equalto', 'present') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: "Logrotate | Remove absent entries"
+  ansible.builtin.file:
+    path: "/etc/logrotate.d/{{ item.name }}"
+    state: absent
+  loop: "{{ logrotate_entries | selectattr('state', 'defined') | selectattr('state', 'equalto', 'absent') | list }}"
+  loop_control:
+    label: "{{ item.name }}"

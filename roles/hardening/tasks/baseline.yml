@@ -166,3 +166,13 @@
     - hardening_auditd_group is failed
     - "'does not exist' not in (hardening_auditd_group.msg | default(''))"
   notify: Reload auditd rules
+
+- name: "Baseline | Rotate AIDE + local tool logs (logrotate concern-role)"
+  ansible.builtin.include_role:
+    name: logrotate
+  vars:
+    logrotate_entries:
+      - name: aide
+        paths: ["/var/log/aide/*.log"]
+        rotate: 8
+        frequency: weekly
