@@ -1,0 +1,100 @@
+---
+# ==============================================================================
+# Docker container logs → journald → promtail → Loki (INF-27: every stream).
+# json-file was the default, so container stdout never reached Loki.
+#
+# PHASED, deliberately: this play only sets the DAEMON default (+ restarts
+# dockerd, serial 1 — containers bounce briefly, restart policies bring them
+# back). Each container adopts journald ON ITS NEXT RECREATION — done per
+# service as the ADR walk visits it (a per-container driver change requires
+# recreation; forcing a fleet-wide recreation in one shot is needless risk).
+#
+#   ansible-playbook playbooks/docker-logging.yml [-e target=<host>]
+# ==============================================================================
+- name: "Docker daemon log-driver → journald"
+  hosts: "{{ target | default('all:!opnsense:!pve_nodes') }}"
+  become: true
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: "Docker-logs | Is docker present? (docker-ce or docker.io paths)"  # noqa: command-instead-of-module
+      ansible.builtin.command: systemctl is-enabled docker
+      register: dockerlog_dockerd_probe
+      changed_when: false
+      failed_when: false
+
+    - name: "Docker-logs | Presence fact"
+      ansible.builtin.set_fact:
+        dockerlog_present: "{{ dockerlog_dockerd_probe.rc == 0 }}"
+
+    - name: "Docker-logs | Converge daemon.json (merge, keep other keys)"
+      when: dockerlog_present | bool
+      block:
+        - name: "Docker-logs | Read current daemon.json"
+          ansible.builtin.slurp:
+            src: /etc/docker/daemon.json
+          register: dockerlog_cur
+          failed_when: false
+
+        - name: "Docker-logs | Merge log-driver=journald"
+          ansible.builtin.set_fact:
+            # json-file-specific log-opts (max-size/max-file) are INVALID for
+            # journald and make dockerd REFUSE TO START — drop log-opts entirely
+            # when switching (journald has its own rotation via journald.conf).
+            dockerlog_new: >-
+              {{ ((dockerlog_cur.content | default('') | b64decode | from_json)
+                  if (dockerlog_cur.content is defined) else {})
+                 | dict2items | rejectattr('key', 'equalto', 'log-opts') | items2dict
+                 | combine({'log-driver': 'journald'}) }}
+
+        - name: "Docker-logs | Write daemon.json"
+          ansible.builtin.copy:
+            dest: /etc/docker/daemon.json
+            owner: root
+            group: root
+            mode: "0644"
+            content: "{{ dockerlog_new | to_nice_json }}\n"
+          register: dockerlog_write
+
+        - name: "Docker-logs | Note whether a restart is needed"
+          ansible.builtin.set_fact:
+            dockerlog_changed: "{{ dockerlog_write is changed }}"
+
+        - name: "Docker-logs | Restart dockerd (containers auto-restart)"  # noqa: no-handler
+          ansible.builtin.systemd_service:
+            name: docker
+            state: restarted
+          when: dockerlog_changed | bool
+
+        # Compose appliance stacks (harbor, jumpserver) do NOT self-recover
+        # after a daemon bounce (learned on harbor: 1/9 containers back, 502) —
+        # bring any /opt/*/docker-compose.yml stack up explicitly.
+        - name: "Docker-logs | Recover compose stacks"
+          ansible.builtin.shell: |
+            set -o pipefail
+            for f in /opt/*/docker-compose.yml; do
+              [ -e "$f" ] || continue
+              (cd "$(dirname "$f")" && docker-compose up -d >/dev/null 2>&1 || docker compose up -d >/dev/null 2>&1) && echo "recovered: $f"
+            done
+            true
+          args: { executable: /bin/bash }
+          register: dockerlog_compose
+          changed_when: "'recovered' in (dockerlog_compose.stdout | default(''))"
+          when: dockerlog_changed | bool
+
+        - name: "Docker-logs | Wait for containers to come back"
+          ansible.builtin.shell: |
+            set -o pipefail
+            sleep 5
+            docker ps --format '{{ '{{' }}.Status{{ '}}' }}' | grep -cE '^Up' || true
+          args: { executable: /bin/bash }
+          register: dockerlog_up
+          changed_when: false
+          when: dockerlog_changed | bool
+
+        - name: "Docker-logs | Report"
+          ansible.builtin.debug:
+            msg: >-
+              {{ inventory_hostname }}: journald default set{{ ' — ' +
+              (dockerlog_up.stdout | default('?') | trim) + ' containers up'
+              if dockerlog_changed | bool else ' (already)' }}
