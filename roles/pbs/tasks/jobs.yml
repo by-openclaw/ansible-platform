@@ -1,0 +1,33 @@
+---
+# Retention + integrity (infra/0008): a prune job (bounded growth) and a verify
+# job (bit-rot detection — chunks live on S3) — both were MISSING (walk step 7).
+- name: "jobs | Current prune jobs"
+  ansible.builtin.command: proxmox-backup-manager prune-job list --output-format json
+  register: pbs_prune_list
+  changed_when: false
+  failed_when: false
+
+- name: "jobs | Create the daily prune job"
+  ansible.builtin.command: >-
+    proxmox-backup-manager prune-job create prune-daily
+    --store {{ pbs_datastore_name }} --schedule 'daily'
+    --keep-last {{ pbs_keep_last }} --keep-daily {{ pbs_keep_daily }}
+    --keep-weekly {{ pbs_keep_weekly }} --keep-monthly {{ pbs_keep_monthly }}
+  when: "'prune-daily' not in (pbs_prune_list.stdout | default(''))"
+  register: pbs_prune_create
+  changed_when: pbs_prune_create is not skipped
+
+- name: "jobs | Current verify jobs"
+  ansible.builtin.command: proxmox-backup-manager verify-job list --output-format json
+  register: pbs_verify_list
+  changed_when: false
+  failed_when: false
+
+- name: "jobs | Create the weekly verify job"
+  ansible.builtin.command: >-
+    proxmox-backup-manager verify-job create verify-weekly
+    --store {{ pbs_datastore_name }} --schedule 'weekly'
+    --ignore-verified true --outdated-after {{ pbs_reverify_days }}
+  when: "'verify-weekly' not in (pbs_verify_list.stdout | default(''))"
+  register: pbs_verify_create
+  changed_when: pbs_verify_create is not skipped
