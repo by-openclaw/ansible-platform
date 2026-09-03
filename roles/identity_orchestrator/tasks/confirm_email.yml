@@ -1,0 +1,20 @@
+---
+- name: "IdentityOrch | Read the sender mailbox creds (authentik@) from Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ identity_orchestrator_env }}/mail/authentik"
+    vault_secret_init: {}
+
+- name: "IdentityOrch | Render + send the confirmation (587 STARTTLS, authenticated)"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - "import smtplib,os,ssl,sys; msg=sys.stdin.read(); s=smtplib.SMTP('{{ identity_orchestrator_mail_host }}',587,timeout=20); s.starttls(context=ssl.create_default_context()); s.login('{{ vault_secret_result.address }}',os.environ['MP']); s.sendmail('{{ identity_orchestrator_mail_from }}', ['{{ io_person.email }}','{{ identity_orchestrator_mail_delegate }}'], msg.encode('utf-8')); s.quit(); print('SENT')"
+    stdin: "{{ lookup('template', 'welcome.txt.j2') }}"
+  environment:
+    MP: "{{ vault_secret_result.password }}"
+  register: io_mail
+  changed_when: "'SENT' in (io_mail.stdout | default(''))"
+  no_log: true

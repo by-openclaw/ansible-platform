@@ -1,0 +1,13 @@
+---
+- name: "IdentityOrch | Load the Authentik admin token"
+  ansible.builtin.set_fact:
+    io_ak_token: "{{ (lookup('file', identity_orchestrator_secret_dir + '/' + identity_orchestrator_ak_secret_file) | from_json).fields.bootstrap_token }}"
+    io_ak_base: "http://{{ identity_orchestrator_ak_host }}:{{ identity_orchestrator_ak_port }}/api/v3"
+  no_log: true
+
+- name: "IdentityOrch | Reconcile each person"
+  ansible.builtin.include_tasks: person.yml
+  loop: "{{ identity_orchestrator_people }}"
+  loop_control:
+    loop_var: io_person
+    label: "{{ io_person.username }}"
