@@ -125,6 +125,12 @@ contract_audit_service_checks:
     expect: "^[1-9]"
     groups: ["gitlab_runner"]
 
+  - id: SVC-STEPCA
+    desc: "step-ca internal CA health endpoint answering"
+    probe: "curl -sk -o /dev/null -w '%{http_code}' -m5 https://127.0.0.1:9000/health || echo 000"
+    expect: "^200$"
+    groups: ["step_ca"]
+
   - id: SVC-VERD
     desc: "Verdaccio npm registry answering /-/ping"
     probe: "curl -s -o /dev/null -w '%{http_code}' -m5 http://127.0.0.1:4873/-/ping || echo 000"
