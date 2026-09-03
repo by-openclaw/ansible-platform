@@ -1,0 +1,78 @@
+---
+# --- Authentik: get-or-create the user (source of truth) ----------------------
+- name: "IdentityOrch | Look up the user"
+  ansible.builtin.uri:
+    url: "{{ io_ak_base }}/core/users/?username={{ io_person.username }}"
+    headers: { Authorization: "Bearer {{ io_ak_token }}" }
+  register: io_lookup
+  no_log: true
+
+- name: "IdentityOrch | Create the Authentik user (absent)"
+  ansible.builtin.uri:
+    url: "{{ io_ak_base }}/core/users/"
+    method: POST
+    headers: { Authorization: "Bearer {{ io_ak_token }}", Content-Type: "application/json" }
+    body_format: json
+    body:
+      username: "{{ io_person.username }}"
+      name: "{{ io_person.name }}"
+      email: "{{ io_person.email }}"
+      is_active: "{{ (io_person.state | default('active')) == 'active' }}"
+      type: internal
+    status_code: [201]
+  register: io_created
+  when: io_lookup.json.results | length == 0
+  no_log: true
+
+- name: "IdentityOrch | Resolve the user pk"
+  ansible.builtin.set_fact:
+    io_user_pk: "{{ (io_created.json.pk | default('')) or (io_lookup.json.results[0].pk | default('')) }}"
+
+- name: "IdentityOrch | Enforce active/disabled state (disable, never delete)"
+  ansible.builtin.uri:
+    url: "{{ io_ak_base }}/core/users/{{ io_user_pk }}/"
+    method: PATCH
+    headers: { Authorization: "Bearer {{ io_ak_token }}", Content-Type: "application/json" }
+    body_format: json
+    body:
+      is_active: "{{ (io_person.state | default('active')) == 'active' }}"
+      name: "{{ io_person.name }}"
+      email: "{{ io_person.email }}"
+    status_code: [200]
+  changed_when: true
+  no_log: true
+
+# --- Group memberships (these UNLOCK services + the mailbox) -------------------
+- name: "IdentityOrch | Resolve each declared group's pk"
+  ansible.builtin.uri:
+    url: "{{ io_ak_base }}/core/groups/?name={{ io_group | urlencode }}"
+    headers: { Authorization: "Bearer {{ io_ak_token }}" }
+  register: io_groups
+  loop: "{{ io_person.groups | default([]) }}"
+  loop_control:
+    loop_var: io_group
+    label: "{{ io_group }}"
+  no_log: true
+
+- name: "IdentityOrch | Add to declared groups (idempotent)"
+  ansible.builtin.uri:
+    url: "{{ io_ak_base }}/core/groups/{{ item.json.results[0].pk }}/add_user/"
+    method: POST
+    headers: { Authorization: "Bearer {{ io_ak_token }}", Content-Type: "application/json" }
+    body_format: json
+    body: { pk: "{{ io_user_pk | int }}" }
+    status_code: [204, 400]
+  loop: "{{ io_groups.results }}"
+  loop_control:
+    label: "{{ item.io_group | default('?') }}"
+  when: item.json.results | length > 0
+  register: io_add
+  changed_when: "io_add.status | default(400) == 204"
+  no_log: true
+
+# --- Confirmation email (the bundle) — no password, enrolment link only --------
+- name: "IdentityOrch | Send the confirmation email"
+  ansible.builtin.include_tasks: confirm_email.yml
+  when:
+    - identity_orchestrator_send_confirmation | bool
+    - (io_person.state | default('active')) == 'active'

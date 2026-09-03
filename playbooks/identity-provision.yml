@@ -1,0 +1,15 @@
+---
+# ==============================================================================
+# Identity provisioning — reconcile the platform_people list into Authentik
+# (users + group memberships) and send each a confirmation email. Authentik is
+# the source of truth; mailboxes auto-provision on first SSO login.
+#   ansible-playbook -i inventories/prod playbooks/identity-provision.yml
+# People live in inventories/prod/group_vars/all/ (platform_people) or -e.
+# ==============================================================================
+- name: "Identity provisioning (Authentik + orchestrator)"
+  hosts: authentik
+  become: true
+  gather_facts: false
+  roles:
+    - role: identity_orchestrator
+      identity_orchestrator_people: "{{ platform_people | default([]) }}"
