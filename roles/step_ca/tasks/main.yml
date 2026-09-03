@@ -1,0 +1,105 @@
+---
+# CA key password — Vault-native get-or-create (SVC-11). The CA's root+intermediate
+# private keys are encrypted with this; losing it = losing the CA.
+- name: "Step-ca | Get-or-create the CA key password in Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ step_ca_vault_path }}"
+    vault_secret_init:
+      password: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+
+- name: "Step-ca | Bind the password"
+  ansible.builtin.set_fact:
+    step_ca_password: "{{ vault_secret_result.password }}"
+  no_log: true
+
+- name: "Step-ca | Layout"
+  ansible.builtin.file:
+    path: "{{ step_ca_build_dir }}/init"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0700"
+
+- name: "Step-ca | Write the init password (neutral path — NOT /home/step)"
+  ansible.builtin.copy:
+    dest: "{{ step_ca_build_dir }}/init/password"
+    content: "{{ step_ca_password }}"
+    owner: "1000"
+    group: "1000"
+    mode: "0600"
+  no_log: true
+
+- name: "Step-ca | Named docker volume for the CA state"
+  community.docker.docker_volume:
+    name: step-ca-data
+
+- name: "Step-ca | Pull the pinned image"
+  community.docker.docker_image:
+    name: "{{ step_ca_image }}"
+    source: pull
+    state: present
+
+# The smallstep image auto-inits on FIRST boot when the volume is empty, from
+# DOCKER_STEPCA_INIT_* — idempotent (a populated volume is left untouched).
+- name: "Step-ca | Run the container (auto-init on empty volume)"
+  community.docker.docker_container:
+    name: step-ca
+    image: "{{ step_ca_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    log_driver: journald
+    published_ports:
+      - "{{ step_ca_listen_ip }}:{{ step_ca_port }}:9000"
+      - "127.0.0.1:{{ step_ca_port }}:9000"
+    volumes:
+      - "step-ca-data:/home/step"
+      - "{{ step_ca_build_dir }}/init/password:/run/init-pw:ro"
+    env:
+      DOCKER_STEPCA_INIT_NAME: "{{ step_ca_name }}"
+      DOCKER_STEPCA_INIT_DNS_NAMES: "{{ step_ca_dns_names }}"
+      DOCKER_STEPCA_INIT_PROVISIONER_NAME: "{{ step_ca_provisioner }}"
+      DOCKER_STEPCA_INIT_ACME: "true"
+      DOCKER_STEPCA_INIT_PASSWORD_FILE: "/run/init-pw"
+
+- name: "Step-ca | Wait for the CA health endpoint"
+  ansible.builtin.uri:
+    url: "https://{{ step_ca_listen_ip }}:{{ step_ca_port }}/health"
+    validate_certs: false
+    status_code: [200]
+  register: step_ca_health
+  retries: 30
+  delay: 3
+  until: step_ca_health.status == 200
+
+# Capture the root fingerprint into Vault (trust anchor for clients).
+- name: "Step-ca | Read the CA root fingerprint"
+  community.docker.docker_container_exec:
+    container: step-ca
+    command: step certificate fingerprint /home/step/certs/root_ca.crt
+  register: step_ca_fp
+  changed_when: false
+
+- name: "Step-ca | Persist the root fingerprint in Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ step_ca_env }}/step-ca/root"
+    vault_secret_init:
+      fingerprint: "{{ step_ca_fp.stdout | trim }}"
+      url: "https://{{ step_ca_fqdn }}"
+      ca_dns: "{{ step_ca_dns_names }}"
+
+# --- compose the platform concerns via the golden-path scaffold --------------
+- name: "Step-ca | Scaffold the platform concerns"
+  ansible.builtin.include_role:
+    name: service_scaffold
+  vars:
+    service_scaffold_def:
+      name: step-ca
+      fqdn: "{{ step_ca_fqdn }}"
+      backend_url: "https://{{ step_ca_listen_ip }}:{{ step_ca_port }}"
+      exposure: internal
+      mailbox: true

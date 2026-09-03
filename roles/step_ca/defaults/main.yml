@@ -1,0 +1,15 @@
+---
+# step-ca — internal certificate authority (smallstep). security/0001 PKI.
+step_ca_image: "smallstep/step-ca:0.28.4"     # pinned, never :latest
+step_ca_listen_ip: "10.1.3.192"
+step_ca_port: 9000
+step_ca_fqdn: "ca.{{ platform_domain | default('by-research.be') }}"
+step_ca_build_dir: "/opt/step-ca"
+step_ca_env: "{{ platform_env | default('prod') }}"
+step_ca_domain: "{{ platform_domain | default('by-research.be') }}"
+# CA root/intermediate key password — Vault get-or-create (never on disk long-term).
+step_ca_vault_path: "{{ step_ca_env }}/step-ca/ca-password"
+step_ca_name: "BY-SYSTEMS Internal CA"
+step_ca_provisioner: "admin@{{ platform_domain | default('by-research.be') }}"
+# DNS names the CA answers on (SAN of the CA cert).
+step_ca_dns_names: "ca.{{ platform_domain | default('by-research.be') }},lxc-stepca-01.{{ platform_domain | default('by-research.be') }},10.1.3.192,127.0.0.1"
