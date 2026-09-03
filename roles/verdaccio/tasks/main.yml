@@ -1,0 +1,107 @@
+---
+# Registry admin credential — Vault-native get-or-create (SVC-11).
+- name: "Verdaccio | Get-or-create the registry admin credential"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ verdaccio_vault_path }}"
+    vault_secret_init:
+      username: "{{ verdaccio_admin_user }}"
+      password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+
+- name: "Verdaccio | Bind the credential"
+  ansible.builtin.set_fact:
+    verdaccio_admin_password: "{{ vault_secret_result.password }}"
+  no_log: true
+
+- name: "Verdaccio | Layout directories"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "10001"           # verdaccio uid in the official image
+    group: "65533"
+    mode: "0755"
+  loop:
+    - "{{ verdaccio_build_dir }}"
+    - "{{ verdaccio_storage_dir }}"
+    - "{{ verdaccio_conf_dir }}"
+
+- name: "Verdaccio | Render config.yaml"
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ verdaccio_conf_dir }}/config.yaml"
+    owner: "10001"
+    group: "65533"
+    mode: "0644"
+  notify: Restart verdaccio
+
+- name: "Verdaccio | Ensure htpasswd tooling"
+  ansible.builtin.apt:
+    name: apache2-utils
+    state: present
+
+- name: "Verdaccio | Seed the admin htpasswd entry (idempotent)"
+  ansible.builtin.shell: |
+    set -o pipefail
+    F={{ verdaccio_conf_dir }}/htpasswd
+    if [ ! -f "$F" ] || ! grep -q '^{{ verdaccio_admin_user }}:' "$F"; then
+      htpasswd -bB -c "$F" '{{ verdaccio_admin_user }}' "$VPW" >/dev/null 2>&1
+      echo changed
+    fi
+  args: { executable: /bin/bash }
+  environment:
+    VPW: "{{ verdaccio_admin_password }}"
+  register: verdaccio_htpasswd
+  changed_when: "'changed' in verdaccio_htpasswd.stdout"
+  no_log: true
+
+- name: "Verdaccio | Own the htpasswd by the container uid"
+  ansible.builtin.file:
+    path: "{{ verdaccio_conf_dir }}/htpasswd"
+    owner: "10001"
+    group: "65533"
+    mode: "0640"
+
+- name: "Verdaccio | Pull the pinned image"
+  community.docker.docker_image:
+    name: "{{ verdaccio_image }}"
+    source: pull
+    state: present
+
+- name: "Verdaccio | Run the container"
+  community.docker.docker_container:
+    name: verdaccio
+    image: "{{ verdaccio_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    log_driver: journald
+    published_ports:
+      - "{{ verdaccio_listen_ip }}:{{ verdaccio_port }}:4873"
+      - "127.0.0.1:{{ verdaccio_port }}:4873"
+    volumes:
+      - "{{ verdaccio_storage_dir }}:/verdaccio/storage"
+      - "{{ verdaccio_conf_dir }}:/verdaccio/conf"
+
+- name: "Verdaccio | Wait for the registry to answer"
+  ansible.builtin.uri:
+    url: "http://{{ verdaccio_listen_ip }}:{{ verdaccio_port }}/-/ping"
+    status_code: [200]
+  register: verdaccio_ping
+  retries: 20
+  delay: 3
+  until: verdaccio_ping.status == 200
+
+# --- compose the platform concerns via the golden-path scaffold --------------
+- name: "Verdaccio | Scaffold the platform concerns"
+  ansible.builtin.include_role:
+    name: service_scaffold
+  vars:
+    service_scaffold_def:
+      name: verdaccio
+      fqdn: "{{ verdaccio_fqdn }}"
+      backend_url: "http://{{ verdaccio_listen_ip }}:{{ verdaccio_port }}"
+      exposure: internal
+      mailbox: true
+      logrotate:
+        - { name: verdaccio, paths: ["/opt/verdaccio/storage/.verdaccio-db.json"], rotate: 7 }
