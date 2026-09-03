@@ -1,0 +1,40 @@
+---
+# ==============================================================================
+# Role: service_scaffold — the golden path for a new platform service.
+#
+# A service is born COMPLIANT by declaring ONE dict and letting this role compose
+# the concern-roles the platform already ships. It owns the per-host, per-service
+# concerns; the three CENTRAL registrations (SSO app, firewall catalog, audit
+# row) live in shared data files and are listed in docs/new-service.md — the role
+# ASSERTS they are present so nothing is forgotten.
+#
+# Usage (from a service role, after the app itself is installed):
+#   - include_role: {name: service_scaffold}
+#     vars:
+#       service_scaffold: "{{ my_service_contract }}"
+#
+# Contract (service_scaffold):
+#   name            required. svc short name (== naming/0002 §3 {function}).
+#   fqdn            required. public/edge name, e.g. "npm.{{ platform_domain }}".
+#   backend_url     required for the route, e.g. "http://10.1.3.181:4873".
+#   exposure        "internal" (VPN-only, default) | "public".
+#   mailbox         true|false (default true) — {name}@{domain} rx/tx mailbox.
+#   mailbox_delegates  list of full addresses (default [adm_yboujraf@domain]).
+#   vault_secrets   list of {path, init:{...}} get-or-create KV secrets.
+#   db              "none" (default) | "postgres" — provisions {name} DB+user.
+#   s3_bucket       "" (default) | bucket name — SeaweedFS scoped identity.
+#   logrotate       list of logrotate entries (see roles/logrotate).
+#   sso_slug        the expected authentik_oidc_apps slug (assert present).
+#   fw_alias        the expected OPNsense catalog port alias (assert present).
+#   audit_id        the expected contract_audit check id (assert present).
+# ==============================================================================
+
+service_scaffold_def: {}
+
+# Resolved from the contract with defaults (do not set directly).
+service_scaffold_domain: "{{ platform_domain | default('by-research.be') }}"
+service_scaffold_env: "{{ platform_env | default('prod') }}"
+
+# Toggle the central-registration assertions off ONLY for a first bring-up where
+# the SSO app / catalog / audit row are landing in the same change set.
+service_scaffold_assert_central: true
