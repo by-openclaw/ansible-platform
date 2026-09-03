@@ -1,0 +1,107 @@
+---
+# ============================ validate ========================================
+- name: "Scaffold | Validate the service contract"
+  ansible.builtin.assert:
+    that:
+      - service_scaffold_def.name | default('') | length > 0
+      - service_scaffold_def.fqdn | default('') | length > 0
+      - service_scaffold_def.backend_url | default('') | length > 0
+      - (service_scaffold_def.exposure | default('internal')) in ['internal', 'public']
+    fail_msg: "service_scaffold needs at least name, fqdn, backend_url; exposure internal|public"
+    quiet: true
+
+- name: "Scaffold | Naming convention (naming/0002 §3)"
+  ansible.builtin.assert:
+    that: service_scaffold_def.name is match('^[a-z0-9-]+$')
+    fail_msg: "service name must be lowercase-hyphen ({{ service_scaffold_def.name }})"
+    quiet: true
+
+# ============================ data plane ======================================
+- name: "Scaffold | Provision the service database (cluster Postgres)"
+  ansible.builtin.include_role:
+    name: postgres_db
+  vars:
+    postgres_db_vault_path: "{{ service_scaffold_env }}/{{ service_scaffold_def.name }}/db-pgsql"
+    postgres_db_name: "{{ service_scaffold_def.name }}"
+    postgres_db_user: "{{ service_scaffold_def.name }}"
+    postgres_db_secret_file: "fabric/db-pgsql-{{ service_scaffold_def.name }}.json"
+  when: (service_scaffold_def.db | default('none')) == 'postgres'
+
+- name: "Scaffold | Provision the SeaweedFS S3 bucket + scoped identity"
+  ansible.builtin.include_role:
+    name: seaweedfs_bucket
+  vars:
+    seaweedfs_bucket_identity: "{{ service_scaffold_def.name }}"
+    seaweedfs_bucket_names: ["{{ service_scaffold_def.s3_bucket }}"]
+    seaweedfs_bucket_secret_file: "fabric/s3-{{ service_scaffold_def.name }}.json"
+  when: (service_scaffold_def.s3_bucket | default('')) | length > 0
+
+# ============================ secrets =========================================
+- name: "Scaffold | Get-or-create declared Vault secrets"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ scaffold_secret.path }}"
+    vault_secret_init: "{{ scaffold_secret.init | default({}) }}"
+  loop: "{{ service_scaffold_def.vault_secrets | default([]) }}"
+  loop_control:
+    loop_var: scaffold_secret
+    label: "{{ scaffold_secret.path }}"
+
+# ============================ mail ============================================
+- name: "Scaffold | Provision the service mailbox (rx/tx + adm delegate)"
+  ansible.builtin.include_role:
+    name: mailbox
+  vars:
+    mailbox_service: "{{ service_scaffold_def.name }}"
+    mailbox_delegates: >-
+      {{ service_scaffold_def.mailbox_delegates
+         | default(['adm_yboujraf@' + service_scaffold_domain]) }}
+  when: service_scaffold_def.mailbox | default(true) | bool
+
+# ============================ edge ============================================
+- name: "Scaffold | Publish via Traefik ({{ service_scaffold_def.exposure | default('internal') }})"
+  ansible.builtin.include_role:
+    name: traefik_route
+  vars:
+    traefik_route_name: "{{ service_scaffold_def.name }}"
+    traefik_route_fqdn: "{{ service_scaffold_def.fqdn }}"
+    traefik_route_backend_url: "{{ service_scaffold_def.backend_url }}"
+    traefik_route_internal_only: "{{ (service_scaffold_def.exposure | default('internal')) == 'internal' }}"
+
+# ============================ logs ============================================
+- name: "Scaffold | Log rotation for the service's own files"
+  ansible.builtin.include_role:
+    name: logrotate
+  vars:
+    logrotate_entries: "{{ service_scaffold_def.logrotate }}"
+  when: (service_scaffold_def.logrotate | default([])) | length > 0
+
+# ============================ central-registration guardrails =================
+# The three cross-cutting registrations live in shared data files (one edit each,
+# listed in docs/new-service.md). We ASSERT they exist so a new service can never
+# silently ship without SSO, a firewall rule, or an audit check.
+- name: "Scaffold | Central registrations present (SSO · firewall · audit)"
+  ansible.builtin.assert:
+    that:
+      - (service_scaffold_def.sso_slug | default('')) | length == 0
+        or service_scaffold_def.sso_slug in (authentik_oidc_apps | default([]) | map(attribute='slug') | list)
+    fail_msg: >-
+      SSO app '{{ service_scaffold_def.sso_slug }}' not in authentik_oidc_apps —
+      add it (see docs/new-service.md §SSO) or clear sso_slug for a service
+      without a human UI.
+    quiet: true
+  when:
+    - service_scaffold_assert_central | bool
+    - (service_scaffold_def.sso_slug | default('')) | length > 0
+    - authentik_oidc_apps is defined
+
+- name: "Scaffold | Summary"
+  ansible.builtin.debug:
+    msg: >-
+      {{ service_scaffold_def.name }} scaffolded — route {{ service_scaffold_def.fqdn }}
+      ({{ service_scaffold_def.exposure | default('internal') }}),
+      mailbox={{ service_scaffold_def.mailbox | default(true) }},
+      db={{ service_scaffold_def.db | default('none') }},
+      s3={{ (service_scaffold_def.s3_bucket | default('')) | length > 0 }},
+      secrets={{ service_scaffold_def.vault_secrets | default([]) | length }}
