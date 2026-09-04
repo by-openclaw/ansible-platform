@@ -162,6 +162,31 @@ gitlab_rails['smtp_enable_starttls_auto'] = true
 gitlab_rails['smtp_tls'] = false
 gitlab_rails['gitlab_email_from'] = '{{ gitlab_smtp.smtp_user }}'
 gitlab_rails['gitlab_email_reply_to'] = '{{ gitlab_smtp.smtp_user }}'
+{% if gitlab_service_desk_enabled | default(false) and gitlab_mail is defined %}
+# --- Service Desk + reply-by-email (mailroom over IMAPS) -----------------------
+# Incoming address uses plus-addressing (mailcow recipient_delimiter=+): every
+# project/issue key rides gitlab+<key>@; Service Desk shares the same mailbox.
+gitlab_rails['incoming_email_enabled'] = true
+gitlab_rails['incoming_email_address'] = "gitlab+%{key}@{{ platform_domain }}"
+gitlab_rails['incoming_email_email'] = '{{ gitlab_mail.address }}'
+gitlab_rails['incoming_email_password'] = '{{ gitlab_mail.password }}'
+gitlab_rails['incoming_email_host'] = '{{ gitlab_mail.imap_host }}'
+gitlab_rails['incoming_email_port'] = {{ gitlab_mail.imap_port | default(993) }}
+gitlab_rails['incoming_email_ssl'] = true
+gitlab_rails['incoming_email_start_tls'] = false
+gitlab_rails['incoming_email_mailbox_name'] = "inbox"
+gitlab_rails['incoming_email_idle_timeout'] = 60
+gitlab_rails['service_desk_email_enabled'] = true
+gitlab_rails['service_desk_email_address'] = "gitlab+%{key}@{{ platform_domain }}"
+gitlab_rails['service_desk_email_email'] = '{{ gitlab_mail.address }}'
+gitlab_rails['service_desk_email_password'] = '{{ gitlab_mail.password }}'
+gitlab_rails['service_desk_email_host'] = '{{ gitlab_mail.imap_host }}'
+gitlab_rails['service_desk_email_port'] = {{ gitlab_mail.imap_port | default(993) }}
+gitlab_rails['service_desk_email_ssl'] = true
+gitlab_rails['service_desk_email_start_tls'] = false
+gitlab_rails['service_desk_email_mailbox_name'] = "inbox"
+gitlab_rails['service_desk_email_idle_timeout'] = 60
+{% endif %}
 {% else %}
 # SMTP not configured — Vault path {{ gitlab_smtp_vault_path }} absent. Provision
 # the mailcow mailbox (writes that Vault secret), then re-run to enable email.
