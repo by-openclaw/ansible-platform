@@ -21,12 +21,18 @@
   vars:
     ansible_python_interpreter: /usr/bin/python3
     opnsense_api_url: "https://{{ opn_host }}:{{ opn_port }}"
-    unbound_override_probe_host: "vm-adguard-01"   # SVC host that resolves via the FW
+    unbound_override_probe_host: "lxc-verdaccio-01"   # SVC host that resolves via the FW (vm-adguard-01 hits a delegated-become prompt — open item)
   tasks:
     - name: "Overrides | Probe which names already resolve to their target on the FW"
       ansible.builtin.command: "getent ahosts{{ 'v6' if item.rr == 'AAAA' else 'v4' }} {{ item.hostname }}.{{ item.domain }}"
       delegate_to: "{{ unbound_override_probe_host }}"
       become: false
+      # The play is connection: local (FW API); the probe must really SSH to the
+      # SVC host (otherwise it silently runs on the controller), and the inventory
+      # ansible_become:true on SVC hosts overrides the keyword → force it off.
+      vars:
+        ansible_connection: ssh
+        ansible_become: false
       loop: "{{ opn_unbound.host_overrides | default([]) }}"
       loop_control:
         label: "{{ item.hostname }}.{{ item.domain }} {{ item.rr }}"
@@ -55,6 +61,9 @@
       loop_control:
         label: "{{ item.item.hostname }}.{{ item.item.domain }} {{ item.item.rr }}"
       when: item.item.server not in (item.stdout | default(''))
+      register: unbound_override_add
+      # the MVC API answers 200 for everything; "saved" is the real change signal
+      changed_when: "(unbound_override_add.json.result | default('')) == 'saved'"
       notify: Reconfigure Unbound
 
   handlers:

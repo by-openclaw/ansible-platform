@@ -16,6 +16,32 @@
 #   -e '{"opn_fw_only": ["PASS DMZ Traefik→SVC CrowdSec LAPI (agent)"]}'
 # Empty (default) = converge the entire catalog.
 
+# --- Catalog guard (naming/0003): aliases mandatory, ipprotocol valid, §1a alias
+# pairs, and dual-stack twins (exempt: opn_single_family_interfaces). Python lint
+# on the controller — files/catalog_lint.py — fails the play with the violation list.
+- name: "Rules | Dump the catalog for the lint"
+  ansible.builtin.copy:
+    content: "{{ {'aliases': opn_aliases, 'rules': opn_filter_rules, 'single_family_interfaces': opn_single_family_interfaces | default([])} | to_json }}"
+    dest: "/tmp/opnsense-catalog-{{ inventory_hostname }}.json"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  tags: [firewall, rules]
+
+- name: "Rules | Catalog guard (naming/0003)"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ role_path }}/files/catalog_lint.py"
+      - "/tmp/opnsense-catalog-{{ inventory_hostname }}.json"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  register: opnsense_catalog_lint
+  failed_when: opnsense_catalog_lint.rc != 0
+  tags: [firewall, rules]
+
 - name: "Rules | Select the rules in scope"
   ansible.builtin.set_fact:
     opnsense_rules_scoped: >-
