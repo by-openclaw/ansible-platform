@@ -104,6 +104,27 @@
   no_log: true
   when: gitlab_smtp_get.rc == 0
 
+- name: "GitLab | Read the gitlab@ mailbox (IMAP) creds for Service Desk"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ gitlab_vault_token }} vault
+      vault kv get -mount=secret -format=json {{ gitlab_mail_vault_path }}
+  delegate_to: lxc-vault-01
+  become: true
+  register: gitlab_mail_get
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: gitlab_service_desk_enabled | bool
+
+- name: "GitLab | Adopt the mailbox creds (Service Desk)"
+  ansible.builtin.set_fact:
+    gitlab_mail: "{{ (gitlab_mail_get.stdout | from_json).data.data }}"
+  no_log: true
+  when:
+    - gitlab_service_desk_enabled | bool
+    - gitlab_mail_get.rc | default(1) == 0
+
 # --- Persistent git storage must be the ZFS bind-mount BEFORE install ----------
 - name: "GitLab | Verify git-data is a mountpoint (ZFS bind-mount)"
   ansible.builtin.command: "mountpoint -q {{ gitlab_git_data_dir }}"

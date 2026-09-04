@@ -135,4 +135,65 @@ end
   puts "project- deleted #{fp}"
 end
 
+# --- 6. Projects (support/desk repos) ---------------------------------------
+# Create-if-absent under a group; reconcile description, visibility and the
+# Service Desk flag (GitLab needs incoming_email configured for it to be live).
+(desired["projects"] || []).each do |pj|
+  full = "#{pj["group"]}/#{pj["path"]}"
+  proj = Project.find_by_full_path(full)
+  if proj.nil?
+    grp = Group.find_by_full_path(pj["group"])
+    if grp.nil?
+      puts "project! FAILED #{full}: group #{pj["group"]} missing"
+      next
+    end
+    params = {
+      name: pj["name"], path: pj["path"], namespace_id: grp.id,
+      description: pj["description"].to_s,
+      visibility_level: VIS[pj["visibility"] || "private"],
+      initialize_with_readme: pj.fetch("readme", true)
+    }
+    proj = Projects::CreateService.new(root, params).execute
+    if proj&.persisted?
+      changes += 1
+      puts "project+ created #{full}"
+    else
+      puts "project! FAILED #{full}: #{proj&.errors&.full_messages.to_a.join(', ')}"
+      next
+    end
+  end
+  upd = {}
+  upd[:description] = pj["description"].to_s if pj.key?("description") && proj.description.to_s != pj["description"].to_s
+  upd[:visibility_level] = VIS[pj["visibility"]] if pj["visibility"] && proj.visibility_level != VIS[pj["visibility"]]
+  upd[:service_desk_enabled] = pj["service_desk"] if pj.key?("service_desk") && proj.service_desk_enabled != pj["service_desk"]
+  next if upd.empty?
+  proj.update!(upd)
+  changes += 1
+  puts "project~ #{full} #{upd.keys.join(',')}"
+end
+
+# --- 7. Project integrations (Discord per project) ----------------------------
+# {project, type: discord, webhook, events: {push: true, ...}, branches: default}
+(desired["integrations"] || []).each do |it|
+  proj = Project.find_by_full_path(it["project"])
+  if proj.nil?
+    puts "integration! FAILED #{it["project"]}: project missing"
+    next
+  end
+  integ = proj.find_or_initialize_integration(it["type"])
+  if integ.nil?
+    puts "integration! FAILED #{it["project"]}: unknown type #{it["type"]}"
+    next
+  end
+  want = { "webhook" => it["webhook"], "active" => true,
+           "branches_to_be_notified" => (it["branches"] || "default") }
+  (it["events"] || {}).each { |ev, on| want["#{ev}_events"] = on }
+  diff = want.reject { |k, v| integ.respond_to?(k) && integ.public_send(k) == v }
+  next if diff.empty? && integ.persisted?
+  diff.each { |k, v| integ.public_send("#{k}=", v) }
+  integ.save!
+  changes += 1
+  puts "integration~ #{it["project"]} #{it["type"]} #{diff.keys.join(',')}"
+end
+
 puts "RBAC_DONE changes=#{changes}"
