@@ -130,5 +130,7 @@ docs: update README with break-glass instructions
 
 ## References
 
+- [docs/new-service.md](docs/new-service.md) — golden path: how a new service is born compliant (`service_scaffold`)
+- [docs/backup.md](docs/backup.md) — backup class · mechanism · restore per stateful service (INF-41) + drill log
 - [ADR-0006 — Platform Charter](https://github.com/by-openclaw/doc-platform-core/blob/main/docs/adr/0006-platform-charter.md)
 - [Platform RAID tracker](https://github.com/by-openclaw/platform-setup/issues)
