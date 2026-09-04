@@ -1,0 +1,54 @@
+---
+# ==============================================================================
+# npm registry for CI (issue: Verdaccio finish → runner must use it). Seeds
+# GitLab INSTANCE-level CI/CD variables so every pipeline (via the shared
+# npm.gitlab-ci.yml template) resolves and authenticates against Verdaccio:
+#   NPM_CONFIG_REGISTRY  https://npm.<domain>/
+#   NPM_AUTH             base64(user:password) of the svc account (masked)
+# Creds come from Vault prod/verdaccio/registry; the token never touches disk
+# (house pattern: gitlab-rails reconciler, desired state via env).
+#   ansible-playbook -i inventories/prod playbooks/verdaccio-gitlab-ci.yml
+# ==============================================================================
+- name: "Seed npm registry CI variables into GitLab"
+  hosts: lxc-gitlab-01
+  become: true
+  gather_facts: false
+  vars:
+    verdaccio_ci_registry: "https://npm.{{ platform_domain | default('by-research.be') }}/"
+  tasks:
+    - name: "Read the svc registry account (Vault)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ platform_env | default('prod') }}/verdaccio/registry"
+
+    - name: "Stage the CI-variable reconciler"
+      ansible.builtin.copy:
+        src: files/ci_vars.rb
+        dest: /opt/gitlab-ci-vars.rb
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "Reconcile the npm CI variables (gitlab-rails runner; desired via env)"
+      vars:
+        verdaccio_ci_desired:
+          variables:
+            - { key: "NPM_CONFIG_REGISTRY", value: "{{ verdaccio_ci_registry }}", masked: false, protected: false, raw: true }
+            - key: "NPM_AUTH"   # pragma: allowlist secret
+              value: "{{ (vault_secret_result.username ~ ':' ~ vault_secret_result.password) | b64encode }}"
+              masked: true
+              protected: false
+              raw: true
+      ansible.builtin.command:
+        argv: [gitlab-rails, runner, /opt/gitlab-ci-vars.rb]
+      environment:
+        CI_VARS_DESIRED: "{{ verdaccio_ci_desired | to_json }}"
+      register: verdaccio_ci_vars_run
+      changed_when: "'changes=0' not in verdaccio_ci_vars_run.stdout"
+      failed_when: "'CI_VARS_DONE' not in verdaccio_ci_vars_run.stdout"
+      no_log: true
+
+    - name: "Result"
+      ansible.builtin.debug:
+        msg: "{{ verdaccio_ci_vars_run.stdout_lines | select('match', '^(var|changes)') | list }}"

@@ -80,6 +80,40 @@ gitlab_rbac_delete_projects:
 gitlab_rbac_projects:
   - { group: platform/support, path: helpdesk, name: "Helpdesk", visibility: private, service_desk: true,
       description: "Service Desk — support requests by email become confidential issues here; runbooks + KB in the repo." }
+  # Shared CI templates — any project does `include: {project: platform/infra/ci-templates, file: /<name>.gitlab-ci.yml}`.
+  # Content is pushed by the reconciler from roles/gitlab/files/ci-templates (gitlab_rbac_project_files).
+  - group: platform/infra
+    path: ci-templates
+    name: "CI templates"
+    visibility: private     # GitLab forbids a more-visible project under a private group; members' pipelines can still include it
+    service_desk: false
+    description: "Shared GitLab CI templates (pre-commit, security-scan, npm) — managed by Ansible; include them, do not copy."
+  # npm registry smoke project — its pipeline proves every runner reaches Verdaccio with the platform creds.
+  - group: platform/devops
+    path: npm-check
+    name: "npm registry check"
+    visibility: private
+    service_desk: false
+    description: "Pipeline smoke test: the runner pulls through npm.<domain> (Verdaccio) with the instance CI credentials."
+
+# --- Project files: pushed to the default branch when content differs -------
+# src = path on the GitLab host (staged by this role from roles/gitlab/files/ci-templates).
+gitlab_rbac_ci_templates_dir: /opt/gitlab-ci-templates
+gitlab_rbac_project_files:
+  - project: platform/infra/ci-templates
+    files:
+      - { path: pre-commit.gitlab-ci.yml, src: "/opt/gitlab-ci-templates/pre-commit.gitlab-ci.yml" }
+      - { path: security-scan.gitlab-ci.yml, src: "/opt/gitlab-ci-templates/security-scan.gitlab-ci.yml" }
+      - { path: npm.gitlab-ci.yml, src: "/opt/gitlab-ci-templates/npm.gitlab-ci.yml" }
+  - project: platform/devops/npm-check
+    files:
+      - path: .gitlab-ci.yml
+        content: |
+          # Managed by Ansible (gitlab_rbac). Proves the runner reaches the platform npm registry.
+          include:
+            - project: 'platform/infra/ci-templates'
+              file: '/npm.gitlab-ci.yml'
+          stages: [test]
 
 # --- Per-project integrations (Discord channel per project) -------------------
 # The webhook is a SECRET: give the Vault path, the role resolves it at run time.
