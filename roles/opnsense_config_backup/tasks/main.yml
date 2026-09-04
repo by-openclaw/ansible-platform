@@ -1,0 +1,84 @@
+---
+- name: "FW backup | age (encryption)"
+  ansible.builtin.apt:
+    name: age
+    state: present
+
+- name: "FW backup | Generate a candidate age keypair (used only if Vault has none)"
+  ansible.builtin.command: age-keygen
+  register: opnsense_config_backup_keygen
+  changed_when: false
+  no_log: true
+
+- name: "FW backup | Get-or-create the age keypair in Vault (private key lives ONLY there)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ opnsense_config_backup_vault_path }}"
+    vault_secret_init:
+      public_key: "{{ opnsense_config_backup_keygen.stdout | regex_search('age1[0-9a-z]+') }}"
+      private_key: "{{ opnsense_config_backup_keygen.stdout | regex_search('AGE-SECRET-KEY-1[0-9A-Z]+') }}"
+
+- name: "FW backup | Bind the recipient + FW API creds (from the opnsense group vars)"
+  ansible.builtin.set_fact:
+    opnsense_config_backup_age_public: "{{ vault_secret_result.public_key }}"
+    opnsense_config_backup_fw_key: "{{ hostvars[opnsense_config_backup_fw_host].opn_key }}"
+    opnsense_config_backup_fw_secret: "{{ hostvars[opnsense_config_backup_fw_host].opn_secret }}"
+  no_log: true
+
+- name: "FW backup | Environment file (root 0600)"
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ opnsense_config_backup_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: "FW backup | Script"
+  ansible.builtin.template:
+    src: opnsense-config-backup.sh.j2
+    dest: "{{ opnsense_config_backup_script }}"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: "FW backup | systemd service + timer"
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - name: opnsense-config-backup.service
+      content: |
+        [Unit]
+        Description=OPNsense config export (age-encrypted) to NFS
+        RequiresMountsFor={{ opnsense_config_backup_dest }}
+        [Service]
+        Type=oneshot
+        ExecStart={{ opnsense_config_backup_script }}
+    - name: opnsense-config-backup.timer
+      content: |
+        [Unit]
+        Description=Nightly OPNsense config export
+        [Timer]
+        OnCalendar={{ opnsense_config_backup_schedule }}
+        Persistent=true
+        RandomizedDelaySec=300
+        [Install]
+        WantedBy=timers.target
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Reload systemd (FW backup)
+
+- name: "FW backup | Flush handlers before enabling"
+  ansible.builtin.meta: flush_handlers
+
+- name: "FW backup | Timer enabled + started"
+  ansible.builtin.systemd_service:
+    name: opnsense-config-backup.timer
+    enabled: true
+    state: started
+    daemon_reload: true

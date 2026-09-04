@@ -1,0 +1,16 @@
+---
+# Nightly OPNsense config export (issue #13 · ISO27001 A.8.13 / A.5.30, NIS2
+# Art.21(2)(c)): pulled from the FW's backup API by the PVE host, encrypted with
+# age (recipient = platform key; private key ONLY in Vault), written to the
+# Synology NFS share already mounted for vzdump. Backup only — restore is the
+# seed-ISO path (never a live config push).
+opnsense_config_backup_fw_url: "https://fw.{{ platform_domain | default('by-research.be') }}"
+opnsense_config_backup_fw_resolve: "fw.{{ platform_domain | default('by-research.be') }}:443:{{ opn_host | default('10.6.239.196') }}"
+opnsense_config_backup_dest: "/mnt/pve/poc-backup/dump-fw-config"   # NFS share (Synology) on the PVE host
+opnsense_config_backup_schedule: "*-*-* 02:45:00"                     # after PBS 01:30, before pg 02:00? (pg is on its host) — no overlap on the FW
+opnsense_config_backup_keep_daily: 30
+opnsense_config_backup_keep_monthly: 12
+opnsense_config_backup_vault_path: "{{ platform_env | default('prod') }}/opnsense/config-backup-age"
+opnsense_config_backup_env_file: "/etc/opnsense-config-backup.env"
+opnsense_config_backup_script: "/usr/local/sbin/opnsense-config-backup.sh"
+opnsense_config_backup_fw_host: vm-opns-01   # inventory host whose opn_key/opn_secret (Vault) are reused
