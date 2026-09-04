@@ -304,3 +304,11 @@ authentik_ldap_container_port: 6636
 
 # Outpost API token, issued by Authentik and stored in the secret folder.
 authentik_ldap_secret_file: "fabric/app-ldap-outpost.json"  # pragma: allowlist secret
+
+# --- LDAP outpost TLS = platform wildcard (synced from the Traefik host, tasks/ldap_cert.yml) ---
+authentik_ldap_cert_name: "wildcard-by-research"          # Authentik certificate-keypair name
+authentik_ldap_provider_name: "ldap"                       # LDAP provider that must reference it
+authentik_ldap_cert_src_host: "lxc-traefik-01"
+authentik_ldap_cert_src_crt: "/etc/lego/cert/certificates/_.{{ platform_domain | default('by-research.be') }}.crt"
+authentik_ldap_cert_src_key: "/etc/lego/cert/certificates/_.{{ platform_domain | default('by-research.be') }}.key"
+authentik_ldap_container_name: "authentik-ldap"   # outpost container (tasks/ldap.yml)
