@@ -43,6 +43,15 @@
     label: "{{ item.item.project | default('') }}"
   when: gitlab_rbac_integrations | length > 0
 
+- name: "RBAC | Stage the shared CI templates on the GitLab host"
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../gitlab/files/ci-templates/"
+    dest: "{{ gitlab_rbac_ci_templates_dir }}/"
+    owner: root
+    group: root
+    mode: "0644"
+    directory_mode: "0755"
+
 - name: "RBAC | Render the desired-state JSON"
   ansible.builtin.template:
     src: desired.json.j2

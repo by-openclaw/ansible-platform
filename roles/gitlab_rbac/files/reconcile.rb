@@ -196,4 +196,35 @@ end
   puts "integration~ #{it["project"]} #{it["type"]} #{diff.keys.join(',')}"
 end
 
+# --- 8. Project files (shared CI templates, seed .gitlab-ci.yml) ---------------
+# {project, files: [{path, src | content}]} — create/update on the default branch
+# only when the content differs (commit as root; a commit triggers the pipeline).
+(desired["project_files"] || []).each do |pf|
+  proj = Project.find_by_full_path(pf["project"])
+  if proj.nil?
+    puts "files! FAILED #{pf["project"]}: project missing"
+    next
+  end
+  branch = proj.default_branch || "main"
+  (pf["files"] || []).each do |fl|
+    content = fl["content"] || File.read(fl["src"])
+    blob = proj.repository.blob_at(branch, fl["path"]) rescue nil
+    if blob.nil?
+      res = Files::CreateService.new(proj, root, commit_message: "ci: add #{fl["path"]} (ansible gitlab_rbac)",
+                                     branch_name: branch, start_branch: branch,
+                                     file_path: fl["path"], file_content: content).execute
+      ok = res[:status] == :success
+      changes += 1 if ok
+      puts "#{ok ? 'file+' : 'file!'} #{pf["project"]}:#{fl["path"]} #{ok ? 'created' : res[:message]}"
+    elsif blob.data != content
+      res = Files::UpdateService.new(proj, root, commit_message: "ci: update #{fl["path"]} (ansible gitlab_rbac)",
+                                     branch_name: branch, start_branch: branch,
+                                     file_path: fl["path"], file_content: content).execute
+      ok = res[:status] == :success
+      changes += 1 if ok
+      puts "#{ok ? 'file~' : 'file!'} #{pf["project"]}:#{fl["path"]} #{ok ? 'updated' : res[:message]}"
+    end
+  end
+end
+
 puts "RBAC_DONE changes=#{changes}"
