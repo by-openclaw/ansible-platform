@@ -1,0 +1,24 @@
+---
+- name: "FW creds | Vault login (ansible-deploy AppRole)"
+  ansible.builtin.include_role:
+    name: vault_login
+
+- name: "FW creds | Read {{ opnsense_api_creds_vault_path }}"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_api_creds_vault_container }}
+      vault kv get -mount={{ opnsense_api_creds_vault_mount }} -format=json {{ opnsense_api_creds_vault_path }}
+  delegate_to: "{{ opnsense_api_creds_vault_host }}"
+  become: true
+  register: opnsense_api_creds_get
+  changed_when: false
+  check_mode: false          # read-only; must also run under --check so FW plays can be dry-run
+  no_log: true
+
+- name: "FW creds | Publish as facts (catalog + role names)"  # noqa: var-naming[no-role-prefix] (contract names used by the catalog + roles/opnsense)
+  ansible.builtin.set_fact:
+    opn_key: "{{ (opnsense_api_creds_get.stdout | from_json).data.data.key }}"
+    opn_secret: "{{ (opnsense_api_creds_get.stdout | from_json).data.data.secret }}"
+    opnsense_api_key: "{{ (opnsense_api_creds_get.stdout | from_json).data.data.key }}"
+    opnsense_api_secret: "{{ (opnsense_api_creds_get.stdout | from_json).data.data.secret }}"
+  no_log: true
