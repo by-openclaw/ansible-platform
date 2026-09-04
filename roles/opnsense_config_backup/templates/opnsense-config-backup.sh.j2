@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Managed by Ansible (roles/opnsense_config_backup). Pull config.xml from the FW
+# backup API, encrypt with age, keep {{ opnsense_config_backup_keep_daily }} daily
+# + {{ opnsense_config_backup_keep_monthly }} monthly on the NFS share.
+set -euo pipefail
+umask 077
+# shellcheck disable=SC1090
+source "{{ opnsense_config_backup_env_file }}"
+DEST="{{ opnsense_config_backup_dest }}"
+mkdir -p "$DEST/daily" "$DEST/monthly"
+STAMP="$(date +%F)"
+TMP="$(mktemp)"; trap 'rm -f "$TMP"' EXIT
+curl -fsS --max-time 60 --resolve "$FW_RESOLVE" -u "$FW_KEY:$FW_SECRET" \
+  "$FW_URL/api/core/backup/download/this" -o "$TMP"
+grep -q '<opnsense>' "$TMP" || { echo "backup: not an OPNsense config"; exit 1; }
+OUT="$DEST/daily/fw-config-$STAMP.xml.age"
+age -r "$AGE_RECIPIENT" -o "$OUT" "$TMP"
+chmod 0600 "$OUT"
+[ "$(date +%d)" = "01" ] && cp -p "$OUT" "$DEST/monthly/"
+# retention
+find "$DEST/daily" -name 'fw-config-*.xml.age' -mtime +{{ opnsense_config_backup_keep_daily }} -delete
+# (find never fails on an empty dir — `ls` on a non-matching glob exits 2 under pipefail)
+find "$DEST/monthly" -maxdepth 1 -name 'fw-config-*.xml.age' | sort | head -n -{{ opnsense_config_backup_keep_monthly }} | xargs -r rm -f
+echo "backup: $OUT ($(stat -c %s "$OUT") bytes)"

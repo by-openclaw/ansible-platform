@@ -49,12 +49,13 @@ Guest images capture everything on the rootfs and named docker volumes.
 | **redis** | **E** | cache only | none | play |
 | **traefik / adguard / diagrams / warden / gitlab-runner** | **D** | config = Ansible/catalog | PBS guest image (convenience) | re-run the play |
 | **pbs** | **A** | datastore is S3 (SeaweedFS) | **excluded from its own S3 job**; DR copy = NFS vzdump `vzdump-qemu-103` | restore VM from NFS; datastore re-attaches to S3 |
-| **opnsense** | **A + D** | `/conf/config.xml` (auto-versioned in `/conf/backup`) | FW VM in PBS/NFS jobs; catalog = code | restore VM or re-apply catalog + seed |
+| **opnsense** | **A + D** | `/conf/config.xml` (auto-versioned in `/conf/backup`) | FW VM in PBS/NFS jobs; catalog = code; **nightly `config.xml` export** (`opnsense_config_backup` on the PVE host, 02:45): age-encrypted → NFS `dump-fw-config/` (30 daily / 12 monthly), key in Vault `prod/opnsense/config-backup-age` | restore VM, or seed-ISO rebuild from the catalog + seed; the export is the evidence/reference copy (decrypt drill ✓ 2026-09-04) |
 
 ## Restore drills (INF-44 — ≥1 per tier per year)
 
 | Date | Drill | Result |
 |---|---|---|
+| 2026-09-04 | FW config export decrypt (`age -d` with the Vault key → `<opnsense>` root present) | ✓ |
 | 2026-09-02 | PBS file restore from encrypted `ct/501/2026-09-02T01:32:06Z` (`pct.conf`) | ✓ content verified |
 | 2026-08 | GitLab archive → restore (role) | ✓ proven |
 | 2026-08 | Vault raft snapshot restore procedure | documented (`roles/vault_backup/README.md`) — drill pending |
