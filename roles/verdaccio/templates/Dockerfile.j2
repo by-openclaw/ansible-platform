@@ -1,0 +1,16 @@
+# Managed by Ansible (roles/verdaccio). Official base + supported plugins, installed
+# exactly as the plugins document (global-style into the plugins folder).
+FROM {{ verdaccio_image }}
+USER root
+RUN set -eux; mkdir -p /tmp/plug \
+ && npm install --global-style --bin-links=false --save=false --package-lock=false \
+      --omit=dev --omit=optional --omit=peer --prefix /tmp/plug \
+      verdaccio-aws-s3-storage@{{ verdaccio_plugin_s3_version }} \
+      verdaccio-openid@{{ verdaccio_plugin_openid_version }} \
+      node-persist@{{ verdaccio_plugin_node_persist_version }} \
+ && mv /tmp/plug/node_modules/verdaccio-aws-s3-storage /verdaccio/plugins/ \
+ && mv /tmp/plug/node_modules/verdaccio-openid /verdaccio/plugins/ \
+ && mv /tmp/plug/node_modules/node-persist /verdaccio/plugins/verdaccio-openid/node_modules/ \
+ && rm -rf /tmp/plug /root/.npm \
+ && chown -R 10001:65533 /verdaccio/plugins
+USER 10001

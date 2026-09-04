@@ -187,6 +187,18 @@ authentik_oidc_apps:
     redirect_uris:
       - "https://jumpserver.{{ platform_domain }}/core/auth/openid/callback/"
 
+  - slug: verdaccio
+    launch_url: "https://npm.{{ platform_domain }}"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/verdaccio.svg"
+    name: "npm registry (Verdaccio)"
+    group: "verdaccio-users"         # ACCESS group — only members may SSO into the registry
+    vault_path: "prod/verdaccio/oidc"   # Vault-native client creds (like GitLab)
+    restrict_to_group: true          # IdP-enforced; verdaccio-openid also checks authorized-groups
+    # verdaccio-openid callbacks: web UI, WebAuthn (npm >=9 `npm login`), CLI fallback.
+    redirect_uris:
+      - "https://npm.{{ platform_domain }}/-/oauth/callback"
+      - "https://npm.{{ platform_domain }}/-/oauth/callback/authn"
+      - "https://npm.{{ platform_domain }}/-/oauth/callback/cli"
   - slug: harbor
     launch_url: "https://harbor.by-research.be"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/harbor.svg"
@@ -240,6 +252,7 @@ authentik_groups:
   - gitlab-admins       # subset of gitlab-users → GitLab instance admins (admin_groups)
   - jumpserver-users    # access group — only members may SSO into the JumpServer bastion
   - harbor-admins       # access group — members may SSO into Harbor and become Harbor admins
+  - verdaccio-users     # access group — members may SSO into the npm registry (verdaccio-openid)
   - infra-admins
   - dev
 # Groups whose members are Authentik superusers (can manage Authentik itself).
