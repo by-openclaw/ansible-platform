@@ -3,40 +3,43 @@
 # Authentik blueprint) → Vault `admins` policy via an external identity group.
 # Vault reaches Authentik's discovery URL over TLS (LE chain in /etc/ssl/certs,
 # resolves via Unbound split-horizon → Traefik). All facts no_log (creds).
-- name: "oidc | Load root token + OIDC client creds"
-  # ROOT REQUIRED: enabling a mount / auth method is a root-only op and runs
-  # ONLY on a fresh Vault deploy (idempotent-skipped once configured). After
-  # root revocation (SEC-06), regenerate root from the unseal keys before a
-  # Vault rebuild: vault operator generate-root. Not used in steady-state deploys.
+#
+# Runs with the ansible-deploy AppRole (vault_login) — root is retired (SEC-06).
+# The deploy policy grants auth/oidc/*, identity/group*, identity/group-alias*
+# and sys/auth/oidc (roles/vault_deploy_identity/templates/deploy-policy.hcl.j2).
+- name: "oidc | Vault login (ansible-deploy AppRole)"
+  ansible.builtin.include_role:
+    name: vault_login
+
+- name: "oidc | Load the OIDC client creds"
   ansible.builtin.set_fact:
-    vault_root_token: "{{ (lookup('file', vault_secret_dir + '/' + vault_init_secret) | from_json).fields.root_token }}"
     vault_oidc: "{{ (lookup('file', vault_secret_dir + '/' + vault_oidc_secret_file) | from_json).fields }}"
   no_log: true
 
 - name: "oidc | Write the admins policy"
   ansible.builtin.command:
-    cmd: "docker exec -i -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault policy write {{ vault_admin_policy_name }} -"
+    cmd: "docker exec -i -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }} vault policy write {{ vault_admin_policy_name }} -"
     stdin: "{{ lookup('template', 'admins-policy.hcl.j2') }}"
   no_log: true
   changed_when: true
 
 - name: "oidc | List auth methods"
   ansible.builtin.command:
-    cmd: "docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault auth list -format=json"
+    cmd: "docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }} vault auth list -format=json"
   register: vault_auth_list
   changed_when: false
   no_log: true
 
 - name: "oidc | Enable the OIDC auth method"
   ansible.builtin.command:
-    cmd: "docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault auth enable oidc"
+    cmd: "docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }} vault auth enable oidc"
   when: "'oidc/' not in (vault_auth_list.stdout | from_json)"
   no_log: true
   changed_when: true
 
 - name: "oidc | Capture the OIDC mount accessor"
   ansible.builtin.command:
-    cmd: "docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault auth list -format=json"
+    cmd: "docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }} vault auth list -format=json"
   register: vault_auth_list2
   changed_when: false
   no_log: true
@@ -49,7 +52,7 @@
 - name: "oidc | Configure auth/oidc (Authentik discovery + client)"
   ansible.builtin.command:
     cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }}
+      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
       vault write auth/oidc/config
       oidc_discovery_url={{ vault_oidc_discovery_url }}
       oidc_client_id={{ vault_oidc.client_id }}
@@ -61,7 +64,7 @@
 - name: "oidc | Configure the default OIDC role"
   ansible.builtin.command:
     cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }}
+      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
       vault write auth/oidc/role/{{ vault_oidc_default_role }}
       user_claim=sub groups_claim=groups token_policies=default token_ttl=1h
       oidc_scopes=openid oidc_scopes=profile oidc_scopes=email oidc_scopes=groups
@@ -72,14 +75,16 @@
 - name: "oidc | Create/update the external admin identity group"
   ansible.builtin.command:
     cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }}
+      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
       vault write identity/group name={{ vault_oidc_admin_group }} type=external policies={{ vault_admin_policy_name }}
   no_log: true
   changed_when: true
 
 - name: "oidc | Read the admin group (id + current alias)"
   ansible.builtin.command:
-    cmd: "docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault read -format=json identity/group/name/{{ vault_oidc_admin_group }}"
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
+      vault read -format=json identity/group/name/{{ vault_oidc_admin_group }}
   register: vault_group_read
   changed_when: false
   no_log: true
@@ -87,7 +92,7 @@
 - name: "oidc | Map the Authentik group → Vault group (alias, once)"
   ansible.builtin.command:
     cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }}
+      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
       vault write identity/group-alias name={{ vault_oidc_admin_group }}
       mount_accessor={{ vault_oidc_accessor }}
       canonical_id={{ (vault_group_read.stdout | from_json).data.id }}

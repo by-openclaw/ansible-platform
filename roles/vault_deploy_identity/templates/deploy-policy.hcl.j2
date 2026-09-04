@@ -25,3 +25,17 @@ path "sys/mounts"                                { capabilities = ["read"] }
 
 # Raft snapshot for the backup playbook (data path, not root-only config).
 path "sys/storage/raft/snapshot"                 { capabilities = ["read"] }
+
+# --- SSO mapping reconciliation (2026-09-04): the OIDC method, its roles and the
+# identity groups/aliases that map Authentik groups → policies are reconciled by
+# roles/vault (tasks/oidc.yml) with THIS identity — root is retired (SEC-06).
+path "auth/oidc/config"        { capabilities = ["read", "update"] }
+path "auth/oidc/role/*"        { capabilities = ["create", "read", "update", "list"] }
+path "auth/oidc/role"          { capabilities = ["list"] }
+path "identity/group"          { capabilities = ["create", "update"] }
+path "identity/group/*"        { capabilities = ["create", "read", "update", "list"] }
+path "identity/group-alias"    { capabilities = ["create", "update"] }
+path "identity/group-alias/*"  { capabilities = ["read", "list"] }
+path "identity/entity/*"       { capabilities = ["read", "list"] }
+path "identity/entity-alias/*" { capabilities = ["read", "list"] }
+path "sys/auth/oidc"           { capabilities = ["create", "read", "update", "sudo"] }
