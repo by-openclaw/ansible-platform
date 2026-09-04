@@ -1044,6 +1044,7 @@ opn_filter_rules:
 # alias source. NOTE: rule ordering is validated at the #51 catalog-apply dry-run.
 - {description: 'PASS mailcow→WAN SMTP via Telenet (egress PBR v4)', action: pass, interface: dmz, direction: in, ipprotocol: inet,  protocol: TCP, source_net: host4_mailcow, destination_net: any, destination_port: port_smtp, gateway: WAN_TELENET_GW,   sequence: '1090', state: present, ref: {adr: 'services/0007#mail-egress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - {description: 'PASS mailcow→WAN SMTP via Telenet (egress PBR v6)', action: pass, interface: dmz, direction: in, ipprotocol: inet6, protocol: TCP, source_net: host6_mailcow, destination_net: any, destination_port: port_smtp, gateway: WAN_TELENET_GWv6, sequence: '1091', state: present, ref: {adr: 'services/0007#mail-egress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+- {description: 'PASS SVC GitLab→DMZ mailcow IMAPS (Service Desk mailroom)', action: pass, interface: svc, direction: in, ipprotocol: inet, protocol: tcp, source_net: host4_gitlab, destination_net: host4_mailcow, destination_port: port_imaps, sequence: 1092, state: present, ref: {adr: 'services/0002#service-desk', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - description: PASS DMZ→WAN default
   action: pass
   interface: dmz
