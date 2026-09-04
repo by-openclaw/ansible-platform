@@ -33,6 +33,7 @@
     owner: "10001"
     group: "65533"
     mode: "0644"
+  register: verdaccio_config
   notify: Restart verdaccio
 
 - name: "Verdaccio | Ensure htpasswd tooling"
@@ -62,36 +63,6 @@
     group: "65533"
     mode: "0640"
 
-- name: "Verdaccio | Pull the pinned image"
-  community.docker.docker_image:
-    name: "{{ verdaccio_image }}"
-    source: pull
-    state: present
-
-- name: "Verdaccio | Run the container"
-  community.docker.docker_container:
-    name: verdaccio
-    image: "{{ verdaccio_image }}"
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    log_driver: journald
-    published_ports:
-      - "{{ verdaccio_listen_ip }}:{{ verdaccio_port }}:4873"
-      - "127.0.0.1:{{ verdaccio_port }}:4873"
-    volumes:
-      - "{{ verdaccio_storage_dir }}:/verdaccio/storage"
-      - "{{ verdaccio_conf_dir }}:/verdaccio/conf"
-
-- name: "Verdaccio | Wait for the registry to answer"
-  ansible.builtin.uri:
-    url: "http://{{ verdaccio_listen_ip }}:{{ verdaccio_port }}/-/ping"
-    status_code: [200]
-  register: verdaccio_ping
-  retries: 20
-  delay: 3
-  until: verdaccio_ping.status == 200
-
 # --- compose the platform concerns via the golden-path scaffold --------------
 - name: "Verdaccio | Scaffold the platform concerns"
   ansible.builtin.include_role:
@@ -103,5 +74,88 @@
       backend_url: "http://{{ verdaccio_listen_ip }}:{{ verdaccio_port }}"
       exposure: internal
       mailbox: true
-      logrotate:
-        - { name: verdaccio, paths: ["/opt/verdaccio/storage/.verdaccio-db.json"], rotate: 7 }
+      s3_bucket: "{{ verdaccio_s3_bucket }}"   # packages + package db in SeaweedFS (Vault prod/verdaccio/s3)
+      sso_slug: verdaccio                       # Authentik OIDC app (roles/authentik authentik_oidc_apps)
+
+# --- SSO client creds: written to Vault by roles/authentik (app slug 'verdaccio') --
+- name: "Verdaccio | Read the OIDC client creds from Vault"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} vault
+      vault kv get -mount=secret -format=json {{ verdaccio_oidc_vault_path }}
+  delegate_to: lxc-vault-01
+  become: true
+  register: verdaccio_oidc_get
+  changed_when: false
+  failed_when: verdaccio_oidc_get.rc != 0
+  no_log: true
+
+- name: "Verdaccio | Bind the OIDC client creds"
+  ansible.builtin.set_fact:
+    verdaccio_oidc: "{{ (verdaccio_oidc_get.stdout | from_json).data.data }}"
+  no_log: true
+
+- name: "Verdaccio | S3 identity present (from the scaffold's bucket step)"
+  ansible.builtin.assert:
+    that: seaweedfs_bucket_key.access_key is defined
+    fail_msg: "service_scaffold did not yield an S3 identity — check s3_bucket in the contract"
+    quiet: true
+
+# --- platform image = official base + supported plugins ------------------------
+- name: "Verdaccio | Pull the official base image"
+  community.docker.docker_image:
+    name: "{{ verdaccio_image }}"
+    source: pull
+
+- name: "Verdaccio | Render the Dockerfile"
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ verdaccio_build_dir }}/Dockerfile"
+    owner: root
+    group: root
+    mode: "0644"
+  register: verdaccio_dockerfile
+
+- name: "Verdaccio | Build the platform image (plugins baked in)"
+  community.docker.docker_image:
+    name: "{{ verdaccio_platform_image }}"
+    tag: "{{ verdaccio_image.split(':')[1] }}-p{{ verdaccio_platform_rev }}"
+    source: build
+    build:
+      path: "{{ verdaccio_build_dir }}"
+      dockerfile: Dockerfile
+      pull: false
+    force_source: "{{ verdaccio_dockerfile.changed }}"
+
+- name: "Verdaccio | Run the container"
+  community.docker.docker_container:
+    name: verdaccio
+    image: "{{ verdaccio_platform_image }}:{{ verdaccio_image.split(':')[1] }}-p{{ verdaccio_platform_rev }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    recreate: false
+    restart: "{{ verdaccio_config.changed | default(false) }}"   # verdaccio does not hot-reload config.yaml
+    log_driver: journald
+    published_ports:
+      - "{{ verdaccio_listen_ip }}:{{ verdaccio_port }}:4873"
+      - "127.0.0.1:{{ verdaccio_port }}:4873"
+    volumes:
+      - "{{ verdaccio_storage_dir }}:/verdaccio/storage"
+      - "{{ verdaccio_conf_dir }}:/verdaccio/conf"
+    env:
+      AWS_S3_ENDPOINT: "{{ seaweedfs_bucket_key.endpoint }}"
+      AWS_ACCESS_KEY_ID: "{{ seaweedfs_bucket_key.access_key }}"
+      AWS_SECRET_ACCESS_KEY: "{{ seaweedfs_bucket_key.secret_key }}"
+      OIDC_CLIENT_ID: "{{ verdaccio_oidc.client_id }}"
+      OIDC_CLIENT_SECRET: "{{ verdaccio_oidc.client_secret }}"
+  no_log: true
+
+- name: "Verdaccio | Wait for the registry to answer"
+  ansible.builtin.uri:
+    url: "http://{{ verdaccio_listen_ip }}:{{ verdaccio_port }}/-/ping"
+    status_code: [200]
+  register: verdaccio_ping
+  retries: 20
+  delay: 3
+  until: verdaccio_ping.status == 200

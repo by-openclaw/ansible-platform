@@ -1,16 +1,44 @@
 # Managed by Ansible (roles/verdaccio). npm registry + upstream proxy.
+# storage = local scratch for the openid token store; PACKAGES are in S3 (store:).
 storage: /verdaccio/storage
+plugins: /verdaccio/plugins
+store:
+  aws-s3-storage:
+    bucket: {{ verdaccio_s3_bucket }}
+    region: us-east-1                    # SeaweedFS ignores it; the SDK requires one
+    endpoint: AWS_S3_ENDPOINT            # env-substituted (never secrets in this file)
+    s3ForcePathStyle: true               # SeaweedFS = path-style
+    accessKeyId: AWS_ACCESS_KEY_ID
+    secretAccessKey: AWS_SECRET_ACCESS_KEY
+    dynamoTableName: none                # package db lives in the bucket
 web:
   title: BY-SYSTEMS npm
   gravatar: false
 auth:
+  # Humans: Authentik OIDC (browser UI + `npm login` web flow). Access group is
+  # enforced twice — at the IdP (restrict_to_group) and here (authorized-groups).
+  openid:
+    provider-host: {{ verdaccio_oidc_provider_host }}
+    client-id: OIDC_CLIENT_ID            # env-substituted
+    client-secret: OIDC_CLIENT_SECRET
+    username-claim: preferred_username
+    groups-claim: groups
+    scope: openid email profile groups
+    # allow_access requires `username === group || real_groups ∋ group`. Humans
+    # pass via the IdP group; the htpasswd svc account (no groups) passes BY NAME.
+    authorized-groups:
+      - {{ verdaccio_oidc_group }}
+      - {{ verdaccio_admin_user }}
+    store-type: file
+    store-config: /verdaccio/storage/openid
+    keep-passwd-login: true              # the svc CI account below still logs in with htpasswd
+  # Machines: the single svc account (Vault {{ verdaccio_vault_path }}) — CI/runner tokens.
   htpasswd:
     file: /verdaccio/conf/htpasswd
-    # max_users default: existing htpasswd users can log in (get tokens). Hard
-    # access-gating (Authentik groups) arrives with the verdaccio-openid plugin
-    # follow-up; today the registry is VPN-only and every package is
-    # $authenticated, so only htpasswd-known users reach anything.
-    max_users: 1000
+    # -1 = registration DISABLED (npm's legacy `npm login` is a PUT through adduser,
+    # so it is disabled too — by design). The svc account authenticates with Basic
+    # auth (`_auth` in .npmrc), which uses `authenticate`, never `adduser`.
+    max_users: -1
 uplinks:
   npmjs:
     url: {{ verdaccio_uplink_url }}
@@ -31,6 +59,8 @@ server:
   keepAliveTimeout: 60
 middlewares:
   audit:
+    enabled: true
+  openid:
     enabled: true
 log: { type: stdout, format: pretty, level: http }
 listen: 0.0.0.0:4873

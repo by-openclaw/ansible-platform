@@ -1,11 +1,26 @@
 ---
 # Verdaccio — npm registry + upstream proxy (services/0011 registry class).
-verdaccio_image: "verdaccio/verdaccio:6.2.0"   # pinned, never :latest
+verdaccio_image: "verdaccio/verdaccio:6.9.3"   # OFFICIAL base (node 24), pinned, never :latest
+# Platform image = official base + two supported plugins, built ON the host from
+# templates/Dockerfile.j2 (the plugins' documented install method). Bump _rev when
+# a plugin pin changes; the tag is what runs.
+verdaccio_platform_image: "verdaccio-platform"
+verdaccio_platform_rev: 1
+verdaccio_plugin_s3_version: "12.1.1"        # verdaccio-aws-s3-storage — verdaccio org, AWS SDK v3, node>=24
+verdaccio_plugin_openid_version: "0.18.0"    # verdaccio-openid (kuoruan) — verdaccio ^6, node>=20; active 2026-07
+verdaccio_plugin_node_persist_version: "4.0.4"  # peer of verdaccio-openid store-type=file
+# --- SSO (Authentik OIDC via verdaccio-openid) — creds written by roles/authentik ---
+verdaccio_oidc_vault_path: "{{ platform_env | default('prod') }}/verdaccio/oidc"
+# Internal Authentik name is authentik.<domain> (split-DNS → Traefik); auth.<domain> is public-only.
+verdaccio_oidc_provider_host: "https://authentik.{{ platform_domain | default('by-research.be') }}/application/o/verdaccio/"
+verdaccio_oidc_group: "verdaccio-users"      # Authentik ACCESS group (IdP-enforced + plugin authorized-groups)
+# --- S3 storage (SeaweedFS) — bucket+identity provisioned by service_scaffold (Vault-native) ---
+verdaccio_s3_bucket: "verdaccio"
 verdaccio_listen_ip: "10.1.3.191"
 verdaccio_port: 4873
 verdaccio_fqdn: "npm.{{ platform_domain | default('by-research.be') }}"
 verdaccio_build_dir: "/opt/verdaccio"
-verdaccio_storage_dir: "/opt/verdaccio/storage"   # local storage v1 (S3 = follow-up)
+verdaccio_storage_dir: "/opt/verdaccio/storage"   # packages live in S3; this holds the openid token store only
 verdaccio_conf_dir: "/opt/verdaccio/conf"
 verdaccio_env: "{{ platform_env | default('prod') }}"
 verdaccio_domain: "{{ platform_domain | default('by-research.be') }}"
