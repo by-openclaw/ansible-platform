@@ -24,6 +24,26 @@ scrape_configs:
       - source_labels: ["__journal_container_name"]
         target_label: container
 {% endif %}
+{% for l in promtail_syslog_listeners | default([]) %}
+  - job_name: syslog_{{ l.name }}
+    syslog:
+      listen_address: "0.0.0.0:{{ l.port }}"
+      listen_protocol: tcp
+      idle_timeout: 120s
+      label_structured_data: false
+      labels:
+        job: {{ l.name }}
+        env: {{ promtail_env_label }}
+    relabel_configs:
+      - source_labels: ["__syslog_message_hostname"]
+        target_label: host
+      - source_labels: ["__syslog_message_app_name"]
+        target_label: app
+      - source_labels: ["__syslog_message_severity"]
+        target_label: severity
+      - source_labels: ["__syslog_message_facility"]
+        target_label: facility
+{% endfor %}
 {% if promtail_ship_auditd %}
 {% for j in promtail_extra_file_jobs | default([]) %}
   - job_name: {{ j.name }}

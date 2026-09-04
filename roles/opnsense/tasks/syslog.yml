@@ -1,0 +1,23 @@
+---
+# Remote syslog destinations (services/0006 §logging · issue #12): OPNsense ships
+# firewall/system/IDS logs to the platform Loki (promtail syslog listener).
+# Catalog: opn_syslog_destinations — applied through the collection module
+# (lib-opnsense SyslogDestManager; match key = description). OPNsense >= 26.1.
+- name: "Syslog | Ensure remote destinations match the catalog"
+  by_systems.opnsense.opnsense_syslog_dest:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port }}"
+    key: "{{ opn_key }}"
+    secret: "{{ opn_secret }}"
+    verify_ssl: false
+    description: "{{ item.description }}"
+    hostname: "{{ item.hostname }}"
+    syslog_port: "{{ item.syslog_port | string }}"
+    transport: "{{ item.transport | default('tcp4') }}"
+    rfc5424: "{{ item.rfc5424 | default(true) }}"
+    enabled: "{{ item.enabled | default(true) }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opn_syslog_destinations | default([]) }}"
+  loop_control:
+    label: "{{ item.description }} -> {{ item.hostname }}:{{ item.syslog_port }}/{{ item.transport | default('tcp4') }}"
+  tags: [syslog, logging]
