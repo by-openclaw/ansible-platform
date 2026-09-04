@@ -203,9 +203,9 @@ authentik_oidc_apps:
     launch_url: "https://harbor.by-research.be"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/harbor.svg"
     name: "Harbor"
-    group: "harbor-admins"          # ACCESS group — members become Harbor admins (oidc_admin_group)
+    group: "harbor-users"           # ACCESS group — who may log in; harbor-admins (subset) become Harbor admins (oidc_admin_group)
     secret_file: "fabric/app-oidc-harbor.json"  # pragma: allowlist secret
-    restrict_to_group: true         # IdP-enforced: only harbor-admins can log in
+    restrict_to_group: true         # IdP-enforced: only harbor-users can log in
     # Harbor's OIDC callback path.
     redirect_uris:
       - "https://harbor.by-research.be/c/oidc/callback"
@@ -251,7 +251,8 @@ authentik_groups:
   - gitlab-users        # access group — only members may SSO into GitLab
   - gitlab-admins       # subset of gitlab-users → GitLab instance admins (admin_groups)
   - jumpserver-users    # access group — only members may SSO into the JumpServer bastion
-  - harbor-admins       # access group — members may SSO into Harbor and become Harbor admins
+  - harbor-users        # access group — members may SSO into Harbor (pull/push per project role)
+  - harbor-admins       # subset of harbor-users → Harbor system admins (oidc_admin_group)
   - verdaccio-users     # access group — members may SSO into the npm registry (verdaccio-openid)
   - infra-admins
   - dev
