@@ -27,6 +27,10 @@ gitlab_rbac_settings:
   kroki_url: "https://kroki.{{ platform_domain }}"
   plantuml_enabled: true
   plantuml_url: "https://plantuml.{{ platform_domain }}"
+  # drawio (diagrams.net) — the self-hosted editor on lxc-diagrams-01 (no egress
+  # to embed.diagrams.net); GitLab embeds the editor in wiki/issues/MRs.
+  diagramsnet_enabled: true
+  diagramsnet_url: "https://drawio.{{ platform_domain }}"
   # --- Track B: safe instance settings ---
   default_branch_name: "main"                        # default branch for new repos
   vscode_extension_marketplace_enabled: true         # Web IDE (VS Code) extension marketplace (open-vsx)
@@ -50,6 +54,9 @@ gitlab_rbac_groups:
   # docs stays private like the parent (GitLab forbids a more-visible subgroup);
   # "everyone reads the Pages wiki" is done per-project via Pages access control.
   - { path: docs, parent: platform, name: "Docs", visibility: private, project_creation: maintainer, subgroup_creation: owner }
+  # support = Service Desk home (email -> confidential issues) — a real repo too
+  # (runbooks/KB alongside the desk), per the "desk support has a repo" rule.
+  - { path: support, parent: platform, name: "Support", visibility: private, project_creation: maintainer, subgroup_creation: owner }
 
 # --- Memberships: Owner = adm_* only; users = Developer (code) / Reporter (docs) -
 # Not granted at platform level (inheritance would floor docs at Developer); set
@@ -60,10 +67,27 @@ gitlab_rbac_members:
   - { group: platform/apps, username: yboujraf, access: developer }
   - { group: platform/devops, username: yboujraf, access: developer }
   - { group: platform/docs, username: yboujraf, access: reporter }   # viewer — reads Pages only
+  - { group: platform/support, username: yboujraf, access: developer }   # support agent: sees confidential desk issues
 
 # --- Cleanup: throwaway projects created during CI bring-up -------------------
 gitlab_rbac_delete_projects:
   - root/smoke
   - root/gtest
+
+# --- Projects: create-if-absent, reconcile desc/visibility/service_desk --------
+# service_desk goes LIVE only once roles/gitlab has incoming_email (mailroom)
+# enabled (gitlab_service_desk_enabled) — the flag itself is safe to set early.
+gitlab_rbac_projects:
+  - { group: platform/support, path: helpdesk, name: "Helpdesk", visibility: private, service_desk: true,
+      description: "Service Desk — support requests by email become confidential issues here; runbooks + KB in the repo." }
+
+# --- Per-project integrations (Discord channel per project) -------------------
+# The webhook is a SECRET: give the Vault path, the role resolves it at run time.
+# Create the webhook in Discord (channel → Integrations → Webhooks), store it:
+#   vault kv put secret/prod/gitlab/discord-<project> webhook=https://discord.com/api/webhooks/...
+# Entries stay inert until a path is listed.
+gitlab_rbac_integrations: []
+#  - { project: platform/support/helpdesk, type: discord, webhook_vault_path: prod/gitlab/discord-helpdesk,
+#      events: { push: true, issues: true, confidential_issues: true, merge_requests: true, pipeline: true, note: false }, branches: default }
 
 gitlab_rbac_host: lxc-gitlab-01

@@ -11,6 +11,38 @@
     group: root
     mode: "0644"
 
+# --- Discord webhooks are secrets: resolve each Vault path into the desired state
+- name: "RBAC | Vault login (AppRole) for integration secrets"
+  ansible.builtin.include_role:
+    name: vault_login
+  when: gitlab_rbac_integrations | length > 0
+
+- name: "RBAC | Resolve integration webhooks from Vault"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} vault
+      vault kv get -mount=secret -field=webhook {{ item.webhook_vault_path }}
+  delegate_to: lxc-vault-01
+  become: true
+  register: gitlab_rbac_webhook_get
+  changed_when: false
+  no_log: true
+  loop: "{{ gitlab_rbac_integrations }}"
+  loop_control:
+    label: "{{ item.project }} {{ item.type }}"
+
+- name: "RBAC | Build the resolved integration list"
+  ansible.builtin.set_fact:
+    gitlab_rbac_integrations_resolved: >-
+      {{ (gitlab_rbac_integrations_resolved | default([]))
+         + [item.item | combine({'webhook': item.stdout}) | dict2items
+            | rejectattr('key', 'equalto', 'webhook_vault_path') | items2dict] }}
+  no_log: true
+  loop: "{{ gitlab_rbac_webhook_get.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.project | default('') }}"
+  when: gitlab_rbac_integrations | length > 0
+
 - name: "RBAC | Render the desired-state JSON"
   ansible.builtin.template:
     src: desired.json.j2

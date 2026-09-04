@@ -33,7 +33,9 @@
   vars:
     seaweedfs_bucket_identity: "{{ service_scaffold_def.name }}"
     seaweedfs_bucket_names: ["{{ service_scaffold_def.s3_bucket }}"]
-    seaweedfs_bucket_secret_file: "fabric/s3-{{ service_scaffold_def.name }}.json"  # pragma: allowlist secret
+    # Vault-native (security/0001): access_key/secret_key/endpoint at <env>/<svc>/s3;
+    # the role leaves them in the `seaweedfs_bucket_key` fact for the caller.
+    seaweedfs_bucket_vault_path: "{{ service_scaffold_env }}/{{ service_scaffold_def.name }}/s3"
   when: (service_scaffold_def.s3_bucket | default('')) | length > 0
 
 # ============================ secrets =========================================
