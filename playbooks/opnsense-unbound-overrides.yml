@@ -21,7 +21,7 @@
   vars:
     ansible_python_interpreter: /usr/bin/python3
     opnsense_api_url: "https://{{ opn_host }}:{{ opn_port }}"
-    unbound_override_probe_host: "vm-adguard-01"   # SVC host that resolves via the FW
+    unbound_override_probe_host: "lxc-verdaccio-01"   # SVC host that resolves via the FW (vm-adguard-01 hits a delegated-become prompt — open item)
   tasks:
     - name: "Overrides | Probe which names already resolve to their target on the FW"
       ansible.builtin.command: "getent ahosts{{ 'v6' if item.rr == 'AAAA' else 'v4' }} {{ item.hostname }}.{{ item.domain }}"
