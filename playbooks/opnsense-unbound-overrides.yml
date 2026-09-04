@@ -1,78 +1,47 @@
 ---
 # ==============================================================================
-# Apply opn_unbound.host_overrides to the FW's Unbound (split-DNS: service name ->
-# Traefik). This wires up a catalog block (inventories/prod/group_vars/opnsense.yml
-# -> opn_unbound.host_overrides) that no other task applied — a pre-existing gap:
-# service records (s3, authentik, pbs, ...) resolve authoritatively on the FW's
-# Unbound (10.1.3.1, `aa` flag) but were added out-of-band.
-#
-# Idempotency: the OPNsense MVC searchHostOverride/get API reads a DIFFERENT store
-# than the legacy config that actually drives Unbound, so it can't be trusted for
-# existence checks (it returns empty even when overrides are live). We instead do a
-# REAL DNS resolve-check delegated to an SVC host (resolves via the FW) and only add
-# the overrides that don't already resolve to their target.
-#
+# Apply opn_unbound.host_overrides (split-DNS: service name -> Traefik / mailcow)
+# to the FW's Unbound through the collection module (lib-opnsense
+# UbHostOverrideManager underneath — lib-first). Match keys hostname/domain/server
+# make it idempotent: no resolve-probe, no duplicates (the previous probe-and-add
+# design left 214 duplicate rows on the FW; cleaned 2026-09-04).
 #   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/opnsense-unbound-overrides.yml
 # ==============================================================================
-- name: Apply Unbound host overrides (split-DNS -> Traefik)
+- name: Apply Unbound host overrides (split-DNS)
   hosts: opnsense
   gather_facts: false
   connection: local
   vars:
     ansible_python_interpreter: /usr/bin/python3
-    opnsense_api_url: "https://{{ opn_host }}:{{ opn_port }}"
-    unbound_override_probe_host: "lxc-verdaccio-01"   # SVC host that resolves via the FW (vm-adguard-01 hits a delegated-become prompt — open item)
   tasks:
-    - name: "Overrides | Probe which names already resolve to their target on the FW"
-      ansible.builtin.command: "getent ahosts{{ 'v6' if item.rr == 'AAAA' else 'v4' }} {{ item.hostname }}.{{ item.domain }}"
-      delegate_to: "{{ unbound_override_probe_host }}"
-      become: false
-      # The play is connection: local (FW API); the probe must really SSH to the
-      # SVC host (otherwise it silently runs on the controller), and the inventory
-      # ansible_become:true on SVC hosts overrides the keyword → force it off.
-      vars:
-        ansible_connection: ssh
-        ansible_become: false
+    - name: "Overrides | Ensure each catalog host override (idempotent by hostname/domain/server)"
+      by_systems.opnsense.opnsense_ub_host_override:
+        host: "{{ opn_host }}"
+        port: "{{ opn_port }}"
+        key: "{{ opn_key }}"
+        secret: "{{ opn_secret }}"
+        verify_ssl: false
+        hostname: "{{ item.hostname }}"
+        domain: "{{ item.domain }}"
+        rr: "{{ item.rr }}"
+        server: "{{ item.server }}"
+        description: "{{ item.description | default('split-DNS (catalog)') }}"
+        enabled: true
+        state: present
       loop: "{{ opn_unbound.host_overrides | default([]) }}"
       loop_control:
-        label: "{{ item.hostname }}.{{ item.domain }} {{ item.rr }}"
-      register: unbound_override_probe
-      changed_when: false
-      failed_when: false
-
-    - name: "Overrides | Add the host overrides that don't already resolve"
-      ansible.builtin.uri:
-        url: "{{ opnsense_api_url }}/api/unbound/settings/addHostOverride"
-        method: POST
-        url_username: "{{ opn_key }}"
-        url_password: "{{ opn_secret }}"
-        force_basic_auth: true
-        body_format: json
-        body:
-          host:
-            enabled: "1"
-            hostname: "{{ item.item.hostname }}"
-            domain: "{{ item.item.domain }}"
-            rr: "{{ item.item.rr }}"
-            server: "{{ item.item.server }}"
-        validate_certs: false
-        status_code: [200]
-      loop: "{{ unbound_override_probe.results }}"
-      loop_control:
-        label: "{{ item.item.hostname }}.{{ item.item.domain }} {{ item.item.rr }}"
-      when: item.item.server not in (item.stdout | default(''))
-      register: unbound_override_add
-      # the MVC API answers 200 for everything; "saved" is the real change signal
-      changed_when: "(unbound_override_add.json.result | default('')) == 'saved'"
+        label: "{{ item.hostname }}.{{ item.domain }} {{ item.rr }} -> {{ item.server }}"
+      register: unbound_override_ensure
       notify: Reconfigure Unbound
 
   handlers:
     - name: Reconfigure Unbound
       ansible.builtin.uri:
-        url: "{{ opnsense_api_url }}/api/unbound/service/reconfigure"
+        url: "https://{{ opn_host }}:{{ opn_port }}/api/unbound/service/reconfigure"
         method: POST
         url_username: "{{ opn_key }}"
         url_password: "{{ opn_secret }}"
         force_basic_auth: true
         validate_certs: false
-        status_code: [200]
+        body_format: json
+        body: {}
