@@ -1,4 +1,8 @@
 ---
+- name: "FW backup | FW API credentials from Vault (roles/opnsense_api_creds, PR 17c)"
+  ansible.builtin.include_role:
+    name: opnsense_api_creds
+
 - name: "FW backup | age (encryption)"
   ansible.builtin.apt:
     name: age
@@ -22,8 +26,8 @@
 - name: "FW backup | Bind the recipient + FW API creds (from the opnsense group vars)"
   ansible.builtin.set_fact:
     opnsense_config_backup_age_public: "{{ vault_secret_result.public_key }}"
-    opnsense_config_backup_fw_key: "{{ hostvars[opnsense_config_backup_fw_host].opn_key }}"
-    opnsense_config_backup_fw_secret: "{{ hostvars[opnsense_config_backup_fw_host].opn_secret }}"
+    opnsense_config_backup_fw_key: "{{ opn_key }}"
+    opnsense_config_backup_fw_secret: "{{ opn_secret }}"
   no_log: true
 
 - name: "FW backup | Environment file (root 0600)"
