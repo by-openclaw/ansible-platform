@@ -61,6 +61,9 @@
       loop_control:
         label: "{{ item.item.hostname }}.{{ item.item.domain }} {{ item.item.rr }}"
       when: item.item.server not in (item.stdout | default(''))
+      register: unbound_override_add
+      # the MVC API answers 200 for everything; "saved" is the real change signal
+      changed_when: "(unbound_override_add.json.result | default('')) == 'saved'"
       notify: Reconfigure Unbound
 
   handlers:

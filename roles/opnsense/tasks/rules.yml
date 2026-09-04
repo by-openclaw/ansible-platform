@@ -16,6 +16,29 @@
 #   -e '{"opn_fw_only": ["PASS DMZ Traefik→SVC CrowdSec LAPI (agent)"]}'
 # Empty (default) = converge the entire catalog.
 
+# --- Catalog guards (platform rules): every net/port field must be an alias
+# (or the keywords any / (self)); ipprotocol must be inet | inet6 | inet46.
+- name: "Rules | Catalog guard — aliases mandatory, ipprotocol valid"
+  ansible.builtin.assert:
+    that:
+      - (item.source_net | default('any')) in _alias_names
+      - (item.destination_net | default('any')) in _alias_names
+      - (item.destination_port | default('any')) in _alias_names
+      - (item.source_port | default('any')) in _alias_names
+      - (item.ipprotocol | default('inet')) in ['inet', 'inet6', 'inet46']
+    fail_msg: >-
+      Catalog violation in rule '{{ item.description }}': net/port fields must be
+      aliases (or any/(self)) and ipprotocol inet|inet6|inet46 —
+      src={{ item.source_net | default('any') }} dst={{ item.destination_net | default('any') }}
+      dport={{ item.destination_port | default('any') }} proto={{ item.ipprotocol | default('inet') }}
+    quiet: true
+  vars:
+    _alias_names: "{{ (opn_aliases | map(attribute='name') | list) + ['any', '(self)'] }}"
+  loop: "{{ opn_filter_rules }}"
+  loop_control:
+    label: "{{ item.description }}"
+  tags: [firewall, rules]
+
 - name: "Rules | Select the rules in scope"
   ansible.builtin.set_fact:
     opnsense_rules_scoped: >-
