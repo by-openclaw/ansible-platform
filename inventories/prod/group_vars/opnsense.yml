@@ -222,7 +222,6 @@ opn_aliases:
 - {name: port_diagrams, type: port, content: ['8000', '8004', '8080'], description: 'Diagram services Traefik backends: kroki:8000, plantuml:8004, drawio:8080', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_jumpserver, type: port, content: ['8090'], description: 'JumpServer bastion web front (Traefik backend; koko/lion proxied behind it)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_stun, type: port, content: ['3478'], description: 'NetBird STUN (coturn, UDP)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: port_imaps, type: port, content: ['993'], description: 'IMAPS — GitLab mailroom (Service Desk) reads gitlab@ from mailcow', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - name: port_dns
   type: port
   content: '53'
@@ -1045,7 +1044,6 @@ opn_filter_rules:
 # alias source. NOTE: rule ordering is validated at the #51 catalog-apply dry-run.
 - {description: 'PASS mailcow→WAN SMTP via Telenet (egress PBR v4)', action: pass, interface: dmz, direction: in, ipprotocol: inet,  protocol: TCP, source_net: host4_mailcow, destination_net: any, destination_port: port_smtp, gateway: WAN_TELENET_GW,   sequence: '1090', state: present, ref: {adr: 'services/0007#mail-egress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - {description: 'PASS mailcow→WAN SMTP via Telenet (egress PBR v6)', action: pass, interface: dmz, direction: in, ipprotocol: inet6, protocol: TCP, source_net: host6_mailcow, destination_net: any, destination_port: port_smtp, gateway: WAN_TELENET_GWv6, sequence: '1091', state: present, ref: {adr: 'services/0007#mail-egress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
-- {description: 'PASS SVC GitLab→DMZ mailcow IMAPS (Service Desk mailroom)', action: pass, interface: svc, direction: in, ipprotocol: inet, protocol: tcp, source_net: host4_gitlab, destination_net: host4_mailcow, destination_port: port_imaps, sequence: 1092, state: present, ref: {adr: 'services/0002#service-desk', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - description: PASS DMZ→WAN default
   action: pass
   interface: dmz
@@ -2300,6 +2298,11 @@ opn_unbound:
   # npm registry (Verdaccio) — SVC consumers (gitlab-runner, CI) resolve it internally via Traefik.
   - {hostname: npm, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.110}
   - {hostname: npm, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
+  # mail.<domain> = mailcow's public MX/IMAP name (its LE cert SAN). Internal
+  # clients (GitLab mailroom, humans on VPN) must reach mailcow DIRECTLY — mail
+  # ports are not proxied by Traefik — so the record points at the DMZ host.
+  - {hostname: mail, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.120}
+  - {hostname: mail, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::120'}
   # (20 stale probe-fleet overrides pruned 2026-06-06 — never-built hosts.)
   # Query Forwarding — chain step: Unbound → dnscrypt-proxy on loopback.
   # Empty domain = catch-all → Unbound creates a `forward-zone "."` from these entries.

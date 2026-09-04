@@ -27,6 +27,12 @@
       ansible.builtin.command: "getent ahosts{{ 'v6' if item.rr == 'AAAA' else 'v4' }} {{ item.hostname }}.{{ item.domain }}"
       delegate_to: "{{ unbound_override_probe_host }}"
       become: false
+      # The play is connection: local (FW API); the probe must really SSH to the
+      # SVC host (otherwise it silently runs on the controller), and the inventory
+      # ansible_become:true on SVC hosts overrides the keyword → force it off.
+      vars:
+        ansible_connection: ssh
+        ansible_become: false
       loop: "{{ opn_unbound.host_overrides | default([]) }}"
       loop_control:
         label: "{{ item.hostname }}.{{ item.domain }} {{ item.rr }}"
