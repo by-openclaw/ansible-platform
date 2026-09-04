@@ -1,0 +1,54 @@
+---
+# ==============================================================================
+# platform_people — THE single source of who exists and which access groups they
+# hold (identity/0004). Consumed by roles/authentik (identity blueprint: creates
+# the user, sets the groups declaratively) and by playbooks/identity-provision.yml
+# (identity_orchestrator: reconcile + confirmation email). Passwords never live
+# here (Vault / fabric user secret). Removal = state: disabled, never delete.
+#
+# Group rule (EntraID-style): the daily-driver account holds *-users groups only;
+# the adm_ account holds the *-admins groups AND the *-users groups an app needs
+# to pass its access policy (e.g. gitlab-admins members must be in gitlab-users).
+# ==============================================================================
+platform_people:
+  - username: yboujraf
+    name: "Youssef Boujraf"
+    email: "yboujraf@{{ platform_domain }}"
+    groups:
+      - gitlab-users
+      - harbor-users
+      - verdaccio-users
+      - nextcloud-users
+      - netbird-users
+      - mailcow-users
+      - vaultwarden-admins     # pre-existing grant (personal vault admin)
+  - username: adm_yboujraf
+    name: "Youssef Boujraf (admin)"
+    email: "adm_yboujraf@{{ platform_domain }}"
+    groups:
+      - platform-admins        # Authentik superuser
+      - infra-admins
+      - gitlab-users
+      - gitlab-admins
+      - harbor-users
+      - harbor-admins
+      - verdaccio-users
+      - jumpserver-users
+      - nextcloud-users
+      - nextcloud-admins
+      - netbird-users
+      - netbird-admins
+      - vault-admins
+      - vaultwarden-admins
+      - pgadmin-admins
+      - netbox-admins
+      - traefik-admins
+      - seaweedfs-admins
+      - proxmox-admins
+      - pbs-admins
+      - grafana-admins
+  - username: yboujraf_example
+    name: "Youssef Boujraf (example.com)"
+    email: "yboujraf@example.com"
+    groups:
+      - mailcow-users          # second-domain mailbox identity only

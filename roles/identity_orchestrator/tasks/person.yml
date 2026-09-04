@@ -39,6 +39,14 @@
       name: "{{ io_person.name }}"
       email: "{{ io_person.email }}"
     status_code: [200]
+  vars:
+    io_current: "{{ (io_lookup.json.results | default([])) | first | default({}) }}"
+  # PATCH only on drift (new user, or name/email/active differ) → idempotent re-runs
+  when: >-
+    io_created is changed
+    or io_current.name | default('') != io_person.name
+    or io_current.email | default('') != io_person.email
+    or (io_current.is_active | default(true) | bool) != ((io_person.state | default('active')) == 'active')
   changed_when: true
   no_log: true
 
@@ -54,6 +62,12 @@
     label: "{{ io_group }}"
   no_log: true
 
+- name: "IdentityOrch | Groups the user already holds"
+  ansible.builtin.set_fact:
+    io_existing_groups: >-
+      {{ ((io_lookup.json.results | default([])) | first | default({})).groups_obj
+         | default([]) | map(attribute='name') | list }}
+
 - name: "IdentityOrch | Add to declared groups (idempotent)"
   ansible.builtin.uri:
     url: "{{ io_ak_base }}/core/groups/{{ item.json.results[0].pk }}/add_user/"
@@ -65,7 +79,9 @@
   loop: "{{ io_groups.results }}"
   loop_control:
     label: "{{ item.io_group | default('?') }}"
-  when: item.json.results | length > 0
+  when:
+    - item.json.results | length > 0
+    - item.io_group not in io_existing_groups      # skip what the user already holds → true no-op on re-run
   register: io_add
   changed_when: "io_add.status | default(400) == 204"
   no_log: true
@@ -76,3 +92,4 @@
   when:
     - identity_orchestrator_send_confirmation | bool
     - (io_person.state | default('active')) == 'active'
+    - io_created is changed          # only when THIS run created the account — a reconcile never re-mails
