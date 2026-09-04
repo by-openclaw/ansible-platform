@@ -21,6 +21,10 @@
     ansible_python_interpreter: /usr/bin/python3
     fw_bg_secret: "~/.openclaw/workspace/infra/secrets/fabric/os-opnsense-by-research.json"
     fw_bg_user: "by-research"
+  pre_tasks:
+    - name: "FW API credentials from Vault"
+      ansible.builtin.include_role:
+        name: opnsense_api_creds
   tasks:
     - name: "Fwid | Stat the break-glass secret"
       ansible.builtin.stat:
@@ -56,6 +60,7 @@
         validate_certs: false
         status_code: [200]
       register: fw_groups
+      check_mode: false   # read-only GET; keeps --check runnable
       no_log: true
 
     - name: "Fwid | Extract the gid (the API's option tokens are numeric gids)"

@@ -7,3 +7,10 @@
 platform_org: "by-research"          # org short-name; also the break-glass account/group (naming/0002 §5.1)
 platform_domain: "by-research.be"    # DNS zone of THIS deployment (env = subdomain zone, naming/0001 §8)
 platform_env: "prod"                 # environment tier (infra/0005)
+
+# --- Connection default -------------------------------------------------------
+# Every host is reached over SSH. The FW (vm-opns-01) overrides this with a host
+# var `ansible_connection: local` (API-only, no shell). Being explicit matters for
+# delegation: a task delegated from a `connection: local` play to an SSH host
+# inherited "local" and silently ran on the controller (2026-09-04 findings).
+ansible_connection: ssh
