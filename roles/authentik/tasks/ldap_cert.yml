@@ -1,0 +1,127 @@
+---
+# ==============================================================================
+# LDAP outpost TLS certificate = the platform wildcard (lego on the Traefik host).
+# The copy inside Authentik does not renew itself: on 2026-09-04 it expired and
+# every strict-TLS LDAP client (the OPNsense WebGUI login, ldap-utils) failed
+# with "Can't contact LDAP server". This task keeps the keypair in sync by
+# SHA-256 fingerprint, ensures the LDAP provider references it, and restarts
+# the outpost only when the material changed. Idempotent; tag ldap-cert.
+# ==============================================================================
+- name: "LDAP cert | Fingerprint of the live wildcard on the Traefik host"
+  ansible.builtin.command:
+    argv: [openssl, x509, -noout, -fingerprint, -sha256, -enddate, -in, "{{ authentik_ldap_cert_src_crt }}"]
+  delegate_to: "{{ authentik_ldap_cert_src_host }}"
+  become: true
+  register: authentik_ldap_cert_src_info
+  changed_when: false
+
+- name: "LDAP cert | Read the wildcard certificate + key (Traefik host)"
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  delegate_to: "{{ authentik_ldap_cert_src_host }}"
+  become: true
+  loop:
+    - "{{ authentik_ldap_cert_src_crt }}"
+    - "{{ authentik_ldap_cert_src_key }}"
+  loop_control:
+    label: "{{ item | basename }}"
+  register: authentik_ldap_cert_src
+  no_log: true
+
+- name: "LDAP cert | Bind facts"
+  ansible.builtin.set_fact:
+    authentik_ldap_cert_fp: "{{ (authentik_ldap_cert_src_info.stdout | regex_search('Fingerprint=([0-9A-Fa-f:]+)', '\\1'))[0] | lower | replace(':', '') }}"
+    authentik_ldap_cert_enddate: "{{ (authentik_ldap_cert_src_info.stdout | regex_search('notAfter=(.+)', '\\1'))[0] }}"
+    authentik_ldap_cert_pem: "{{ authentik_ldap_cert_src.results[0].content | b64decode }}"
+    authentik_ldap_key_pem: "{{ authentik_ldap_cert_src.results[1].content | b64decode }}"
+  no_log: true
+
+- name: "LDAP cert | Current keypair in Authentik (by name)"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/crypto/certificatekeypairs/?name={{ authentik_ldap_cert_name | urlencode }}"
+    headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}" }
+  register: authentik_ldap_cert_get
+  no_log: true
+
+- name: "LDAP cert | Create the keypair (absent)"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/crypto/certificatekeypairs/"
+    method: POST
+    headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}", Content-Type: "application/json" }
+    body_format: json
+    body:
+      name: "{{ authentik_ldap_cert_name }}"
+      certificate_data: "{{ authentik_ldap_cert_pem }}"
+      key_data: "{{ authentik_ldap_key_pem }}"
+    status_code: [201]
+  register: authentik_ldap_cert_create
+  when: authentik_ldap_cert_get.json.results | length == 0
+  no_log: true
+  changed_when: true
+
+- name: "LDAP cert | Update the keypair (fingerprint differs)"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/crypto/certificatekeypairs/{{ authentik_ldap_cert_get.json.results[0].pk }}/"
+    method: PATCH
+    headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}", Content-Type: "application/json" }
+    body_format: json
+    body:
+      certificate_data: "{{ authentik_ldap_cert_pem }}"
+      key_data: "{{ authentik_ldap_key_pem }}"
+    status_code: [200]
+  register: authentik_ldap_cert_update
+  when:
+    - authentik_ldap_cert_get.json.results | length > 0
+    - (authentik_ldap_cert_get.json.results[0].fingerprint_sha256 | default('') | lower | replace(':', '')) != authentik_ldap_cert_fp
+  no_log: true
+  changed_when: true
+
+- name: "LDAP cert | Keypair pk"
+  ansible.builtin.set_fact:
+    authentik_ldap_cert_pk: >-
+      {{ (authentik_ldap_cert_create.json.pk if (authentik_ldap_cert_create is not skipped) else authentik_ldap_cert_get.json.results[0].pk) }}
+    authentik_ldap_cert_changed: "{{ (authentik_ldap_cert_create is not skipped) or (authentik_ldap_cert_update is not skipped) }}"
+
+- name: "LDAP cert | LDAP provider (by name)"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/providers/ldap/?name={{ authentik_ldap_provider_name | urlencode }}"
+    headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}" }
+  register: authentik_ldap_provider_get
+  no_log: true
+
+- name: "LDAP cert | Provider references the wildcard keypair"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/providers/ldap/{{ authentik_ldap_provider_get.json.results[0].pk }}/"
+    method: PATCH
+    headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}", Content-Type: "application/json" }
+    body_format: json
+    body: { certificate: "{{ authentik_ldap_cert_pk }}" }
+    status_code: [200]
+  when:
+    - authentik_ldap_provider_get.json.results | length > 0
+    - authentik_ldap_provider_get.json.results[0].certificate != authentik_ldap_cert_pk
+  no_log: true
+  changed_when: true
+
+- name: "LDAP cert | Restart the LDAP outpost so it serves the new material"
+  community.docker.docker_container:
+    name: "{{ authentik_ldap_container_name }}"
+    state: started
+    restart: true
+  when: authentik_ldap_cert_changed | bool
+
+- name: "LDAP cert | Served certificate on :636 matches the wildcard"
+  ansible.builtin.shell: |
+    set -o pipefail
+    sleep {{ 8 if (authentik_ldap_cert_changed | bool) else 0 }}
+    timeout 10 openssl s_client -connect 127.0.0.1:636 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 -enddate
+  args: { executable: /bin/bash }
+  register: authentik_ldap_cert_served
+  changed_when: false
+  failed_when: >-
+    ((authentik_ldap_cert_served.stdout | regex_search('Fingerprint=([0-9A-Fa-f:]+)', '\\1'))[0] | lower | replace(':', ''))
+    != authentik_ldap_cert_fp
+
+- name: "LDAP cert | Result"
+  ansible.builtin.debug:
+    msg: "LDAP outpost serves the wildcard: {{ authentik_ldap_cert_served.stdout | regex_search('notAfter=.*') }} (changed={{ authentik_ldap_cert_changed }})"
