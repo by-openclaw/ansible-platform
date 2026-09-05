@@ -81,6 +81,17 @@
   delay: 3
   until: jitsi_ping.status == 200
 
+- name: "Jitsi | Open the web port to internal (Traefik) when ufw is active"
+  community.general.ufw:
+    rule: allow
+    port: "{{ jitsi_http_port | string }}"
+    proto: tcp
+    from_ip: "{{ item }}"
+    comment: "Jitsi web via Traefik"
+  loop: ["10.1.0.0/16", "100.64.0.0/10"]
+  become: true
+  failed_when: false          # no-op where ufw isn't installed
+
 # --- compose the platform concerns (mailbox, Traefik route, SSO assert, audit) --
 - name: "Jitsi | Scaffold the platform concerns"
   ansible.builtin.include_role:
@@ -89,7 +100,7 @@
     service_scaffold_def:
       name: jitsi
       fqdn: "{{ jitsi_fqdn }}"
-      backend_url: "http://{{ jitsi_http_ip }}:{{ jitsi_http_port }}"
+      backend_url: "http://{{ hostvars[inventory_hostname].ansible_host }}:{{ jitsi_http_port }}"
       exposure: public          # meet.<domain> reachable; forwardAuth (Authentik) gates access
       mailbox: true
       sso_slug: "{{ jitsi_sso_slug }}"
