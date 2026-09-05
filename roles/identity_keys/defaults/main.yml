@@ -1,0 +1,12 @@
+---
+# identity_keys — per-identity SSH + GPG keys, generated once and escrowed in Vault
+# so the owner can retrieve the passphrase to use them. get-or-create: generated
+# only when the Vault path is absent. Public halves register on GitLab (gitlab_rbac).
+# Each identity gets its OWN pair — never shared/mixed across accounts.
+identity_keys_env: "{{ platform_env | default('prod') }}"
+identity_keys_domain: "{{ platform_domain | default('by-research.be') }}"
+identity_keys_vault_host: "lxc-vault-01"
+identity_keys_vault_container: "vault"
+identity_keys_vault_mount: "secret"
+identity_keys_path_prefix: "{{ identity_keys_env }}/users"     # secret/<env>/users/<username>/{ssh,gpg}
+identity_keys_people: "{{ platform_people | default([]) | selectattr('manage_keys', 'defined') | selectattr('manage_keys') | list }}"

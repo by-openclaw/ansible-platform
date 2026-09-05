@@ -1,0 +1,53 @@
+---
+# Runs on the controller (has ssh-keygen + gpg). get-or-create per identity in Vault.
+- name: "IdKeys | Vault login (AppRole)"
+  ansible.builtin.import_role:
+    name: vault_login
+
+- name: "IdKeys | Does this identity already have keys in Vault?"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ identity_keys_vault_container }}
+      vault kv get -mount={{ identity_keys_vault_mount }} -field=ssh_fingerprint
+      {{ identity_keys_path_prefix }}/{{ item.username }}/keys
+  delegate_to: "{{ identity_keys_vault_host }}"
+  become: true
+  loop: "{{ identity_keys_people }}"
+  loop_control: { label: "{{ item.username }}" }
+  register: identity_keys_probe
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: "IdKeys | Generate SSH+GPG for identities missing keys (passphrases random)"
+  ansible.builtin.command:
+    cmd: "{{ role_path }}/files/gen_identity_keys.sh"
+  environment:
+    KUSER: "{{ item.item.username }}"
+    KNAME: "{{ item.item.name }}"
+    KEMAIL: "{{ item.item.email }}"
+  loop: "{{ identity_keys_probe.results }}"
+  loop_control: { label: "{{ item.item.username }}" }
+  when: item.rc != 0
+  register: identity_keys_gen
+  changed_when: true
+  no_log: true
+
+- name: "IdKeys | Escrow the new keypairs in Vault (private + passphrase + public)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -i -e VAULT_TOKEN={{ vault_deploy_token }} {{ identity_keys_vault_container }}
+      vault kv put -mount={{ identity_keys_vault_mount }}
+      {{ identity_keys_path_prefix }}/{{ item.item.item.username }}/keys -
+    stdin: >-
+      {{ (item.stdout | from_json)
+         | combine({'username': item.item.item.username,
+                    'created': ansible_date_time.iso8601}) | to_json }}
+    stdin_add_newline: false
+  delegate_to: "{{ identity_keys_vault_host }}"
+  become: true
+  loop: "{{ identity_keys_gen.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | list }}"
+  loop_control: { label: "{{ item.item.item.username }}" }
+  when: item.stdout is defined
+  changed_when: true
+  no_log: true

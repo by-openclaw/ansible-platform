@@ -1,0 +1,22 @@
+---
+# ==============================================================================
+# identity-keys — per-identity SSH + GPG key material (identity/0004).
+#
+# For every platform_people entry with manage_keys: true, generate ONCE (on the
+# controller) an ed25519 SSH keypair and an ed25519 GPG key, both passphrase-
+# protected, and escrow the whole set (private + public + passphrase + fingerprint)
+# in Vault at secret/<env>/users/<username>/keys. get-or-create: an identity that
+# already has keys is left untouched. Each identity gets its OWN pair — never
+# shared. Retrieve a passphrase when you need to use the key:
+#   vault kv get -field=ssh_passphrase secret/<env>/users/<username>/keys   (Vault UI as adm_yboujraf)
+# The PUBLIC halves are registered on GitLab by playbooks/gitlab-rbac.yml.
+#
+#   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/identity-keys.yml
+# ==============================================================================
+- name: "Per-identity SSH + GPG keys (generate once, escrow in Vault)"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  become: false
+  roles:
+    - identity_keys

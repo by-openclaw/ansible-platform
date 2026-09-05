@@ -245,13 +245,15 @@ end
   declared.each do |k|
     title = "ansible:#{k["label"]}"
     ex = u.keys.find_by(title: title)
+    kattrs = { title: title, key: k["key"] }
+    kattrs[:organization_id] = default_org.id if default_org && Key.column_names.include?("organization_id")
     if ex.nil?
-      nk = u.keys.new(title: title, key: k["key"])
+      nk = u.keys.new(kattrs)
       if nk.save then changes += 1; puts "sshkey+ #{uk["username"]} #{title}"
       else puts "sshkey! #{uk["username"]} #{title}: #{nk.errors.full_messages.join(", ")}" end
     elsif ex.key.to_s.split[0, 2] != k["key"].to_s.split[0, 2]
       ex.destroy
-      u.keys.create(title: title, key: k["key"])
+      u.keys.create(kattrs)
       changes += 1
       puts "sshkey~ #{uk["username"]} #{title}"
     end
