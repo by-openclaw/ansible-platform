@@ -61,11 +61,7 @@
     traefik_route_fqdn: "{{ grafana_fqdn }}"
     traefik_route_backend_url: "http://{{ hostvars[inventory_hostname].ansible_host }}:{{ grafana_port }}"
     traefik_route_internal_only: true
-    traefik_route_internal_cidrs:
-      - "10.1.0.0/16"
-      - "100.64.0.0/10"     # NetBird overlay (CGNAT) — VPN peers
-      - "fd01::/16"
-      - "127.0.0.1/32"
-      - "::1/128"
+    # internal_cidrs (LAN + VPN + loopback) now come from the role default — the
+    # VPN overlay is canonical for every internal service (was a per-role override).
   when: grafana_traefik_enabled | default(true) | bool
   tags: [route]

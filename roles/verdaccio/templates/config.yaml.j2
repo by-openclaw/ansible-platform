@@ -12,7 +12,7 @@ store:
     secretAccessKey: AWS_SECRET_ACCESS_KEY
     dynamoTableName: none                # package db lives in the bucket
 web:
-  title: BY-SYSTEMS npm
+  title: {{ (platform_org | default('by-research')) | upper }} npm
   gravatar: false
 auth:
   # Humans: Authentik OIDC (browser UI + `npm login` web flow). Access group is
@@ -64,4 +64,6 @@ middlewares:
     enabled: true
 log: { type: stdout, format: pretty, level: http }
 listen: 0.0.0.0:4873
-url_prefix: https://{{ verdaccio_fqdn }}/
+# 6.9.x builds absolute URLs from Host/X-Forwarded-* (Traefik); an absolute
+# url_prefix is prepended twice (base href https://npm…/https://npm…/ → 404s).
+url_prefix: /
