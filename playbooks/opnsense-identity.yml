@@ -23,8 +23,9 @@
     fw_bg_user: "by-research"
   pre_tasks:
     - name: "FW API credentials from Vault"
-      ansible.builtin.include_role:
+      ansible.builtin.import_role:        # static: `always` propagates to the role tasks
         name: opnsense_api_creds
+      tags: [always]          # creds must load under ANY --tags selection
   tasks:
     - name: "Fwid | Stat the break-glass secret"
       ansible.builtin.stat:

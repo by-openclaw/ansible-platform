@@ -70,6 +70,9 @@
     traefik_route_fqdn: "{{ service_scaffold_def.fqdn }}"
     traefik_route_backend_url: "{{ service_scaffold_def.backend_url }}"
     traefik_route_internal_only: "{{ (service_scaffold_def.exposure | default('internal')) == 'internal' }}"
+    # forwardAuth (Authentik proxy provider) — for services without native OIDC.
+    # Pair with an authentik_proxy_apps entry whose slug == service name.
+    traefik_route_forward_auth: "{{ service_scaffold_def.forward_auth | default(false) | bool }}"
 
 # ============================ logs ============================================
 - name: "Scaffold | Log rotation for the service's own files"

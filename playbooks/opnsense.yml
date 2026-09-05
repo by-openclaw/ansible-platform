@@ -23,8 +23,9 @@
     ansible_python_interpreter: /usr/bin/python3
   pre_tasks:
     - name: "FW API credentials from Vault"
-      ansible.builtin.include_role:
+      ansible.builtin.import_role:        # static: `always` propagates to the role tasks
         name: opnsense_api_creds
+      tags: [always]          # creds must load under ANY --tags selection
   tasks:
     - name: Tunnel | Kill any stale tunnel on port 8443
       ansible.builtin.shell:
