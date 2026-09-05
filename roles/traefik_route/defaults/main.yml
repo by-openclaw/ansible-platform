@@ -19,7 +19,9 @@ traefik_route_rule: "Host(`{{ traefik_route_fqdn }}`)"
 
 # Internal-only services get an ipAllowList (no public exposure). Public services
 # (a Cloudflare record + DNAT exist) set this false.
-traefik_route_internal_only: true
+# Derived from the single exposure source (group_vars/all/deployment.yml):
+# a route is public only when its name is in platform_exposure_public.
+traefik_route_internal_only: "{{ ((traefik_route_fqdn | default('x.y')).split('.') | first) not in (platform_exposure_public | default([])) }}"
 # Backend speaks its own TLS with a NON-Traefik-verifiable cert (e.g. PBS's
 # self-signed cert on :8007). true -> emit a per-route serversTransport with
 # insecureSkipVerify so Traefik still proxies over TLS but skips cert validation

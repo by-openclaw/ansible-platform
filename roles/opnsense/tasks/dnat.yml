@@ -1,0 +1,40 @@
+---
+# Port forwards (D-NAT) from the catalog (opn_dnat_rules) — applied through the
+# collection module (lib-opnsense FwDnatManager; match keys descr/interface/target).
+# Scoped like aliases/rules: opn_fw_only matches by `descr`. Runs after aliases
+# (destination/port aliases must exist). Before 2026-09-05 this block had NO
+# consumer — the WAN DNATs were applied out-of-band.
+- name: "DNAT | Select the port forwards in scope"
+  ansible.builtin.set_fact:
+    opnsense_dnat_scoped: >-
+      {{ opn_dnat_rules | default([])
+         if not (opn_fw_only | default([]))
+         else (opn_dnat_rules | default([]) | selectattr('descr', 'in', opn_fw_only) | list) }}
+  tags: [firewall, dnat]
+
+- name: "DNAT | Ensure port forwards match the catalog"
+  by_systems.opnsense.opnsense_fw_dnat:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port }}"
+    key: "{{ opn_key }}"
+    secret: "{{ opn_secret }}"
+    verify_ssl: false
+    descr: "{{ item.descr }}"
+    interface: "{{ item.interface }}"
+    ipprotocol: "{{ item.ipprotocol | default('inet') }}"
+    protocol: "{{ item.protocol | default('tcp') | lower }}"
+    target: "{{ item.target }}"
+    local_port: "{{ item['local-port'] | default(item.local_port | default('')) | string }}"
+    destination_net: "{{ (item.destination | default({})).network | default('') }}"
+    destination_port: "{{ (item.destination | default({})).port | default('') | string }}"
+    source_net: "{{ (item.source | default({})).network | default('') }}"
+    source_port: "{{ (item.source | default({})).port | default('') | string }}"
+    sequence: "{{ item.sequence | default(omit) }}"
+    natreflection: "{{ item.natreflection | default('') }}"
+    disabled: "{{ item.disabled | default(false) | bool }}"
+    log: "{{ item.log | default(false) | bool }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opnsense_dnat_scoped }}"
+  loop_control:
+    label: "{{ item.descr }}"
+  tags: [firewall, dnat]

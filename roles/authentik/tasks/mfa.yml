@@ -1,0 +1,39 @@
+---
+# MFA enforcement (public SSO front door): the default authentication flow's
+# validation stage must NOT skip users without an authenticator — it sends
+# them to enrolment (TOTP or WebAuthn) instead. Idempotent PATCH by stage name.
+- name: "mfa | Read the validation stage"
+  ansible.builtin.uri:
+    url: >-
+      http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/stages/authenticator/validate/?name={{ authentik_mfa_validation_stage | urlencode }}
+    headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}" }
+  register: authentik_mfa_stage
+  no_log: true
+
+- name: "mfa | Resolve the enrolment (setup) stages"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/stages/all/?name={{ item | urlencode }}"
+    headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}" }
+  loop: "{{ authentik_mfa_setup_stages }}"
+  register: authentik_mfa_setup
+  no_log: true
+
+- name: "mfa | Enforce enrolment when no authenticator is configured"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/stages/authenticator/validate/{{ authentik_mfa_stage.json.results[0].pk }}/"
+    method: PATCH
+    headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}", Content-Type: "application/json" }
+    body_format: json
+    body:
+      not_configured_action: configure
+      device_classes: "{{ authentik_mfa_device_classes }}"
+      configuration_stages: "{{ authentik_mfa_setup.results | map(attribute='json.results') | map('first') | map(attribute='pk') | list }}"
+    status_code: [200]
+  when: >-
+    authentik_mfa_stage.json.results | length > 0 and (
+      authentik_mfa_stage.json.results[0].not_configured_action != 'configure'
+      or (authentik_mfa_stage.json.results[0].device_classes | sort) != (authentik_mfa_device_classes | sort)
+      or (authentik_mfa_stage.json.results[0].configuration_stages | sort)
+         != (authentik_mfa_setup.results | map(attribute='json.results') | map('first') | map(attribute='pk') | list | sort))
+  changed_when: true
+  no_log: true

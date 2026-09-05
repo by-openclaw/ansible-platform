@@ -14,3 +14,20 @@ platform_env: "prod"                 # environment tier (infra/0005)
 # delegation: a task delegated from a `connection: local` play to an SSH host
 # inherited "local" and silently ran on the controller (2026-09-04 findings).
 ansible_connection: ssh
+
+# --- Exposure — ONE declaration per public name (services/0007 exposure model) ---
+# Everything not listed is internal (VPN/LAN allow-list on Traefik, no public DNS).
+# Consumers: roles/traefik_route (allow-list vs public rate-limit) and
+# roles/cloudflare_dns (public CNAME -> apex; only the apex carries A/AAAA).
+# Every public web name sits behind authentication (SSO + MFA, GitLab tokens,
+# Pages access control) — exposure never means anonymous.
+platform_exposure_public:
+  - authentik        # SSO front door
+  - nextcloud
+  - vaultwarden
+  - vpn              # NetBird
+  - gitlab           # web (SSO-only, MFA enforced)
+  - gitlab-ssh       # git over SSH on the hardened port (DNAT -> GitLab host)
+  - registry         # container registry (GitLab token auth)
+  - pages            # GitLab Pages (access control on)
+  - "*.pages"        # per-project Pages sites

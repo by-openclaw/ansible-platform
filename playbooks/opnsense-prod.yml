@@ -28,7 +28,8 @@
     opnsense_api_url: "https://{{ opn_host }}:{{ opn_port }}"
   pre_tasks:
     - name: "FW API credentials from Vault"
-      ansible.builtin.include_role:
+      ansible.builtin.import_role:        # static import: `always` propagates to the role's tasks
         name: opnsense_api_creds
+      tags: [always]          # creds must load under ANY --tags selection
   roles:
     - role: opnsense

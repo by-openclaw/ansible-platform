@@ -33,41 +33,26 @@ cloudflare_dns_mailcow_dkim: "v=DKIM1;k=rsa;t=s;s=email;p=MIIBIjANBgkqhkiG9w0BAQ
 cloudflare_dns_mailcow_dmarc: "v=DMARC1; p=reject; rua=mailto:postmaster@{{ platform_domain }}; ruf=mailto:postmaster@{{ platform_domain }}; adkim=s; aspf=s; fo=1"
 # yamllint enable rule:line-length
 
-cloudflare_dns_records:
-  # --- Apex = Telenet static (default anchor). solo => exactly one record. ---
-  - {record: "@", type: A, value: "{{ cloudflare_dns_apex_v4 }}", state: present, solo: true}
-  - {record: "@", type: AAAA, value: "{{ cloudflare_dns_apex_v6 }}", state: present, solo: true}
-
-  # --- vpn: convert from Telenet direct A/AAAA to CNAME -> apex (delete first) ---
-  - {record: "vpn", type: A, state: absent}
-  - {record: "vpn", type: AAAA, state: absent}
-  - {record: "vpn", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}
-
-  # --- public services -> Telenet apex (dual-stack inherited via CNAME) ---
-  - {record: "nextcloud", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}
-  - {record: "vaultwarden", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}
-  - {record: "authentik", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}
-
-  # --- admin tool: remove public record (VPN-only via internal split-DNS) ---
-  - {record: "traefik", type: A, state: absent}
-  - {record: "traefik", type: AAAA, state: absent}
-
-  # --- mailcow mail ({{ platform_domain }} PUBLIC mail; egress + ingress via Telenet) ---
-  # mail host: DIRECT A/AAAA (an MX target must not be a CNAME — RFC 2181). Same
-  # Telenet apex IPs that front the web UI (Traefik :443) and the SMTP/IMAP DNATs.
-  - {record: "mail", type: A, value: "{{ cloudflare_dns_apex_v4 }}", state: present, solo: true}
-  - {record: "mail", type: AAAA, value: "{{ cloudflare_dns_apex_v6 }}", state: present, solo: true}
-  # receive mail → the mail host (single MX)
-  - {record: "@", type: MX, value: "mail.{{ platform_domain }}", priority: 10, state: present, solo: true}
-  # SPF — STRICT (-all hard-fail). `mx` authorises the MX host's A+AAAA (dual-stack,
-  # Telenet) — exactly one SPF record is allowed (RFC 7208), so remove the older
-  # IPv4-only SPF that pre-dated this and would otherwise cause a permerror.
-  - {record: "@", type: TXT, value: "v=spf1 ip4:213.214.47.222 -all", state: absent}
-  - {record: "@", type: TXT, value: "v=spf1 mx -all", state: present}
-  # DKIM (selector "dkim", 2048-bit) — value in cloudflare_dns_mailcow_dkim above.
-  - {record: "dkim._domainkey", type: TXT, value: "{{ cloudflare_dns_mailcow_dkim }}", state: present, solo: true}
-  # DMARC — STRICT alignment (adkim/aspf=s), p=reject; reports → postmaster.
-  - {record: "_dmarc", type: TXT, value: "{{ cloudflare_dns_mailcow_dmarc }}", state: present, solo: true}
-  # client autoconfiguration: Outlook (autodiscover) + Thunderbird (autoconfig)
-  - {record: "autodiscover", type: CNAME, value: "mail.{{ platform_domain }}", state: present, solo: true}
-  - {record: "autoconfig", type: CNAME, value: "mail.{{ platform_domain }}", state: present, solo: true}
+# Public names are DERIVED from platform_exposure_public (deployment manifest):
+# CNAME -> apex, so the WAN addresses live only on the apex A/AAAA. mail stays
+# A/AAAA because an MX target must not be a CNAME. Retired/legacy names are
+# kept as explicit `absent` entries until the next audit.
+cloudflare_dns_records: >-
+  {{ [
+       {'record': '@', 'type': 'A', 'value': cloudflare_dns_apex_v4, 'state': 'present', 'solo': true},
+       {'record': '@', 'type': 'AAAA', 'value': cloudflare_dns_apex_v6, 'state': 'present', 'solo': true},
+       {'record': 'traefik', 'type': 'A', 'state': 'absent'},
+       {'record': 'traefik', 'type': 'AAAA', 'state': 'absent'},
+       {'record': 'vpn', 'type': 'A', 'state': 'absent'},
+       {'record': 'vpn', 'type': 'AAAA', 'state': 'absent'},
+       {'record': 'mail', 'type': 'A', 'value': cloudflare_dns_apex_v4, 'state': 'present', 'solo': true},
+       {'record': 'mail', 'type': 'AAAA', 'value': cloudflare_dns_apex_v6, 'state': 'present', 'solo': true},
+       {'record': '@', 'type': 'MX', 'value': 'mail.' ~ platform_domain, 'priority': 10, 'state': 'present', 'solo': true},
+       {'record': '@', 'type': 'TXT', 'value': 'v=spf1 ip4:213.214.47.222 -all', 'state': 'absent'},
+       {'record': '@', 'type': 'TXT', 'value': 'v=spf1 mx -all', 'state': 'present'},
+       {'record': 'dkim._domainkey', 'type': 'TXT', 'value': cloudflare_dns_mailcow_dkim, 'state': 'present', 'solo': true},
+       {'record': '_dmarc', 'type': 'TXT', 'value': cloudflare_dns_mailcow_dmarc, 'state': 'present', 'solo': true}
+     ]
+     + (platform_exposure_public | default([])
+        | map('community.general.dict_kv', 'record') | list
+        | map('combine', {'type': 'CNAME', 'value': platform_domain, 'state': 'present', 'solo': true}) | list) }}

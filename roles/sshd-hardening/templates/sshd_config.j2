@@ -77,3 +77,8 @@ Match Group {{ sshd_hardening_break_glass_group }} Address {{ sshd_hardening_bre
 Match Address {{ sshd_hardening_root_allowed_from | join(',') }}
     PermitRootLogin prohibit-password
 {% endif %}
+
+{# Per-host additions (Match blocks etc.) — e.g. GitLab's git user resolving keys from gitlab-shell #}
+{% for line in sshd_hardening_extra_config | default([]) %}
+{{ line }}
+{% endfor %}

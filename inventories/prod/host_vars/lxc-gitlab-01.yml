@@ -1,0 +1,15 @@
+---
+# --- git over SSH on the hardened sshd (22222): the `git` user authenticates through
+# gitlab-shell's AuthorizedKeysCommand (keys live in the GitLab DB, not in a file).
+sshd_hardening_allow_groups:            # platform default + git (never drop the automation/break-glass groups)
+  - "{{ platform_org | default('by-research') }}"
+  - rune
+  - ansible
+  - git
+sshd_hardening_extra_config:
+  - "Match User git"
+  - "  AuthorizedKeysCommand /opt/gitlab/embedded/service/gitlab-shell/bin/gitlab-shell-authorized-keys-check git %u %k"
+  - "  AuthorizedKeysCommandUser git"
+  - "  PasswordAuthentication no"
+  - "  AllowTcpForwarding no"
+  - "  X11Forwarding no"
