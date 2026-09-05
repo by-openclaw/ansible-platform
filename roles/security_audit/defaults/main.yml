@@ -1,0 +1,18 @@
+---
+# security_audit — fleet CVE / update-currency audit (read-only; never patches).
+# Four layers: OS (debsecan + apt security), containers (Trivy on running images),
+# appliance currency (OPNsense firmware / PVE), and a consolidated report shipped
+# to Loki + Discord #alerts + (optional) GitLab issues for HIGH/CRITICAL.
+# Remediation is roles/updates (staged waves) — this only DETECTS.
+security_audit_report_dir: "/var/log/security-audit"          # on each host
+security_audit_controller_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/security-audit"
+security_audit_scan_containers: true                          # Trivy on running images
+security_audit_trivy_image: "aquasec/trivy:0.58.1"           # pinned, cached DB volume
+security_audit_trivy_severity: "HIGH,CRITICAL"
+security_audit_trivy_cache_volume: "trivy-db"
+security_audit_severity_gate: "HIGH,CRITICAL"                 # what escalates to Discord/issue
+security_audit_debsecan_suite: ""                             # auto from os-release codename
+# Sinks (all optional; empty disables)
+security_audit_discord_webhook_vault_path: "{{ platform_env | default('prod') }}/discord/webhook-alerts"
+security_audit_loki_url: "http://lxc-monitoring-01.{{ platform_domain | default('by-research.be') }}:3100/loki/api/v1/push"
+security_audit_gitlab_issues: false                          # open a GitLab issue per HIGH/CRITICAL host (off until reviewed)

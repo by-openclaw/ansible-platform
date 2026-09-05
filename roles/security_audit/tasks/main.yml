@@ -1,0 +1,37 @@
+---
+# Per-host collection.
+# (aggregate/ship on the controller = playbooks/security-audit.yml play 2)
+- name: "SecAudit | Ensure the per-host report dir"
+  ansible.builtin.file:
+    path: "{{ security_audit_report_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  become: true
+
+# The aggregate/ship step is a separate play on the
+# controller (playbooks/security-audit.yml) consuming these host facts.
+- name: "SecAudit | OS CVE / update posture"
+  ansible.builtin.import_tasks: os.yml
+
+- name: "SecAudit | Container image CVEs (Trivy)"
+  ansible.builtin.import_tasks: containers.yml
+  when: security_audit_scan_containers | bool
+
+- name: "SecAudit | Per-host record"
+  ansible.builtin.set_fact:
+    security_audit_host_record:
+      host: "{{ inventory_hostname }}"
+      when: "{{ ansible_date_time.iso8601 | default('') }}"
+      os: "{{ security_audit_os | default({}) }}"
+      containers: "{{ security_audit_containers | default([]) }}"
+      container_high: "{{ security_audit_containers | default([]) | map(attribute='high') | map('int') | sum }}"
+      container_critical: "{{ security_audit_containers | default([]) | map(attribute='critical') | map('int') | sum }}"
+
+- name: "SecAudit | Write the per-host report"
+  ansible.builtin.copy:
+    content: "{{ security_audit_host_record | to_nice_json }}"
+    dest: "{{ security_audit_report_dir }}/{{ inventory_hostname }}.json"
+    mode: "0640"
+  become: true
