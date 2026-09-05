@@ -1,0 +1,19 @@
+---
+# Jitsi Meet — self-hosted video conferencing (official jitsi/docker-jitsi-meet).
+# Docker-in-LXC on lxc-jitsi-01. TLS terminated by Traefik (meet.<domain>); the
+# stack serves plain HTTP on the loopback. JVB media = UDP 10000, DNAT'd from WAN
+# so external participants connect. Internal component secrets live in Vault.
+jitsi_image_tag: "stable-11031"        # pinned; latest published on Docker Hub (bump deliberately)
+jitsi_build_dir: "/opt/jitsi"
+jitsi_config_dir: "/opt/jitsi/config"
+jitsi_fqdn: "meet.{{ platform_domain | default('by-research.be') }}"
+jitsi_http_ip: "127.0.0.1"                 # Traefik is the only ingress for web
+jitsi_http_port: 8000
+jitsi_jvb_port: 10000                      # UDP media
+jitsi_public_ip: "{{ jitsi_wan_ip | default('') }}"   # JVB advertises this for external peers (set from FW WAN)
+jitsi_env: "{{ platform_env | default('prod') }}"
+jitsi_vault_path: "{{ jitsi_env }}/jitsi/secrets"      # component/auth secrets
+jitsi_tz: "Europe/Brussels"
+# SSO: Authentik forwardAuth gates the web app to platform users (jitsi-users).
+# Guest/JWT join for externals is a documented follow-up.
+jitsi_sso_slug: "jitsi"

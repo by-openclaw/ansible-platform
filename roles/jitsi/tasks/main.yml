@@ -1,0 +1,97 @@
+---
+# --- secrets: get-or-create the internal component/auth secrets in Vault --------
+- name: "Jitsi | Get-or-create component secrets in Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ jitsi_vault_path }}"
+    vault_secret_init:
+      jicofo_component_secret: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+      jicofo_auth_password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+      jvb_auth_password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+      jigasi_xmpp_password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+      jibri_recorder_password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+      jibri_xmpp_password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+
+- name: "Jitsi | Bind the secrets"
+  ansible.builtin.set_fact:
+    jitsi_secrets: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "Jitsi | Layout directories"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0750"
+  loop:
+    - "{{ jitsi_build_dir }}"
+    - "{{ jitsi_config_dir }}"
+  become: true
+
+- name: "Jitsi | Render .env (secrets, PUBLIC_URL, JVB)"
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ jitsi_build_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0640"
+  become: true
+  no_log: true
+  register: jitsi_env_file
+
+- name: "Jitsi | Render docker-compose.yml"
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ jitsi_build_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  register: jitsi_compose_file
+
+- name: "Jitsi | Ensure Compose v2 (Debian standalone docker-compose)"
+  ansible.builtin.apt:
+    name: docker-compose
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+
+- name: "Jitsi | Pull images (pinned)"
+  ansible.builtin.command:
+    cmd: docker-compose pull
+    chdir: "{{ jitsi_build_dir }}"
+  become: true
+  changed_when: true
+
+- name: "Jitsi | Start the stack"
+  ansible.builtin.command:
+    cmd: docker-compose up -d --remove-orphans
+    chdir: "{{ jitsi_build_dir }}"
+  become: true
+  register: jitsi_up
+  changed_when: "'Started' in (jitsi_up.stderr | default('')) or 'Created' in (jitsi_up.stderr | default('')) or 'Recreated' in (jitsi_up.stderr | default(''))"
+
+- name: "Jitsi | Wait for the web UI (loopback)"
+  ansible.builtin.uri:
+    url: "http://{{ jitsi_http_ip }}:{{ jitsi_http_port }}/"
+    status_code: [200]
+  register: jitsi_ping
+  retries: 20
+  delay: 3
+  until: jitsi_ping.status == 200
+
+# --- compose the platform concerns (mailbox, Traefik route, SSO assert, audit) --
+- name: "Jitsi | Scaffold the platform concerns"
+  ansible.builtin.include_role:
+    name: service_scaffold
+  vars:
+    service_scaffold_def:
+      name: jitsi
+      fqdn: "{{ jitsi_fqdn }}"
+      backend_url: "http://{{ jitsi_http_ip }}:{{ jitsi_http_port }}"
+      exposure: public          # meet.<domain> reachable; forwardAuth (Authentik) gates access
+      mailbox: true
+      sso_slug: "{{ jitsi_sso_slug }}"
+      vault_secrets:
+        - path: "{{ jitsi_vault_path }}"

@@ -1,0 +1,44 @@
+# Managed by Ansible (roles/jitsi). Official jitsi/docker-jitsi-meet stack, pinned.
+services:
+  web:
+    image: jitsi/web:{{ jitsi_image_tag }}
+    restart: unless-stopped
+    ports:
+      - "{{ jitsi_http_ip }}:{{ jitsi_http_port }}:80"
+    volumes:
+      - "{{ jitsi_config_dir }}/web:/config:Z"
+      - "{{ jitsi_config_dir }}/web/crontabs:/var/spool/cron/crontabs:Z"
+      - "{{ jitsi_config_dir }}/transcripts:/usr/share/jitsi-meet/transcripts:Z"
+    environment: &jitsi_env
+      - CONFIG={{ jitsi_config_dir }}
+    env_file: [.env]
+    depends_on: [prosody]
+    networks: {meet.jitsi: {}}
+  prosody:
+    image: jitsi/prosody:{{ jitsi_image_tag }}
+    restart: unless-stopped
+    expose: ["5222", "5347", "5280"]
+    volumes:
+      - "{{ jitsi_config_dir }}/prosody/config:/config:Z"
+      - "{{ jitsi_config_dir }}/prosody/prosody-plugins-custom:/prosody-plugins-custom:Z"
+    env_file: [.env]
+    networks: {meet.jitsi: {aliases: [xmpp.meet.jitsi]}}
+  jicofo:
+    image: jitsi/jicofo:{{ jitsi_image_tag }}
+    restart: unless-stopped
+    volumes: ["{{ jitsi_config_dir }}/jicofo:/config:Z"]
+    env_file: [.env]
+    depends_on: [prosody]
+    networks: {meet.jitsi: {}}
+  jvb:
+    image: jitsi/jvb:{{ jitsi_image_tag }}
+    restart: unless-stopped
+    ports:
+      - "{{ jitsi_jvb_port }}:{{ jitsi_jvb_port }}/udp"
+    volumes: ["{{ jitsi_config_dir }}/jvb:/config:Z"]
+    env_file: [.env]
+    depends_on: [prosody]
+    networks: {meet.jitsi: {}}
+networks:
+  meet.jitsi:
+    driver: bridge
