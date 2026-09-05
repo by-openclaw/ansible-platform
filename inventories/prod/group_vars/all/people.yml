@@ -1,10 +1,27 @@
 ---
 # ==============================================================================
-# platform_people — THE single source of who exists and which access groups they
-# hold (identity/0004). Consumed by roles/authentik (identity blueprint: creates
-# the user, sets the groups declaratively) and by playbooks/identity-provision.yml
-# (identity_orchestrator: reconcile + confirmation email). Passwords never live
-# here (Vault / fabric user secret). Removal = state: disabled, never delete.
+# platform_people — THE single source of who exists on the platform. One entry
+# provisions the whole account bundle (identity/0004):
+#   - Authentik user + group memberships  (roles/authentik blueprint)
+#   - Authentik HR/contact attributes     (identity_orchestrator → attributes)
+#   - GitLab SSH + GPG keys                (gitlab_rbac reconciler, from ssh_keys/gpg_keys)
+#   - confirmation email with the bundle   (identity_orchestrator)
+# Consumed by roles/authentik, playbooks/identity-provision.yml and gitlab_rbac.
+#
+# Schema (per person):
+#   username   : login (Authentik + apps). REQUIRED.
+#   name       : display name. REQUIRED.
+#   email      : primary address. REQUIRED.
+#   state      : active | disabled  (removal = disabled, NEVER delete — identity/0004 §1)
+#   groups     : access groups (see the group rule below). REQUIRED.
+#   attributes : optional HR/contact record → Authentik user.attributes
+#                (title, phone, manager, department, start_date). No PII invented;
+#                fill what is true. Surfaced in the confirmation email.
+#   ssh_keys   : list of {label, key} — PUBLIC ed25519 keys, ONE per device
+#                (never share a private key between devices). → GitLab (git + auth).
+#   gpg_keys   : list of {label, key} — ASCII-armored PUBLIC GPG keys → GitLab
+#                (Verified commits). Prefer SSH commit signing; GPG optional.
+# Passwords / private keys NEVER live here (Vault / the person's own device / Vaultwarden).
 #
 # Group rule (EntraID-style): the daily-driver account holds *-users groups only;
 # the adm_ account holds the *-admins groups AND the *-users groups an app needs
@@ -14,6 +31,11 @@ platform_people:
   - username: yboujraf
     name: "Youssef Boujraf"
     email: "yboujraf@{{ platform_domain }}"
+    state: active
+    attributes:
+      title: "Platform Owner"
+    ssh_keys: []               # add {label: <device>, key: "ssh-ed25519 AAAA… you@device"}
+    gpg_keys: []
     groups:
       - gitlab-users
       - harbor-users
@@ -25,6 +47,11 @@ platform_people:
   - username: adm_yboujraf
     name: "Youssef Boujraf (admin)"
     email: "adm_yboujraf@{{ platform_domain }}"
+    state: active
+    attributes:
+      title: "Platform Administrator (privileged)"
+    ssh_keys: []
+    gpg_keys: []
     groups:
       - platform-admins        # Authentik superuser
       - infra-admins
@@ -50,5 +77,6 @@ platform_people:
   - username: yboujraf_example
     name: "Youssef Boujraf (example.com)"
     email: "yboujraf@example.com"
+    state: active
     groups:
       - mailcow-users          # second-domain mailbox identity only

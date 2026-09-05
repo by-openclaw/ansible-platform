@@ -124,4 +124,10 @@ gitlab_rbac_integrations: []
 #  - { project: platform/support/helpdesk, type: discord, webhook_vault_path: prod/gitlab/discord-helpdesk,
 #      events: { push: true, issues: true, confidential_issues: true, merge_requests: true, pipeline: true, note: false }, branches: default }
 
+# --- Per-user SSH/GPG keys — derived from platform_people (group_vars/all/people.yml).
+# GitLab user must already exist (created via SSO first login or the identity flow).
+gitlab_rbac_user_keys: >-
+  {{ platform_people | default([])
+     | json_query('[].{username: username, ssh_keys: ssh_keys, gpg_keys: gpg_keys}') }}
+
 gitlab_rbac_host: lxc-gitlab-01
