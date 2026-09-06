@@ -1,0 +1,295 @@
+---
+# ==============================================================================
+# opnsense_api_bootstrap — mint the svc-ansible API token THROUGH the MVC API
+# and store it in Vault. Get-or-mint + idempotent. See defaults/main.yml + README.
+# ==============================================================================
+
+# --- 0. resolve the genesis (break-glass admin) credentials -------------------
+- name: "OPNsense bootstrap | Load genesis creds from local file (if given)"
+  ansible.builtin.set_fact:
+    _opn_gen_key: "{{ _f.key }}"
+    _opn_gen_secret: "{{ _f.secret }}"
+  vars:
+    _f: "{{ (lookup('file', opnsense_api_bootstrap_genesis_file) | from_json).fields }}"
+  no_log: true
+  when: opnsense_api_bootstrap_genesis_file | default('') | length > 0
+
+- name: "OPNsense bootstrap | Use genesis creds passed as vars"
+  ansible.builtin.set_fact:
+    _opn_gen_key: "{{ opnsense_api_bootstrap_genesis_key }}"
+    _opn_gen_secret: "{{ opnsense_api_bootstrap_genesis_secret }}"
+  no_log: true
+  when:
+    - _opn_gen_key is not defined
+    - opnsense_api_bootstrap_genesis_key | length > 0
+
+- name: "OPNsense bootstrap | Require genesis creds"
+  ansible.builtin.assert:
+    that: _opn_gen_key is defined and _opn_gen_secret is defined
+    fail_msg: >-
+      No genesis admin credentials. Set opnsense_api_bootstrap_genesis_file (a
+      secret file with .fields.key/.secret) or _genesis_key/_genesis_secret.
+
+- name: "OPNsense bootstrap | Connection facts"
+  ansible.builtin.set_fact:
+    _opn_api: "https://{{ opnsense_api_bootstrap_host }}:{{ opnsense_api_bootstrap_port }}/api"
+
+# --- 1. is the token already in Vault? (get-or-mint) --------------------------
+- name: "OPNsense bootstrap | Vault login (ansible-deploy AppRole)"
+  ansible.builtin.include_role:
+    name: vault_login
+
+- name: "OPNsense bootstrap | Read existing token from Vault"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_api_bootstrap_vault_container }}
+      vault kv get -mount={{ opnsense_api_bootstrap_vault_mount }} -format=json {{ opnsense_api_bootstrap_vault_path }}
+  delegate_to: "{{ opnsense_api_bootstrap_vault_host }}"
+  become: true
+  register: _opn_vault_get
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "OPNsense bootstrap | Reuse token already in Vault (noop)"  # noqa: var-naming[no-role-prefix] (contract names used by the catalog + roles/opnsense)
+  ansible.builtin.set_fact:
+    opn_key: "{{ _kv.key }}"
+    opn_secret: "{{ _kv.secret }}"
+    opnsense_api_key: "{{ _kv.key }}"
+    opnsense_api_secret: "{{ _kv.secret }}"
+    opnsense_api_bootstrap_minted: false
+  vars:
+    _kv: "{{ (_opn_vault_get.stdout | from_json).data.data }}"
+  no_log: true
+  when: _opn_vault_get.rc == 0
+
+# --- 2. mint path (only when Vault has no token yet) --------------------------
+- name: "OPNsense bootstrap | CHECK MODE — token absent in Vault, would mint (no change made)"
+  ansible.builtin.debug:
+    msg: >-
+      check mode: no token at {{ opnsense_api_bootstrap_vault_mount }}/{{ opnsense_api_bootstrap_vault_path }}
+      — a real run would mint one via auth/user/add_api_key for {{ opnsense_api_bootstrap_user }}
+      on {{ opnsense_api_bootstrap_host }} and store it in Vault.
+  when:
+    - _opn_vault_get.rc != 0
+    - ansible_check_mode
+
+- name: "OPNsense bootstrap | Mint svc-ansible token via MVC"
+  when:
+    - _opn_vault_get.rc != 0
+    - not ansible_check_mode      # never mint under --check (CLAUDE.md: check mode must work)
+  block:
+    - name: "OPNsense bootstrap | Search for the service user"
+      ansible.builtin.uri:
+        url: "{{ _opn_api }}/auth/user/search"
+        method: POST
+        url_username: "{{ _opn_gen_key }}"
+        url_password: "{{ _opn_gen_secret }}"
+        force_basic_auth: true
+        body_format: json
+        body: {}
+        validate_certs: "{{ opnsense_api_bootstrap_validate_certs }}"
+      delegate_to: localhost   # API calls originate from the controller (no SSH/Python on the FW)
+      become: false
+      register: _opn_user_search
+      no_log: true
+
+    - name: "OPNsense bootstrap | Extract service-user row"
+      ansible.builtin.set_fact:
+        _opn_user_row: >-
+          {{ (_opn_user_search.json.rows | default([]))
+             | selectattr('name', 'equalto', opnsense_api_bootstrap_user) | list | first | default({}) }}
+
+    # ---- create the user only if absent (OPNsense requires a password on add) --
+    - name: "OPNsense bootstrap | Generate a random password (create-only; real auth = API key + SSH keys)"
+      ansible.builtin.set_fact:
+        _opn_gen_pw: "{{ lookup('community.general.random_string', length=40, special=true, override_special='!@#%^*-_=+') }}"
+      no_log: true
+      when: _opn_user_row.name is not defined
+
+    - name: "OPNsense bootstrap | Create the service user (MVC)"
+      ansible.builtin.uri:
+        url: "{{ _opn_api }}/auth/user/add"
+        method: POST
+        url_username: "{{ _opn_gen_key }}"
+        url_password: "{{ _opn_gen_secret }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          user:
+            name: "{{ opnsense_api_bootstrap_user }}"
+            descr: "{{ opnsense_api_bootstrap_user_descr }} ({{ opnsense_api_bootstrap_env }})"
+            shell: "{{ opnsense_api_bootstrap_user_shell }}"
+            disabled: "0"
+            password: "{{ _opn_gen_pw }}"
+        validate_certs: "{{ opnsense_api_bootstrap_validate_certs }}"
+      delegate_to: localhost   # API calls originate from the controller (no SSH/Python on the FW)
+      become: false
+      register: _opn_user_add
+      no_log: true
+      when: _opn_user_row.name is not defined
+
+    - name: "OPNsense bootstrap | Re-read users to resolve uid"
+      ansible.builtin.uri:
+        url: "{{ _opn_api }}/auth/user/search"
+        method: POST
+        url_username: "{{ _opn_gen_key }}"
+        url_password: "{{ _opn_gen_secret }}"
+        force_basic_auth: true
+        body_format: json
+        body: {}
+        validate_certs: "{{ opnsense_api_bootstrap_validate_certs }}"
+      delegate_to: localhost   # API calls originate from the controller (no SSH/Python on the FW)
+      become: false
+      register: _opn_user_search2
+      no_log: true
+
+    - name: "OPNsense bootstrap | Resolve service-user uid"
+      ansible.builtin.set_fact:
+        _opn_uid: >-
+          {{ (_opn_user_search2.json.rows | selectattr('name', 'equalto', opnsense_api_bootstrap_user)
+              | map(attribute='uid') | list | first) | string }}
+
+    # ---- ensure admins membership (preserve members + privs; CSV not arrays) ---
+    - name: "OPNsense bootstrap | Search groups"
+      ansible.builtin.uri:
+        url: "{{ _opn_api }}/auth/group/search"
+        method: POST
+        url_username: "{{ _opn_gen_key }}"
+        url_password: "{{ _opn_gen_secret }}"
+        force_basic_auth: true
+        body_format: json
+        body: {}
+        validate_certs: "{{ opnsense_api_bootstrap_validate_certs }}"
+      delegate_to: localhost   # API calls originate from the controller (no SSH/Python on the FW)
+      become: false
+      register: _opn_group_search
+      no_log: true
+
+    - name: "OPNsense bootstrap | Resolve admins group uuid"
+      ansible.builtin.set_fact:
+        _opn_admins_uuid: >-
+          {{ _opn_group_search.json.rows | selectattr('name', 'equalto', opnsense_api_bootstrap_admin_group)
+             | map(attribute='uuid') | list | first }}
+
+    - name: "OPNsense bootstrap | Get admins group detail"
+      ansible.builtin.uri:
+        url: "{{ _opn_api }}/auth/group/get/{{ _opn_admins_uuid }}"
+        method: POST
+        url_username: "{{ _opn_gen_key }}"
+        url_password: "{{ _opn_gen_secret }}"
+        force_basic_auth: true
+        body_format: json
+        body: {}
+        validate_certs: "{{ opnsense_api_bootstrap_validate_certs }}"
+      delegate_to: localhost   # API calls originate from the controller (no SSH/Python on the FW)
+      become: false
+      register: _opn_admins_get
+      no_log: true
+
+    - name: "OPNsense bootstrap | Compute selected members + privs"
+      ansible.builtin.set_fact:
+        _opn_members: >-
+          {{ (_grp.member | default({})) | dict2items
+             | selectattr('value.selected', 'equalto', 1) | map(attribute='key') | list }}
+        _opn_privs: >-
+          {{ (_grp.priv | default({})) | dict2items
+             | selectattr('value.selected', 'equalto', 1) | map(attribute='key') | list }}
+      vars:
+        _grp: "{{ _opn_admins_get.json.group | default(_opn_admins_get.json) }}"
+
+    - name: "OPNsense bootstrap | Add service user to admins (CSV member/priv)"
+      ansible.builtin.uri:
+        url: "{{ _opn_api }}/auth/group/set/{{ _opn_admins_uuid }}"
+        method: POST
+        url_username: "{{ _opn_gen_key }}"
+        url_password: "{{ _opn_gen_secret }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          group:
+            name: "{{ opnsense_api_bootstrap_admin_group }}"
+            description: "{{ (_opn_admins_get.json.group | default(_opn_admins_get.json)).description | default('System Administrators') }}"
+            member: "{{ (_opn_members + [_opn_uid]) | join(',') }}"
+            priv: "{{ _opn_privs | join(',') }}"
+        validate_certs: "{{ opnsense_api_bootstrap_validate_certs }}"
+      delegate_to: localhost   # API calls originate from the controller (no SSH/Python on the FW)
+      become: false
+      register: _opn_group_set
+      no_log: true
+      when: _opn_uid not in _opn_members
+
+    # ---- mint the API token via MVC -------------------------------------------
+    - name: "OPNsense bootstrap | Mint API token (auth/user/add_api_key)"
+      ansible.builtin.uri:
+        url: "{{ _opn_api }}/auth/user/add_api_key/{{ opnsense_api_bootstrap_user }}"
+        method: POST
+        url_username: "{{ _opn_gen_key }}"
+        url_password: "{{ _opn_gen_secret }}"
+        force_basic_auth: true
+        body_format: json
+        body: {}
+        validate_certs: "{{ opnsense_api_bootstrap_validate_certs }}"
+      delegate_to: localhost   # API calls originate from the controller (no SSH/Python on the FW)
+      become: false
+      register: _opn_mint
+      no_log: true
+
+    - name: "OPNsense bootstrap | Assert mint succeeded"
+      ansible.builtin.assert:
+        that:
+          - _opn_mint.json.result in ['ok', 'saved']
+          - _opn_mint.json.key | default('') | length > 0
+          - _opn_mint.json.secret | default('') | length > 0
+        fail_msg: "add_api_key did not return a key/secret: {{ _opn_mint.json | default({}) }}"
+
+    # ---- store the minted token in Vault (primary store) ----------------------
+    - name: "OPNsense bootstrap | Write minted token to Vault"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -i -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_api_bootstrap_vault_container }}
+          vault kv put -mount={{ opnsense_api_bootstrap_vault_mount }} {{ opnsense_api_bootstrap_vault_path }} -
+        stdin: >-  # pragma: allowlist secret
+          {{ {'host': opnsense_api_bootstrap_host, 'port': opnsense_api_bootstrap_port,
+              'username': opnsense_api_bootstrap_user,
+              'key': _opn_mint.json.key, 'secret': _opn_mint.json.secret,
+              'created_via': 'mvc:auth/user/add_api_key', 'env': opnsense_api_bootstrap_env} | to_json }}
+      delegate_to: "{{ opnsense_api_bootstrap_vault_host }}"
+      become: true
+      changed_when: true
+      no_log: true
+
+    - name: "OPNsense bootstrap | Publish minted token as facts"  # noqa: var-naming[no-role-prefix] (contract names used by the catalog + roles/opnsense)
+      ansible.builtin.set_fact:
+        opn_key: "{{ _opn_mint.json.key }}"
+        opn_secret: "{{ _opn_mint.json.secret }}"
+        opnsense_api_key: "{{ _opn_mint.json.key }}"
+        opnsense_api_secret: "{{ _opn_mint.json.secret }}"
+        opnsense_api_bootstrap_minted: true
+      no_log: true
+
+    # ---- optional 0600 DR / local fast-path mirror (Vault stays primary) ------
+    - name: "OPNsense bootstrap | Mirror to local secret file (DR / fast-path)"
+      ansible.builtin.copy:
+        dest: "{{ opnsense_api_bootstrap_collect_file }}"
+        mode: "0600"
+        content: >-  # pragma: allowlist secret
+          {{ {'_meta': {'purpose': 'OPNsense MVC API token for ' ~ opnsense_api_bootstrap_user,
+                        'created_via': 'mvc:auth/user/add_api_key', 'env': opnsense_api_bootstrap_env},
+              'fields': {'env': opnsense_api_bootstrap_env, 'host': opnsense_api_bootstrap_host,
+                         'port': opnsense_api_bootstrap_port, 'username': opnsense_api_bootstrap_user,
+                         'key': _opn_mint.json.key, 'secret': _opn_mint.json.secret}} | to_nice_json }}
+      delegate_to: localhost
+      become: false
+      no_log: true
+      when: opnsense_api_bootstrap_collect_file | default('') | length > 0
+
+- name: "OPNsense bootstrap | Summary"
+  ansible.builtin.debug:
+    msg: >-
+      svc user={{ opnsense_api_bootstrap_user }} on {{ opnsense_api_bootstrap_host }} —
+      token {{ 'MINTED via MVC + stored in Vault' if (opnsense_api_bootstrap_minted | default(false))
+               else ('ABSENT — check mode, would mint (no change made)' if (ansible_check_mode and _opn_vault_get.rc != 0)
+               else 'reused from Vault (noop)') }}
+      at {{ opnsense_api_bootstrap_vault_mount }}/{{ opnsense_api_bootstrap_vault_path }}
