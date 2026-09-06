@@ -39,7 +39,7 @@ it to `admins`.
 | `opnsense_api_bootstrap_genesis_file` | `""` | break-glass admin secret file |
 | `opnsense_api_bootstrap_env` | `platform_env` (→ `prod`) | env segment of the KV path |
 | `opnsense_api_bootstrap_vault_path` | `{platform_env}/opnsense/api` | KV v2 path — **same path `opnsense_api_creds` reads** |
-| `opnsense_api_bootstrap_collect_file` | `.../net-opnsense-svc-ansible-{env}.json` | 0600 DR mirror ("" to skip) |
+| `opnsense_api_bootstrap_collect_file` | `.../net-opnsense-{env}-svc-ansible.json` | 0600 DR mirror, same name the `vault_kv_map` sync uses ("" to skip) |
 
 ## Example
 
