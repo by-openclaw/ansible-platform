@@ -46,6 +46,18 @@
   no_log: true
   when: vault_deploy_token is not defined
 
+- name: "Vault login | Refuse a revoked/empty root fallback (surface AppRole failure)"
+  ansible.builtin.fail:
+    msg: >-
+      Vault login fell back to the root token but it is '{{ vault_deploy_token }}'
+      — the AppRole login produced no token (delegated sudo/docker on
+      {{ vault_login_host }} likely failed, or the approle file is missing:
+      {{ vault_login_secret_dir }}/{{ vault_login_approle_file }}). Fix the AppRole
+      path; do NOT rely on the retired root token (SEC-06).
+  when:
+    - vault_deploy_auth | default('') == 'root'
+    - (vault_deploy_token | default('')) in ['', 'REVOKED']
+
 - name: "Vault login | Report auth method (no token)"
   ansible.builtin.debug:
     msg: "Vault deploy auth = {{ vault_deploy_auth }}"
