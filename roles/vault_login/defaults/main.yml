@@ -10,4 +10,8 @@ vault_login_approle_file: "app-vault-approle-ansible-deploy.json"   # pragma: al
 vault_login_bootstrap_file: "vault-init.json"   # root fallback (bootstrap only)  # pragma: allowlist secret
 # Verified TLS: the wildcard cert matches the FQDN (never 127.0.0.1 — that CN
 # mismatch was the historical reason for VAULT_SKIP_VERIFY; skip-verify is BANNED).
-vault_login_addr: "https://lxc-vault-01.{{ platform_domain | default('by-research.be') }}:8200"
+# Root-token fallback is OFF: AppRole failure must fail loudly (SEC-06). Enable
+# ONLY for Vault genesis (fresh Vault, AppRole not yet provisioned).
+vault_login_allow_root_fallback: false
+# NOTE: no vault_login_addr — the vault container's own VAULT_ADDR is authoritative;
+# deriving it from platform_domain broke every non-prod inventory (DNS).
