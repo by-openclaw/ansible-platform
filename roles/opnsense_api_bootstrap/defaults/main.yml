@@ -1,0 +1,48 @@
+---
+# ==============================================================================
+# Role: opnsense_api_bootstrap
+# Mint the svc-ansible API identity on an OPNsense box THROUGH the MVC API
+# (auth/user/add_api_key) and store the token in Vault — no GUI, no static key
+# baked into the seed. Idempotent + get-or-mint: if Vault already holds the
+# token it is reused; otherwise it is minted once and written to Vault.
+#
+# Genesis credential (chicken-and-egg): the FIRST API call after a Terraform+seed
+# rebuild needs an existing admin key. That is the ONE seeded credential — a
+# break-glass admin (root / oob-admin) whose key is provided below. svc-ansible's
+# own token is NEVER seeded; it is minted here.  On a seeded FW the svc-ansible
+# user + admins membership already exist (from the seed), so this role is
+# effectively mint-only.  See README.md.
+# ==============================================================================
+
+# --- target FW ---------------------------------------------------------------
+opnsense_api_bootstrap_host: "{{ ansible_host | default(inventory_hostname) }}"
+opnsense_api_bootstrap_port: 443
+opnsense_api_bootstrap_validate_certs: false     # self-signed FW cert
+
+# --- service identity to mint ------------------------------------------------
+opnsense_api_bootstrap_user: "svc-ansible-prod"
+opnsense_api_bootstrap_user_descr: "Ansible automation service account"
+opnsense_api_bootstrap_user_shell: "/bin/sh"
+opnsense_api_bootstrap_admin_group: "admins"     # group granting API (page-all) privileges
+
+# --- genesis (break-glass) admin credentials used to drive the MVC calls -----
+# Provide EITHER a local secret file (fields.key / fields.secret) OR key+secret
+# directly (e.g. resolved from Vault by a wrapping play). File path wins if set.
+opnsense_api_bootstrap_genesis_file: ""          # e.g. .../secrets/fabric/net-opnsense-prod-oob-admin.json
+opnsense_api_bootstrap_genesis_key: ""
+opnsense_api_bootstrap_genesis_secret: ""
+
+# --- where the minted token is stored (Vault KV v2, via the vault container) --
+# MUST match where opnsense_api_creds READS ({platform_env}/opnsense/api, fields
+# key + secret): bootstrap writes it once, every later FW play reads it.
+opnsense_api_bootstrap_mount: "secret"
+opnsense_api_bootstrap_vault_mount: "{{ opnsense_api_bootstrap_mount }}"
+opnsense_api_bootstrap_env: "{{ platform_env | default('prod') }}"
+opnsense_api_bootstrap_vault_path: "{{ opnsense_api_bootstrap_env }}/opnsense/api"
+opnsense_api_bootstrap_vault_host: "lxc-vault-01"
+opnsense_api_bootstrap_vault_container: "vault"
+
+# Also drop a 0600 collection file in the secret folder (DR / local fast-path,
+# same convention as opnsense_api_creds_local_file). Set to "" to skip.
+opnsense_api_bootstrap_collect_file: >-
+  {{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric/net-opnsense-svc-ansible-{{ opnsense_api_bootstrap_env }}.json
