@@ -60,7 +60,8 @@ it to `admins`.
 |---|---|---|
 | **reuse** | seeded test FW, `secret/test/opnsense/api` present | *reused from Vault (noop)*, `changed=0`; published token → `auth/user/search` **HTTP 200** |
 | **mint** | lab FW, empty scratch path | *MINTED via MVC + stored in Vault*, `changed=1` (the Vault write); 2nd on-box key confirmed |
-| **idempotent** | lab FW, 2nd run | *reused (noop)*, `changed=0`; the minted token → **HTTP 200** |
+| **idempotent** | lab FW, 2nd run | *reused (noop, verified HTTP 200)*, `changed=0` |
+| **rotate** | lab FW, Vault holds a stale/bogus token (= FW rebuilt/reseeded) | *ROTATED — re-minted via MVC + stored* (new KV v2 version, history kept), `changed=1`, new token **HTTP 200** |
 | **check mode** | `--check` with token absent | reports *would mint*, makes no change |
 
 Run from the controller (`hosts: localhost`, set `opnsense_api_bootstrap_host`) —
