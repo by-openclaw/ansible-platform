@@ -236,7 +236,10 @@
         body:
           group:
             name: "{{ opnsense_api_bootstrap_admin_group }}"
-            description: "{{ (opnsense_api_bootstrap_admins_get.json.group | default(opnsense_api_bootstrap_admins_get.json)).description | default('System Administrators') }}"
+            description: >-
+              {{ (opnsense_api_bootstrap_admins_get.json.group
+                  | default(opnsense_api_bootstrap_admins_get.json)).description
+                 | default('System Administrators') }}
             member: "{{ (opnsense_api_bootstrap_members + [opnsense_api_bootstrap_uid]) | join(',') }}"
             priv: "{{ opnsense_api_bootstrap_privs | join(',') }}"
         validate_certs: "{{ opnsense_api_bootstrap_validate_certs }}"
