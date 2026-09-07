@@ -40,6 +40,16 @@
   tags: [dhcp, kea, radvd, dnsmasq]
   when: opn_kea_dhcp4 is defined or opn_kea_dhcp6 is defined or opn_radvd is defined or opn_dnsmasq is defined
 
+- name: Include IDS tasks (Suricata alert-only on the WAN edge — catalog opn_ids)
+  ansible.builtin.include_tasks: ids.yml
+  tags: [ids]
+  when: opn_ids is defined
+
+- name: Include mDNS repeater tasks (catalog opn_mdns)
+  ansible.builtin.include_tasks: mdns.yml
+  tags: [mdns]
+  when: opn_mdns is defined
+
 - name: Include LLDP tasks
   ansible.builtin.include_tasks: lldpd.yml
   tags: [services, lldpd]
