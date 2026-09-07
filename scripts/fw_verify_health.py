@@ -13,8 +13,13 @@ a throwaway VM first; only promote to prod when this is green, twice).
 Pure stdlib + the FW MVC API. No catalog/lib import, so it runs anywhere.
 
 Usage:
-  scripts/fw_verify_health.py --secret-file ~/.openclaw/workspace/infra/secrets/fabric/net-opnsense-vm-opns-01-access.json
-  # optional: --expect-wan2  (require Telenet WAN2 up — once the seed assigns it)
+  scripts/fw_verify_health.py --secret-file ~/.openclaw/workspace/infra/secrets/fabric/net-opnsense-prod-svc-ansible.json --expect-wan2
+  scripts/fw_verify_health.py --secret-file ~/.openclaw/workspace/infra/secrets/fabric/net-opnsense-test-vm-opns-test-01.json --expect-wan2 --no-proximus --no-kea
+  # --expect-wan2       require Telenet WAN2 up with the env's OWN addresses (read from the ISP secret
+  #                     file: net-isp-telenet.json for prod, net-isp-telenet-test.json for test — derived
+  #                     from the creds file's `env`, or pass --isp-secret-file)
+  # --no-proximus       the test FW keeps the single Proximus PPPoE account administratively down
+  # --no-kea            skip the kea-dhcp check (the Kea catalog keys have no consumer yet — #301)
 """
 
 from __future__ import annotations
@@ -43,10 +48,24 @@ EXPECTED_IFACES = [
     "Media",
     "GAMING",
     "CCTV",
-    "WAN_PROXIMUS",
+    "FAB",  # fabric MGMT VLAN 600 (opt14, vtnet4) — seeded on prod (.2) and test (.3) since 2026-09
 ]
+WAN1_IFACE = "WAN_PROXIMUS"  # checked unless --no-proximus (single PPPoE account: test keeps it down)
+# Fallbacks only — --isp-secret-file (or the env-derived default) supplies the real addresses.
 TELENET_V4_SUFFIX = ".222"
 TELENET_V6_SUFFIX = "::5"
+
+
+def load_telenet(secret_file: str, isp_secret_file: str | None) -> dict:
+    """Expected Telenet WAN2 addresses for THIS env (prod .222/::5, test .220/::6)."""
+    p = Path(isp_secret_file) if isp_secret_file else None
+    if p is None:
+        env = str(json.loads(Path(secret_file).read_text()).get("fields", {}).get("env", "prod"))
+        p = Path(secret_file).parent / ("net-isp-telenet.json" if env == "prod" else f"net-isp-telenet-{env}.json")
+    if not p.exists():
+        return {}
+    f = json.loads(p.read_text()).get("fields", {})
+    return {"ipv4_address": f.get("ipv4_address"), "ipv6_address": f.get("ipv6_address"), "source": p.name}
 
 
 def _bool(v) -> bool:
@@ -107,8 +126,15 @@ class Gate:
         return 1 if failed else 0
 
 
-def run(api: API, expect_wan2: bool) -> int:
+def run(
+    api: API,
+    expect_wan2: bool,
+    expect_proximus: bool = True,
+    telenet: dict | None = None,
+    expect_kea: bool = True,
+) -> int:
     g = Gate()
+    telenet = telenet or {}
 
     # 1) Interfaces assigned & up
     try:
@@ -130,15 +156,23 @@ def run(api: API, expect_wan2: bool) -> int:
         up = bool(v) and str(v.get("status", "")).lower() == "up"
         g.check(f"iface {d} up", up, (v or {}).get("status", "absent"))
 
-    # 2) WAN_PROXIMUS has a public-ish v4 (not RFC1918 / not empty)
-    wan1 = by_descr.get("WAN_PROXIMUS") or by_descr.get("WAN1") or {}
-    a4 = wan1.get("addr4") or wan1.get("ipaddr") or ""
-    wan1_ok = (
-        bool(a4)
-        and not a4.startswith(("10.", "192.168.", "172."))
-        and a4 not in ("pppoe", "dhcp")
-    )
-    g.check("WAN_PROXIMUS public IPv4", wan1_ok, a4 or "none")
+    # 2) WAN_PROXIMUS up + public-ish v4 (not RFC1918 / not empty) — unless --no-proximus
+    if expect_proximus:
+        wan1 = by_descr.get(WAN1_IFACE) or by_descr.get("WAN1") or {}
+        g.check(
+            f"iface {WAN1_IFACE} up",
+            bool(wan1) and str(wan1.get("status", "")).lower() == "up",
+            wan1.get("status", "absent"),
+        )
+        a4 = wan1.get("addr4") or wan1.get("ipaddr") or ""
+        wan1_ok = (
+            bool(a4)
+            and not a4.startswith(("10.", "192.168.", "172."))
+            and a4 not in ("pppoe", "dhcp")
+        )
+        g.check(f"{WAN1_IFACE} public IPv4", wan1_ok, a4 or "none")
+    else:
+        g.check(f"{WAN1_IFACE} (skipped: --no-proximus)", True, "admin down")
 
     # 3) WAN2 Telenet (gated)
     wan2 = by_descr.get("WAN_TELENET") or {}
@@ -150,12 +184,11 @@ def run(api: API, expect_wan2: bool) -> int:
             bool(wan2) and str(wan2.get("status", "")).lower() == "up",
             wan2.get("status", "absent"),
         )
-        g.check(
-            "WAN2 Telenet IPv4 .222",
-            a4w2.split("/")[0].endswith(TELENET_V4_SUFFIX),
-            a4w2 or "none",
-        )
-        g.check("WAN2 Telenet IPv6 ::5", TELENET_V6_SUFFIX in a6w2, a6w2 or "none")
+        exp4, exp6 = telenet.get("ipv4_address"), telenet.get("ipv6_address")
+        ok4 = (a4w2.split("/")[0] == exp4) if exp4 else a4w2.split("/")[0].endswith(TELENET_V4_SUFFIX)
+        ok6 = (exp6.lower() in a6w2.lower()) if exp6 else (TELENET_V6_SUFFIX in a6w2)
+        g.check(f"WAN2 Telenet IPv4 {exp4 or TELENET_V4_SUFFIX}", ok4, a4w2 or "none")
+        g.check(f"WAN2 Telenet IPv6 {exp6 or TELENET_V6_SUFFIX}", ok6, a6w2 or "none")
     else:
         g.check("WAN2 Telenet (skipped: --expect-wan2 off)", True, "seed pending")
 
@@ -173,10 +206,15 @@ def run(api: API, expect_wan2: bool) -> int:
         "unbound",
         "dnscrypt-proxy",
         "crowdsec",
-        "kea-dhcp",
         "qemu-ga",
         "flowd_aggregate",
     ]
+    if expect_kea:
+        required_services.insert(3, "kea-dhcp")
+    else:
+        # The Kea catalog keys have no Ansible consumer yet (ansible-platform #301):
+        # a freshly seeded FW has no DHCP config, so the daemon is legitimately down.
+        g.check("service kea-dhcp (skipped: --no-kea)", True, "no consumer yet")
     try:
         svc = api.get("/api/core/service/search").get("rows", [])
         running = {}
@@ -208,10 +246,36 @@ def main():
     p.add_argument(
         "--expect-wan2",
         action="store_true",
-        help="require Telenet WAN2 up (enable once the seed assigns it)",
+        help="require Telenet WAN2 up with this env's own addresses",
+    )
+    p.add_argument(
+        "--no-proximus",
+        action="store_true",
+        help="skip the WAN_PROXIMUS checks (test FW: single PPPoE account stays down)",
+    )
+    p.add_argument(
+        "--isp-secret-file",
+        default=None,
+        help="Telenet ISP secret file (fields ipv4_address/ipv6_address); default derived from the creds file's env",
+    )
+    p.add_argument(
+        "--no-kea",
+        action="store_true",
+        help="skip the kea-dhcp check (no Kea consumer in the catalog yet — #301)",
     )
     args = p.parse_args()
-    sys.exit(run(API(load_creds(args.secret_file, args.host)), args.expect_wan2))
+    telenet = load_telenet(args.secret_file, args.isp_secret_file) if args.expect_wan2 else {}
+    if telenet.get("source"):
+        print(f"[info] Telenet expectations from {telenet['source']}: {telenet.get('ipv4_address')} / {telenet.get('ipv6_address')}")
+    sys.exit(
+        run(
+            API(load_creds(args.secret_file, args.host)),
+            args.expect_wan2,
+            expect_proximus=not args.no_proximus,
+            telenet=telenet,
+            expect_kea=not args.no_kea,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,94 @@
+---
+# NAT — port forwards (DNAT) + outbound (source) NAT, catalog-driven.
+#
+# Data comes from the CATALOG (`opn_dnat_rules` / `opn_snat_rules` in
+# group_vars/opnsense.yml — the same single source of truth as aliases/rules).
+# Applied through the by_systems.opnsense collection (lib-opnsense FwDnatManager /
+# FwSourceNatManager underneath — lib-first, no raw uri). The lib applies the
+# filter after each change, so no separate reload step is needed.
+#
+# Scope one concern with -e '{"opn_fw_only": ["<descr>", ...]}' (same switch as
+# rules/aliases); an unscoped run converges the whole NAT catalog and is gated by
+# the same opn_fw_confirm_full confirmation in main.yml.
+#
+# Catalog item (DNAT):
+#   descr, interface (slot ident e.g. opt13, or a logical name in opn_interface_map),
+#   protocol, ipprotocol, destination: {network, port}, target, local-port, state
+#   (+ optional source: {network, port}, natreflection, log, disabled)
+
+- name: "NAT | Select the DNAT rules in scope"
+  ansible.builtin.set_fact:
+    opnsense_dnat_scoped: >-
+      {{ (opn_dnat_rules | default([]))
+         if not (opn_fw_only | default([]))
+         else ((opn_dnat_rules | default([])) | selectattr('descr', 'in', opn_fw_only) | list) }}
+    opnsense_snat_scoped: >-
+      {{ (opn_snat_rules | default([]))
+         if not (opn_fw_only | default([]))
+         else ((opn_snat_rules | default([])) | selectattr('description', 'in', opn_fw_only) | list) }}
+  delegate_to: localhost
+  become: false
+  tags: [firewall, nat]
+
+- name: "NAT | Report scope"
+  ansible.builtin.debug:
+    msg: >-
+      DNAT: {{ opnsense_dnat_scoped | length }} rule(s), SNAT: {{ opnsense_snat_scoped | length }} rule(s)
+      {{ '' if not (opn_fw_only | default([])) else '(scoped)' }}
+  delegate_to: localhost
+  become: false
+  tags: [firewall, nat]
+
+- name: "NAT | Ensure port forwards (DNAT) match the catalog"
+  by_systems.opnsense.opnsense_fw_dnat:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    descr: "{{ item.descr }}"
+    interface: "{{ opn_interface_map[item.interface] | default(item.interface) }}"
+    ipprotocol: "{{ item.ipprotocol | default('inet') }}"
+    protocol: "{{ item.protocol | default('tcp') | lower }}"
+    source_net: "{{ (item.source | default({})).network | default('any') }}"
+    source_port: "{{ (item.source | default({})).port | default(omit) }}"
+    destination_net: "{{ (item.destination | default({})).network | default('any') }}"
+    destination_port: "{{ (item.destination | default({})).port | default(omit) }}"
+    target: "{{ item.target }}"
+    local_port: "{{ item['local-port'] | default(item.local_port | default(omit)) }}"
+    natreflection: "{{ item.natreflection | default(omit) }}"
+    log: "{{ item.log | default(false) | bool }}"
+    disabled: "{{ item.disabled | default(false) | bool }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opnsense_dnat_scoped }}"
+  loop_control:
+    label: "{{ item.descr }}"
+  delegate_to: localhost
+  become: false
+  tags: [firewall, nat, dnat]
+
+- name: "NAT | Ensure outbound (source) NAT matches the catalog"
+  by_systems.opnsense.opnsense_fw_source_nat:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    description: "{{ item.description }}"
+    interface: "{{ opn_interface_map[item.interface] | default(item.interface) }}"
+    ipprotocol: "{{ item.ipprotocol | default('inet') }}"
+    protocol: "{{ item.protocol | default('any') | lower }}"
+    source_net: "{{ item.source_net | default('any') }}"
+    source_port: "{{ item.source_port | default(omit) }}"
+    destination_net: "{{ item.destination_net | default('any') }}"
+    destination_port: "{{ item.destination_port | default(omit) }}"
+    target: "{{ item.target | default(omit) }}"
+    enabled: "{{ item.enabled | default(true) | bool }}"
+    log: "{{ item.log | default(false) | bool }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opnsense_snat_scoped }}"
+  loop_control:
+    label: "{{ item.description }}"
+  delegate_to: localhost
+  become: false
+  tags: [firewall, nat, snat]

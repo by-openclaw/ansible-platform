@@ -25,6 +25,7 @@
     validate_certs: false
     status_code: 200
   register: opnsense_rt_gw_search
+  check_mode: false   # read-only GET — must also run under --check
   delegate_to: localhost
   become: false
   tags: [gateway, network]
@@ -49,9 +50,13 @@
     validate_certs: false
     status_code: 200
   register: opnsense_rt_gw_items
+  check_mode: false   # read-only GET — must also run under --check
   loop: "{{ opnsense_proximus_gateways }}"
   loop_control:
     label: "{{ item.name }}"
+  # A dynamic gateway only exists while its session is up (the test FW keeps Proximus
+  # administratively down) — skip what the firewall does not have instead of KeyError.
+  when: item.name in opnsense_rt_gw_uuid
   delegate_to: localhost
   become: false
   tags: [gateway, network]
@@ -76,7 +81,10 @@
   loop: "{{ opnsense_rt_gw_items.results }}"
   loop_control:
     label: "{{ item.item.name }} -> {{ item.item.monitor }}"
-  when: item.json.gateway_item.monitor != item.item.monitor
+  when:
+    - item is not skipped
+    - item.json is defined
+    - item.json.gateway_item.monitor != item.item.monitor
   register: opnsense_rt_gw_set
   delegate_to: localhost
   become: false

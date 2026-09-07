@@ -1,13 +1,13 @@
 # Role: opnsense
 
-Configures OPNsense firewall via REST API using the `puzzle.opnsense` collection.
+Configures OPNsense via the REST/MVC API using `ansibleguy.opnsense` (rules/aliases — ADR-mandated) and `by_systems.opnsense` (lib-opnsense MVC: NAT, syslog, …). L2/L3 topology, system identity, interface settings and gateways are SEED-owned (infra-terraform-proxmox `modules/vm-opnsense/seed`).
 
 ## Contract
 
 - **Idempotent:** every task uses `state: present/absent`. Safe to run repeatedly.
 - **No shell/command tasks.** All config via collection modules only.
 - **No hardcoded values in tasks.** All values from `defaults/main.yml` or vault.
-- **Bootstrap exception:** `opnsense-bootstrap.yml` uses `uri` module for 2 one-shot tasks (hostname + WAN IP) that have no collection module. Guarded by `changed_when`.
+- **Bootstrap:** identity + interfaces come from the seed; the svc-ansible API token is minted by `playbooks/opnsense-api-bootstrap.yml` (get-or-mint → Vault; `opnsense-bootstrap.yml` archived under playbooks/_archive). Historic note: it used `uri` for 2 one-shot tasks (hostname + WAN IP) that have no collection module. Guarded by `changed_when`.
 
 ## What it configures
 
@@ -74,4 +74,4 @@ ansible-playbook playbooks/opnsense.yml --check --diff
 
 - `docs/setup.md` — Ansible install + SSH + vault setup
 - ADR-0015: Network/VLAN architecture + WireGuard spec
-- Collection docs: <https://github.com/puzzle/puzzle.opnsense>
+- Collection docs: <https://github.com/ansibleguy/collection_opnsense> · by_systems.opnsense = <https://github.com/by-openclaw/ansible-opnsense> (lib-opnsense)

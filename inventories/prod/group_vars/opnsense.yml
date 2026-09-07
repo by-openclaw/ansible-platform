@@ -1,5 +1,42 @@
 opn_host: 10.6.239.196
 opn_port: 443
+# --- Dynamic DNS (os-ddclient -> Cloudflare) — per env; see roles/opnsense/tasks/dyndns.yml ---
+opnsense_dyndns_accounts:
+  # Proximus DYNAMIC anchor = `dyn.{{ platform_domain }}` (neutral name, no ISP identity).
+  # Telenet is the static default anchor (the apex {{ platform_domain }}, NOT DynDNS).
+  # Only services explicitly bound to Proximus CNAME to `dyn` (+ outbound PBR).
+  # Dual-stack: one account per family (os-ddclient resolves ONE address each;
+  # record type follows the checkip family).
+  #   checkip 'if'  = Interface [IPv4] -> A   ;  'if6' = Interface [IPv6] -> AAAA (GUA)
+  # Local interface read = reliable (no external HTTP); pins to opt12 (Proximus).
+  # record_type drives the Cloudflare anchor pre-create only.
+  - description: "cloudflare-dyn-proximus"
+    service: cloudflare
+    username: ""                     # empty (no '@') => Cloudflare Bearer-token auth
+    zone: "{{ platform_domain }}"
+    hostnames: "dyn.{{ platform_domain }}"  # Proximus dynamic anchor
+    checkip: "if"
+    interface: "opt12"               # Proximus pppoe0
+    record_type: "A"
+    ttl: 60
+    force_ssl: true
+    enabled: true
+    state: present
+  - description: "cloudflare-dyn-proximus-v6"
+    service: cloudflare
+    username: ""
+    zone: "{{ platform_domain }}"
+    hostnames: "dyn.{{ platform_domain }}"
+    checkip: "if6"                    # Interface [IPv6] -> Proximus GUA on opt12
+    interface: "opt12"
+    record_type: "AAAA"
+    ttl: 60
+    force_ssl: true
+    enabled: true
+    state: present
+# OPNsense version this FW is pinned to (firmware.yml waits for it after an update).
+opnsense_firmware_upgrade: false   # apply pending updates (reboot) only when deliberately flipped for a window
+opnsense_firmware_target: "26.1.9"
 # Interfaces that carry ONE address family by design (naming/0003 §1a): rules on
 # them are legitimately single-family and need no v6/v4 twin. Everything else
 # is dual-stack → every intent needs an inet AND an inet6 rule.
@@ -12,8 +49,8 @@ opn_verify_ssl: false
 opnsense_host: '{{ opn_host }}'
 opnsense_port: '{{ opn_port }}'
 opnsense_verify_ssl: '{{ opn_verify_ssl }}'
-opnsense_api_key: '{{ opn_key }}'
-opnsense_api_secret: '{{ opn_secret }}'
+# Credentials are FACTS published by roles/opnsense_api_creds (Vault secret/prod/opnsense/api) at the
+# start of every FW play — both name sets (opn_* and opnsense_api_*) come from there.
 # Interface → OPNsense opt-slot map. MUST match the live FW assignment produced
 # by recreate-and-seed.py + the complete-config seed (config.xml from the
 # pre-reseed live state, addressing-rewritten to ADR). That layout is opt2–opt12
@@ -1230,7 +1267,7 @@ opn_filter_rules:
   interface: iot
   direction: in
   ipprotocol: inet
-  protocol: any
+  protocol: TCP/UDP   # DNS = 53 tcp+udp; ports are invalid on protocol any (OPNsense 400)
   source_net: net4_iot
   destination_net: any
   destination_port: port_dns
@@ -1312,7 +1349,7 @@ opn_filter_rules:
   interface: voip
   direction: in
   ipprotocol: inet
-  protocol: any
+  protocol: TCP/UDP   # DNS = 53 tcp+udp; ports are invalid on protocol any (OPNsense 400)
   source_net: net4_voip
   destination_net: any
   destination_port: port_dns
@@ -1790,7 +1827,7 @@ opn_filter_rules:
   interface: iot
   direction: in
   ipprotocol: inet6
-  protocol: any
+  protocol: TCP/UDP   # DNS = 53 tcp+udp; ports are invalid on protocol any (OPNsense 400)
   source_net: net6_iot
   destination_net: any
   destination_port: port_dns
@@ -1872,7 +1909,7 @@ opn_filter_rules:
   interface: voip
   direction: in
   ipprotocol: inet6
-  protocol: any
+  protocol: TCP/UDP   # DNS = 53 tcp+udp; ports are invalid on protocol any (OPNsense 400)
   source_net: net6_voip
   destination_net: any
   destination_port: port_dns
@@ -2593,15 +2630,6 @@ opn_dnscrypt_proxy:
     lib_manager: "DnscryptProxyManager (TODO — lib-opnsense#NN)"
     ansible_module: "opn_dnscrypt_proxy_settings"
 
-# ── WAN2 — Telenet (restored; lost in minimal-seed reseed; tracked in #32) ─────
-# Static /29 IPv4 + /64 IPv6; actual IPs live in vault (vault_telenet_*).
-# default_gw stays false → WAN1 Proximus remains system default. Per-VLAN egress
-# policy (gaming→Proximus, wifiap→VPN exits, Contabo→DE) is ADR-gated, not here.
-opnsense_wan2:
-  device: vtnet2
-  description: WAN_TELENET
-  block_private: true
-  block_bogons: true
 
 # ==============================================================================
 # Remote syslog (issue #12 · NIS2 Art.21(2)(h) / ISO27001 A.8.16): all FW logs
