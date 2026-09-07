@@ -90,8 +90,13 @@
 
 - name: "OPNsense bootstrap | Decide: reuse, or (re)mint"
   ansible.builtin.set_fact:
-    opnsense_api_bootstrap_need_mint: "{{ (opnsense_api_bootstrap_force_rotate | bool) or opnsense_api_bootstrap_vault_get.rc != 0 or (opnsense_api_bootstrap_reuse_probe.status | default(0)) != 200 }}"
-    opnsense_api_bootstrap_stale: "{{ opnsense_api_bootstrap_vault_get.rc == 0 and (opnsense_api_bootstrap_reuse_probe.status | default(0)) != 200 }}"
+    opnsense_api_bootstrap_need_mint: >-
+      {{ (opnsense_api_bootstrap_force_rotate | bool)
+         or opnsense_api_bootstrap_vault_get.rc != 0
+         or (opnsense_api_bootstrap_reuse_probe.status | default(0)) != 200 }}
+    opnsense_api_bootstrap_stale: >-
+      {{ opnsense_api_bootstrap_vault_get.rc == 0
+         and (opnsense_api_bootstrap_reuse_probe.status | default(0)) != 200 }}
 
 # --- 2. mint path (absent in Vault, or present but stale) ---------------------
 - name: "OPNsense bootstrap | CHECK MODE — token absent/stale in Vault, would mint (no change made)"
