@@ -33,5 +33,25 @@
   delay: 10
   delegate_to: localhost
   become: false
-  changed_when: true
+  # The backend reports status=done even when it REFUSED the install — the
+  # verdict is only in the log text. pkg prints "New packages to be INSTALLED"
+  # only when it actually installs something (already installed => no change).
+  changed_when: "'to be INSTALLED' in (opnsense_plugin_status.json.log | default(''))"
+  failed_when: "'No packages available to install' in (opnsense_plugin_status.json.log | default(''))"
+  tags: [firmware, plugins]
+
+- name: "Firmware | Plugin install refused — base image out of date: {{ plugin_name }}"
+  # A freshly seeded image (e.g. 26.7.0 nano) is refused every plugin until it
+  # takes the pending point update. Updates are a deliberate per-env window,
+  # never part of the converge: open it explicitly (see roles/opnsense/README.md).
+  ansible.builtin.fail:
+    msg: >-
+      OPNsense refused to install {{ plugin_name }}:
+      "{{ opnsense_plugin_status.json.log | default('') | regex_search('Installation out of date[^\n]*') }}".
+      Open the firmware window for this env first:
+      ansible-playbook -i inventories/{{ platform_env | default('<env>') }} playbooks/opnsense.yml
+      --tags firmware -e opnsense_firmware_upgrade=true -e opnsense_firmware_target=<version>
+  when: "'Installation out of date' in (opnsense_plugin_status.json.log | default(''))"
+  delegate_to: localhost
+  become: false
   tags: [firmware, plugins]

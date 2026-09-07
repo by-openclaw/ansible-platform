@@ -6,7 +6,7 @@ opn_port: 443
 opnsense_dyndns_accounts: []   # no public zone for the test env — DynDNS is prod-only
 # OPNsense version this FW is pinned to (firmware.yml waits for it after an update).
 opnsense_firmware_upgrade: false   # apply pending updates (reboot) only when deliberately flipped for a window
-opnsense_firmware_target: "26.7"
+opnsense_firmware_target: "26.7.3"   # proven by the 2026-09-07 window (26.7 nano → 26.7.3_11); plugins need it
 opn_verify_ssl: false
 opnsense_host: '{{ opn_host }}'
 opnsense_port: '{{ opn_port }}'
@@ -146,7 +146,7 @@ opn_aliases:
     adr: infra/0004#§4-row-2400
     lib_manager: FwAliasManager
     ansible_module: by_systems.opnsense.opnsense_fw_alias
-- name: net4_oob
+- name: net_oob
   type: network
   content: 10.6.224.0/20
   description: OOB management network — iLO/iDRAC/switch console (never via FW data path)
@@ -921,7 +921,7 @@ opn_filter_rules:
   interface: iot
   direction: in
   ipprotocol: inet
-  protocol: any
+  protocol: TCP/UDP   # DNS = 53 tcp+udp; ports are invalid on protocol any (OPNsense 400)
   source_net: net4_iot
   destination_net: any
   destination_port: port_dns
@@ -1003,7 +1003,7 @@ opn_filter_rules:
   interface: voip
   direction: in
   ipprotocol: inet
-  protocol: any
+  protocol: TCP/UDP   # DNS = 53 tcp+udp; ports are invalid on protocol any (OPNsense 400)
   source_net: net4_voip
   destination_net: any
   destination_port: port_dns
@@ -1481,7 +1481,7 @@ opn_filter_rules:
   interface: iot
   direction: in
   ipprotocol: inet6
-  protocol: any
+  protocol: TCP/UDP   # DNS = 53 tcp+udp; ports are invalid on protocol any (OPNsense 400)
   source_net: net6_iot
   destination_net: any
   destination_port: port_dns
@@ -1563,7 +1563,7 @@ opn_filter_rules:
   interface: voip
   direction: in
   ipprotocol: inet6
-  protocol: any
+  protocol: TCP/UDP   # DNS = 53 tcp+udp; ports are invalid on protocol any (OPNsense 400)
   source_net: net6_voip
   destination_net: any
   destination_port: port_dns

@@ -14,11 +14,12 @@ Pure stdlib + the FW MVC API. No catalog/lib import, so it runs anywhere.
 
 Usage:
   scripts/fw_verify_health.py --secret-file ~/.openclaw/workspace/infra/secrets/fabric/net-opnsense-prod-svc-ansible.json --expect-wan2
-  scripts/fw_verify_health.py --secret-file ~/.openclaw/workspace/infra/secrets/fabric/net-opnsense-test-vm-opns-test-01.json --expect-wan2 --no-proximus
+  scripts/fw_verify_health.py --secret-file ~/.openclaw/workspace/infra/secrets/fabric/net-opnsense-test-vm-opns-test-01.json --expect-wan2 --no-proximus --no-kea
   # --expect-wan2       require Telenet WAN2 up with the env's OWN addresses (read from the ISP secret
   #                     file: net-isp-telenet.json for prod, net-isp-telenet-test.json for test — derived
   #                     from the creds file's `env`, or pass --isp-secret-file)
   # --no-proximus       the test FW keeps the single Proximus PPPoE account administratively down
+  # --no-kea            skip the kea-dhcp check (the Kea catalog keys have no consumer yet — #301)
 """
 
 from __future__ import annotations
@@ -125,7 +126,13 @@ class Gate:
         return 1 if failed else 0
 
 
-def run(api: API, expect_wan2: bool, expect_proximus: bool = True, telenet: dict | None = None) -> int:
+def run(
+    api: API,
+    expect_wan2: bool,
+    expect_proximus: bool = True,
+    telenet: dict | None = None,
+    expect_kea: bool = True,
+) -> int:
     g = Gate()
     telenet = telenet or {}
 
@@ -199,10 +206,15 @@ def run(api: API, expect_wan2: bool, expect_proximus: bool = True, telenet: dict
         "unbound",
         "dnscrypt-proxy",
         "crowdsec",
-        "kea-dhcp",
         "qemu-ga",
         "flowd_aggregate",
     ]
+    if expect_kea:
+        required_services.insert(3, "kea-dhcp")
+    else:
+        # The Kea catalog keys have no Ansible consumer yet (ansible-platform #301):
+        # a freshly seeded FW has no DHCP config, so the daemon is legitimately down.
+        g.check("service kea-dhcp (skipped: --no-kea)", True, "no consumer yet")
     try:
         svc = api.get("/api/core/service/search").get("rows", [])
         running = {}
@@ -246,6 +258,11 @@ def main():
         default=None,
         help="Telenet ISP secret file (fields ipv4_address/ipv6_address); default derived from the creds file's env",
     )
+    p.add_argument(
+        "--no-kea",
+        action="store_true",
+        help="skip the kea-dhcp check (no Kea consumer in the catalog yet — #301)",
+    )
     args = p.parse_args()
     telenet = load_telenet(args.secret_file, args.isp_secret_file) if args.expect_wan2 else {}
     if telenet.get("source"):
@@ -256,6 +273,7 @@ def main():
             args.expect_wan2,
             expect_proximus=not args.no_proximus,
             telenet=telenet,
+            expect_kea=not args.no_kea,
         )
     )
 
