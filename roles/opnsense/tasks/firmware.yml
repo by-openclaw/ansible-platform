@@ -1,173 +1,70 @@
 ---
-# Firmware — in-place upgrade + plugin install via the OPNsense firmware API.
-# Idempotent: upgrade only when an update is pending; install only missing plugins.
-# Per ADR services/0008 the firmware API runs as root internally — this is the
-# reproducible mechanism, not an ad-hoc curl. All tasks delegate_to: localhost.
+# Firmware + plugins — contract: by_systems.opnsense modules (lib-opnsense FirmwareManager /
+# PluginManager.ensure underneath). Per ADR services/0008 the firmware API is the reproducible
+# mechanism, not an ad-hoc curl.
 #
-# NOTE: the upgrade reboots the FW. We trigger it, then wait for the API to come
-# back. Plugin installs do not reboot.
+# Updates/upgrades REBOOT the firewall and are a deliberate per-env window: the check always
+# runs (so the play reports what is pending), the apply only when opnsense_firmware_upgrade is
+# flipped, and then the play waits for the FW to come back INTO opnsense_firmware_target.
+# Plugins: install only what is missing; the module reads the job log — the backend reports
+# "done" even when it REFUSED (a fresh 26.7.0 nano needs the point update first) and the module
+# fails loudly with the reason instead of silently continuing.
 
-- name: Firmware | Check for updates
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/core/firmware/check"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: 200
+- name: "Firmware | Check pending updates (report only — no reboot)"
+  by_systems.opnsense.opnsense_firmware:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: updated
+    check_timeout: 120
+  check_mode: true
+  register: opnsense_fw_pending
   delegate_to: localhost
   become: false
   tags: [firmware]
 
-- name: Firmware | Wait for the async check to complete
-  # The check runs in the background; reading status too early returns a stale
-  # value (often a transient 'none'). Poll the check log until it reports DONE.
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/core/firmware/upgradestatus"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    status_code: 200
-  register: opnsense_fw_check
-  until: (opnsense_fw_check.json.status | default('')) == 'done'
-  retries: 12
-  delay: 5
-  delegate_to: localhost
-  become: false
-  tags: [firmware]
-
-- name: Firmware | Read resolved status (pending version / reboot)
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/core/firmware/status"
-    method: GET
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    status_code: 200
-  register: opnsense_fw_status
-  check_mode: false   # read-only GET — must also run under --check
-  delegate_to: localhost
-  become: false
-  tags: [firmware]
-
-- name: "Firmware | Apply package updates (reboots) — target {{ opnsense_firmware_target }}"
-  # status=='update' => point-release package updates => /update (NOT /upgrade,
-  # which is for major version jumps and no-ops here with "no packages to fetch").
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/core/firmware/update"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: 200
-  when:
-    - opnsense_fw_status.json.status | default('') == 'update'
-    - opnsense_firmware_upgrade | bool
-  delegate_to: localhost
-  become: false
-  tags: [firmware]
-
-- name: Firmware | Major version upgrade (reboots)
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/core/firmware/upgrade"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: 200
-  when:
-    - opnsense_fw_status.json.status | default('') == 'upgrade'
-    - opnsense_firmware_upgrade | bool
-  delegate_to: localhost
-  become: false
-  tags: [firmware]
-
-- name: Firmware | Wait for FW to reboot INTO {{ opnsense_firmware_target }}
-  # Must wait for the NEW version, not just any 200 (the FW is still up for a few
-  # seconds after /update before it reboots). failed_when:false tolerates the
-  # connection errors while it is rebooting.
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/core/firmware/status"
-    method: GET
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-  register: opnsense_fw_back
-  until: opnsense_firmware_target in (opnsense_fw_back.json.product_version | default(''))
-  retries: 50
-  delay: 30
-  failed_when: false
-  changed_when: false
-  when:
-    - opnsense_firmware_target | length > 0   # per-env catalog value; empty = no version-gated wait
-    - opnsense_firmware_upgrade | bool
-    - opnsense_fw_status.json.status | default('') in ['update', 'upgrade']
-  delegate_to: localhost
-  become: false
-  tags: [firmware]
-
-# --- Plugins (idempotent: install only what's missing) ---
-
-- name: Firmware | Read installed packages
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/core/firmware/info"
-    method: GET
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    status_code: 200
-  register: opnsense_fw_info
-  check_mode: false   # read-only GET — must also run under --check
-  # OPNsense 26.7.0 corrupts large (>64 KiB) API responses at a buffer boundary
-  # (firmware/info is ~350 KiB): the body arrives truncated/garbled and the JSON
-  # parse fails. The corruption point varies per request, so retry; if it never
-  # parses, fall back to installing every catalog plugin (pkg install is a no-op
-  # for an already-installed package — still idempotent, only `changed` is coarser).
-  until: opnsense_fw_info.status | default(0) == 200 and opnsense_fw_info.json.package is defined
-  retries: 5
-  delay: 3
-  failed_when: false
-  delegate_to: localhost
-  become: false
-  tags: [firmware, plugins]
-
-- name: Firmware | Package list unreadable — falling back to install-all (idempotent at pkg level)
+- name: "Firmware | Report what is pending and whether the window is open"
   ansible.builtin.debug:
     msg: >-
-      core/firmware/info could not be parsed after retries ({{ opnsense_fw_info.msg | default('') | truncate(90) }});
-      every catalog plugin will be (re)requested — pkg skips the ones already installed.
-  when: opnsense_fw_info.json.package is not defined
-  tags: [firmware, plugins]
+      status={{ opnsense_fw_pending.diff.before.status | default('?') }}
+      product_version={{ opnsense_fw_pending.diff.before.product_version | default('?') }}
+      target={{ opnsense_firmware_target | default('') or 'none' }}
+      apply={{ opnsense_firmware_upgrade | bool }}
+  tags: [firmware]
 
-- name: Firmware | Build set of installed package names
-  ansible.builtin.set_fact:
-    opnsense_installed_pkgs: >-
-      {{ (opnsense_fw_info.json.package | default([])
-          | selectattr('installed', 'defined')
-          | selectattr('installed', 'equalto', '1')
-          | map(attribute='name') | list)
-         if (opnsense_fw_info.json.package is defined) else [] }}
+- name: "Firmware | Apply the pending update/upgrade and wait for the reboot INTO {{ opnsense_firmware_target | default('') or 'any version' }}"
+  by_systems.opnsense.opnsense_firmware:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: "{{ 'upgraded' if (opnsense_fw_pending.diff.before.status | default('') == 'upgrade') else 'updated' }}"
+    target: "{{ opnsense_firmware_target | default('') or omit }}"
+    check_timeout: 120
+    wait_timeout: 1500
+  when:
+    - opnsense_firmware_upgrade | bool
+    - opnsense_fw_pending.diff.before.status | default('') in ['update', 'upgrade']
   delegate_to: localhost
   become: false
-  tags: [firmware, plugins]
+  tags: [firmware]
 
-- name: Firmware | Install missing plugins (sequentially, wait for each)
-  ansible.builtin.include_tasks: install_plugin.yml
-  loop: "{{ opnsense_plugins | difference(opnsense_installed_pkgs) }}"
-  loop_control:
-    loop_var: plugin_name
+# --- Plugins (idempotent: the module reads the installed state itself) ---
+- name: "Firmware | Ensure catalog plugins are installed"
+  by_systems.opnsense.opnsense_plugin:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ item }}"
+    state: present
+    wait: true
+    timeout: 300
+  loop: "{{ opnsense_plugins }}"
+  delegate_to: localhost
+  become: false
   tags: [firmware, plugins]

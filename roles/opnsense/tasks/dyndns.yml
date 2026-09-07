@@ -101,20 +101,20 @@
   loop: "{{ opnsense_dyndns_accounts }}"
   loop_control:
     label: "{{ item.description }}"
+  register: opnsense_ddns_accounts_result
   delegate_to: localhost
   become: false
   tags: [dyndns, dns]
 
-- name: "DynDNS | Restart os-ddclient so it publishes the active-WAN IP immediately"
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/dyndns/service/restart"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    status_code: 200
+- name: "DynDNS | Restart os-ddclient so it publishes the active-WAN IP immediately"  # noqa: no-handler
+  by_systems.opnsense.opnsense_ddns_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: restarted
+  when: opnsense_ddns_accounts_result is changed
   delegate_to: localhost
   become: false
-  changed_when: false
   tags: [dyndns, dns]
