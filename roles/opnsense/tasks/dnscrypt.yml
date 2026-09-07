@@ -1,0 +1,55 @@
+---
+# dnscrypt-proxy (os-dnscrypt-proxy) — the encrypted upstream of the DNS chain:
+#   AdGuard (clients) -> Unbound (:53) -> dnscrypt-proxy (loopback :53531) -> DoH/DNSCrypt upstream
+#
+# Contract: by_systems.opnsense modules (lib-opnsense underneath) driven by the catalog key
+# opn_dnscrypt_proxy (general block + serverlist). `serverlist` is a free-form CSVListField on
+# the API (server NAMES from the public-resolvers list the daemon downloads; unknown names are
+# simply ignored by the daemon, not rejected by the API) — one pass converges everything.
+
+- name: DNS-crypt | Ensure dnscrypt-proxy general settings match the catalog (listeners, filters, cache)
+  by_systems.opnsense.opnsense_dnscrypt_settings:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    enabled: "{{ opn_dnscrypt_proxy.enabled | default(true) | bool }}"
+    listen_addresses: "{{ opn_dnscrypt_proxy.general.listen_addresses }}"
+    ipv4_servers: "{{ opn_dnscrypt_proxy.general.ipv4_servers | default('1') | bool }}"
+    ipv6_servers: "{{ opn_dnscrypt_proxy.general.ipv6_servers | default('0') | bool }}"
+    dnscrypt_servers: "{{ opn_dnscrypt_proxy.general.dnscrypt_servers | default('1') | bool }}"
+    doh_servers: "{{ opn_dnscrypt_proxy.general.doh_servers | default('1') | bool }}"
+    odoh_servers: "{{ opn_dnscrypt_proxy.general.odoh_servers | default('0') | bool }}"
+    require_dnssec: "{{ opn_dnscrypt_proxy.general.require_dnssec | default('0') | bool }}"
+    require_nolog: "{{ opn_dnscrypt_proxy.general.require_nolog | default('1') | bool }}"
+    require_nofilter: "{{ opn_dnscrypt_proxy.general.require_nofilter | default('0') | bool }}"
+    force_tcp: "{{ opn_dnscrypt_proxy.general.force_tcp | default('0') | bool }}"
+    cache: "{{ opn_dnscrypt_proxy.general.cache | default('1') | bool }}"
+    cache_size: "{{ opn_dnscrypt_proxy.general.cache_size | default('512') | string }}"
+    cache_min_ttl: "{{ opn_dnscrypt_proxy.general.cache_min_ttl | default('600') | string }}"
+    cache_max_ttl: "{{ opn_dnscrypt_proxy.general.cache_max_ttl | default('86400') | string }}"
+    cache_neg_min_ttl: "{{ opn_dnscrypt_proxy.general.cache_neg_min_ttl | default('60') | string }}"
+    cache_neg_max_ttl: "{{ opn_dnscrypt_proxy.general.cache_neg_max_ttl | default('600') | string }}"
+    fallback_resolver: "{{ opn_dnscrypt_proxy.general.fallback_resolver | default('9.9.9.9:53') }}"
+    timeout: "{{ opn_dnscrypt_proxy.general.timeout | default('2500') | string }}"
+    keepalive: "{{ opn_dnscrypt_proxy.general.keepalive | default('30') | string }}"
+    cert_refresh_delay: "{{ opn_dnscrypt_proxy.general.cert_refresh_delay | default('240') | string }}"
+    query_logs: "{{ opn_dnscrypt_proxy.general.query_logs | default('0') | bool }}"
+    block_ipv6: "{{ opn_dnscrypt_proxy.general.block_ipv6 | default('0') | bool }}"
+    serverlist: "{{ opn_dnscrypt_proxy.serverlist | default([]) }}"
+  delegate_to: localhost
+  become: false
+  tags: [dns, dnscrypt]
+
+- name: DNS-crypt | Ensure the dnscrypt-proxy daemon is {{ opn_dnscrypt_proxy.service_state | default('running') }}
+  by_systems.opnsense.opnsense_dnscrypt_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: "{{ opn_dnscrypt_proxy.service_state | default('running') }}"
+  delegate_to: localhost
+  become: false
+  tags: [dns, dnscrypt]
