@@ -41,19 +41,15 @@
   become: false
   tags: [services, crowdsec]
 
-- name: Services | Reconfigure NetFlow / Insight reporting
-  # diagnostics/netflow has no lib manager yet (NetflowSettingsManager — #301 / lib #97).
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/diagnostics/netflow/reconfigure"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: [200, 400]
-  changed_when: false
+- name: Services | Reconfigure NetFlow / Insight reporting (exporter config is seed-owned)
+  by_systems.opnsense.opnsense_netflow_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: reconfigured
+  changed_when: false   # a reconfigure is not a config change; the exporter stays active
   delegate_to: localhost
   become: false
   tags: [services, netflow]

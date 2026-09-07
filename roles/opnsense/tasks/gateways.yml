@@ -2,20 +2,18 @@
 # WAN gateway monitoring — Proximus DYNAMIC gateways (PPPoE v4 + DHCP6-PD v6).
 # Per ADR services/0008: gateways are API-managed, not the seed.
 #
-# These are dynamic gateways, so neither collection module can manage them:
-#   - ansibleguy.opnsense.gateway rejects `gateway: dynamic`
-#   - by_systems.opnsense.opnsense_rt_gateway (lib RtGatewayManager) rejects the
-#     DHCP6 gateway's empty `gateway` field (lib gap — tracked separately)
-# So we use the uri get->set pattern (same as rules.yml). Only `interface` and
-# `ipprotocol` are enum dicts to flatten; everything else is a plain string. The
-# set runs ONLY when the live monitor differs (idempotent).
+# Contract: by_systems.opnsense.opnsense_rt_gateway (lib RtGatewayManager — dynamic gateways
+# carry no static address and are matched by NAME; `gateway` is omitted). A dynamic gateway
+# only exists while its session is up (the test FW keeps Proximus administratively down), so
+# a read-only lookup filters the ones the firewall has and the interface/ipprotocol come from
+# that row — never guessed.
 #
-# Why a custom monitor: the Proximus PPPoE/DHCP6 peers don't answer ICMP, so we
-# monitor an external host. The v6 monitor MUST be reachable over Proximus v6 —
-# Quad9 v6 (2620:fe::fe) does NOT route from Proximus (100% loss) -> false
-# gateway-down -> LAN v6 drops (issue #138). Google v6 is reachable.
+# Why a custom monitor: the Proximus PPPoE/DHCP6 peers don't answer ICMP, so we monitor an
+# external host. The v6 monitor MUST be reachable over Proximus v6 — Quad9 v6 (2620:fe::fe)
+# does NOT route from Proximus (100% loss) -> false gateway-down -> LAN v6 drops (issue #138).
+# Google v6 is reachable.
 
-- name: Gateways | Fetch routing gateways (uuid + current monitor)
+- name: Gateways | Fetch routing gateways (read-only lookup — which dynamic ones exist)
   ansible.builtin.uri:
     url: "{{ opnsense_api_url }}/api/routing/settings/searchGateway"
     method: GET
@@ -30,78 +28,28 @@
   become: false
   tags: [gateway, network]
 
-- name: Gateways | Desired monitors + name->uuid map
+- name: Gateways | Desired monitors for the Proximus dynamic gateways
   ansible.builtin.set_fact:
-    opnsense_proximus_gateways:
-      - {name: "WAN_PROXIMUS_PPPOE", monitor: "{{ opnsense_proximus_monitor_v4 }}"}
-      - {name: "WAN_PROXIMUS_DHCP6", monitor: "{{ opnsense_proximus_monitor_v6 }}"}
-    opnsense_rt_gw_uuid: >-
-      {{ dict(opnsense_rt_gw_search.json.rows | map(attribute='name')
-              | zip(opnsense_rt_gw_search.json.rows | map(attribute='uuid'))) }}
+    opnsense_proximus_monitors:
+      WAN_PROXIMUS_PPPOE: "{{ opnsense_proximus_monitor_v4 }}"
+      WAN_PROXIMUS_DHCP6: "{{ opnsense_proximus_monitor_v6 }}"
   tags: [gateway, network]
 
-- name: Gateways | Read each Proximus dynamic gateway (full item)
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/routing/settings/getGateway/{{ opnsense_rt_gw_uuid[item.name] }}"
-    method: GET
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    status_code: 200
-  register: opnsense_rt_gw_items
-  check_mode: false   # read-only GET — must also run under --check
-  loop: "{{ opnsense_proximus_gateways }}"
+- name: Gateways | Pin the monitor of each Proximus dynamic gateway the firewall has
+  by_systems.opnsense.opnsense_rt_gateway:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ item.name }}"
+    interface: "{{ item.interface }}"
+    ipprotocol: "{{ item.ipprotocol }}"
+    monitor: "{{ opnsense_proximus_monitors[item.name] }}"
+    state: present
+  loop: "{{ opnsense_rt_gw_search.json.rows | selectattr('name', 'in', opnsense_proximus_monitors.keys() | list) | list }}"
   loop_control:
-    label: "{{ item.name }}"
-  # A dynamic gateway only exists while its session is up (the test FW keeps Proximus
-  # administratively down) — skip what the firewall does not have instead of KeyError.
-  when: item.name in opnsense_rt_gw_uuid
-  delegate_to: localhost
-  become: false
-  tags: [gateway, network]
-
-- name: Gateways | Set Proximus gateway monitor when it differs
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/routing/settings/setGateway/{{ opnsense_rt_gw_uuid[item.item.name] }}"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body:
-      gateway_item: >-
-        {{ item.json.gateway_item | combine({
-             'interface': (item.json.gateway_item.interface | dict2items | selectattr('value.selected') | map(attribute='key') | first),
-             'ipprotocol': (item.json.gateway_item.ipprotocol | dict2items | selectattr('value.selected') | map(attribute='key') | first),
-             'monitor': item.item.monitor
-           }) }}
-    status_code: 200
-  loop: "{{ opnsense_rt_gw_items.results }}"
-  loop_control:
-    label: "{{ item.item.name }} -> {{ item.item.monitor }}"
-  when:
-    - item is not skipped
-    - item.json is defined
-    - item.json.gateway_item.monitor != item.item.monitor
-  register: opnsense_rt_gw_set
-  delegate_to: localhost
-  become: false
-  tags: [gateway, network]
-
-- name: Gateways | Apply routing changes (reconfigure)  # noqa: no-handler
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/routing/settings/reconfigure"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: 200
-  when: opnsense_rt_gw_set is changed
+    label: "{{ item.name }} -> {{ opnsense_proximus_monitors[item.name] }}"
   delegate_to: localhost
   become: false
   tags: [gateway, network]

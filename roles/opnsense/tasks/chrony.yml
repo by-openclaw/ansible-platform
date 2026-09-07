@@ -1,7 +1,7 @@
 ---
 # Chrony (os-chrony) — THE time sync; the base ntpd is retired (see tasks/_archive/ntp.yml).
 # Contract: by_systems.opnsense modules (lib-opnsense underneath). Chrony REPLACES ntpd:
-# we enable chrony, then stop the legacy daemon so the two don't both bind :123.
+# we enable chrony, then keep the legacy daemon stopped (core service) so the two don't both bind :123.
 # Serves NTP to opnsense_chrony_allowed_networks (empty list = client-only).
 
 - name: Chrony | Ensure chronyd settings match the catalog (peers, served networks)
@@ -36,21 +36,15 @@
   become: false
   tags: [ntp, chrony]
 
-- name: Chrony | Stop legacy ntpd (chrony owns time sync now)
-  # core/service has no lib manager yet (CoreServiceManager — ansible-platform #301 / lib #97);
-  # a stop is idempotent on an already-stopped daemon.
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/core/service/stop/ntpd"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: [200, 400, 404]
-  failed_when: false
-  changed_when: false
+- name: Chrony | Ensure the legacy ntpd is stopped (chrony owns time sync now)
+  by_systems.opnsense.opnsense_core_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: ntpd
+    state: stopped
   delegate_to: localhost
   become: false
   tags: [ntp, chrony]
