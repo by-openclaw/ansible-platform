@@ -2136,3 +2136,12 @@ opn_dnscrypt_proxy:
 # Test FW API token: read from the controller secret file (also mirrored to Vault
 # secret/test/opnsense/api). Avoids the Vault delegate+sudo+jump chain for test runs.
 opnsense_api_creds_local_file: "{{ lookup('env','HOME') }}/.openclaw/workspace/infra/secrets/fabric/net-opnsense-test-vm-opns-test-01.json"
+
+# --- opnsense_api_bootstrap (playbooks/opnsense-api-bootstrap.yml) -----------
+# Genesis = the ONE seeded break-glass credential (oob-admin, rendered into the
+# seed from this file's key/secret). The role mints svc-ansible's token from it
+# and stores it at secret/test/opnsense/api; the DR mirror refreshes the
+# local fast-path file opnsense_api_creds reads (same file, so a rotate after a
+# reseed is picked up by every FW play without manual steps).
+opnsense_api_bootstrap_genesis_file: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric/net-opnsense-test-oob-admin.json"
+opnsense_api_bootstrap_collect_file: "{{ opnsense_api_creds_local_file }}"

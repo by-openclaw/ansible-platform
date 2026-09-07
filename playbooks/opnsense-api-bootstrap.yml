@@ -1,0 +1,48 @@
+---
+# ==============================================================================
+# OPNsense — bootstrap the svc-ansible API token through the MVC API (get-or-mint)
+#
+# The seed carries NO svc-ansible API key by design. This play mints it from the
+# ONE seeded break-glass credential (oob-admin = genesis) and stores it in Vault
+# at secret/{platform_env}/opnsense/api — exactly what roles/opnsense_api_creds
+# reads at the start of every FW play. Idempotent: reuse (verified) / mint /
+# rotate-when-stale (after a rebuild or reseed). --check never mints.
+#
+#   ansible-playbook -i inventories/test playbooks/opnsense-api-bootstrap.yml
+#   ansible-playbook -i inventories/prod playbooks/opnsense-api-bootstrap.yml
+#
+# Vars (inventory group_vars/opnsense.yml, or -e):
+#   opnsense_api_bootstrap_genesis_file   break-glass admin creds file (fields key/secret)
+#   opnsense_api_bootstrap_collect_file   0600 DR mirror ("" to skip) — point it at the
+#                                         opnsense_api_creds_local_file for the env so the
+#                                         fast-path file is refreshed after a rotate
+# ==============================================================================
+- name: OPNsense — svc-ansible API token bootstrap (MVC → Vault)
+  hosts: opnsense
+  gather_facts: false
+  roles:
+    - role: opnsense_api_bootstrap
+  post_tasks:
+    - name: "Bootstrap | Verify the published token against the FW (status only)"
+      ansible.builtin.uri:
+        url: "https://{{ opnsense_api_bootstrap_host }}:{{ opnsense_api_bootstrap_port }}/api/core/firmware/status"
+        method: GET
+        url_username: "{{ opn_key }}"
+        url_password: "{{ opn_secret }}"
+        force_basic_auth: true
+        validate_certs: "{{ opnsense_api_bootstrap_validate_certs }}"
+        status_code: [200]
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      register: opnsense_api_bootstrap_final_probe
+      no_log: true
+      when: opn_key is defined
+
+    - name: "Bootstrap | Result"
+      ansible.builtin.debug:
+        msg: >-
+          {{ opnsense_api_bootstrap_host }}: token
+          {{ 'MINTED/ROTATED' if (opnsense_api_bootstrap_minted | default(false)) else 'reused' }}
+          — verified HTTP {{ opnsense_api_bootstrap_final_probe.status | default('n/a (check mode / absent)') }}
+          at secret/{{ opnsense_api_bootstrap_vault_path }}
