@@ -21,10 +21,6 @@
   become: false
   vars:
     ansible_python_interpreter: /usr/bin/python3
-  pre_tasks:
-    - name: "FW API credentials from Vault"
-      ansible.builtin.include_role:
-        name: opnsense_api_creds
   tasks:
     - name: Tunnel | Kill any stale tunnel on port 8443
       ansible.builtin.shell:
@@ -123,6 +119,8 @@
     - name: "FW API credentials (Vault / local fast-path) on the firewall host"
       ansible.builtin.include_role:
         name: opnsense_api_creds
+        apply:
+          tags: [always]   # inner tasks must run under any --tags subset (e.g. --tags firewall)
       tags: always
   roles:
     - role: opnsense
