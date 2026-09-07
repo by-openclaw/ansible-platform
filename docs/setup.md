@@ -138,7 +138,8 @@ Every Ansible task against OPNsense **must be idempotent**. The `by_systems.opns
 
 - Use `state: present` / `state: absent` — never raw API calls in playbooks (`uri` only for read-only lookups/probes where no module exists)
 - No `shell:` or `command:` tasks for OPNsense config — always use a collection module
-- Ownership split: the **seed** owns L2/L3 topology, system identity, interface settings and gateways (no MVC setter for interface addressing); **Ansible** owns every MVC-managed service (rules, aliases, NAT, DNS, DHCP, syslog, chrony, monit, …) from the catalog in `group_vars/opnsense.yml`. Retired duplicates: `roles/opnsense/tasks/_archive/`, `playbooks/_archive/`.
+- Ownership split: the **seed** owns L2/L3 topology, system identity, interface settings, gateways and the NetFlow exporter (no MVC setter for interface addressing); **Ansible** owns every MVC-managed service through the catalog consumers in `roles/opnsense/tasks/` — firmware/plugins, dynamic-gateway monitors, dnscrypt-proxy, Unbound, DynDNS, chrony, IDS, mDNS repeater, Kea v4/v6 + radvd + Dnsmasq, lldpd, aliases/rules/NAT, QEMU agent + CrowdSec + NetFlow reconfigure, Monit, syslog. Catalog → PR → `ansible-playbook` is the only way state reaches a firewall (test FW included); a knob the catalog does not manage is never touched by hand.
+- Firmware updates/upgrades are a deliberate per-env window (`--tags firmware -e opnsense_firmware_upgrade=true -e opnsense_firmware_target=<version>`, PVE snapshot first); a fresh 26.7.0 nano refuses every plugin install until its point update.
 
 ## 8. Running Playbooks
 
@@ -163,7 +164,7 @@ ansible-playbook -i inventories/<env> playbooks/opnsense.yml --tags firewall
 
 ```bash
 # Functional health gate (SVC-51: must be green twice after seed + Ansible)
-scripts/fw_verify_health.py --secret-file ~/.openclaw/workspace/infra/secrets/fabric/net-opnsense-<env>-svc-ansible.json --expect-wan2
+scripts/fw_verify_health.py --secret-file ~/.openclaw/workspace/infra/secrets/fabric/net-opnsense-<env>-svc-ansible.json --expect-wan2   # test FW: add --no-proximus (single PPPoE account stays down there)
 
 # Hardware drift gate for the FW VM (seed pipeline, read-only)
 python3 ../infra-terraform-proxmox/modules/vm-opnsense/seed/recreate-and-seed.py vm-opns-01 --check
