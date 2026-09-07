@@ -70,3 +70,10 @@ the FW needs no SSH/Python for this role. Vault auth = `ansible-deploy` AppRole
 
 > Uses `ansible.builtin.uri` for the MVC calls (consistent with `roles/opnsense`).
 > Migrates to the lib-opnsense Ansible collection when the OPNsense lib-loop lands.
+
+## Forced rotation (SEC-09)
+
+```bash
+# rotate even though the current token works (schedule, or after an exposure)
+ansible-playbook -i inventories/<env> playbooks/opnsense-api-bootstrap.yml -e opnsense_api_bootstrap_force_rotate=true
+```
