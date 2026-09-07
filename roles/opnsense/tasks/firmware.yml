@@ -51,11 +51,12 @@
     validate_certs: false
     status_code: 200
   register: opnsense_fw_status
+  check_mode: false   # read-only GET — must also run under --check
   delegate_to: localhost
   become: false
   tags: [firmware]
 
-- name: Firmware | Apply package updates to {{ opnsense_firmware_target }} (reboots)
+- name: "Firmware | Apply package updates (reboots) — target {{ opnsense_firmware_target }}"
   # status=='update' => point-release package updates => /update (NOT /upgrade,
   # which is for major version jumps and no-ops here with "no packages to fetch").
   ansible.builtin.uri:
@@ -111,6 +112,7 @@
   failed_when: false
   changed_when: false
   when:
+    - opnsense_firmware_target | length > 0   # per-env catalog value; empty = no version-gated wait
     - opnsense_firmware_upgrade | bool
     - opnsense_fw_status.json.status | default('') in ['update', 'upgrade']
   delegate_to: localhost
@@ -129,17 +131,36 @@
     validate_certs: false
     status_code: 200
   register: opnsense_fw_info
+  check_mode: false   # read-only GET — must also run under --check
+  # OPNsense 26.7.0 corrupts large (>64 KiB) API responses at a buffer boundary
+  # (firmware/info is ~350 KiB): the body arrives truncated/garbled and the JSON
+  # parse fails. The corruption point varies per request, so retry; if it never
+  # parses, fall back to installing every catalog plugin (pkg install is a no-op
+  # for an already-installed package — still idempotent, only `changed` is coarser).
+  until: opnsense_fw_info.status | default(0) == 200 and opnsense_fw_info.json.package is defined
+  retries: 5
+  delay: 3
+  failed_when: false
   delegate_to: localhost
   become: false
+  tags: [firmware, plugins]
+
+- name: Firmware | Package list unreadable — falling back to install-all (idempotent at pkg level)
+  ansible.builtin.debug:
+    msg: >-
+      core/firmware/info could not be parsed after retries ({{ opnsense_fw_info.msg | default('') | truncate(90) }});
+      every catalog plugin will be (re)requested — pkg skips the ones already installed.
+  when: opnsense_fw_info.json.package is not defined
   tags: [firmware, plugins]
 
 - name: Firmware | Build set of installed package names
   ansible.builtin.set_fact:
     opnsense_installed_pkgs: >-
-      {{ opnsense_fw_info.json.package | default([])
-         | selectattr('installed', 'defined')
-         | selectattr('installed', 'equalto', '1')
-         | map(attribute='name') | list }}
+      {{ (opnsense_fw_info.json.package | default([])
+          | selectattr('installed', 'defined')
+          | selectattr('installed', 'equalto', '1')
+          | map(attribute='name') | list)
+         if (opnsense_fw_info.json.package is defined) else [] }}
   delegate_to: localhost
   become: false
   tags: [firmware, plugins]

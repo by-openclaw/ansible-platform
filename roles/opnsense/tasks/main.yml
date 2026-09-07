@@ -1,38 +1,17 @@
 ---
 # OPNsense role — entry point
-# Collection: ansibleguy.opnsense (v1.2.16)
+# Collections: ansibleguy.opnsense (rules/aliases — ADR-mandated) + by_systems.opnsense
+# (lib-opnsense MVC: NAT, syslog, ...). L2/L3 topology, system identity, interface settings
+# and gateways are SEED-owned (infra-terraform-proxmox modules/vm-opnsense/seed) — see
+# tasks/_archive/README.md for what was retired on 2026-09-07.
 # No shell/command tasks. Every task is idempotent (state: present/absent).
 # API credentials come from vault via group_vars/opnsense.yml.
 # NOTE: include_tasks (not import_tasks) — allows tag-filtered partial runs
-
-- name: Install and enable QEMU guest agent
-  ansible.builtin.include_tasks: qemu-agent.yml
-  tags: [bootstrap, qemu-agent]
-  when: opnsense_install_qemu_agent | default(true) | bool
-
-- name: Include system tasks
-  ansible.builtin.include_tasks: system.yml
-  tags: [system]
-  # hostname/domain/timezone are SEED-owned (build-seed.py renders config.xml from
-  # net-internal-domain.json) — same ownership principle as L2/L3 and firewall
-  # objects. system.yml also uses puzzle.opnsense.system_settings_general, which
-  # rejects this playbook's inline api_* creds (needs an httpapi connection) and
-  # fails the whole untagged run at task 1. Gated OFF by default — issue #51.
-  when: opnsense_manage_system | default(false) | bool
 
 - name: Include firmware (upgrade + plugins) tasks
   ansible.builtin.include_tasks: firmware.yml
   tags: [firmware, plugins]
   when: opnsense_manage_firmware | default(true) | bool
-
-- name: Include interface tasks
-  ansible.builtin.include_tasks: interfaces.yml
-  tags: [interfaces, network]
-
-- name: Include WAN2 (Telenet) tasks
-  ansible.builtin.include_tasks: wan2.yml
-  tags: [wan2, network]
-  when: opnsense_wan2 is defined
 
 - name: Include WAN gateway monitoring tasks
   ansible.builtin.include_tasks: gateways.yml
@@ -47,22 +26,9 @@
   tags: [dyndns, dns]
   when: opnsense_dyndns_accounts | default([]) | length > 0
 
-- name: Include DHCP tasks
-  ansible.builtin.include_tasks: dhcp.yml
-  tags: [dhcp]
-  # STALE old-3-zone model (puzzle DHCP on opt1). Prod DHCP = catalog opn_kea via
-  # the lib path. Gated OFF so an untagged run can't drift prod — see issue #51.
-  when: opnsense_manage_dhcp | default(false) | bool
-
-- name: Include NTP tasks (base ntpd) — only when chrony is NOT used
-  ansible.builtin.include_tasks: ntp.yml
-  tags: [ntp]
-  when: not (opnsense_use_chrony | default(true) | bool)
-
-- name: Include chrony tasks (replaces base ntpd)
+- name: Include chrony tasks (os-chrony is THE time sync; base ntpd is archived)
   ansible.builtin.include_tasks: chrony.yml
   tags: [ntp, chrony]
-  when: opnsense_use_chrony | default(true) | bool
 
 - name: Include LLDP tasks
   ansible.builtin.include_tasks: lldpd.yml
@@ -81,10 +47,10 @@
       or, if a full converge is genuinely intended, re-run with
       -e opn_fw_confirm_full=true after inspecting `--check --diff`.
   when:
-    - (opnsense_manage_aliases | default(true) | bool) or (opnsense_manage_rules | default(true) | bool)
+    - (opnsense_manage_aliases | default(true) | bool) or (opnsense_manage_rules | default(true) | bool) or (opnsense_manage_nat | default(true) | bool)
     - not (opn_fw_only | default([]))
     - not (opn_fw_confirm_full | default(false) | bool)
-  tags: [firewall, aliases, rules]
+  tags: [firewall, aliases, rules, nat]
 
 - name: Include firewall alias tasks
   ansible.builtin.include_tasks: aliases.yml
@@ -103,6 +69,13 @@
   # list and the raw uri calls. Scope with -e opn_fw_only=[...]; an unscoped run
   # converges the WHOLE catalog, so check --diff first.
   when: opnsense_manage_rules | default(true) | bool
+
+- name: Include NAT (DNAT / source NAT) tasks
+  ansible.builtin.include_tasks: nat.yml
+  tags: [firewall, nat, dnat, snat]
+  # Catalog-driven (opn_dnat_rules / opn_snat_rules) through by_systems.opnsense
+  # (lib-opnsense FwDnat/FwSourceNat managers). Same scoping + confirm gate as rules.
+  when: opnsense_manage_nat | default(true) | bool
 
 - name: Include service activation tasks
   ansible.builtin.include_tasks: services.yml

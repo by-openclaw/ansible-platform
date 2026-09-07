@@ -1,24 +1,21 @@
 ---
-# Firewall rules — idempotent via ansibleguy.opnsense collection.
-# Authoritative source: ADR services/0001-opnsense §Phase 2 (Ansible owns
-# everything; collection ansibleguy.opnsense; role ansible-platform/roles/opnsense).
-# Naming: ADR naming/0003-firewall.
+# Firewall rules — catalog-driven, idempotent, lib-first.
 #
-# Data comes from the CATALOG (`opn_filter_rules` in group_vars/opnsense.yml).
-# Previously this file drove the raw `uri` module against the OPNsense REST API
-# and looped a stale six-rule list in role defaults; both are replaced here so
-# the ADR-mandated collection owns the rules and the catalog is the only truth.
+# Data comes from the CATALOG (`opn_filter_rules` in group_vars/opnsense.yml), the
+# single source of truth for every rule (naming/0003). Every catalog item declares
+# its contract module in `ref.ansible_module`; for rules that is
+# by_systems.opnsense.opnsense_fw_filter (lib-opnsense FwFilterManager underneath),
+# matched by `description`. The lib applies the filter after a change, so no
+# separate reload step is needed.
 #
-# `description` is the match key (rule identity), matching how the catalog and
-# lib-opnsense FwFilterManager both identify rules.
+# Interface names in the catalog are logical zone names (mgmt, dmz, svc, ...);
+# OPNsense addresses them by slot (opt2, opt3, ...). opn_interface_map is the
+# translation; a comma-separated list (multi-interface rule) is mapped per element.
 #
 # Scope a single concern with:
-#   -e '{"opn_fw_only": ["PASS DMZ Traefik→SVC CrowdSec LAPI (agent)"]}'
-# Empty (default) = converge the entire catalog.
+#   -e '{"opn_fw_only": ["<rule description>", ...]}'
+# Empty (default) = converge the entire catalog (gated by opn_fw_confirm_full in main.yml).
 
-# --- Catalog guard (naming/0003): aliases mandatory, ipprotocol valid, §1a alias
-# pairs, and dual-stack twins (exempt: opn_single_family_interfaces). Python lint
-# on the controller — files/catalog_lint.py — fails the play with the violation list.
 - name: "Rules | Dump the catalog for the lint"
   ansible.builtin.copy:
     content: "{{ {'aliases': opn_aliases, 'rules': opn_filter_rules, 'single_family_interfaces': opn_single_family_interfaces | default([])} | to_json }}"
@@ -63,23 +60,18 @@
   become: false
   tags: [firewall, rules]
 
-# Interface names in the catalog are logical zone names (dmz, svc, ...); OPNsense
-# addresses them by slot (opt3, opt4, ...). opn_interface_map is the translation,
-# the same one the catalog's own tooling applies.
-- name: "Rules | Ensure firewall rules match the catalog"
-  ansibleguy.opnsense.rule:
-    firewall: "{{ opnsense_firewall }}"
-    api_port: "{{ opnsense_api_port }}"
-    api_key: "{{ opnsense_api_key }}"
-    api_secret: "{{ opnsense_api_secret }}"
-    ssl_verify: false
+- name: "Rules | Ensure firewall rules match the catalog (by_systems.opnsense / lib-opnsense)"
+  by_systems.opnsense.opnsense_fw_filter:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
     description: "{{ item.description }}"
-    match_fields: ['description']
-    sequence: "{{ item.sequence | default(1) }}"
     action: "{{ item.action | default('pass') }}"
-    interface: "{{ [opn_interface_map[item.interface] | default(item.interface)] }}"
+    interface: "{{ item.interface | string | split(',') | map('trim') | map('extract', opnsense_iface_lookup) | join(',') }}"
     direction: "{{ item.direction | default('in') }}"
-    ip_protocol: "{{ item.ipprotocol | default('inet') }}"
+    ipprotocol: "{{ item.ipprotocol | default('inet') }}"
     protocol: "{{ 'any' if (item.protocol | default('any')) == 'any' else (item.protocol | upper) }}"
     source_net: "{{ item.source_net | default('any') }}"
     source_port: "{{ item.source_port | default(omit) }}"
@@ -87,10 +79,16 @@
     destination_port: "{{ item.destination_port | default(omit) }}"
     enabled: "{{ item.enabled | default(true) | bool }}"
     log: "{{ item.log | default(false) | bool }}"
+    quick: "{{ (item.quick | bool) if (item.quick is defined) else omit }}"
+    sequence: "{{ item.sequence | default(omit) }}"
+    source_not: "{{ (item.source_not | bool) if (item.source_not is defined) else omit }}"
+    destination_not: "{{ (item.destination_not | bool) if (item.destination_not is defined) else omit }}"
+    gateway: "{{ item.gateway | default(omit) }}"
     state: "{{ item.state | default('present') }}"
   loop: "{{ opnsense_rules_scoped }}"
   loop_control:
     label: "{{ item.description }}"
+  register: opnsense_rules_apply
   delegate_to: localhost
   become: false
   tags: [firewall, rules]

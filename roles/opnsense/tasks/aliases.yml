@@ -1,18 +1,22 @@
 ---
-# Firewall aliases — idempotent via ansibleguy.opnsense collection.
-# Authoritative source: ADR services/0001-opnsense §Phase 2 (Ansible owns
-# everything; collection ansibleguy.opnsense; role ansible-platform/roles/opnsense).
-# Naming: ADR naming/0003-firewall.
+# Firewall aliases — catalog-driven, idempotent, lib-first.
 #
-# Data comes from the CATALOG (`opn_aliases` in group_vars/opnsense.yml), which is
-# the single source of truth for every alias. It is NOT a standalone list in the
-# role — ADR Phase 2: "Every task file reads its data from a cross-referenced ADR
-# or NetBox — no standalone truth in Ansible vars".
+# Data comes from the CATALOG (`opn_aliases` in group_vars/opnsense.yml), the single
+# source of truth for every alias (naming/0003). Every catalog item declares its
+# contract module in `ref.ansible_module`; for aliases that is
+# by_systems.opnsense.opnsense_fw_alias (lib-opnsense FwAliasManager underneath),
+# which — unlike the previous ansibleguy path — handles network GROUPS (members
+# referenced by name), empty host aliases (e.g. host_internet_request, filled by
+# the IBR service) and check mode without server-side member validation. The lib
+# applies `firewall/alias/reconfigure` itself after a change, so no extra reload.
+#
+# Content: the catalog may give a string or a list; OPNsense stores one entry per
+# line, so lists are joined with "\n". Order in the catalog = apply order (groups
+# are listed after their members).
 #
 # Scope a single concern with:
 #   -e '{"opn_fw_only": ["port_crowdsec_lapi", "host4_crowdsec"]}'
-# so one change never drags unrelated catalog drift onto the live firewall.
-# Empty (default) = converge the entire catalog.
+# Empty (default) = converge the entire catalog (gated by opn_fw_confirm_full in main.yml).
 
 - name: "Aliases | Select the aliases in scope"
   ansible.builtin.set_fact:
@@ -35,38 +39,23 @@
   become: false
   tags: [firewall, aliases]
 
-- name: "Aliases | Ensure firewall aliases exist"
-  ansibleguy.opnsense.alias:
-    firewall: "{{ opnsense_firewall }}"
-    api_port: "{{ opnsense_api_port }}"
-    api_key: "{{ opnsense_api_key }}"
-    api_secret: "{{ opnsense_api_secret }}"
-    ssl_verify: false
+- name: "Aliases | Ensure firewall aliases match the catalog (by_systems.opnsense / lib-opnsense)"
+  by_systems.opnsense.opnsense_fw_alias:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
     name: "{{ item.name }}"
     type: "{{ item.type }}"
-    content: "{{ item.content }}"
+    content: "{{ (item.content | join('\n')) if (item.content is sequence and item.content is not string) else (item.content | default('')) }}"
     description: "{{ item.description | default(omit) }}"
+    enabled: "{{ item.enabled | default(true) | bool }}"
     state: "{{ item.state | default('present') }}"
   loop: "{{ opnsense_aliases_scoped }}"
   loop_control:
     label: "{{ item.name }}"
   register: opnsense_alias_apply
-  delegate_to: localhost
-  become: false
-  tags: [firewall, aliases]
-
-- name: "Aliases | Reconfigure aliases (reload pf tables) when any changed"
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/firewall/alias/reconfigure"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: 200
-  when: opnsense_alias_apply is defined and (opnsense_alias_apply.changed | default(false))
   delegate_to: localhost
   become: false
   tags: [firewall, aliases]

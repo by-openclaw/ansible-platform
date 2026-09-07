@@ -1,13 +1,16 @@
+# Credentials are FACTS published by roles/opnsense_api_creds (Vault secret/test/opnsense/api or the
+# local fast-path file below) at the start of every FW play — never defined here (no duplicate source).
 opn_host: 10.6.239.195
 opn_port: 443
+# --- Dynamic DNS (os-ddclient -> Cloudflare) — per env; see roles/opnsense/tasks/dyndns.yml ---
+opnsense_dyndns_accounts: []   # no public zone for the test env — DynDNS is prod-only
+# OPNsense version this FW is pinned to (firmware.yml waits for it after an update).
+opnsense_firmware_upgrade: false   # apply pending updates (reboot) only when deliberately flipped for a window
+opnsense_firmware_target: "26.7"
 opn_verify_ssl: false
-opn_key: '{{ vault_opn_key }}'
-opn_secret: '{{ vault_opn_secret }}'
 opnsense_host: '{{ opn_host }}'
 opnsense_port: '{{ opn_port }}'
 opnsense_verify_ssl: '{{ opn_verify_ssl }}'
-opnsense_api_key: '{{ opn_key }}'
-opnsense_api_secret: '{{ opn_secret }}'
 # Interface → OPNsense opt-slot map. MUST match the live FW assignment produced
 # by recreate-and-seed.py + the complete-config seed (config.xml from the
 # pre-reseed live state, addressing-rewritten to ADR). That layout is opt2–opt12

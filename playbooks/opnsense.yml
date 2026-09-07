@@ -117,6 +117,13 @@
     opnsense_api_port: "{{ opn_port | default(443) }}"
     # uri-module tasks connection
     opnsense_api_url: "https://{{ opn_host }}:{{ opn_port | default(443) }}"
+  pre_tasks:
+    # Creds must be facts ON THE FW HOST (the tunnel play above runs on localhost,
+    # so its include never reaches this play's host — 401 on the first uri call).
+    - name: "FW API credentials (Vault / local fast-path) on the firewall host"
+      ansible.builtin.include_role:
+        name: opnsense_api_creds
+      tags: always
   roles:
     - role: opnsense
 

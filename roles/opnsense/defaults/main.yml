@@ -18,20 +18,6 @@ opnsense_api_port: "{{ opnsense_port }}"
 # Ansible connection — all collection tasks run locally (API calls, not SSH)
 ansible_python_interpreter: /usr/bin/python3
 
-# System
-opnsense_hostname: "vm-opnsense-01"
-# Search domain — never hardcode a real domain (no-real-domains rule).
-# Real value lives in vault (vault_opnsense_domain) / infra secret net-internal-domain.json.
-opnsense_domain: "{{ vault_opnsense_domain | default('example.local') }}"
-opnsense_timezone: "Europe/Brussels"
-
-# ── L2/L3 ownership ───────────────────────────────────────────────────────────
-# The SEED (config.xml) owns interface assignment + VLANs (no OPNsense API for
-# assignment — ADR services/0008). Leave VLAN management OFF so re-runs don't
-# spawn unassigned orphan VLANs (the live FW had 310/320/330 orphans from this).
-# Only flip true to bootstrap a fresh FW that has NO seed.
-opnsense_manage_vlans: false
-
 # ── Firewall-object ownership (aliases / rules / DHCP) ────────────────────────
 # These objects are owned by the CATALOG (inventories/<env>/group_vars/opnsense.yml
 # → opn_aliases / opn_filter_rules / opn_kea).
@@ -45,19 +31,38 @@ opnsense_manage_vlans: false
 # An UNSCOPED run converges the ENTIRE catalog. Scope a single concern with
 #   -e '{"opn_fw_only": ["<alias name or rule description>", ...]}'
 # and always inspect `--check --diff` before applying.
-#
-# dhcp.yml is still the old puzzle-DHCP-on-opt1 model and stays gated OFF.
+# Interface reference resolution for catalog rules: logical zone names (mgmt, dmz, …)
+# come from opn_interface_map; raw slot identifiers (lan, wan, optN) pass through.
+opnsense_iface_identity:
+  lan: lan
+  wan: wan
+  opt1: opt1
+  opt2: opt2
+  opt3: opt3
+  opt4: opt4
+  opt5: opt5
+  opt6: opt6
+  opt7: opt7
+  opt8: opt8
+  opt9: opt9
+  opt10: opt10
+  opt11: opt11
+  opt12: opt12
+  opt13: opt13
+  opt14: opt14
+  opt15: opt15
+  opt16: opt16
+  opt17: opt17
+  opt18: opt18
+  opt19: opt19
+  opt20: opt20
+opnsense_iface_lookup: "{{ opnsense_iface_identity | combine(opn_interface_map | default({})) }}"
+
 opnsense_manage_aliases: true
 opnsense_manage_rules: true
-opnsense_manage_dhcp: false
-# hostname/domain/timezone are SEED-owned (build-seed.py from net-internal-domain.json).
-# system.yml also uses the puzzle collection (httpapi connection) which is incompatible
-# with the prod playbook's inline api_* creds and fails outright. Gated OFF — issue #51.
-opnsense_manage_system: false
+opnsense_manage_nat: true      # nat.yml — catalog opn_dnat_rules / opn_snat_rules via by_systems.opnsense
 
-# ── Time sync ─────────────────────────────────────────────────────────────────
-# chrony (os-chrony) replaces the base ntpd. chrony.yml enables it and stops ntpd.
-opnsense_use_chrony: true
+# ── Time sync (os-chrony — base ntpd retired, see tasks/_archive) ─────────────────────────────────────────────────────────────────
 # Belgian NTP pool — geographically close stratum servers (FW is in Brussels TZ).
 opnsense_chrony_peers:
   - "0.be.pool.ntp.org"
@@ -97,33 +102,6 @@ opnsense_lldpd_interfaces:
 
 # WAN
 opnsense_wan_interface: "vtnet0"
-opnsense_wan_ip: "10.6.224.106"
-opnsense_wan_prefix: "20"
-opnsense_wan_gateway: "10.6.224.1"
-
-# VLAN interfaces on vtnet1 (trunk)
-opnsense_vlans:
-  - id: 310
-    name: "mgmt"
-    parent: "vtnet1"
-    ip: "10.1.1.1"
-    prefix: "24"
-  - id: 320
-    name: "dmz"
-    parent: "vtnet1"
-    ip: "10.1.2.1"
-    prefix: "24"
-  - id: 330
-    name: "svc"
-    parent: "vtnet1"
-    ip: "10.1.3.1"
-    prefix: "24"
-
-# DHCP (MGMT only)
-opnsense_dhcp_mgmt_enabled: true
-opnsense_dhcp_mgmt_range_start: "10.1.1.100"
-opnsense_dhcp_mgmt_range_end: "10.1.1.199"
-
 # DNS — Unbound in the prod chain: AdGuard -> Unbound(:53) -> dnscrypt-proxy(:53531)
 # Unbound forwards PLAINTEXT to the local dnscrypt-proxy listener (which does the
 # encrypted upstream). Unbound itself does NO DoT — see dns.yml. The old
@@ -137,11 +115,6 @@ opnsense_unbound_dnscrypt_servers:
   - "::1"
   - "127.0.0.1"
 opnsense_unbound_dnscrypt_port: 53531
-
-# NTP
-opnsense_ntp_servers:
-  - "0.pool.ntp.org"
-  - "1.pool.ntp.org"
 
 # ── Monit (os-monit) — monitoring + email alerts via OUR Mailcow ──────────────
 # Sender = the opnsense service mailbox (Vault prod/mail/opnsense, mailbox
@@ -249,8 +222,13 @@ opnsense_proximus_monitor_v4: "9.9.9.9"
 opnsense_proximus_monitor_v6: "2001:4860:4860::8888"
 # Firmware upgrade + plugins (reproducible via roles/opnsense/tasks/firmware.yml,
 # NOT ad-hoc API). 26.1.8+ is required for the MVC gateway/firmware endpoints.
-opnsense_firmware_target: "26.1.9"
-opnsense_firmware_upgrade: true
+# Target OPNsense version is PER ENV (catalog: inventories/<env>/group_vars/opnsense.yml —
+# prod 26.1.9, test 26.7). Empty here = no version-gated reboot wait.
+opnsense_firmware_target: ""
+# Applying pending updates/upgrades (reboots the FW) is a DELIBERATE per-env decision
+# (catalog); never on by default. 26.7.0 -> 26.7.x on the ZFS lab VM lost its console after
+# the reboot (2026-09-07) — understand that before enabling anywhere.
+opnsense_firmware_upgrade: false
 opnsense_plugins:
   - os-acme-client
   - os-chrony
@@ -282,36 +260,6 @@ opnsense_cf_secret: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secre
 opnsense_dyndns_seed_ip: "192.0.2.1"
 opnsense_dyndns_seed_ip6: "2001:db8::1"   # RFC 3849 doc range; ddclient overwrites
 
-opnsense_dyndns_accounts:
-  # Proximus DYNAMIC anchor = `dyn.{{ platform_domain }}` (neutral name, no ISP identity).
-  # Telenet is the static default anchor (the apex {{ platform_domain }}, NOT DynDNS).
-  # Only services explicitly bound to Proximus CNAME to `dyn` (+ outbound PBR).
-  # Dual-stack: one account per family (os-ddclient resolves ONE address each;
-  # record type follows the checkip family).
-  #   checkip 'if'  = Interface [IPv4] -> A   ;  'if6' = Interface [IPv6] -> AAAA (GUA)
-  # Local interface read = reliable (no external HTTP); pins to opt12 (Proximus).
-  # record_type drives the Cloudflare anchor pre-create only.
-  - description: "cloudflare-dyn-proximus"
-    service: cloudflare
-    username: ""                     # empty (no '@') => Cloudflare Bearer-token auth
-    zone: "{{ platform_domain }}"
-    hostnames: "dyn.{{ platform_domain }}"  # Proximus dynamic anchor
-    checkip: "if"
-    interface: "opt12"               # Proximus pppoe0
-    record_type: "A"
-    ttl: 60
-    force_ssl: true
-    enabled: true
-    state: present
-  - description: "cloudflare-dyn-proximus-v6"
-    service: cloudflare
-    username: ""
-    zone: "{{ platform_domain }}"
-    hostnames: "dyn.{{ platform_domain }}"
-    checkip: "if6"                    # Interface [IPv6] -> Proximus GUA on opt12
-    interface: "opt12"
-    record_type: "AAAA"
-    ttl: 60
-    force_ssl: true
-    enabled: true
-    state: present
+# DynDNS accounts are PER ENV (public DNS = prod only): defined in
+# inventories/prod/group_vars/opnsense.yml. Empty here = dyndns.yml skipped.
+opnsense_dyndns_accounts: []

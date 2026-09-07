@@ -25,7 +25,7 @@ pip install ansible ansible-lint
 ansible-galaxy collection install -r requirements.yml
 ```
 
-`requirements.yml` defines all collections including `community.opnsense`.
+`requirements.yml` defines all collections, including the two OPNsense ones: `ansibleguy.opnsense` (firewall rules/aliases — ADR-mandated) and `by_systems.opnsense` (our lib-opnsense-backed MVC modules: NAT, syslog, Kea, users/API keys, …).
 
 ## 2. SSH Configuration
 
@@ -41,7 +41,7 @@ Host opnsense-poc
     ServerAliveInterval 30
 ```
 
-> OPNsense does not have `by-systems` OS user — SSH as `root` for bootstrap, then switch to API-only (`svc-rune`) for all Ansible operations via the OPNsense API (no SSH needed after bootstrap).
+> OPNsense hosts are `connection: local` API targets — no SSH from Ansible. The firewall's identity (users, SSH keys, interfaces, the `oob-admin` break-glass/genesis credential) comes from the **seed** (infra-terraform-proxmox `modules/vm-opnsense/seed`); Ansible talks to the MVC API as `svc-ansible-prod` (naming/0002 §3) with a token it mints itself (§6).
 
 ## 3. Ansible Configuration
 
@@ -49,7 +49,7 @@ Host opnsense-poc
 
 ```ini
 [defaults]
-inventory           = inventories/poc/hosts.yml
+inventory           = inventories/poc/hosts.yml   ; per-env: -i inventories/prod | -i inventories/test
 remote_user         = by-systems
 private_key_file    = ~/.ssh/id_ed25519_rune
 host_key_checking   = False
@@ -63,7 +63,7 @@ become_method = sudo
 become_user   = root
 ```
 
-> For OPNsense targets: `become` is not used — all operations go through the OPNsense REST API via `community.opnsense` modules (token auth, not SSH sudo).
+> For OPNsense targets: `become` is not used — all operations go through the OPNsense REST/MVC API via the `ansibleguy.opnsense` + `by_systems.opnsense` modules (token auth, not SSH sudo). The inventory sets `ansible_connection: local`, `ansible_become: false`, `ansible_python_interpreter: /usr/bin/python3` on the FW host.
 
 ## 4. Sudo Configuration
 
@@ -80,114 +80,98 @@ sudo -l
 
 For OPNsense: no sudo needed — API token auth only.
 
-## 5. Ansible Vault
+## 5. Secrets — HashiCorp Vault is the store
 
-Secrets (API tokens, WireGuard keys) are encrypted with ansible-vault.
+Secrets are **not** kept in ansible-vault files. Every role/play that needs one goes through
+Vault (KV v2, mount `secret`, per-env prefix `{platform_env}/…`):
 
-```bash
-# Create vault password file (never commit this)
-echo "your-vault-password" > ~/.vault_pass
-chmod 600 ~/.vault_pass
+- `roles/vault_login` — authenticates as the `ansible-deploy` AppRole (creds file
+  `secrets/app-vault-approle-ansible-deploy.json`); the retired root token is never used
+  (fails loudly instead of falling back).
+- `roles/vault_secret` — get-or-create ONE KV path (`vault_secret_path` + `vault_secret_init`),
+  read-only when `init` is empty, rotation via `vault_secret_force_fields`.
+- Service-specific readers (e.g. `roles/opnsense_api_creds`) publish the values as facts;
+  nothing is printed (`no_log`), nothing lands in git.
 
-# Copy to infra/secrets as well (source of truth)
-cp ~/.vault_pass /home/by-systems/.openclaw/workspace/infra/secrets/ansible-vault.key
-```
-
-`ansible.cfg` uses vault password file automatically — add to config:
-
-```ini
-[defaults]
-vault_password_file = ~/.vault_pass
-```
-
-**Secret storage path:** `infra/secrets/vault.yml` (ansible-vault encrypted)
-**Future:** migrate to HashiVault when deployed (ADR-0024 — `identity-sync` Ansible role pattern)
-
-### Create/edit vault secrets
-
-```bash
-# Create
-ansible-vault create infra/secrets/vault.yml
-
-# Edit
-ansible-vault edit infra/secrets/vault.yml
-
-# View
-ansible-vault view infra/secrets/vault.yml
-```
+The only secrets allowed outside Vault are Vault's own bootstrap (unseal keys — kept
+off-platform) and the controller's local mirrors under `~/.openclaw/workspace/infra/secrets/`
+(0600, synced by `playbooks/secrets-to-vault.yml`, validated by `playbooks/secrets-validate.yml`).
 
 ## 6. OPNsense API Authentication
 
-The `community.opnsense` collection authenticates via OPNsense API key (not SSH).
+Both OPNsense collections authenticate with an API key (never SSH). The key belongs to the
+contract-named automation account **`svc-ansible-prod`** and is **minted through the MVC API,
+never in the UI and never baked into the seed**:
 
-Create `svc-rune` API key in OPNsense UI:
-- System → Access → Users → `svc-rune` → Edit → API keys → Generate
-
-Store in vault:
-
-```yaml
-# infra/secrets/vault.yml (ansible-vault encrypted)
-opnsense_api_key: "<key>"
-opnsense_api_secret: "<secret>"
-opnsense_host: "10.1.1.1"
+```bash
+# get-or-mint: reuse the token from Vault if it still works, otherwise mint one with the
+# seeded break-glass genesis credential (oob-admin) and store it — also rotates after a reseed
+ansible-playbook -i inventories/<env> playbooks/opnsense-api-bootstrap.yml
 ```
 
-Reference in inventory:
+The token lives in Vault at `secret/{platform_env}/opnsense/api` (fields `key`, `secret`);
+every FW play starts with `roles/opnsense_api_creds`, which reads that path (or the env's
+local fast-path file) and publishes `opn_key` / `opn_secret` / `opnsense_api_key` /
+`opnsense_api_secret`. Nothing is stored in `vault.yml` and nothing is typed into the GUI.
 
 ```yaml
-# inventories/poc/group_vars/opnsense.yml
-opnsense_api_key: "{{ vault_opnsense_api_key }}"
-opnsense_api_secret: "{{ vault_opnsense_api_secret }}"
-opnsense_host: "{{ vault_opnsense_host }}"
+# inventories/<env>/group_vars/opnsense.yml (catalog + connection; no secrets)
+opn_host: 10.6.239.196
+opn_port: 443
+opnsense_api_bootstrap_genesis_file: ".../secrets/fabric/net-opnsense-<env>-oob-admin.json"
 ```
 
 ## 7. Idempotency — ensure() pattern
 
-Every Ansible task against OPNsense **must be idempotent**. The `community.opnsense` modules follow a consistent pattern:
+Every Ansible task against OPNsense **must be idempotent**. The `by_systems.opnsense` + `ansibleguy.opnsense` modules follow a consistent pattern:
 
 ```yaml
-- name: Ensure DHCP server configured on MGMT
-  puzzle.opnsense.dhcpv4_reservation:
-    interface: "opt1"
+- name: Ensure a Kea DHCPv4 reservation (catalog-driven, lib-opnsense underneath)
+  by_systems.opnsense.opnsense_kea4_reservation:
+    host: "{{ opn_host }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    ip_address: "10.1.1.50"
+    hw_address: "bc:24:11:00:00:01"
     state: present
-    # ... params
 ```
 
-- Use `state: present` / `state: absent` — never raw API calls in playbooks
-- No `shell:` or `command:` tasks for OPNsense config — always use the collection module
-- Bootstrap exception: 2 initial API calls (hostname + WAN IP) via `uri` module in `bootstrap.yml` — documented, one-shot, idempotent guard via `changed_when`
+- Use `state: present` / `state: absent` — never raw API calls in playbooks (`uri` only for read-only lookups/probes where no module exists)
+- No `shell:` or `command:` tasks for OPNsense config — always use a collection module
+- Ownership split: the **seed** owns L2/L3 topology, system identity, interface settings and gateways (no MVC setter for interface addressing); **Ansible** owns every MVC-managed service (rules, aliases, NAT, DNS, DHCP, syslog, chrony, monit, …) from the catalog in `group_vars/opnsense.yml`. Retired duplicates: `roles/opnsense/tasks/_archive/`, `playbooks/_archive/`.
 
 ## 8. Running Playbooks
 
 ```bash
 source ~/.venv/ansible/bin/activate
 
-# Full OPNsense config
-ansible-playbook playbooks/opnsense.yml
+# 1) API token (get-or-mint → Vault; rotates itself after a reseed)
+ansible-playbook -i inventories/<env> playbooks/opnsense-api-bootstrap.yml
 
-# Bootstrap only (first boot — sets hostname + WAN IP)
-ansible-playbook playbooks/opnsense-bootstrap.yml
+# 2) Full OPNsense config from the catalog — ALWAYS dry-run first
+ansible-playbook -i inventories/<env> playbooks/opnsense.yml --check --diff -e opn_fw_confirm_full=true
+ansible-playbook -i inventories/<env> playbooks/opnsense.yml -e opn_fw_confirm_full=true
 
-# Dry run
-ansible-playbook playbooks/opnsense.yml --check --diff
+# One concern only (rules / aliases / NAT by description or alias name)
+ansible-playbook -i inventories/<env> playbooks/opnsense.yml -e '{"opn_fw_only": ["<descr>"]}'
 
-# Specific tags
-ansible-playbook playbooks/opnsense.yml --tags wireguard
+# Tag subsets
+ansible-playbook -i inventories/<env> playbooks/opnsense.yml --tags firewall
 ```
 
 ## 9. Verify
 
 ```bash
-# Ping inventory
-ansible all -m ping
+# Functional health gate (SVC-51: must be green twice after seed + Ansible)
+scripts/fw_verify_health.py --secret-file ~/.openclaw/workspace/infra/secrets/fabric/net-opnsense-<env>-svc-ansible.json --expect-wan2
 
-# Check OPNsense API reachable
-ansible-playbook playbooks/opnsense.yml --tags check --check
+# Hardware drift gate for the FW VM (seed pipeline, read-only)
+python3 ../infra-terraform-proxmox/modules/vm-opnsense/seed/recreate-and-seed.py vm-opns-01 --check
 ```
 
 ## References
 
-- Collection docs: <https://docs.ansible.com/ansible/latest/collections/community/opnsense/>
+- Collection docs: <https://github.com/ansibleguy/collection_opnsense> · `by_systems.opnsense` = <https://github.com/by-openclaw/ansible-opnsense> (lib-opnsense)
 - `roles/opnsense/README.md` — role contract and variables
 - ADR-0015: Network/VLAN architecture
 - ADR-0024: Identity provisioning pattern (vault → HashiVault migration path)
