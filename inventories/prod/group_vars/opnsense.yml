@@ -100,6 +100,29 @@ opn_mdns:
   - gaming
   ref:
     adr: infra/0004#§1-zone-taxonomy-mdns-exception
+# --- ACME: the firewall's own TLS certificate (SEC-26/27/33) ------------------------------------
+# Mirrors what the prod FW already carries (account `letsencrypt`, validation `cloudflare-dns`,
+# action `restart-webgui`, certificate fw.<domain>) so the first converge is a NOOP on the objects
+# and only adds what was missing: the auto-renewal CRON (2026-09-09: autoRenewal=1, no cron, the
+# GUI certificate 2 days from expiry). `state: issued` never re-signs an issued certificate;
+# renew deliberately with `--tags acme -e opn_acme_renew=true` (window #307).
+# Cloudflare scoped token + ACME e-mail: Vault prod/cloudflare/by-research-be (playbook pre-play).
+opn_acme:
+  enabled: true
+  environment: ""              # plugin default (= Let's Encrypt production); prod stores the empty value
+  account: {name: letsencrypt, ca: letsencrypt, description: "Let's Encrypt production"}
+  validation: {name: cloudflare-dns, dns_sleep: "25", description: 'Cloudflare DNS-01 (by-research.be)'}
+  action: {name: restart-webgui, description: 'Restart WebGUI after cert issue/renew'}
+  certificates:
+  - name: fw.by-research.be
+    key_length: key_4096
+    renew_interval: "60"
+    description: 'FW WebGUI certificate'
+  ref:
+    adr: security/0004#certificate-strategy
+    lib_manager: AcmeCertificateManager
+    ansible_module: by_systems.opnsense.opnsense_acme_certificate
+
 opn_aliases:
 - name: net4_mgmt
   type: network

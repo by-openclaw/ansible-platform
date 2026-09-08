@@ -37,6 +37,7 @@ converge.
 | `ntp`, `chrony` | `chrony.yml` | `opnsense_chrony_*` | `opnsense_chrony_settings`, `opnsense_chrony_service`, `opnsense_core_service` (legacy `ntpd` stopped) |
 | `ids` | `ids.yml` | `opn_ids` | `opnsense_ids_settings` (mode, interfaces, HOME_NET from the catalog group, EVE → syslog, `mpm_algo`, `detect_profile`), `opnsense_ids_ruleset`, `opnsense_ids_service` |
 | `mdns` | `mdns.yml` | `opn_mdns` | `opnsense_mdnsrepeater_settings`, `opnsense_mdnsrepeater_service` (skips with a note while the plugin is only previewed under `--check`) |
+| `acme`, `certs` | `acme.yml` | `opn_acme` + Vault `prod/cloudflare/<zone>` | `opnsense_acme_settings/_account (registered)/_validation (DNS-01 Cloudflare)/_action (restart WebGUI)/_certificate (`issued` once; `-e opn_acme_renew=true` renews)/_service` |
 | `dhcp`, `kea`, `radvd`, `dnsmasq` | `dhcp.yml` | `opn_kea_dhcp4`, `opn_kea_dhcp6`, `opn_radvd`, `opn_dnsmasq` | `opnsense_kea4/6_settings`, `opnsense_kea4/6_subnet` (with `option_data`), `opnsense_kea_service`, `opnsense_radvd_entry/_service`, `opnsense_dnsmasq_settings/_service` (kept off) |
 | `services`, `lldpd` | `lldpd.yml` | `opnsense_lldpd_*` | `opnsense_lldpd_settings`, `opnsense_lldpd_service` |
 | `firewall`, `aliases` | `aliases.yml` | `opn_aliases` | `opnsense_fw_alias` |
@@ -60,6 +61,12 @@ install_plugin) — superseded by the seed or by the modules above.
   Suricata 8.0.6 with ET Open sits at ~3.9 GiB RSS once loaded: the FW VM profile is **8 GiB**
   (seed `vm.memory`, infra-terraform-proxmox #91); on a 3 GiB VM it is OOM-killed and the catalog
   must keep `opn_ids.enabled: false` until the VM is resized (ansible-platform #310).
+- ACME: the plugin's auto-renewal needs its cron job — `acmeclient/settings` saved through the API with
+  `autoRenewal=1` + service reconfigure creates it (prod had `autoRenewal=1` and NO cron → the GUI
+  certificate ran to 2 days before expiry, 2026-09-09). Issuance = `state: issued` (once; the plugin signs
+  asynchronously — the module waits for the terminal status). The WebGUI binding
+  (`system.webgui.ssl-certref`) has no MVC endpoint and the plugin's `certRefId` is read-only on the
+  API → seed concern (pre-set refid), tracked on #317; prod's GUI already serves the ACME leaf.
 - Kea6 subnets need their interface selected in Kea6 *general* first; Kea options (`option_data`)
   converge sub-key by sub-key (lib-opnsense #104).
 
