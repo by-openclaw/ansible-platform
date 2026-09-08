@@ -1,0 +1,148 @@
+---
+# Prune — remove from the firewall what the catalog no longer declares (SVC-47: live == merged
+# in BOTH directions). Firewall family: aliases, filter rules, DNAT, SNAT.
+#
+# A candidate must (1) carry the catalog naming marker (naming/0003), so seed/built-in/automatic
+# objects never qualify (bogons, sshlockout, virusprot, __*_network, anti-lockout, CrowdSec,
+# RFC4890, "Auto created rule" …), and (2) be absent from the catalog by its match key:
+#   aliases   name         ^(grp|host|host4|host6|net|net4|net6|port)_
+#   rules     description  ^(PASS|BLOCK|REJECT)\s        (automatic rules use other wording)
+#   DNAT      descr        ^DNAT\s      ·   SNAT   description  ^SNAT\s
+# An item the catalog declares with state: absent is NOT a candidate — its own consumer removes it.
+#
+# Always REPORTS the candidates. Deletes only when opn_prune=true (default false) AND the run is
+# unscoped (opn_fw_only empty): a scoped run converges one concern and must never prune.
+# Deletion goes through the same modules as creation (state: absent, lib-first), so --check
+# lists the would-deletes and the lib applies the reload itself.
+
+- name: "Prune | Read the live firewall objects (read-only lookups)"
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/{{ item }}?rowCount=5000"
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  loop:
+    - firewall/alias/searchItem
+    - firewall/filter/searchRule
+    - firewall/d_nat/searchRule
+    - firewall/source_nat/searchRule
+  register: opnsense_prune_live
+  check_mode: false   # read-only GET — must also run under --check
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+- name: "Prune | Candidates = marker-bearing objects the catalog does not declare"
+  ansible.builtin.set_fact:
+    opnsense_prune_aliases: >-
+      {{ opnsense_prune_live.results[0].json.rows
+         | selectattr('name', 'match', '^(grp|host|host4|host6|net|net4|net6|port)_')
+         | rejectattr('name', 'in', opn_aliases | default([]) | map(attribute='name') | list)
+         | map(attribute='name') | list }}
+    opnsense_prune_rules: >-
+      {{ opnsense_prune_live.results[1].json.rows
+         | selectattr('description', 'match', '^(PASS|BLOCK|REJECT)\s')
+         | rejectattr('description', 'in', opn_filter_rules | default([]) | map(attribute='description') | list)
+         | list }}
+    opnsense_prune_dnat: >-
+      {{ opnsense_prune_live.results[2].json.rows
+         | selectattr('descr', 'match', '^DNAT\s')
+         | rejectattr('descr', 'in', opn_dnat_rules | default([]) | map(attribute='descr') | list)
+         | list }}
+    opnsense_prune_snat: >-
+      {{ opnsense_prune_live.results[3].json.rows
+         | selectattr('description', 'match', '^SNAT\s')
+         | rejectattr('description', 'in', opn_snat_rules | default([]) | map(attribute='description') | list)
+         | list }}
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+- name: "Prune | Report"
+  ansible.builtin.debug:
+    msg: >-
+      prune candidates — aliases: {{ opnsense_prune_aliases | join(', ') or 'none' }} |
+      rules: {{ opnsense_prune_rules | map(attribute='description') | join(', ') or 'none' }} |
+      dnat: {{ opnsense_prune_dnat | map(attribute='descr') | join(', ') or 'none' }} |
+      snat: {{ opnsense_prune_snat | map(attribute='description') | join(', ') or 'none' }}
+      ({{ 'DELETING' if (opn_prune | default(false) | bool) else 'report only — set opn_prune=true to delete' }})
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+# Rules first (they may reference the aliases), then NAT, then aliases.
+- name: "Prune | Remove undeclared filter rules"
+  by_systems.opnsense.opnsense_fw_filter:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    description: "{{ item.description }}"
+    interface: "{{ item.interface }}"
+    direction: "{{ item.direction }}"
+    protocol: "{{ item.protocol }}"
+    state: absent
+  loop: "{{ opnsense_prune_rules }}"
+  loop_control:
+    label: "{{ item.description }}"
+  when: opn_prune | default(false) | bool
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+- name: "Prune | Remove undeclared port forwards (DNAT)"
+  by_systems.opnsense.opnsense_fw_dnat:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    descr: "{{ item.descr }}"
+    interface: "{{ item.interface }}"
+    target: "{{ item.target }}"
+    state: absent
+  loop: "{{ opnsense_prune_dnat }}"
+  loop_control:
+    label: "{{ item.descr }}"
+  when: opn_prune | default(false) | bool
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+- name: "Prune | Remove undeclared outbound NAT (SNAT)"
+  by_systems.opnsense.opnsense_fw_source_nat:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    description: "{{ item.description }}"
+    interface: "{{ item.interface }}"
+    source_net: "{{ item.source_net }}"
+    state: absent
+  loop: "{{ opnsense_prune_snat }}"
+  loop_control:
+    label: "{{ item.description }}"
+  when: opn_prune | default(false) | bool
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+- name: "Prune | Remove undeclared aliases"
+  by_systems.opnsense.opnsense_fw_alias:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ opnsense_prune_aliases }}"
+  when: opn_prune | default(false) | bool
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]

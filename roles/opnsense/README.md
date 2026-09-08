@@ -17,6 +17,8 @@ converge.
 - **Catalog → PR → apply is the only way state reaches a firewall** — test FW included. A knob the
   catalog does not manage may not be touched by hand; if a value must be owned, declare it here first
   (default = OPNsense default) so the converge removes any drift.
+- **Both directions:** an unscoped run ends with the prune report (firewall family); `-e opn_prune=true`
+  deletes what the catalog stopped declaring (SVC-47). Other families: #316.
 - **No secrets in the catalog.** The API token is minted by `playbooks/opnsense-api-bootstrap.yml`
   (get-or-mint → Vault `secret/{env}/opnsense/api`) and published by `roles/opnsense_api_creds`;
   Monit's SMTP credentials come from Vault via the playbook's pre-play.
@@ -43,6 +45,7 @@ converge.
 | `services` | `services.yml` | — | `opnsense_qemuguestagent_settings/_service`, `opnsense_crowdsec_service`, `opnsense_netflow_service` (reconfigure only; config is seed-owned) |
 | `services`, `monit` | `monit.yml` | `opnsense_monit_*` + Vault SMTP | `opnsense_monit_settings/_alert/_test/_service` (`ProcessDown` is `type: Custom`) |
 | `syslog` | `syslog.yml` | `opnsense_syslog_*` | `opnsense_syslog_dest` |
+| `firewall`, `prune` | `prune.yml` | `opn_prune` (+ the four object lists) | read-only lookups → marker-bearing aliases/rules/DNAT/SNAT the catalog does not declare: reported always, deleted through the same modules (`state: absent`) only with `-e opn_prune=true` on an unscoped run |
 
 Archived (never delete): `tasks/_archive/` (system, interfaces, wan2, dhcp legacy, ntp, qemu-agent,
 install_plugin) — superseded by the seed or by the modules above.
