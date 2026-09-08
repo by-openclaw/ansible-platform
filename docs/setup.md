@@ -25,7 +25,7 @@ pip install ansible ansible-lint
 ansible-galaxy collection install -r requirements.yml
 ```
 
-`requirements.yml` defines all collections, including the two OPNsense ones: `ansibleguy.opnsense` (firewall rules/aliases — ADR-mandated) and `by_systems.opnsense` (our lib-opnsense-backed MVC modules: NAT, syslog, Kea, users/API keys, …).
+`requirements.yml` pins every collection to an exact version (INF-08); the OPNsense one is `by_systems.opnsense` (our lib-opnsense-backed MVC modules: NAT, syslog, Kea, users/API keys, …).
 
 ## 2. SSH Configuration
 
@@ -63,7 +63,7 @@ become_method = sudo
 become_user   = root
 ```
 
-> For OPNsense targets: `become` is not used — all operations go through the OPNsense REST/MVC API via the `ansibleguy.opnsense` + `by_systems.opnsense` modules (token auth, not SSH sudo). The inventory sets `ansible_connection: local`, `ansible_become: false`, `ansible_python_interpreter: /usr/bin/python3` on the FW host.
+> For OPNsense targets: `become` is not used — all operations go through the OPNsense REST/MVC API via the `by_systems.opnsense` modules (token auth, not SSH sudo). The inventory sets `ansible_connection: local`, `ansible_become: false`, `ansible_python_interpreter: /usr/bin/python3` on the FW host.
 
 ## 4. Sudo Configuration
 
@@ -123,7 +123,7 @@ opnsense_api_bootstrap_genesis_file: ".../secrets/fabric/net-opnsense-<env>-oob-
 
 ## 7. Idempotency — ensure() pattern
 
-Every Ansible task against OPNsense **must be idempotent**. The `by_systems.opnsense` + `ansibleguy.opnsense` modules follow a consistent pattern:
+Every Ansible task against OPNsense **must be idempotent**. The `by_systems.opnsense` modules follow a consistent pattern:
 
 ```yaml
 - name: Ensure a Kea DHCPv4 reservation (catalog-driven, lib-opnsense underneath)
@@ -172,7 +172,7 @@ python3 ../infra-terraform-proxmox/modules/vm-opnsense/seed/recreate-and-seed.py
 
 ## References
 
-- Collection docs: <https://github.com/ansibleguy/collection_opnsense> · `by_systems.opnsense` = <https://github.com/by-openclaw/ansible-opnsense> (lib-opnsense)
+- Collection: `by_systems.opnsense` = <https://github.com/by-openclaw/ansible-opnsense> (lib-opnsense)
 - `roles/opnsense/README.md` — role contract and variables
 - ADR-0015: Network/VLAN architecture
 - ADR-0024: Identity provisioning pattern (vault → HashiVault migration path)
