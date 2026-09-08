@@ -53,3 +53,26 @@
   delegate_to: localhost
   become: false
   tags: [gateway, network]
+
+# --- Static gateways the catalog declares (opn_gateways) ---------------------------------------
+# e.g. the prod FW's OOB address as next hop for prod-only services reached from the test FW.
+- name: Gateways | Ensure the static gateways the catalog declares (opn_gateways)
+  by_systems.opnsense.opnsense_rt_gateway:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ item.name }}"
+    interface: "{{ opnsense_iface_lookup[item.interface] }}"
+    gateway: "{{ item.gateway }}"
+    ipprotocol: "{{ item.ipprotocol | default('inet') }}"
+    monitor_disable: "{{ item.monitor_disable | default(false) | bool }}"
+    disabled: "{{ item.disabled | default(false) | bool }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opn_gateways | default([]) }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.gateway }} ({{ item.interface }})"
+  delegate_to: localhost
+  become: false
+  tags: [gateway, network]

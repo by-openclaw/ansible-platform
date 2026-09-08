@@ -17,6 +17,11 @@
   ansible.builtin.include_tasks: gateways.yml
   tags: [gateway, network]
 
+- name: Include static route tasks (catalog opn_routes — needs the gateways above)
+  ansible.builtin.include_tasks: routes.yml
+  tags: [routes, network]
+  when: opn_routes is defined
+
 - name: Include dnscrypt-proxy tasks (encrypted upstream of the Unbound chain — catalog opn_dnscrypt_proxy)
   ansible.builtin.include_tasks: dnscrypt.yml
   tags: [dns, dnscrypt]

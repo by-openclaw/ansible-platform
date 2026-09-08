@@ -34,6 +34,22 @@ opn_interface_map:
   cctv: opt11
   wan: opt13   # the seed assigns no 'wan' slot — the test FW's live uplink (Telenet); Proximus stays admin-down there
   lan: lan
+# --- Static gateways + routes (catalog-owned, ADR services/0008: gateways are API-managed) ------
+# The test FW reaches PROD-ONLY services through the prod FW's OOB address: Mailcow submission for
+# Monit alerts (SVC-11 — one Mailcow, on prod; 587/465 are deliberately NOT public). One static
+# gateway on the OOB slot + one /32 route here; the matching OOB→mailcow:587 PASS rule lives in
+# the prod catalog (applied in the prod window, #307). Consumers: gateways.yml / routes.yml.
+opn_gateways:
+- name: OOB_FW_PROD
+  interface: lan            # OOB slot on the seed (opn_interface_map.lan)
+  gateway: 10.6.239.196     # prod FW OOB address
+  ipprotocol: inet
+  monitor_disable: true     # the prod FW OOB address is not an ICMP-monitored uplink
+opn_routes:
+- network: 10.1.2.120/32    # vm-mailcow-01 (prod DMZ)
+  gateway: OOB_FW_PROD
+  descr: 'prod mailcow (Monit SMTP submission) via prod FW OOB'
+
 opn_ids:
   # ENABLED 2026-09-08 (ADR services/0006 §1 + services/0010 §1: Suricata alert-only on WAN as the
   # sensor feeding CrowdSec). Suricata 8.0.6 needs ~1.9 GiB RSS; on the 3 GiB nano it was OOM-killed
@@ -1797,6 +1813,13 @@ opn_unbound:
   - grp_net4_internal
   - grp_net6_internal
   host_overrides:
+  # prod-only service the test FW must reach by its asset FQDN (Monit SMTP): same answer as the
+  # prod split-DNS twin; the route to it is opn_routes (prod FW OOB next hop).
+  - hostname: vm-mailcow-01
+    domain: "{{ platform_mail_domain }}"
+    rr: A
+    server: 10.1.2.120
+    description: 'prod mailcow — Monit SMTP submission (asset FQDN, prod split-DNS twin)'
   - hostname: lxc-mgmt-deb13-test-01
     domain: "{{ platform_domain }}"
     rr: A

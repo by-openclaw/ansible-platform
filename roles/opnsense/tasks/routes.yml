@@ -1,0 +1,22 @@
+---
+# Static routes the catalog declares (opn_routes) — by_systems.opnsense.opnsense_rt_route
+# (lib RtRouteManager). `gateway` is the NAME of a gateway (seed WAN gateway or opn_gateways).
+# Apply order: gateways.yml runs before this file (main.yml).
+- name: Routes | Ensure the static routes the catalog declares (opn_routes)
+  by_systems.opnsense.opnsense_rt_route:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    network: "{{ item.network }}"
+    gateway: "{{ item.gateway }}"
+    descr: "{{ item.descr | default('') }}"
+    disabled: "{{ item.disabled | default(false) | bool }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opn_routes | default([]) }}"
+  loop_control:
+    label: "{{ item.network }} via {{ item.gateway }}"
+  delegate_to: localhost
+  become: false
+  tags: [routes, network]

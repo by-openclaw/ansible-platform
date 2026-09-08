@@ -27,7 +27,8 @@ converge.
 | Tag(s) | Task file | Catalog keys | Modules |
 |---|---|---|---|
 | `firmware`, `plugins` | `firmware.yml` | `opnsense_plugins`, `opnsense_firmware_{target,upgrade}` | `opnsense_firmware` (check → report; gated apply + wait for the target version), `opnsense_plugin` (job-log verdict) |
-| `gateway` | `gateways.yml` | `opnsense_proximus_monitor_{v4,v6}` | `opnsense_rt_gateway` on the DYNAMIC Proximus gateways the FW has (read-only lookup first) |
+| `gateway` | `gateways.yml` | `opnsense_proximus_monitor_{v4,v6}`, `opn_gateways` | `opnsense_rt_gateway`: monitors of the DYNAMIC Proximus gateways the FW has (read-only lookup first) + the static gateways the catalog declares (e.g. the prod FW OOB next hop on test) |
+| `routes` | `routes.yml` | `opn_routes` | `opnsense_rt_route` (static routes by gateway NAME; runs after gateways) |
 | `dns`, `dnscrypt` | `dnscrypt.yml` | `opn_dnscrypt_proxy` | `opnsense_dnscrypt_settings` (listeners, filters, serverlist), `opnsense_dnscrypt_service` |
 | `dns`, `unbound` | `dns.yml` | `opnsense_unbound_*` | `opnsense_ub_settings` (enable — a seeded FW ships Unbound off), `opnsense_ub_forward` (catch-all → dnscrypt), `opnsense_ub_dot` (purge), `opnsense_ub_service` |
 | `dyndns` | `dyndns.yml` | `opnsense_dyndns_accounts` | `opnsense_ddns_account`, `opnsense_ddns_service` (restart on change) |
