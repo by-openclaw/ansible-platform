@@ -1,7 +1,7 @@
 ---
 # OPNsense role — entry point
-# Collections: ansibleguy.opnsense (rules/aliases — ADR-mandated) + by_systems.opnsense
-# (lib-opnsense MVC: NAT, syslog, ...). L2/L3 topology, system identity, interface settings
+# Collection: by_systems.opnsense only (lib-opnsense MVC managers for every writer: rules,
+# aliases, NAT, DNS, DHCP, IDS, services, syslog, ...). L2/L3 topology, system identity, interface settings
 # and gateways are SEED-owned (infra-terraform-proxmox modules/vm-opnsense/seed) — see
 # tasks/_archive/README.md for what was retired on 2026-09-07.
 # No shell/command tasks. Every task is idempotent (state: present/absent).
@@ -89,9 +89,9 @@
 - name: Include firewall rule tasks
   ansible.builtin.include_tasks: rules.yml
   tags: [firewall, rules]
-  # Catalog-driven since #161: rules.yml now loops opn_filter_rules through the
-  # ADR-mandated ansibleguy.opnsense collection, replacing both the stale 3-zone
-  # list and the raw uri calls. Scope with -e opn_fw_only=[...]; an unscoped run
+  # Catalog-driven since #161: rules.yml loops opn_filter_rules through
+  # by_systems.opnsense.opnsense_fw_filter (lib FwFilterRuleManager), replacing both
+  # the stale 3-zone list and the raw uri calls. Scope with -e opn_fw_only=[...]; an unscoped run
   # converges the WHOLE catalog, so check --diff first.
   when: opnsense_manage_rules | default(true) | bool
 

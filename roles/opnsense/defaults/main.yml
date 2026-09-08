@@ -10,7 +10,7 @@ opnsense_timeout: 60
 # Post-MGMT-VLAN: set to https://10.1.1.1:443
 opnsense_api_url: "https://{{ opnsense_host }}:{{ opnsense_port }}"
 
-# ansibleguy.opnsense collection connection args
+# API connection args (by_systems.opnsense modules — lib-opnsense underneath)
 # Overridden in playbook vars: firewall=127.0.0.1, api_port=8443 (SSH tunnel)
 opnsense_firewall: "{{ opnsense_host }}"
 opnsense_api_port: "{{ opnsense_port }}"
@@ -23,8 +23,8 @@ ansible_python_interpreter: /usr/bin/python3
 # → opn_aliases / opn_filter_rules / opn_kea).
 #
 # aliases.yml and rules.yml now READ that catalog and apply it through the
-# ADR-mandated ansibleguy.opnsense collection (services/0001 §Phase 2: "Ansible
-# owns everything"). They previously carried the old test-era 3-zone model
+# by_systems.opnsense collection (lib-opnsense managers; services/0001 §Phase 2: "Ansible
+# owns everything" — the ADR text still names ansibleguy, see doc-platform-core #58). They previously carried the old test-era 3-zone model
 # (net_mgmt/dmz/svc, opt1/2/3) and were gated OFF under issue #51 so an untagged
 # run could not drift prod — that migration is done, so they are ON.
 #
@@ -142,7 +142,7 @@ opnsense_monit_processes:
   - {name: "kea-dhcp6", pidfile: "/var/run/kea/kea-dhcp6.kea-dhcp6.pid"}
 
 # Firewall aliases — source of truth for all firewall rules (ADR-0015)
-# content MUST be a list — ansibleguy.opnsense collection iterates it
+# content MUST be a list — the alias module iterates it
 # Names are explicit by context (firewall alias) — no alias_ prefix needed
 opnsense_aliases:
   - name: "net_mgmt"
