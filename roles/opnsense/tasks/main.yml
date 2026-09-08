@@ -115,3 +115,10 @@
 - name: "Syslog | Remote destinations (Loki / promtail)"
   ansible.builtin.include_tasks: syslog.yml
   tags: [syslog, logging]
+
+# Last: what the catalog no longer declares (firewall family). Reports always; deletes with
+# opn_prune=true; never on a scoped run (opn_fw_only) — see prune.yml.
+- name: Include prune tasks (SVC-47 — live == merged both ways)
+  ansible.builtin.include_tasks: prune.yml
+  tags: [firewall, prune]
+  when: not (opn_fw_only | default([]))
