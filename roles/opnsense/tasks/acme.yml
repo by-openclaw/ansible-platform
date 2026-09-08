@@ -1,0 +1,149 @@
+---
+# ACME (os-acme-client) — the firewall's own TLS certificate (WebGUI) issued and renewed from the
+# catalog (SEC-26/27/33): Let's Encrypt, DNS-01 through Cloudflare (scoped token from Vault, handed
+# over by the playbook's pre-play as opnsense_acme_dns), post-issue action "restart WebGUI".
+#
+# Contract: by_systems.opnsense acme modules (lib-opnsense Acme* managers). References between the
+# objects are UUIDs, so the account/validation/action uuids come back from their own ensure calls.
+# `state: issued` signs ONCE (idempotent — an issued certificate is a noop); `-e opn_acme_renew=true`
+# renews deliberately (never idempotent). Settings changes reconfigure the service (acme.sh config +
+# renewal cron) through the lib; the closing service task keeps it running.
+#
+# WebGUI binding: system.webgui.ssl-certref has no MVC endpoint on 26.7 and the plugin's certRefId
+# is read-only on the API (verified). The plugin's import KEEPS an existing trust-store refid that
+# matches the object's certRefId, so the binding is a SEED concern: the seed pre-creates the WebGUI
+# certificate slot (refid) and the ACME certificate object pointing at it; the catalog only issues.
+# A FW whose GUI already serves the ACME leaf (prod) is bound; a seeded-self-signed FW (test) is
+# bound at its next reseed (infra follow-up on #317).
+
+- name: ACME | Require the DNS-01 credentials (set by the vault pre-play)
+  ansible.builtin.assert:
+    that: opnsense_acme_dns is defined
+    fail_msg: >-
+      opnsense_acme_dns not set — run playbooks/opnsense.yml (its vault pre-play reads
+      prod/cloudflare/<zone>), not the role in isolation.
+    quiet: true
+  tags: [acme, certs]
+
+- name: ACME | Ensure the client settings (enable, auto-renewal cron, environment)
+  by_systems.opnsense.opnsense_acme_settings:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    enabled: "{{ opn_acme.enabled | default(true) | bool }}"
+    auto_renewal: true
+    environment: "{{ opn_acme.environment | default('') }}"   # '' = plugin default (production)
+    log_level: "{{ opn_acme.log_level | default('normal') }}"
+    cron: true   # the plugin creates its renewal cron ONLY through fetchCronIntegration (prod had none)
+  delegate_to: localhost
+  become: false
+  tags: [acme, certs]
+
+- name: ACME | Ensure the CA account exists and is registered
+  by_systems.opnsense.opnsense_acme_account:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ opn_acme.account.name }}"
+    email: "{{ opnsense_acme_dns.acme_email }}"
+    ca: "{{ opn_acme.account.ca | default('letsencrypt') }}"
+    description: "{{ opn_acme.account.description | default('catalog (ansible-platform)') }}"
+    enabled: true
+    state: registered
+  register: opnsense_acme_account
+  delegate_to: localhost
+  become: false
+  tags: [acme, certs]
+
+- name: ACME | Ensure the DNS-01 validation method (Cloudflare, scoped token)
+  by_systems.opnsense.opnsense_acme_validation:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ opn_acme.validation.name }}"
+    method: dns01
+    dns_service: dns_cf
+    dns_cf_token: "{{ opnsense_acme_dns.api_token }}"
+    dns_cf_account_id: "{{ opnsense_acme_dns.account_id }}"
+    dns_cf_zone_id: "{{ opnsense_acme_dns.zone_id | default('') }}"
+    dns_sleep: "{{ opn_acme.validation.dns_sleep | default('30') | string }}"
+    description: "{{ opn_acme.validation.description | default('catalog (ansible-platform)') }}"
+    enabled: true
+  register: opnsense_acme_validation
+  no_log: true
+  delegate_to: localhost
+  become: false
+  tags: [acme, certs]
+
+- name: ACME | Ensure the post-issue action (restart the WebGUI)
+  by_systems.opnsense.opnsense_acme_action:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ opn_acme.action.name | default('restart-webgui') }}"
+    type: configd_restart_gui
+    description: "{{ opn_acme.action.description | default('catalog (ansible-platform)') }}"
+    enabled: true
+  register: opnsense_acme_action
+  delegate_to: localhost
+  become: false
+  tags: [acme, certs]
+
+- name: ACME | Ensure each catalog certificate exists and is issued (sign once; renew with -e opn_acme_renew=true)
+  by_systems.opnsense.opnsense_acme_certificate:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ item.name }}"
+    alt_names: "{{ item.alt_names | default([]) | join(',') }}"
+    account: "{{ opnsense_acme_account.uuid }}"
+    validation_method: "{{ opnsense_acme_validation.uuid }}"
+    restart_actions: "{{ opnsense_acme_action.uuid }}"
+    key_length: "{{ item.key_length | default('key_ec256') }}"
+    auto_renewal: true
+    renew_interval: "{{ item.renew_interval | default('30') | string }}"
+    description: "{{ item.description | default('catalog (ansible-platform)') }}"
+    enabled: true
+    state: issued
+    renew: "{{ opn_acme_renew | default(false) | bool }}"
+  loop: "{{ opn_acme.certificates }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: opnsense_acme_certs
+  delegate_to: localhost
+  become: false
+  tags: [acme, certs]
+
+- name: ACME | Ensure the ACME client service is running
+  by_systems.opnsense.opnsense_acme_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: "{{ 'running' if (opn_acme.enabled | default(true) | bool) else 'stopped' }}"
+  delegate_to: localhost
+  become: false
+  tags: [acme, certs]
+
+- name: ACME | Report
+  ansible.builtin.debug:
+    msg: >-
+      account={{ opnsense_acme_account.action }} validation={{ opnsense_acme_validation.action }}
+      action={{ opnsense_acme_action.action }}
+      certificates={{ opnsense_acme_certs.results | map(attribute='item.name')
+                      | zip(opnsense_acme_certs.results | map(attribute='action'))
+                      | map('join', ':') | join(', ') }}
+  delegate_to: localhost
+  become: false
+  tags: [acme, certs]

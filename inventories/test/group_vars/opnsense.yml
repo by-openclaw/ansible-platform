@@ -75,6 +75,27 @@ opn_mdns:
   - gaming
   ref:
     adr: infra/0004#§1-zone-taxonomy-mdns-exception
+# --- ACME: the firewall's own TLS certificate (SEC-26/27/33) ------------------------------------
+# Let's Encrypt via DNS-01 (Cloudflare scoped token from Vault prod/cloudflare/<zone>, read by the
+# playbook's pre-play). Test FW = LE STAGING first (untrusted chain, no rate limits); flip to
+# `environment: prod` once the chain is proven. Consumer: roles/opnsense/tasks/acme.yml.
+# WebGUI binding = seed concern (pre-set refid; certRefId is read-only on the API) — #317.
+opn_acme:
+  enabled: true
+  environment: stg              # LE staging on TEST; prod uses `prod`
+  account: {name: letsencrypt-staging, ca: letsencrypt_test}
+  validation: {name: cloudflare-dns, dns_sleep: "30"}
+  action: {name: restart-webgui}
+  certificates:
+  - name: vm-opns-test-01.test.by-research.be
+    key_length: key_ec256
+    renew_interval: "30"
+    description: 'WebGUI certificate (asset FQDN) — catalog'
+  ref:
+    adr: security/0004#certificate-strategy
+    lib_manager: AcmeCertificateManager
+    ansible_module: by_systems.opnsense.opnsense_acme_certificate
+
 opn_aliases:
 - name: net4_mgmt
   type: network
