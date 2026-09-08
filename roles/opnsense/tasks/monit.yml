@@ -1,8 +1,10 @@
 ---
 # Monit (os-monit) — process-down alerts by e-mail through OUR mail relay.
 # Contract: by_systems.opnsense monit modules (lib-opnsense MonitSettings/Alert/Test/Service
-# managers underneath); each module applies (monit reconfigure) on change. The SMTP settings
-# come from Vault via the playbook's pre-play (opnsense_monitchk_smtp).
+# managers underneath); each module applies (monit reconfigure) on change, and the daemon task
+# at the end keeps Monit RUNNING — the plugin's reconfigure regenerates monitrc, syntax-tests it
+# and only then (re)starts; a refused config answers HTTP 200 `status: failed` (lib #107 raises).
+# The SMTP settings come from Vault via the playbook's pre-play (opnsense_monitchk_smtp).
 
 - name: Monit | Require the SMTP settings (set by the vault pre-play)
   ansible.builtin.assert:
@@ -105,6 +107,18 @@
   loop: "{{ opnsense_monit_processes }}"
   loop_control:
     label: "{{ item.name }}"
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Ensure the Monit daemon is running (config regenerated + syntax-tested by the plugin)
+  by_systems.opnsense.opnsense_monit_daemon:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: running
   delegate_to: localhost
   become: false
   tags: [services, monit]
