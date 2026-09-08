@@ -35,12 +35,11 @@ opn_interface_map:
   wan: opt13   # the seed assigns no 'wan' slot — the test FW's live uplink (Telenet); Proximus stays admin-down there
   lan: lan
 opn_ids:
-  # DISABLED 2026-09-07 (deliberate, reversible): Suricata 8.0.6 on OPNsense 26.7.3 takes ~1.9 GiB RSS
-  # (SIZE 4.3 GiB) with 4 MB of rules on the 3 GiB nano — the kernel OOM-kills it ~60 s after every
-  # start ("failed to reclaim memory", no swap). Settings/rulesets stay managed below; the daemon is
-  # kept stopped until the memory finding is resolved (issue linked from #307). ADR services/0006 §1
-  # still wants alert-only on WAN1 — a hardware/upstream gap, not a catalog change.
-  enabled: false
+  # ENABLED 2026-09-08 (ADR services/0006 §1 + services/0010 §1: Suricata alert-only on WAN as the
+  # sensor feeding CrowdSec). Suricata 8.0.6 needs ~1.9 GiB RSS; on the 3 GiB nano it was OOM-killed
+  # (#310). Sizing review per 0006 "resource budget is fixed at FW VM sizing time": the seed `vm`
+  # block now carries 8192 MiB (infra-terraform-proxmox, applied with `recreate-and-seed.py --apply-hw`).
+  enabled: true
   mode: alert
   interfaces:
   - wan
