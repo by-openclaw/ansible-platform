@@ -53,8 +53,9 @@ install_plugin) — superseded by the seed or by the modules above.
 - Interface names in the catalog are friendly (`mgmt`, `dmz`, `wan`, …) and resolve to slot ids through
   `opnsense_iface_lookup` (`opn_interface_map`); the seed never assigns a `wan` slot.
 - IDS: a seeded FW stores `interfaces=wan` (invalid) and refuses every IDS save — settings go first.
-  Suricata 8.0.6 needs ~2 GiB on its own: the catalog keeps the daemon **stopped** on 3 GiB FWs
-  (ansible-platform #310).
+  Suricata 8.0.6 with ET Open sits at ~3.9 GiB RSS once loaded: the FW VM profile is **8 GiB**
+  (seed `vm.memory`, infra-terraform-proxmox #91); on a 3 GiB VM it is OOM-killed and the catalog
+  must keep `opn_ids.enabled: false` until the VM is resized (ansible-platform #310).
 - Kea6 subnets need their interface selected in Kea6 *general* first; Kea options (`option_data`)
   converge sub-key by sub-key (lib-opnsense #104).
 
