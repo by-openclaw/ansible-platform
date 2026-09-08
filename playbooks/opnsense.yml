@@ -79,7 +79,10 @@
         apply:
           tags: [services, monit]
       vars:
-        vault_secret_path: "{{ platform_env | default('prod') }}/mail/opnsense"
+        # The service mailbox lives where Mailcow lives (one Mailcow, on prod): `platform_mail_env`
+        # / `platform_mail_domain` (inventories/<env>/group_vars/all/deployment.yml) default to the
+        # deployment's own env/domain and are pinned to prod on test. No test/mail/* secret exists.
+        vault_secret_path: "{{ platform_mail_env | default(platform_env | default('prod')) }}/mail/opnsense"
         vault_secret_init: {}
       tags: [services, monit]
 
@@ -88,12 +91,12 @@
         opnsense_monitchk_smtp:
           # Asset FQDN, not mail. (which split-DNS maps to Traefik / public IP;
           # SMTP is NOT proxied). Wildcard cert *.{domain} covers it -> TLS verify stays ON.
-          smtp_host: "vm-mailcow-01.{{ platform_domain | default('by-research.be') }}"
+          smtp_host: "vm-mailcow-01.{{ platform_mail_domain | default(platform_domain | default('by-research.be')) }}"
           smtp_port: "{{ vault_secret_result.smtp_port }}"
           smtp_username: "{{ vault_secret_result.address }}"
           smtp_password: "{{ vault_secret_result.password }}"
           from_address: "{{ vault_secret_result.address }}"
-          to_address: "alerts@{{ platform_domain | default('by-research.be') }}"
+          to_address: "alerts@{{ platform_mail_domain | default(platform_domain | default('by-research.be')) }}"
       delegate_to: "{{ item }}"
       delegate_facts: true
       loop: "{{ groups['opnsense'] }}"
