@@ -177,6 +177,6 @@ python3 ../infra-terraform-proxmox/modules/vm-opnsense/seed/recreate-and-seed.py
 - Collection: `by_systems.opnsense` = <https://github.com/by-openclaw/ansible-opnsense> (lib-opnsense)
 - `roles/opnsense/README.md` — role contract and variables
 - `docs/services/opnsense.md` — the firewalls' setup runbook (identity, secrets, certs, backup, logging, decommission)
-- `docs/licensing.md` — licence BoM (SPDX, flagged components)
+- `docs/licensing.md` — third-party licence BoM (SPDX, class, owner); our own code is MIT in `LICENSE`
 - ADR-0015: Network/VLAN architecture
 - ADR-0024: Identity provisioning pattern (vault → HashiVault migration path)
