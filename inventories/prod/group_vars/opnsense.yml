@@ -96,14 +96,19 @@ opn_ids:
   log_to_loki: true
   ref:
     adr: services/0006#§1-suricata-ids
+# mDNS repeater — OFF (USER decision 2026-09-09). Never installed on either firewall, so
+# this is the live state, not a rollback. A repeater re-broadcasts EVERY mDNS service between
+# the interfaces it serves and cannot filter by service type, which publishes device and
+# service names across zones; serving `mgmt` would make the administration plane discoverable
+# from gaming. The cited exception (infra/0004#§1-zone-taxonomy-mdns-exception) does not exist
+# in that ADR. Interfaces kept here as the proposal, to be revisited when the ADR covers it.
 opn_mdns:
-  enabled: true
+  enabled: false
   interfaces:
-  - mgmt
   - media
   - gaming
   ref:
-    adr: infra/0004#§1-zone-taxonomy-mdns-exception
+    adr: infra/0004#pending-mdns-exception
 # --- ACME: the firewall's own TLS certificate (SEC-26/27/33) ------------------------------------
 # Mirrors what the prod FW already carries (account `letsencrypt`, validation `cloudflare-dns`,
 # action `restart-webgui`, certificate fw.<domain>) so the first converge is a NOOP on the objects
