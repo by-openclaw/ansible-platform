@@ -1,0 +1,19 @@
+---
+# ==============================================================================
+# Provision an OPNsense firewall VM from its seed profile — Ansible only, no shell or python
+# script (infra-terraform-proxmox #93).
+#
+#   ansible-playbook playbooks/opnsense-provision.yml -e opnsense_provision_fw=<seed name>
+#   ansible-playbook playbooks/opnsense-provision.yml -e opnsense_provision_fw=<seed name> \
+#                    -e opnsense_provision_recreate=true          # DESTROYS and rebuilds
+#
+# Recreating a prod profile additionally needs -e opnsense_provision_confirm_prod=true.
+# After this: playbooks/opnsense-api-bootstrap.yml, then playbooks/opnsense.yml.
+# ==============================================================================
+- name: Provision an OPNsense firewall VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  roles:
+    - role: opnsense_provision
