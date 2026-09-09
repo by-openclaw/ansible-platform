@@ -28,7 +28,9 @@
   ansible.builtin.set_fact:
     resolver_nameservers: >-
       {{ ([resolver_fallback_v4, resolver_fallback_v6]
-          if (inventory_hostname in resolver_self_hosted) or (resolver_isolated | bool)
+          if (inventory_hostname in resolver_self_hosted)
+             or (resolver_isolated | bool)
+             or (group_names | intersect(resolver_direct_groups | default([])) | length > 0)
           else [resolver_primary_v4, resolver_primary_v6,
                 resolver_fallback_v4, resolver_fallback_v6])
          | select('string') | select('!=', '') | list }}
@@ -40,6 +42,8 @@
       {{ inventory_hostname }} -> {{ resolver_nameservers | join(', ') }}
       {{ '(runs AdGuard: points at the firewall to avoid resolving through itself)'
          if inventory_hostname in resolver_self_hosted
+         else '(hosts the guests: must not depend on one of them for DNS)'
+         if (group_names | intersect(resolver_direct_groups | default([])) | length > 0)
          else '(isolated from SVC by firewall design: resolves at the firewall)'
          if (resolver_isolated | bool)
          else '(AdGuard first, firewall as fallback)' }}
@@ -54,6 +58,14 @@
   ansible.builtin.set_fact:
     resolver_uses_resolved: >-
       {{ (ansible_facts.services['systemd-resolved.service'].state | default('')) == 'running' }}
+  tags: [resolver, dns]
+
+- name: "Resolver | Make sure systemd-resolved has a drop-in directory"
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d
+    state: directory
+    mode: "0755"
+  when: resolver_uses_resolved | bool
   tags: [resolver, dns]
 
 - name: "Resolver | Hand the resolvers to systemd-resolved"

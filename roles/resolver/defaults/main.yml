@@ -39,6 +39,12 @@ resolver_self_hosted: [vm-adguard-01]
 resolver_isolated_subnets:
   - 10.1.2.0/24
 
+# A hypervisor must not depend for DNS on a guest it hosts: AdGuard runs ON the Proxmox node,
+# so a node pointed at it cannot resolve until the VM it is trying to start has started. It
+# resolves at the firewall, which is a separate box on a separate lifecycle.
+resolver_direct_groups:
+  - proxmox_nodes
+
 # Docker enables IPv6 forwarding for its bridge, and Linux reads accept_ra=1 as "accept
 # router advertisements only while forwarding is off" — so the host silently stops
 # processing RAs: no SLAAC address, and no RA change ever reaches it again. 2 = accept
