@@ -12,7 +12,9 @@
 # ==============================================================================
 - name: Provision an OPNsense firewall VM
   hosts: localhost
-  connection: local
+  # No play-level `connection: local`: it would override the connection of the tasks delegated to
+  # the Proxmox node, running them on the controller instead (they fail on a sudo prompt there).
+  # localhost is local anyway through the implicit inventory entry.
   gather_facts: false
   become: false
   roles:

@@ -12,7 +12,13 @@ opnsense_provision_fw: ""
 # Where the seed profiles and the rendered config live. Defaults to a sibling checkout.
 opnsense_provision_seed_dir: "{{ playbook_dir }}/../../infra-terraform-proxmox/modules/vm-opnsense/seed"
 opnsense_provision_seed_profile: "{{ opnsense_provision_seed_dir }}/seeds/{{ opnsense_provision_fw }}.json"
+opnsense_provision_baseline: "{{ opnsense_provision_seed_dir }}/templates/baseline.xml"
+opnsense_provision_build_dir: "{{ opnsense_provision_seed_dir }}/out/{{ opnsense_provision_fw }}"
 opnsense_provision_seed_iso: "{{ opnsense_provision_seed_dir }}/out/{{ opnsense_provision_fw }}-seed.iso"
+
+# The break-glass credential, the ISP credentials and the internal domain are read from the fabric
+# secret store when the configuration is rendered — a seed profile never carries them.
+opnsense_provision_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric"
 
 # Proxmox: API credentials come from the fabric secret store, never from the inventory.
 opnsense_provision_pve_secret: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric/infra-proxmox-poc.json"
