@@ -92,5 +92,6 @@ scripts/fw_verify_health.py --secret-file <creds.json> --expect-wan2 [--no-proxi
 ## References
 
 - `docs/setup.md` — Vault, API bootstrap, seed ownership, playbooks, verify
+- `docs/services/opnsense.md` — setup runbook (19 sections) · `docs/licensing.md` — licence BoM
 - ADRs: services/0001 (provisioning), services/0006 (IDS, Internet-by-request), naming/0003 (aliases/rules), infra/0004 (zones)
 - Collections: `by_systems.opnsense` = <https://github.com/by-openclaw/ansible-opnsense> (lib-opnsense)
