@@ -1,0 +1,216 @@
+---
+# Provision a firewall VM from its seed profile. Order: read the profile → refuse anything unsafe →
+# put the images on the node → create the VM → hand the appliance its config through the boot
+# importer → wait for it to answer.
+
+- name: "Provision | A firewall must be named"
+  ansible.builtin.assert:
+    that: opnsense_provision_fw | length > 0
+    fail_msg: "set opnsense_provision_fw to a seed profile name, e.g. -e opnsense_provision_fw=vm-opns-test-01"
+    quiet: true
+
+- name: "Provision | Read the seed profile (the single source for this firewall's hardware)"
+  ansible.builtin.set_fact:
+    opnsense_provision_seed: "{{ lookup('file', opnsense_provision_seed_profile) | from_json }}"
+
+- name: "Provision | Profile facts"
+  ansible.builtin.set_fact:
+    opnsense_provision_vm: "{{ opnsense_provision_seed.vm }}"
+    opnsense_provision_vmid: "{{ opnsense_provision_seed.vm.vmid }}"
+    opnsense_provision_node: "{{ opnsense_provision_seed.vm.node }}"
+
+# ── Safety ───────────────────────────────────────────────────────────────────────────────────────
+# Two ways to wreck a firewall from here: recreate a prod profile, or give a non-prod box prod's ISP
+# identity so it dials the one PPPoE session or claims the static WAN2 address. Both are refused
+# before anything is created.
+- name: "Provision | Recreating a PROD firewall needs an explicit confirmation"
+  ansible.builtin.assert:
+    that: not (opnsense_provision_recreate | bool) or (opnsense_provision_confirm_prod | bool)
+    fail_msg: >-
+      {{ opnsense_provision_fw }} is env=prod — recreating it DESTROYS the running firewall.
+      Pass -e opnsense_provision_confirm_prod=true inside a maintenance window.
+    quiet: true
+  when: opnsense_provision_vm.env | default('') == 'prod'
+
+- name: "Provision | A non-prod firewall must never carry prod's ISP identity"
+  ansible.builtin.assert:
+    that:
+      - (opnsense_provision_seed.wan2 | default({})).creds_secret | default('') is not search('net-isp-telenet.json$')
+      - (opnsense_provision_seed.wan | default({})).creds_secret | default('') is not search('net-isp-proximus-pppoe.json$')
+    fail_msg: >-
+      {{ opnsense_provision_fw }} is not prod but references prod's ISP credentials — that would put a
+      duplicate identity on the ISP segment. Give it its own, or leave the wan/wan2 sections out.
+    quiet: true
+  when: opnsense_provision_vm.env | default('') != 'prod'
+
+- name: "Provision | Load the Proxmox API credentials"
+  ansible.builtin.set_fact:
+    opnsense_provision_pve: "{{ (lookup('file', opnsense_provision_pve_secret) | from_json).fields }}"
+  no_log: true
+
+- name: "Provision | Network interfaces from the profile"
+  ansible.builtin.set_fact:
+    opnsense_provision_nics: >-
+      {{ opnsense_provision_nics | default({}) | combine({
+           item.key: 'virtio,bridge=' ~ item.value ~ ',firewall=0'
+                     ~ (',link_down=1'
+                        if (item.key in opnsense_provision_uplink_nic
+                            and not ((opnsense_provision_vm.uplinks | default({}))
+                                     [opnsense_provision_uplink_nic[item.key]] | default(false)))
+                        else '') }) }}
+  loop: "{{ opnsense_provision_vm.nics | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} -> {{ item.value }}"
+  vars:
+    # firewall=0: packet filtering is the appliance's job, not the hypervisor's. An uplink whose
+    # flag is off is created link_down, so a firewall can exist without ever touching an ISP.
+    opnsense_provision_uplink_nic: {net2: proximus, net3: telenet}
+
+- name: "Provision | Report what will be built"
+  ansible.builtin.debug:
+    msg: >-
+      {{ opnsense_provision_fw }} (vmid {{ opnsense_provision_vmid }}, env
+      {{ opnsense_provision_vm.env | default('?') }}) on {{ opnsense_provision_node }}:
+      {{ opnsense_provision_vm.cores }} vCPU / {{ opnsense_provision_vm.memory }} MiB,
+      nics {{ opnsense_provision_nics }}
+
+# ── Images on the node ───────────────────────────────────────────────────────────────────────────
+- name: "Provision | The appliance image must already be on the node's import store"
+  ansible.builtin.stat:
+    path: "{{ opnsense_provision_image_path }}/{{ opnsense_provision_nano_image }}"
+  register: opnsense_provision_nano
+  delegate_to: "{{ opnsense_provision_pve_node_host }}"
+  become: true
+
+- name: "Provision | Fail clearly when the appliance image is missing"
+  ansible.builtin.fail:
+    msg: >-
+      {{ opnsense_provision_nano_image }} is not in {{ opnsense_provision_image_path }} on
+      {{ opnsense_provision_pve_node_host }} — put the release image there first.
+  when: not opnsense_provision_nano.stat.exists
+
+# Named .raw on purpose: Proxmox's import store parses the volume by extension and only accepts
+# disk-image names there. The file is an ISO9660 image; the appliance reads it as a plain block
+# device (vtbd1) and its importer mounts it, so the extension is presentation, not content.
+- name: "Provision | Upload this firewall's seed image"
+  ansible.builtin.copy:
+    src: "{{ opnsense_provision_seed_iso }}"
+    dest: "{{ opnsense_provision_image_path }}/{{ opnsense_provision_fw }}-seed.raw"
+    mode: "0644"
+  delegate_to: "{{ opnsense_provision_pve_node_host }}"
+  become: true
+
+# ── VM ───────────────────────────────────────────────────────────────────────────────────────────
+- name: "Provision | Remove the existing VM (recreate only)"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ opnsense_provision_pve.host }}"
+    api_user: "{{ opnsense_provision_pve.admin_token_id | regex_replace('!.*$', '') }}"
+    api_token_id: "{{ opnsense_provision_pve.admin_token_id | regex_replace('^.*!', '') }}"
+    api_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
+    validate_certs: "{{ opnsense_provision_validate_certs }}"
+    node: "{{ opnsense_provision_node }}"
+    vmid: "{{ opnsense_provision_vmid }}"
+    state: absent
+    force: true
+    timeout: 180
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: opnsense_provision_recreate | bool
+
+- name: "Provision | Create the firewall VM from the seed profile"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ opnsense_provision_pve.host }}"
+    api_user: "{{ opnsense_provision_pve.admin_token_id | regex_replace('!.*$', '') }}"
+    api_token_id: "{{ opnsense_provision_pve.admin_token_id | regex_replace('^.*!', '') }}"
+    api_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
+    validate_certs: "{{ opnsense_provision_validate_certs }}"
+    node: "{{ opnsense_provision_node }}"
+    vmid: "{{ opnsense_provision_vmid }}"
+    name: "{{ opnsense_provision_vm.name }}"
+    state: present
+    bios: "{{ opnsense_provision_vm.bios | default('seabios') }}"
+    machine: "{{ opnsense_provision_vm.machine | default('q35') }}"
+    ostype: "{{ opnsense_provision_vm.ostype | default('other') }}"
+    scsihw: "{{ opnsense_provision_vm.scsihw | default('virtio-scsi-single') }}"
+    cores: "{{ opnsense_provision_vm.cores }}"
+    sockets: 1
+    memory: "{{ opnsense_provision_vm.memory }}"
+    onboot: "{{ (opnsense_provision_vm.onboot | default(0)) | bool }}"
+    tags: "{{ opnsense_provision_vm.tags | default('') | split(';') | reject('equalto', '') | list }}"
+    agent: false          # switched on after the import, so the first boot stays quiet
+    keyboard: "{{ opnsense_provision_vm.keyboard | default('fr-be') }}"
+    tablet: false
+    vga: std
+    serial:
+      serial0: socket     # the boot importer talks over this
+    boot: order=virtio0
+    # virtio0 = the appliance image, virtio1 = this firewall's configuration (vtbd1 in the guest)
+    virtio:
+      virtio0: >-
+        {{ opnsense_provision_storage }}:0,import-from={{ opnsense_provision_image_store }}:import/{{
+        opnsense_provision_nano_image }},iothread=1,discard=on
+      virtio1: >-
+        {{ opnsense_provision_storage }}:0,import-from={{ opnsense_provision_image_store }}:import/{{
+        opnsense_provision_fw }}-seed.raw,iothread=1,discard=on
+    net: "{{ opnsense_provision_nics }}"
+    timeout: 300
+  delegate_to: localhost
+  become: false
+  register: opnsense_provision_created
+
+- name: "Provision | Grow the appliance disk to the profile's size"
+  community.proxmox.proxmox_disk:
+    api_host: "{{ opnsense_provision_pve.host }}"
+    api_user: "{{ opnsense_provision_pve.admin_token_id | regex_replace('!.*$', '') }}"
+    api_token_id: "{{ opnsense_provision_pve.admin_token_id | regex_replace('^.*!', '') }}"
+    api_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
+    validate_certs: "{{ opnsense_provision_validate_certs }}"
+    vmid: "{{ opnsense_provision_vmid }}"
+    disk: virtio0
+    state: resized
+    size: "{{ opnsense_provision_target_disk_gb }}G"   # absolute target; Proxmox only ever grows
+  delegate_to: localhost
+  become: false
+  register: opnsense_provision_resized
+  failed_when: false   # already at or above the target size is not an error
+  when: not ansible_check_mode
+
+# ── Hand the appliance its configuration ─────────────────────────────────────────────────────────
+# The only step a fresh box has no API for: it has no configuration yet, so its boot importer is the
+# way in. The module answers the two prompts and returns once the restore starts.
+# Only for a box that was just created. Re-driving the importer on a firewall that already exists
+# would overwrite whatever the catalog has since applied, so an existing VM is left alone.
+- name: "Provision | Seed the firewall through its boot importer"   # noqa: no-handler (ordered step, not a notification)
+  by_systems.opnsense.opnsense_seed_import:
+    pve_host: "{{ opnsense_provision_pve.host }}"
+    pve_node: "{{ opnsense_provision_node }}"
+    pve_token_id: "{{ opnsense_provision_pve.admin_token_id }}"
+    pve_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
+    validate_certs: "{{ opnsense_provision_validate_certs }}"
+    vmid: "{{ opnsense_provision_vmid }}"
+    device: "{{ opnsense_provision_seed_device }}"
+    timeout: "{{ opnsense_provision_seed_timeout }}"
+  register: opnsense_provision_seeded
+  delegate_to: localhost
+  become: false
+  when: opnsense_provision_created is changed
+
+- name: "Provision | Wait for the firewall to answer on its management address"
+  ansible.builtin.wait_for:
+    host: "{{ opnsense_provision_seed.lan.ipv4 }}"
+    port: 443
+    timeout: 300
+    delay: 10
+  delegate_to: localhost
+  become: false
+  when: not ansible_check_mode
+
+- name: "Provision | Result"
+  ansible.builtin.debug:
+    msg: >-
+      {{ opnsense_provision_fw }} is up on {{ opnsense_provision_seed.lan.ipv4 }} —
+      {{ ('seeded in ' ~ opnsense_provision_seeded.elapsed ~ 's')
+         if (opnsense_provision_created is changed) else 'already existed, left untouched' }}.
+      Next: the API token (playbooks/opnsense-api-bootstrap.yml), then the catalog
+      (playbooks/opnsense.yml).
