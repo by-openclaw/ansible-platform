@@ -82,6 +82,25 @@
   notify: Restart systemd-resolved
   tags: [resolver, dns]
 
+# Some agents own /etc/resolv.conf outright. NetBird generates it, points it at the overlay
+# resolver so VPN split-DNS works, and keeps the original beside it — writing our own file
+# there starts a fight we lose on the next NetBird refresh, and breaks split-DNS in between.
+# Where an agent owns the file, its upstream is that agent's configuration, not ours.
+- name: "Resolver | Look for an agent that owns /etc/resolv.conf"
+  ansible.builtin.stat:
+    path: /etc/resolv.conf.original.netbird
+  register: resolver_netbird_backup
+  tags: [resolver, dns]
+
+- name: "Resolver | Leave /etc/resolv.conf to the agent that generates it"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: NetBird generates /etc/resolv.conf and points it at the overlay
+      resolver for split-DNS — not managed here. Its upstream belongs to NetBird's nameserver
+      groups.
+  when: resolver_netbird_backup.stat.exists
+  tags: [resolver, dns]
+
 # resolv.conf on a host running systemd-resolved is its stub symlink — leave it alone there.
 - name: "Resolver | Write /etc/resolv.conf directly (no systemd-resolved here)"
   ansible.builtin.template:
@@ -92,6 +111,7 @@
   when:
     - resolver_manage_resolv_conf | bool
     - not (resolver_uses_resolved | bool)
+    - not resolver_netbird_backup.stat.exists
   tags: [resolver, dns]
 
 # ── Router advertisements ────────────────────────────────────────────────────────────────
