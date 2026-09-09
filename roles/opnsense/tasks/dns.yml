@@ -26,6 +26,10 @@
     active_interface: "{{ opnsense_unbound_active_interfaces }}"
     dnssec: "{{ opnsense_unbound_dnssec | bool }}"
     stats: "{{ opnsense_unbound_stats | bool }}"
+    # NAM-06/08: the asset FQDN is an explicit host override (A/AAAA + PTR from the template); the
+    # plugin's own registration of the hostname on EVERY interface (28 addresses on prod, WAN
+    # public IPs included) is switched off in the catalog with opnsense_unbound_noregrecords.
+    noregrecords: "{{ opnsense_unbound_noregrecords | bool }}"
   delegate_to: localhost
   become: false
   tags: [dns, unbound]
