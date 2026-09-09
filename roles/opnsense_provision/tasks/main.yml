@@ -81,6 +81,8 @@
   register: opnsense_provision_nano
   delegate_to: "{{ opnsense_provision_pve_node_host }}"
   become: true
+  vars:   # a delegated task resolves become vars from localhost, which has none of the node's
+    ansible_become_password: "{{ hostvars[opnsense_provision_pve_node_host].ansible_become_password | default(omit) }}"
 
 - name: "Provision | Fail clearly when the appliance image is missing"
   ansible.builtin.fail:
@@ -88,6 +90,42 @@
       {{ opnsense_provision_nano_image }} is not in {{ opnsense_provision_image_path }} on
       {{ opnsense_provision_pve_node_host }} — put the release image there first.
   when: not opnsense_provision_nano.stat.exists
+
+# ── Seed configuration ───────────────────────────────────────────────────────────────────────────
+# A fresh appliance has no API to configure itself with — on 26.7 `interfaces/assign/*` is 404 — so
+# its config.xml has to exist before it is reachable. Rendered from the seed profile here and packed
+# into an image its boot importer reads, so building a firewall needs nothing but ansible-playbook.
+- name: "Provision | Render this firewall's configuration from its seed profile"
+  by_systems.opnsense.opnsense_seed_config:
+    seed: "{{ opnsense_provision_seed }}"
+    baseline: "{{ opnsense_provision_baseline }}"
+    dest: "{{ opnsense_provision_build_dir }}/conf/config.xml"
+    secret_dir: "{{ opnsense_provision_secret_dir }}"
+  register: opnsense_provision_config
+  no_log: true                      # the render carries the break-glass credential
+  delegate_to: localhost
+  become: false
+
+- name: "Provision | Look for an already-built seed image"
+  ansible.builtin.stat:
+    path: "{{ opnsense_provision_seed_iso }}"
+  register: opnsense_provision_iso
+  delegate_to: localhost
+  become: false
+
+# ISO9660 carrying the volume label the importer looks for. The appliance sees a plain block device
+# and mounts /conf/config.xml off it.
+- name: "Provision | Pack the configuration into the seed image"
+  community.general.iso_create:
+    src_files: ["{{ opnsense_provision_build_dir }}/conf"]
+    dest_iso: "{{ opnsense_provision_seed_iso }}"
+    vol_ident: OPNsense
+    joliet: 3
+    rock_ridge: "1.09"
+    interchange_level: 3
+  when: (opnsense_provision_config is changed) or (not opnsense_provision_iso.stat.exists)
+  delegate_to: localhost
+  become: false
 
 # Named .raw on purpose: Proxmox's import store parses the volume by extension and only accepts
 # disk-image names there. The file is an ISO9660 image; the appliance reads it as a plain block
@@ -97,8 +135,11 @@
     src: "{{ opnsense_provision_seed_iso }}"
     dest: "{{ opnsense_provision_image_path }}/{{ opnsense_provision_fw }}-seed.raw"
     mode: "0644"
+  when: not ansible_check_mode or opnsense_provision_iso.stat.exists
   delegate_to: "{{ opnsense_provision_pve_node_host }}"
   become: true
+  vars:   # a delegated task resolves become vars from localhost, which has none of the node's
+    ansible_become_password: "{{ hostvars[opnsense_provision_pve_node_host].ansible_become_password | default(omit) }}"
 
 # ── VM ───────────────────────────────────────────────────────────────────────────────────────────
 - name: "Provision | Remove the existing VM (recreate only)"

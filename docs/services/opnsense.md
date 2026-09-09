@@ -57,10 +57,33 @@ production LE; test: staging. Binding a freshly seeded FW's GUI to the leaf = se
 
 ## 7. Provisioning (instead of docker compose)
 
+One command takes a free VMID to a firewall running the whole catalog — no script, no hand steps:
+
+```bash
+ansible-playbook -i inventories/test playbooks/opnsense-build.yml -e opnsense_provision_fw=vm-opns-test-01
+```
+
+It chains: the VM from the seed profile's hardware truth → `config.xml` rendered and handed to the
+boot importer → the svc-ansible API token minted from the seeded break-glass credential → firmware
+and the catalog's plugins → the full catalog. Rebuilding an existing firewall DESTROYS it and needs
+`-e opnsense_provision_recreate=true` (prod also `-e opnsense_provision_confirm_prod=true`); steps 4
+and 5 refuse to run against a firewall this run did not create.
+
+Measured on a throwaway VMID (2026-09-09): **150 s** from nothing to a firewall answering its API
+with the seeded identity — 77 s of that is the boot importer. A second run is `changed=0`.
+
+Just the VM and its configuration, without the firmware and catalog phases:
+
+```bash
+ansible-playbook -i inventories/test playbooks/opnsense-provision.yml -e opnsense_provision_fw=<fw>
+```
+
+Hardware drift on a firewall that is already running (the old Python pipeline, still the path for an
+in-place hardware change until it is archived — infra-terraform-proxmox#93):
+
 ```
 recreate-and-seed.py <fw> --check            # hardware drift, read-only
 recreate-and-seed.py <fw> --apply-hw         # memory/cores/onboot/tags in place (prod: --confirm-prod-restart)
-recreate-and-seed.py <fw>                    # full reseed (test); prod needs --confirm-prod-recreate + window
 ```
 
 ## 8. Exposure / routing
@@ -72,8 +95,14 @@ overrides (`opn_unbound.host_overrides`, `playbooks/opnsense-unbound-overrides.y
 ## 9. Installation steps
 
 ```bash
-# 1) seed (infra-terraform-proxmox)            2) API token (get-or-mint → Vault)
-recreate-and-seed.py vm-opns-test-01           ansible-playbook -i inventories/test playbooks/opnsense-api-bootstrap.yml
+# One command for all of it (§7):
+ansible-playbook -i inventories/test playbooks/opnsense-build.yml -e opnsense_provision_fw=vm-opns-test-01
+
+# …or the same phases one at a time, which is what a dry run needs:
+# 1) VM + seeded configuration                 2) API token (get-or-mint → Vault)
+ansible-playbook -i inventories/test \
+  playbooks/opnsense-provision.yml \           ansible-playbook -i inventories/test playbooks/opnsense-api-bootstrap.yml
+  -e opnsense_provision_fw=vm-opns-test-01
 # 3) catalog — ALWAYS dry-run first
 ansible-playbook -i inventories/test playbooks/opnsense.yml --check --diff -e opn_fw_confirm_full=true
 ansible-playbook -i inventories/test playbooks/opnsense.yml -e opn_fw_confirm_full=true

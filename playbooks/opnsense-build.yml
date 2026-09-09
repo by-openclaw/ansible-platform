@@ -1,0 +1,82 @@
+---
+# ==============================================================================
+# OPNsense — build a firewall, one command
+#
+# From a free VMID to a firewall running the whole catalog, with nothing run by
+# hand in between:
+#
+#   1. the VM, from the seed profile's hardware truth
+#   2. its config.xml, rendered and handed to the boot importer
+#   3. the svc-ansible API token, minted from the seeded break-glass credential
+#   4. firmware to the release the catalog pins, then the catalog's plugins
+#   5. the full catalog — DNS, DHCP, rules, IDS, ACME, Monit, syslog
+#
+#   ansible-playbook -i inventories/test playbooks/opnsense-build.yml \
+#     -e opnsense_provision_fw=vm-opns-test-01
+#
+# REBUILDING an existing firewall DESTROYS it — that needs -e opnsense_provision_recreate=true
+# (and, for a prod profile, -e opnsense_provision_confirm_prod=true on top).
+#
+# Steps 4 and 5 only run for a firewall this run actually created: pointing this
+# playbook at a firewall that is already live would otherwise open a firmware
+# window and a full catalog converge on it by accident. Use playbooks/opnsense.yml
+# for an existing firewall; -e opnsense_build_force=true is the deliberate override.
+# ==============================================================================
+
+- name: Build | Start the clock
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: "Build | Record when the build started"
+      ansible.builtin.set_fact:
+        opnsense_build_started: "{{ lookup('pipe', 'date +%s') | int }}"
+      check_mode: false
+      tags: always
+
+- name: Build | The VM, and its configuration through the boot importer
+  ansible.builtin.import_playbook: opnsense-provision.yml
+
+- name: Build | Only a firewall this run created goes on to firmware and the catalog
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: "Build | Refuse to converge a firewall that was already running"
+      ansible.builtin.assert:
+        that:
+          - (opnsense_provision_created is defined and opnsense_provision_created is changed)
+            or (opnsense_build_force | default(false) | bool)
+        fail_msg: >-
+          {{ opnsense_provision_fw }} already existed, so this run created nothing. Building would
+          open a firmware window and a full catalog converge on a live firewall. Use
+          playbooks/opnsense.yml for an existing firewall, add -e opnsense_provision_recreate=true
+          to rebuild it from scratch, or -e opnsense_build_force=true if you mean it.
+        quiet: true
+      tags: always
+
+- name: Build | The API token, minted from the seeded break-glass credential
+  ansible.builtin.import_playbook: opnsense-api-bootstrap.yml
+
+# A firewall this run created has nothing on it worth protecting from a reboot, so the firmware
+# window is open by default here — the point of a build is to end on the pinned release with the
+# catalog's plugins installed. The same play then converges the rest of the catalog.
+- name: Build | Firmware, plugins and the full catalog
+  ansible.builtin.import_playbook: opnsense.yml
+  vars:
+    opnsense_firmware_upgrade: true
+    opn_fw_confirm_full: true
+
+- name: Build | Report
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: "Build | How long the firewall took"
+      ansible.builtin.debug:
+        msg: >-
+          {{ opnsense_provision_fw }} built in
+          {{ (((lookup('pipe', 'date +%s') | int) - (opnsense_build_started | int)) / 60) | round(1) }}
+          minutes — VM, seed, API token, firmware and the full catalog.
+      check_mode: false
+      tags: always
