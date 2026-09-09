@@ -218,6 +218,21 @@
       changed_when: true
       no_log: true
 
+    - name: "OPNsense bootstrap | Record the rotation in the secret's metadata (SEC-09 audit trail)"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_api_bootstrap_vault_container }}
+          vault kv metadata put -mount={{ opnsense_api_bootstrap_vault_mount }}
+          -custom-metadata=rotated_at={{ '%Y-%m-%dT%H:%M:%SZ' | strftime(utc=true) }}
+          -custom-metadata=rotated_by=ansible-deploy
+          -custom-metadata=reason={{ 'forced' if (opnsense_api_bootstrap_force_rotate | bool)
+                                     else ('stale' if (opnsense_api_bootstrap_stale | bool) else 'absent') }}
+          {{ opnsense_api_bootstrap_vault_path }}
+      delegate_to: "{{ opnsense_api_bootstrap_vault_host }}"
+      become: true
+      changed_when: true
+      no_log: true   # the command line carries the deploy token
+
     - name: "OPNsense bootstrap | Publish minted token as facts"  # noqa: var-naming[no-role-prefix] (contract names used by the catalog + roles/opnsense)
       ansible.builtin.set_fact:
         opn_key: "{{ opnsense_api_bootstrap_mint.api_key }}"

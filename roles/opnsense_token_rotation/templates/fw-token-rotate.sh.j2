@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Managed by Ansible role `opnsense_token_rotation`. Do not edit by hand.
+# fw-token-rotate.sh <env> — SEC-09: rotate the firewall's Ansible API token for <env> through the
+# contract (opnsense-api-bootstrap.yml, force-rotate), then prove the new token converges the
+# catalog (opnsense.yml --tags dns --check must be changed=0). Non-zero exit = the systemd unit
+# fails loudly (`systemctl --user --failed`); the log stays under {{ opnsense_token_rotation_state_dir }}.
+set -euo pipefail
+ENV="${1:?usage: fw-token-rotate.sh <env>}"
+REPO="{{ opnsense_token_rotation_repo }}"
+LOG_DIR="{{ opnsense_token_rotation_state_dir }}"
+mkdir -p "$LOG_DIR"
+LOG="$LOG_DIR/${ENV}-$(date -u +%Y%m%dT%H%M%SZ).log"
+export PYTHONUNBUFFERED=1 ANSIBLE_FORCE_COLOR=0 ANSIBLE_NOCOLOR=1
+cd "$REPO"
+{
+  echo "== $(date -u +%FT%TZ) rotate ${ENV} (force-rotate through the bootstrap playbook)"
+  ansible-playbook -i "inventories/${ENV}" playbooks/opnsense-api-bootstrap.yml -e opnsense_api_bootstrap_force_rotate=true
+  echo "== $(date -u +%FT%TZ) gate: opnsense.yml --tags dns --check must be changed=0 failed=0 with the new token"
+  gate="$(ansible-playbook -i "inventories/${ENV}" playbooks/opnsense.yml --tags dns --check 2>&1)"
+  printf '%s\n' "$gate"
+  if ! printf '%s\n' "$gate" | grep -qE '^vm-opns[^ ]* +: ok=[0-9]+ +changed=0 +unreachable=0 +failed=0'; then
+    echo "== GATE FAILED — the rotated token does not converge the catalog; investigate before the next run"
+    exit 2
+  fi
+  echo "== $(date -u +%FT%TZ) OK — ${ENV} token rotated and proven"
+} >>"$LOG" 2>&1
