@@ -76,11 +76,12 @@ opn_interface_map:
   wan: opt12   # the seed assigns no 'wan' slot — WAN1 = Proximus (ADR services/0006 §1: IDS on WAN1)
   lan: lan
 opn_ids:
-  # STAYS OFF until the prod FW VM carries the 8 GiB seed profile (infra-terraform-proxmox #91,
-  # applied in the prod window with `recreate-and-seed.py vm-opns-01 --apply-hw --confirm-prod-restart`).
-  # ADR services/0006 §1 + services/0010 §1 require Suricata alert-only on WAN as the CrowdSec feed;
-  # on 3 GiB it is OOM-killed (#310). Flip to true right after that window.
-  enabled: false
+  # ENABLED 2026-09-09 in the prod window (USER go): the FW VM now carries the 8 GiB seed profile
+  # (infra-terraform-proxmox #91, applied with `--apply-hw --confirm-prod-restart`; guest sees
+  # 8153 MiB). ADR services/0006 §1 (Suricata alert-only on WAN1) + services/0010 §1 (the WAN feed
+  # for CrowdSec — syslog destination below → lxc-crowdsec-01:1515). Suricata needs ~3.9 GiB RSS
+  # with ET Open loaded; on the old 3 GiB VM it was OOM-killed (#310).
+  enabled: true
   mode: alert
   interfaces:
   - wan
