@@ -247,7 +247,14 @@ opnsense_plugins:
   - os-ddclient        # Dynamic DNS (current plugin; keeps the DynDNS MVC API /api/dyndns)
   - os-dnscrypt-proxy
   - os-lldpd
-  - os-mdns-repeater   # catalog opn_mdns (ADR infra/0004 mDNS exception) — mdns.yml
+  # os-mdns-repeater is deliberately NOT installed. A repeater re-broadcasts EVERY mDNS
+  # service between the interfaces it serves — it cannot filter by service type — so it
+  # publishes a live inventory of device and service names across those zones. The catalog
+  # served mgmt, which is the administration plane and the zone least worth making
+  # discoverable from gaming. It also cited infra/0004#§1-zone-taxonomy-mdns-exception,
+  # and that ADR has no mDNS section at all — the exception was claimed, never written or
+  # approved. Off until the ADR says otherwise (USER decision 2026-09-09).
+  # - os-mdns-repeater
   - os-qemu-guest-agent
 
 # --- Dynamic DNS (os-ddclient) -------------------------------------------------
