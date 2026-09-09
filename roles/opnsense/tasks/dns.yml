@@ -37,6 +37,12 @@
 # ── Plaintext forward to dnscrypt-proxy ──────────────────────────────────────
 # Same model as DoT on the API (type selects it): type=forward is a PLAINTEXT
 # query forward. domain "" = catch-all root forward.
+#
+# dedupe: a catch-all forward has no name — its identity is (domain "", server), so two rows
+# for one resolver are indistinguishable and the manager refuses to guess which one the
+# catalog meant, failing the whole converge with an ambiguous match (prod, 2026-09-09: two
+# rows each for 127.0.0.1 and ::1). The catalog declares ONE forward per resolver, so a
+# second one is drift: the lowest-UUID copy converges and the rest are removed.
 - name: DNS | Ensure plaintext forward(s) to dnscrypt-proxy exist
   by_systems.opnsense.opnsense_ub_forward:
     host: "{{ opn_host }}"
@@ -49,8 +55,11 @@
     type: forward
     forward_port: "{{ opnsense_unbound_dnscrypt_port | string }}"
     enabled: true
-    description: "Unbound -> dnscrypt-proxy loopback"
+    # The row's identity is (domain, server); the description is free text, so name the
+    # resolver in it — live carried two different hand-written strings for the same pair.
+    description: "Unbound -> dnscrypt-proxy loopback ({{ item }})"
     state: present
+    dedupe: true
   loop: "{{ opnsense_unbound_dnscrypt_servers }}"
   loop_control:
     label: "{{ item }}:{{ opnsense_unbound_dnscrypt_port }}"
