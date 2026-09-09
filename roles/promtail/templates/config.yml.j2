@@ -23,6 +23,14 @@ scrape_configs:
       # docker journald driver stamps CONTAINER_NAME — label container logs
       - source_labels: ["__journal_container_name"]
         target_label: container
+    # infra/0006 INF-32: security streams carry the `audit` label (90-day class): sshd/PAM, sudo,
+    # logins, the CrowdSec agent. Everything else in the journal stays a normal stream.
+    pipeline_stages:
+      - match:
+          selector: '{unit=~"{{ promtail_journal_audit_units | join('|') }}"}'
+          stages:
+            - static_labels:
+                audit: "true"
 {% endif %}
 {% for l in promtail_syslog_listeners | default([]) %}
   - job_name: syslog_{{ l.name }}
@@ -34,6 +42,9 @@ scrape_configs:
       labels:
         job: {{ l.name }}
         env: {{ promtail_env_label }}
+{% if l.audit | default(false) %}
+        audit: "true"
+{% endif %}
     relabel_configs:
       - source_labels: ["__syslog_message_hostname"]
         target_label: host
@@ -52,6 +63,9 @@ scrape_configs:
         labels:
           job: {{ j.name }}
           host: {{ inventory_hostname }}
+{% if j.audit | default(false) %}
+          audit: "true"
+{% endif %}
           __path__: {{ j.path }}
 {% endfor %}
 {% if promtail_vault_audit_log | default('') %}
@@ -61,6 +75,7 @@ scrape_configs:
         labels:
           job: vault_audit
           host: {{ inventory_hostname }}
+          audit: "true"
           __path__: {{ promtail_vault_audit_log }}
 {% endif %}
   - job_name: auditd
@@ -70,5 +85,6 @@ scrape_configs:
           job: auditd
           host: {{ inventory_hostname }}
           env: {{ promtail_env_label }}
+          audit: "true"
           __path__: {{ promtail_auditd_log }}
 {% endif %}
