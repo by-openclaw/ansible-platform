@@ -28,6 +28,17 @@ resolver_search_domain: "{{ platform_domain | default('') }}"
 # Listed hosts fall back to the firewall's Unbound, which is what AdGuard forwards to anyway.
 resolver_self_hosted: [vm-adguard-01]
 
+# Subnets the firewall deliberately keeps away from the services VLAN. DMZ holds the
+# internet-facing services, and DMZ -> SVC is blocked on purpose — so those hosts cannot
+# reach AdGuard, and pointing them at it would add a resolver timeout to every lookup before
+# falling back. They resolve at the firewall's Unbound instead: still dnscrypt-encrypted
+# upstream, just not AdGuard-filtered. Opening DNS from DMZ into SVC would be a decision
+# about the isolation, not about DNS, so it is not made here.
+# Verified 2026-09-09: lxc-traefik-01 (10.1.2.110) and vm-mailcow-01 (10.1.2.120) time out
+# to AdGuard on both families; every other guest answers ok.
+resolver_isolated_subnets:
+  - 10.1.2.0/24
+
 # Docker enables IPv6 forwarding for its bridge, and Linux reads accept_ra=1 as "accept
 # router advertisements only while forwarding is off" — so the host silently stops
 # processing RAs: no SLAAC address, and no RA change ever reaches it again. 2 = accept
