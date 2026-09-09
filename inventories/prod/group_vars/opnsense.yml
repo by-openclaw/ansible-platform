@@ -2664,6 +2664,13 @@ opn_dnsmasq:
 opn_radvd:
   enabled: true               # cutover step 1: enable radvd entries (Kea v6 does NOT emit RAs)
   service_state: running      # start the radvd daemon after ensuring entries
+  # IPv6 clients get their resolver from the RA and nowhere else: Kea DHCPv6 declares no
+  # option_data and its general settings have no DNS field, so the RA is the whole story.
+  # Left unset, radvd advertises the firewall's own address — which is what prod does today,
+  # so IPv6 clients bypass AdGuard while IPv4 clients go through it. Same resolver as
+  # opn_dhcp_dns_servers, over its IPv6 address.
+  rdnss: "fd01:3::101"
+  dnssl: "{{ platform_domain }}"
   # Base6Interface: empty for static prefix on this interface (stateless mode).
   # Only set Base6Interface to a different slot when tracking a prefix delegated
   # from upstream (e.g. WAN); OPNsense rejects Base6Interface == interface.
