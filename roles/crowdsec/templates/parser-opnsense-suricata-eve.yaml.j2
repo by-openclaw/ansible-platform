@@ -1,0 +1,22 @@
+# Managed by Ansible role `crowdsec`. Do not edit by hand.
+#
+# OPNsense ships Suricata's EVE JSON over syslog with APP-NAME/program `suricata` (its engine log
+# uses the same program). The hub parser crowdsecurity/suricata-evelogs only fires on program
+# `suricata-evelogs` (and suricata-fastlogs for the fast.log format), so without this bridge the
+# firewalls' EVE stream is received and never parsed — acquisition shows lines read, 0 parsed.
+#
+# Stage/ordering (verified with `cscli explain` on the real wire format): crowdsecurity/syslog-logs
+# runs in s00-raw and ends with `onsuccess: next_stage`, so a node placed in s00-raw after it is
+# NEVER evaluated. This node therefore lives in s01-parse and the `00-` filename keeps it ahead of
+# suricata-logs.yaml in that stage; it deliberately does NOT set `onsuccess: next_stage`, so the
+# renamed event still reaches crowdsecurity/suricata-evelogs in the same stage.
+#
+# Only JSON payloads are touched, so Suricata's own engine log lines ("rule reload complete", …)
+# stay as they are.
+filter: |
+  evt.Parsed.program == "{{ crowdsec_suricata_syslog_program }}" && evt.Parsed.message startsWith "{"
+name: bysystems/opnsense-suricata-eve
+description: "Map the OPNsense Suricata EVE syslog program onto the name the hub parser expects"
+statics:
+  - target: evt.Parsed.program
+    value: suricata-evelogs

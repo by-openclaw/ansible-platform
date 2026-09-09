@@ -63,6 +63,23 @@
     label: "syslog-{{ item.name }} :{{ item.port }}"
   notify: Restart crowdsec
 
+- name: "config | Bridge the OPNsense Suricata EVE syslog program onto the hub parser's name"
+  ansible.builtin.template:
+    src: parser-opnsense-suricata-eve.yaml.j2
+    dest: /etc/crowdsec/parsers/s01-parse/00-opnsense-suricata-eve.yaml
+    mode: "0644"
+  when: crowdsec_suricata_syslog_program | default('') | length > 0
+  notify: Restart crowdsec
+
+- name: "config | Remove the Suricata program bridge (disabled, or the retired s00-raw location)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/crowdsec/parsers/s00-raw/zz-opnsense-suricata-eve.yaml   # retired: syslog-logs leaves s00-raw
+    - "{{ '/etc/crowdsec/parsers/s01-parse/00-opnsense-suricata-eve.yaml' if not (crowdsec_suricata_syslog_program | default('') | length > 0) else omit }}"
+  notify: Restart crowdsec
+
 - name: "config | Apply LAPI/AppSec config now"
   ansible.builtin.meta: flush_handlers
 
