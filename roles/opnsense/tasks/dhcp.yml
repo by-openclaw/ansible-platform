@@ -104,6 +104,14 @@
     mode: "{{ item.mode | default('unmanaged') }}"
     enabled: "{{ item.enabled | default('1') | bool }}"
     base6_interface: "{{ item.Base6Interface | default('') }}"
+    # Resolver advertisement (RFC 8106). Kea DHCPv6 hands out no DNS at all, so the RA is
+    # the ONLY thing telling an IPv6 client where to resolve — and advertise_dns with an
+    # empty rdnss advertises the firewall itself, quietly bypassing whatever filtering
+    # resolver IPv4 clients are given. Declared per entry, defaulting to the catalog-wide
+    # resolver so v6 matches v4 by construction.
+    advertise_dns: "{{ item.advertise_dns | default(true) | bool }}"
+    rdnss: "{{ item.RDNSS | default(opn_radvd.rdnss | default('')) }}"
+    dnssl: "{{ item.DNSSL | default(opn_radvd.dnssl | default('')) }}"
     state: "{{ item.state | default('present') }}"
   loop: "{{ opn_radvd.entries | default([]) }}"
   loop_control:
