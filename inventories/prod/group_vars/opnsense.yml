@@ -2280,6 +2280,10 @@ opn_dnat_rules:
 # WAN forward). Telenet only (mail egress/ingress is Telenet; Proximus blocks :25).
 - {descr: 'DNAT Telenet→mailcow SMTP/MX (v4)',  interface: opt13, protocol: TCP, ipprotocol: inet,  destination: {network: host4_wan_pub, port: port_smtp},       target: host4_mailcow, local-port: port_smtp,       state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
 - {descr: 'DNAT Telenet→mailcow SMTP/MX (v6)',  interface: opt13, protocol: TCP, ipprotocol: inet6, destination: {network: host6_wan_pub, port: port_smtp},       target: host6_mailcow, local-port: port_smtp,       state: present, ref: {adr: 'services/0007#mail-ingress', lib_manager: FwDnatManager, ansible_module: by_systems.opnsense.opnsense_fw_dnat}}
+# Do not let Unbound register the FW hostname on every interface (WAN public IPs included);
+# the asset records are the explicit host overrides below (NAM-06/08).
+opnsense_unbound_noregrecords: true
+
 opn_unbound:
   enabled: true
   domain: "{{ platform_domain }}"
@@ -2287,6 +2291,19 @@ opn_unbound:
   - grp_net4_internal
   - grp_net6_internal
   host_overrides:
+  # NAM-06/08: the firewall's own asset FQDN → its MGMT (platform management) address, both
+  # families where the interface has one; the template emits the PTRs. The plugin's registration of
+  # the hostname on every interface is off (opnsense_unbound_noregrecords) so this is THE answer.
+  - hostname: vm-opns-01
+    domain: "{{ platform_domain }}"
+    rr: A
+    server: 10.1.1.1
+    description: 'FW asset FQDN (MGMT v4) — catalog'
+  - hostname: vm-opns-01
+    domain: "{{ platform_domain }}"
+    rr: AAAA
+    server: fd01:1::1
+    description: 'FW asset FQDN (MGMT v6) — catalog'
   # --- Real cluster hosts (present) — split-horizon internal records ---
   - {hostname: vm-adguard-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.101}
   - {hostname: vm-adguard-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::101'}

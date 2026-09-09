@@ -1827,6 +1827,10 @@ opn_filter_rules:
   ref: {adr: 'security/0001#dns-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
 opn_snat_rules: []
 opn_dnat_rules: []
+# Do not let Unbound register the FW hostname on every interface (WAN public IPs included);
+# the asset records are the explicit host overrides below (NAM-06/08).
+opnsense_unbound_noregrecords: true
+
 opn_unbound:
   enabled: true
   domain: "{{ platform_domain }}"
@@ -1834,6 +1838,15 @@ opn_unbound:
   - grp_net4_internal
   - grp_net6_internal
   host_overrides:
+  # NAM-06/08: the firewall's own asset FQDN → its MGMT (platform management) address, both
+  # families where the interface has one; the template emits the PTRs. The plugin's registration of
+  # the hostname on every interface is off (opnsense_unbound_noregrecords) so this is THE answer.
+  - hostname: vm-opns-test-01
+    domain: "{{ platform_domain }}"
+    rr: A
+    server: 10.11.1.1
+    description: 'FW asset FQDN (MGMT v4) — catalog'
+  # AAAA: test MGMT carries no IPv6 address yet (track6 on a WAN without PD) — add when it does.
   # prod-only service the test FW must reach by its asset FQDN (Monit SMTP): same answer as the
   # prod split-DNS twin; the route to it is opn_routes (prod FW OOB next hop).
   - hostname: vm-mailcow-01
