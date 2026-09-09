@@ -77,3 +77,4 @@ the FW needs no SSH/Python for this role. Vault auth = `ansible-deploy` AppRole
 # rotate even though the current token works (schedule, or after an exposure)
 ansible-playbook -i inventories/<env> playbooks/opnsense-api-bootstrap.yml -e opnsense_api_bootstrap_force_rotate=true
 ```
+\n\nScheduled: `roles/opnsense_token_rotation` installs a quarterly systemd user timer per env on the controller (force-rotate + `--tags dns --check` gate); each mint records `rotated_at`/`reason` in the secret's custom metadata.\n

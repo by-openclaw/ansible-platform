@@ -148,6 +148,8 @@ source ~/.venv/ansible/bin/activate
 
 # 1) API token (get-or-mint → Vault; rotates itself after a reseed)
 ansible-playbook -i inventories/<env> playbooks/opnsense-api-bootstrap.yml
+#    Scheduled rotation (SEC-09): playbooks/opnsense-token-rotation.yml → quarterly user timer per env
+#    on the controller (force-rotate + catalog check gate); prod's timer stays disabled until its window.
 
 # 2) Full OPNsense config from the catalog — ALWAYS dry-run first
 ansible-playbook -i inventories/<env> playbooks/opnsense.yml --check --diff -e opn_fw_confirm_full=true

@@ -1,0 +1,18 @@
+---
+# Role: opnsense_token_rotation — SEC-09 schedule for the firewalls' Ansible API token.
+# Runs ON THE CONTROLLER (hosts: localhost) as the user that runs the playbooks: one systemd USER
+# timer per environment fires `opnsense-api-bootstrap.yml -e opnsense_api_bootstrap_force_rotate=true`
+# and gates on `opnsense.yml --tags dns --check` being changed=0 with the new token. The controller
+# user must linger (`loginctl enable-linger`) so the timer runs without a login session.
+opnsense_token_rotation_repo: "{{ playbook_dir | dirname }}"
+opnsense_token_rotation_bin_dir: "{{ lookup('env', 'HOME') }}/.local/bin"
+opnsense_token_rotation_unit_dir: "{{ lookup('env', 'HOME') }}/.config/systemd/user"
+opnsense_token_rotation_state_dir: "{{ lookup('env', 'HOME') }}/.local/state/fw-token-rotation"
+opnsense_token_rotation_ansible_bin: "{{ lookup('env', 'HOME') }}/.local/bin"
+# Quarterly ≈ every 90 days, 03:00 UTC on the 1st of Jan/Apr/Jul/Oct, ±1 h jitter, catches up after downtime.
+opnsense_token_rotation_on_calendar: "*-01,04,07,10-01 03:00:00 UTC"
+opnsense_token_rotation_randomized_delay: "1h"
+# One timer instance per environment; prod stays installed-but-disabled until its window (USER go).
+opnsense_token_rotation_envs:
+  - {env: test, enabled: true}
+  - {env: prod, enabled: false}
