@@ -13,9 +13,20 @@ collections:
   - name: community.docker
     # docker_image / docker_container — pgadmin (and future Docker svc).
     version: "5.1.0"
+  - name: ansible.utils
+    # ipaddr — roles/resolver decides whether a host sits on a subnet the firewall keeps
+    # away from the services VLAN, so it must not be handed a resolver it cannot reach.
+    version: "6.0.1"
+  - name: ansible.netcommon
+    # ansible.utils pulls this in; pinned explicitly because this file is exact pins.
+    version: "8.4.0"
+  - name: community.proxmox
+    # proxmox_kvm / proxmox_disk — roles/opnsense_provision builds a firewall VM. The modules
+    # moved out of community.general (deprecated there since 11.x) and live here now.
+    version: "1.6.0"
   - name: https://github.com/by-openclaw/ansible-opnsense.git
     # by_systems.opnsense — the MVC lib (lib-opnsense) modules, no root. Private repo, not on
     # Galaxy: pinned by COMMIT of main (release-please tags lag behind the modules the role uses).
     # Dev controller: ~/.ansible/collections/.../by_systems/opnsense is a symlink to the checkout.
     type: git
-    version: "af5a263"   # main after ansible-opnsense #27 (opnsense_monit_daemon)
+    version: "e4131b8"   # main after ansible-opnsense #34 (radvd RFC 8106 resolver fields)
