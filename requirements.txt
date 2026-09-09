@@ -1,0 +1,26 @@
+# Controller Python dependencies — EXACT pins, same contract as requirements.yml
+# (ADR INF-08 / SVC-60: a reproducible controller). Bump deliberately, one PR per bump.
+#
+#   pip install -r requirements.txt
+#
+# lib-opnsense is a private repo: the install needs a credential (CI uses the by-rune token,
+# a dev controller usually has it as an editable checkout instead —
+# `pip install -e ~/repos/lib-opnsense`, which takes precedence over this pin).
+
+# The OPNsense MVC library every by_systems.opnsense module runs on.
+opnsense @ git+https://github.com/by-openclaw/lib-opnsense.git@v1.3.0
+
+# community.proxmox talks to the Proxmox API through this (roles/opnsense_provision).
+proxmoxer==2.3.0
+
+# by_systems.opnsense.opnsense_seed_import drives a fresh firewall's boot importer over the
+# Proxmox console websocket.
+websocket-client==1.9.0
+
+# by_systems.opnsense.opnsense_seed_config renders the seed config.xml: bcrypt for the GUI
+# password hash, passlib for sha512-crypt on Python 3.13+ where the stdlib crypt module is gone.
+bcrypt==4.0.1
+passlib==1.7.4
+
+# community.general.iso_create packs the rendered configuration into the seed image.
+pycdlib==1.14.0
