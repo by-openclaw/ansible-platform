@@ -15,3 +15,7 @@ Class **A**: sqlite (machines/bouncers) in PBS; decisions are ephemeral. Full ma
 
 - Health: `cscli machines list` (all validated, fresh heartbeats), `cscli bouncers list` (recent `last_pull`), `cscli decisions list`.
 - Common: bouncer not pulling → API key mismatch (`fabric/app-crowdsec-bouncer-*.json`).
+
+## Suricata feed (services/0010 §1)
+
+`crowdsec_syslog_feeds` opens a syslog datasource per entry (`acquis.d/syslog-<name>.yaml`, RFC5424/TCP); the firewalls ship their syslog (incl. Suricata EVE, `program=suricata`) to it from the catalog (`opn_syslog_destinations`), and `crowdsecurity/suricata` (parser + `suricata-alerts` scenario + context) turns high/major alerts into decisions the OPNsense bouncer enforces. Verify: `cscli metrics` (acquisition `syslog-suricata` lines), `cscli alerts list --scenario crowdsecurity/suricata-alerts`.

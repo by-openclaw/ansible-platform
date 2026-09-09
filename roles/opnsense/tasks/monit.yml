@@ -122,3 +122,32 @@
   delegate_to: localhost
   become: false
   tags: [services, monit]
+
+# Deliberate test mail: Monit mails an "Monit instance changed" alert to every recipient when the
+# daemon STARTS (a reload does not). `-e opn_monit_test_mail=true` stops and starts the daemon on
+# purpose; never idempotent by design, never part of a plain converge.
+- name: Monit | Test alert — stop the daemon (-e opn_monit_test_mail=true)
+  by_systems.opnsense.opnsense_monit_daemon:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: stopped
+  when: opn_monit_test_mail | default(false) | bool
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Test alert — start the daemon again (mails 'Monit instance changed')
+  by_systems.opnsense.opnsense_monit_daemon:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: running
+  when: opn_monit_test_mail | default(false) | bool
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
