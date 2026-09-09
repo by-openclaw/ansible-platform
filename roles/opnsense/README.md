@@ -3,7 +3,9 @@
 Applies the per-env **FW catalog** (`inventories/<env>/group_vars/opnsense.yml`) to OPNsense through
 the REST/MVC API using `by_systems.opnsense` modules (lib-opnsense managers underneath). Every catalog
 key has a consumer task file; the role has **no raw API writer** (`uri` appears only for read-only
-lookups where no module exists) and no shell/command task.
+lookups where no module exists). Nothing on the firewall is written by a shell or command task — the
+one `ansible.builtin.command` in the role runs `files/catalog_lint.py` **on the controller** as a
+pre-apply guard (naming/0003) and never touches the appliance.
 
 Ownership split: the **seed** (infra-terraform-proxmox `modules/vm-opnsense/seed`) owns L2/L3 topology,
 system identity, interface settings, gateways and the NetFlow exporter; **Ansible** owns every
