@@ -139,7 +139,7 @@ it at will; the catalog and Vault path stay. `roles/service_decommission` applie
 
 ## 19. Licensing
 
-`docs/licensing.md` §Firewall (OPNsense BSD-2-Clause, Suricata GPL-2.0, Monit AGPL-3.0 flagged, …).
+`docs/licensing.md` §Firewall (OPNsense `BSD-2-Clause`, Suricata `GPL-2.0`, Monit `AGPL-3.0` — flagged, covered by the blanket in ADR security/0005 §4). Our own code is MIT in `LICENSE`.
 
 ## References
 
