@@ -1,0 +1,106 @@
+---
+# Order: work out which resolvers this host should use, write them where the host actually
+# reads them from (systemd-resolved when it is running, /etc/resolv.conf otherwise), then
+# make sure router advertisements are still honoured if IPv6 forwarding is on.
+
+- name: "Resolver | Which interface carries this host's addressing"
+  ansible.builtin.set_fact:
+    resolver_interface: "{{ ansible_default_ipv4.interface | default('eth0') }}"
+  tags: [resolver, dns, ra]
+
+- name: "Resolver | Decide this host's nameservers"
+  ansible.builtin.set_fact:
+    resolver_nameservers: >-
+      {{ ([resolver_fallback_v4, resolver_fallback_v6]
+          if inventory_hostname in resolver_self_hosted
+          else [resolver_primary_v4, resolver_primary_v6,
+                resolver_fallback_v4, resolver_fallback_v6])
+         | select('string') | select('!=', '') | list }}
+  tags: [resolver, dns]
+
+- name: "Resolver | Report what this host will use"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} -> {{ resolver_nameservers | join(', ') }}
+      {{ '(runs AdGuard: points at the firewall to avoid resolving through itself)'
+         if inventory_hostname in resolver_self_hosted else '(AdGuard first, firewall as fallback)' }}
+  tags: [resolver, dns]
+
+# ── Where the host reads its resolvers from ──────────────────────────────────────────────
+- name: "Resolver | Is systemd-resolved running"
+  ansible.builtin.service_facts:
+  tags: [resolver, dns]
+
+- name: "Resolver | Note which resolver stack this host uses"
+  ansible.builtin.set_fact:
+    resolver_uses_resolved: >-
+      {{ (ansible_facts.services['systemd-resolved.service'].state | default('')) == 'running' }}
+  tags: [resolver, dns]
+
+- name: "Resolver | Hand the resolvers to systemd-resolved"
+  ansible.builtin.copy:
+    dest: /etc/systemd/resolved.conf.d/10-platform-dns.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible — roles/resolver. Manual edits are overwritten.
+      [Resolve]
+      DNS={{ resolver_nameservers | join(' ') }}
+      {% if resolver_search_domain %}Domains={{ resolver_search_domain }}
+      {% endif %}
+  when: resolver_uses_resolved | bool
+  notify: Restart systemd-resolved
+  tags: [resolver, dns]
+
+# resolv.conf on a host running systemd-resolved is its stub symlink — leave it alone there.
+- name: "Resolver | Write /etc/resolv.conf directly (no systemd-resolved here)"
+  ansible.builtin.template:
+    src: resolv.conf.j2
+    dest: /etc/resolv.conf
+    mode: "0644"
+    backup: true
+  when:
+    - resolver_manage_resolv_conf | bool
+    - not (resolver_uses_resolved | bool)
+  tags: [resolver, dns]
+
+# ── Router advertisements ────────────────────────────────────────────────────────────────
+# accept_ra=1 means "only while forwarding is off", so anything that turns on IPv6
+# forwarding (Docker does, for its bridge) silently stops the host reading RAs.
+# Per interface, not `all`: the kernel uses the interface's own accept_ra/forwarding, and
+# `all` only seeds defaults — reading `all` said "fix me" on a host whose interface was
+# deliberately set to ignore RAs.
+- name: "Resolver | Read the current RA settings on this host's interface"
+  ansible.builtin.command: >-
+    sysctl -n net.ipv6.conf.{{ resolver_interface }}.forwarding
+    net.ipv6.conf.{{ resolver_interface }}.accept_ra
+  register: resolver_ra_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: resolver_fix_accept_ra | bool
+  tags: [resolver, ra]
+
+# Fix ONLY the silent case: accept_ra=1 means "accept while forwarding is off", so turning
+# forwarding on quietly disables it. accept_ra=0 is a deliberate opt-out (a host with a
+# static IPv6 route that should ignore RAs) and is left exactly as it is.
+- name: "Resolver | Decide whether this host's RA handling was silently disabled"
+  ansible.builtin.set_fact:
+    resolver_ra_silently_off: >-
+      {{ (resolver_ra_state.stdout_lines | default(['0', '0']))[0] == '1'
+         and (resolver_ra_state.stdout_lines | default(['0', '0']))[1] == '1' }}
+  when: resolver_fix_accept_ra | bool
+  tags: [resolver, ra]
+
+- name: "Resolver | Keep honouring router advertisements despite forwarding"
+  ansible.posix.sysctl:
+    name: "net.ipv6.conf.{{ item }}.accept_ra"
+    value: "{{ resolver_accept_ra_value | string }}"
+    sysctl_file: /etc/sysctl.d/60-platform-accept-ra.conf
+    sysctl_set: true
+    reload: true
+    state: present
+  loop: ["{{ resolver_interface }}"]
+  when:
+    - resolver_fix_accept_ra | bool
+    - resolver_ra_silently_off | default(false) | bool
+  tags: [resolver, ra]
