@@ -223,7 +223,7 @@ opn_aliases:
     adr: infra/0004#§4-row-1400
     lib_manager: FwAliasManager
     ansible_module: by_systems.opnsense.opnsense_fw_alias
-- name: net_oob
+- name: net4_oob
   type: network
   content: 10.6.224.0/20
   description: OOB management network (single-family v4, naming/0003 §1a) — iLO/iDRAC/switch console (never via FW data path)
@@ -746,6 +746,12 @@ opn_aliases:
 - {name: port_smtp,        type: port, content: ['25'],  description: 'SMTP (MX inbound / outbound delivery, STARTTLS)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 # Declared 2026-09-11 after the prune report found them live but undeclared — a rebuild of the
 # firewall would have dropped GitLab git-over-SSH from the internet and the Jitsi reverse proxy.
+# OOB management plane, IPv6 side — the v4 counterpart net4_oob already existed; this is needed so
+# the OOB egress rule can be declared per family instead of with a raw interface macro.
+# Retired 2026-09-12: OOB is dual-stack now, so naming/0003 §1a wants the family-suffixed pair
+# (net4_oob + net6_oob) rather than the unsuffixed single-family name.
+- {name: net_oob, type: network, content: ['10.6.224.0/20'], description: 'superseded by net4_oob', state: absent, ref: {adr: 'naming/0003#§1a-single-family', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: net6_oob, type: network, content: ['fd06:224::/64'], description: 'OOB management plane (IPv6)', state: present, ref: {adr: 'naming/0003#§1a-single-family', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_ssh_hardened, type: port, content: ['22222'], description: 'Platform sshd (hardened port, sshd-hardening role) — also git over SSH to GitLab', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: port_jitsi, type: port, content: ['8000'], description: 'Jitsi Meet web (Traefik backend)', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host4_jitsi, type: host, content: ['10.1.3.193'], description: 'Jitsi Meet (SVC) v4', state: present, ref: {adr: 'naming/0003#§1-atomic-ports', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
@@ -2288,6 +2294,19 @@ opn_filter_rules:
   state: present
   ref: {adr: 'security/0001#ntp-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
 # Declared 2026-09-11 (prune report: live but undeclared).
+# OOB egress — declared 2026-09-12 after the 26.7 rebuild dropped it and the node's PBS backup
+# failed ("Can't connect to 10.1.3.222:8007"). The pre-rebuild firewall carried OPNsense's two
+# factory "Default allow LAN to any" rules on the OOB interface; our seed ships no <filter> block
+# at all, so a rebuilt firewall has none. Nothing declared them and prune could not flag them —
+# its candidate regex only matches PASS/BLOCK/REJECT-prefixed descriptions, so a factory-named
+# rule is invisible to it in both directions.
+#
+# These restore exactly what was running before, no more. OOB is the management plane (the Proxmox
+# node, the controller, break-glass); it reaches PBS on SVC, the guests it hosts, and the internet.
+# Narrowing this to per-destination rules is a deliberate hardening step, not something to change
+# while restoring service — tracked separately.
+- {description: 'PASS OOB → any (management plane egress; was the factory LAN rule pre-rebuild)', action: pass, interface: lan, direction: in, ipprotocol: inet,  source_net: net4_oob, destination_net: any, quick: '1', enabled: '1', state: present, ref: {adr: 'infra/0004#§1-zone-taxonomy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+- {description: 'PASS OOB → any (management plane egress, v6; was the factory LAN rule pre-rebuild)', action: pass, interface: lan, direction: in, ipprotocol: inet6, source_net: net6_oob, destination_net: any, quick: '1', enabled: '1', state: present, ref: {adr: 'infra/0004#§1-zone-taxonomy', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - {description: 'PASS Proximus WAN → GitLab git-SSH (v4)', action: pass, interface: opt12, direction: in, ipprotocol: inet,  protocol: TCP, source_net: any, destination_net: host4_gitlab, destination_port: port_ssh_hardened, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - {description: 'PASS Telenet WAN → GitLab git-SSH (v4)',  action: pass, interface: opt13, direction: in, ipprotocol: inet,  protocol: TCP, source_net: any, destination_net: host4_gitlab, destination_port: port_ssh_hardened, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - {description: 'PASS Telenet WAN → GitLab git-SSH (v6)',  action: pass, interface: opt13, direction: in, ipprotocol: inet6, protocol: TCP, source_net: any, destination_net: host6_gitlab, destination_port: port_ssh_hardened, quick: '1', enabled: '1', state: present, ref: {adr: 'services/0007#ingress', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
