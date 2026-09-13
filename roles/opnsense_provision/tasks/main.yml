@@ -199,7 +199,11 @@
     memory: "{{ opnsense_provision_vm.memory }}"
     onboot: "{{ (opnsense_provision_vm.onboot | default(0)) | bool }}"
     tags: "{{ opnsense_provision_vm.tags | default('') | split(';') | reject('equalto', '') | list }}"
-    agent: false          # switched on after the import, so the first boot stays quiet
+    # Off for the first boot so nothing competes with the importer on the serial console; the
+    # task after the import switches it on per the profile's agent_enabled. Leaving it off is
+    # what made `Services | Ensure the QEMU guest agent is running` the one task that never
+    # converged — no virtio-serial port, so the daemon starts and exits (#362).
+    agent: false
     keyboard: "{{ opnsense_provision_vm.keyboard | default('fr-be') }}"
     tablet: false
     vga: std
@@ -256,6 +260,46 @@
   delegate_to: localhost
   become: false
   when: opnsense_provision_created is changed
+
+# The agent needs its virtio-serial port, and that only attaches at power-on — so the flag goes
+# on after the import and the VM is cold-cycled. Without this the plugin reports Enabled=1 while
+# the service sits stopped, and `qm agent <vmid> ping` answers "not running" forever.
+- name: "Provision | Attach the guest-agent port the profile asks for"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ opnsense_provision_pve.host }}"
+    api_user: "{{ opnsense_provision_pve.admin_token_id | regex_replace('!.*$', '') }}"
+    api_token_id: "{{ opnsense_provision_pve.admin_token_id | regex_replace('^.*!', '') }}"
+    api_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
+    validate_certs: "{{ opnsense_provision_validate_certs }}"
+    node: "{{ opnsense_provision_node }}"
+    vmid: "{{ opnsense_provision_vmid }}"
+    agent: "enabled=1,type=virtio,freeze-fs-on-backup=0"
+    update: true
+  when:
+    - opnsense_provision_vm.agent_enabled | default(false) | bool
+    - opnsense_provision_created is changed
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: "Provision | Cold-cycle so the port actually attaches"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ opnsense_provision_pve.host }}"
+    api_user: "{{ opnsense_provision_pve.admin_token_id | regex_replace('!.*$', '') }}"
+    api_token_id: "{{ opnsense_provision_pve.admin_token_id | regex_replace('^.*!', '') }}"
+    api_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
+    validate_certs: "{{ opnsense_provision_validate_certs }}"
+    node: "{{ opnsense_provision_node }}"
+    vmid: "{{ opnsense_provision_vmid }}"
+    state: "{{ item }}"
+    timeout: 180
+  loop: [stopped, started]
+  when:
+    - opnsense_provision_vm.agent_enabled | default(false) | bool
+    - opnsense_provision_created is changed
+  delegate_to: localhost
+  become: false
+  no_log: true
 
 - name: "Provision | Wait for the firewall to answer on its management address"
   ansible.builtin.wait_for:
