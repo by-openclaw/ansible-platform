@@ -20,6 +20,20 @@ opnsense_provision_seed_iso: "{{ opnsense_provision_seed_dir }}/out/{{ opnsense_
 # secret store when the configuration is rendered — a seed profile never carries them.
 opnsense_provision_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric"
 
+# Where those credentials live in Vault, which is the store of record (security/0001). The role
+# reads these and hands them to opnsense_seed_config; the files above are the break-glass
+# fallback for when Vault is unreachable — during a rebuild it usually is, because Vault sits
+# behind the firewall being rebuilt.
+#
+# Reading files ALONE is what let the Proximus PPPoE password go stale in both stores while only
+# the running firewall held the working one, so the 26.7 rebuild came up with no uplink (#360).
+opnsense_provision_vault_secrets: true
+opnsense_provision_vault_paths:
+  genesis: "{{ platform_env | default('prod') }}/opnsense/oob-admin"
+  pppoe: "{{ platform_env | default('prod') }}/net/isp-proximus-pppoe"
+  wan2: "{{ platform_env | default('prod') }}/net/isp-telenet"
+  domain: "{{ platform_env | default('prod') }}/net/internal-domain"
+
 # Proxmox: API credentials come from the fabric secret store, never from the inventory.
 opnsense_provision_pve_secret: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric/infra-proxmox-poc.json"
 opnsense_provision_pve_node_host: srv-proxmox-poc-01     # inventory host, for the ISO upload
