@@ -95,12 +95,32 @@
 # A fresh appliance has no API to configure itself with — on 26.7 `interfaces/assign/*` is 404 — so
 # its config.xml has to exist before it is reachable. Rendered from the seed profile here and packed
 # into an image its boot importer reads, so building a firewall needs nothing but ansible-playbook.
+# Vault first, file second. A rebuild frequently runs with Vault unreachable — it lives behind
+# the firewall being rebuilt — so each read is best-effort and the renderer falls back to the
+# file the seed names for anything that did not come back.
+- name: "Provision | Read the seed credentials from Vault"
+  ansible.builtin.include_tasks: vault_secret_read.yml
+  loop: "{{ opnsense_provision_vault_paths | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: opnsense_provision_vault_secrets | bool
+
+- name: "Provision | Where each credential came from"
+  ansible.builtin.debug:
+    msg: >-
+      Vault: {{ (opnsense_provision_secrets | default({})).keys() | list | join(', ') or 'none' }}
+      | files (fallback):
+      {{ opnsense_provision_vault_paths.keys()
+         | difference((opnsense_provision_secrets | default({})).keys() | list)
+         | join(', ') or 'none' }}
+
 - name: "Provision | Render this firewall's configuration from its seed profile"
   by_systems.opnsense.opnsense_seed_config:
     seed: "{{ opnsense_provision_seed }}"
     baseline: "{{ opnsense_provision_baseline }}"
     dest: "{{ opnsense_provision_build_dir }}/conf/config.xml"
     secret_dir: "{{ opnsense_provision_secret_dir }}"
+    secrets: "{{ opnsense_provision_secrets | default(omit) }}"
   register: opnsense_provision_config
   no_log: true                      # the render carries the break-glass credential
   delegate_to: localhost
