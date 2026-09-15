@@ -1,7 +1,32 @@
 ---
+# Fast, robust path: if a local secret file is provided (opnsense_api_creds_local_file),
+# read the API token straight from it — NO Vault delegation, NO sudo, NO jump. Used by
+# the test env (its token also lives in Vault secret/test/opnsense/api for DR). Prod
+# leaves the var unset and uses the Vault path below.
+- name: "FW creds | Stat the local secret file (if configured)"
+  ansible.builtin.stat:
+    path: "{{ opnsense_api_creds_local_file }}"
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  register: opnsense_api_creds_local
+  when: opnsense_api_creds_local_file | default('') | length > 0
+
+- name: "FW creds | Publish from the local file"  # noqa: var-naming[no-role-prefix] (contract names used by the catalog + roles/opnsense)
+  ansible.builtin.set_fact:
+    opn_key: "{{ _f.key }}"
+    opn_secret: "{{ _f.secret }}"
+    opnsense_api_key: "{{ _f.key }}"
+    opnsense_api_secret: "{{ _f.secret }}"
+  vars:
+    _f: "{{ (lookup('file', opnsense_api_creds_local_file) | from_json).fields }}"
+  no_log: true
+  when: opnsense_api_creds_local.stat.exists | default(false)
+
 - name: "FW creds | Vault login (ansible-deploy AppRole)"
   ansible.builtin.import_role:          # static: inherits the caller tags (always)
     name: vault_login
+  when: opn_key is not defined
 
 - name: "FW creds | Read {{ opnsense_api_creds_vault_path }}"
   ansible.builtin.command:
@@ -12,6 +37,7 @@
   become: true
   register: opnsense_api_creds_get
   changed_when: false
+  when: opn_key is not defined
   check_mode: false          # read-only; must also run under --check so FW plays can be dry-run
   no_log: true
 
@@ -22,3 +48,4 @@
     opnsense_api_key: "{{ (opnsense_api_creds_get.stdout | from_json).data.data.key }}"
     opnsense_api_secret: "{{ (opnsense_api_creds_get.stdout | from_json).data.data.secret }}"
   no_log: true
+  when: opn_key is not defined

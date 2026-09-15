@@ -1,13 +1,16 @@
+# Credentials are FACTS published by roles/opnsense_api_creds (Vault secret/test/opnsense/api or the
+# local fast-path file below) at the start of every FW play — never defined here (no duplicate source).
 opn_host: 10.6.239.195
 opn_port: 443
+# --- Dynamic DNS (os-ddclient -> Cloudflare) — per env; see roles/opnsense/tasks/dyndns.yml ---
+opnsense_dyndns_accounts: []   # no public zone for the test env — DynDNS is prod-only
+# OPNsense version this FW is pinned to (firmware.yml waits for it after an update).
+opnsense_firmware_upgrade: false   # apply pending updates (reboot) only when deliberately flipped for a window
+opnsense_firmware_target: "26.7.3"   # proven by the 2026-09-07 window (26.7 nano → 26.7.3_11); plugins need it
 opn_verify_ssl: false
-opn_key: '{{ vault_opn_key }}'
-opn_secret: '{{ vault_opn_secret }}'
 opnsense_host: '{{ opn_host }}'
 opnsense_port: '{{ opn_port }}'
 opnsense_verify_ssl: '{{ opn_verify_ssl }}'
-opnsense_api_key: '{{ opn_key }}'
-opnsense_api_secret: '{{ opn_secret }}'
 # Interface → OPNsense opt-slot map. MUST match the live FW assignment produced
 # by recreate-and-seed.py + the complete-config seed (config.xml from the
 # pre-reseed live state, addressing-rewritten to ADR). That layout is opt2–opt12
@@ -29,9 +32,35 @@ opn_interface_map:
   media: opt9
   gaming: opt10
   cctv: opt11
-  wan: wan
+  wan: opt13   # the seed assigns no 'wan' slot — the test FW's live uplink (Telenet); Proximus stays admin-down there
   lan: lan
+# --- Static gateways + routes (catalog-owned, ADR services/0008: gateways are API-managed) ------
+# The test FW reaches PROD-ONLY services through the prod FW's OOB address: Mailcow submission for
+# Monit alerts (SVC-11 — one Mailcow, on prod; 587/465 are deliberately NOT public). One static
+# gateway on the OOB slot + one /32 route here; the matching OOB→mailcow:587 PASS rule lives in
+# the prod catalog (applied in the prod window, #307). Consumers: gateways.yml / routes.yml.
+opn_gateways:
+- name: OOB_FW_PROD
+  interface: lan            # OOB slot on the seed (opn_interface_map.lan)
+  gateway: 10.6.239.196     # prod FW OOB address
+  ipprotocol: inet
+  monitor_disable: true     # the prod FW OOB address is not an ICMP-monitored uplink
+opn_routes:
+- network: 10.1.2.120/32    # vm-mailcow-01 (prod DMZ)
+  gateway: OOB_FW_PROD
+  descr: 'prod mailcow (Monit SMTP submission) via prod FW OOB'
+- network: 10.1.3.230/32    # lxc-monitoring-01 (prod SVC) — Loki syslog listener
+  gateway: OOB_FW_PROD
+  descr: 'prod Loki (syslog) via prod FW OOB'
+- network: 10.1.3.190/32    # lxc-crowdsec-01 (prod SVC) — Suricata EVE feed
+  gateway: OOB_FW_PROD
+  descr: 'prod CrowdSec engine (Suricata feed) via prod FW OOB'
+
 opn_ids:
+  # ENABLED 2026-09-08 (ADR services/0006 §1 + services/0010 §1: Suricata alert-only on WAN as the
+  # sensor feeding CrowdSec). Suricata 8.0.6 needs ~1.9 GiB RSS; on the 3 GiB nano it was OOM-killed
+  # (#310). Sizing review per 0006 "resource budget is fixed at FW VM sizing time": the seed `vm`
+  # block now carries 8192 MiB (infra-terraform-proxmox, applied with `recreate-and-seed.py --apply-hw`).
   enabled: true
   mode: alert
   interfaces:
@@ -44,14 +73,40 @@ opn_ids:
   log_to_loki: true
   ref:
     adr: services/0006#§1-suricata-ids
+# mDNS repeater — OFF (USER decision 2026-09-09). Never installed on either firewall, so
+# this is the live state, not a rollback. A repeater re-broadcasts EVERY mDNS service between
+# the interfaces it serves and cannot filter by service type, which publishes device and
+# service names across zones; serving `mgmt` would make the administration plane discoverable
+# from gaming. The cited exception (infra/0004#§1-zone-taxonomy-mdns-exception) does not exist
+# in that ADR. Interfaces kept here as the proposal, to be revisited when the ADR covers it.
 opn_mdns:
-  enabled: true
+  enabled: false
   interfaces:
-  - mgmt
   - media
   - gaming
   ref:
-    adr: infra/0004#§1-zone-taxonomy-mdns-exception
+    adr: infra/0004#pending-mdns-exception
+# --- ACME: the firewall's own TLS certificate (SEC-26/27/33) ------------------------------------
+# Let's Encrypt via DNS-01 (Cloudflare scoped token from Vault prod/cloudflare/<zone>, read by the
+# playbook's pre-play). Test FW = LE STAGING first (untrusted chain, no rate limits); flip to
+# `environment: prod` once the chain is proven. Consumer: roles/opnsense/tasks/acme.yml.
+# WebGUI binding = seed concern (pre-set refid; certRefId is read-only on the API) — #317.
+opn_acme:
+  enabled: true
+  environment: stg              # LE staging on TEST; prod uses `prod`
+  account: {name: letsencrypt-staging, ca: letsencrypt_test}
+  validation: {name: cloudflare-dns, dns_sleep: "30"}
+  action: {name: restart-webgui}
+  certificates:
+  - name: vm-opns-test-01.test.by-research.be
+    key_length: key_ec256
+    renew_interval: "30"
+    description: 'WebGUI certificate (asset FQDN) — catalog'
+  ref:
+    adr: security/0004#certificate-strategy
+    lib_manager: AcmeCertificateManager
+    ansible_module: by_systems.opnsense.opnsense_acme_certificate
+
 opn_aliases:
 - name: net4_mgmt
   type: network
@@ -143,7 +198,7 @@ opn_aliases:
     adr: infra/0004#§4-row-2400
     lib_manager: FwAliasManager
     ansible_module: by_systems.opnsense.opnsense_fw_alias
-- name: net4_oob
+- name: net_oob
   type: network
   content: 10.6.224.0/20
   description: OOB management network — iLO/iDRAC/switch console (never via FW data path)
@@ -918,7 +973,7 @@ opn_filter_rules:
   interface: iot
   direction: in
   ipprotocol: inet
-  protocol: any
+  protocol: TCP/UDP   # DNS = 53 tcp+udp; ports are invalid on protocol any (OPNsense 400)
   source_net: net4_iot
   destination_net: any
   destination_port: port_dns
@@ -1000,7 +1055,7 @@ opn_filter_rules:
   interface: voip
   direction: in
   ipprotocol: inet
-  protocol: any
+  protocol: TCP/UDP   # DNS = 53 tcp+udp; ports are invalid on protocol any (OPNsense 400)
   source_net: net4_voip
   destination_net: any
   destination_port: port_dns
@@ -1478,7 +1533,7 @@ opn_filter_rules:
   interface: iot
   direction: in
   ipprotocol: inet6
-  protocol: any
+  protocol: TCP/UDP   # DNS = 53 tcp+udp; ports are invalid on protocol any (OPNsense 400)
   source_net: net6_iot
   destination_net: any
   destination_port: port_dns
@@ -1560,7 +1615,7 @@ opn_filter_rules:
   interface: voip
   direction: in
   ipprotocol: inet6
-  protocol: any
+  protocol: TCP/UDP   # DNS = 53 tcp+udp; ports are invalid on protocol any (OPNsense 400)
   source_net: net6_voip
   destination_net: any
   destination_port: port_dns
@@ -1781,8 +1836,18 @@ opn_filter_rules:
   enabled: '1'
   state: present
   ref: {adr: 'security/0001#dns-enforcement', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}
+# --- Remote syslog (INF-27 + services/0010 §1) — the same two sinks as prod, reached through the
+# prod FW's OOB address (opn_routes above); the matching PASS rules live in the prod catalog.
+opn_syslog_destinations:
+  - {description: 'Loki — promtail syslog listener (all logs, RFC5424/TCP)', hostname: 10.1.3.230, syslog_port: '1514', transport: tcp4, rfc5424: true, enabled: true, state: present, ref: {adr: 'infra/0006#logging', lib_manager: SyslogDestManager, ansible_module: by_systems.opnsense.opnsense_syslog_dest}}
+  - {description: 'CrowdSec — Suricata EVE feed (all logs, RFC5424/UDP)', hostname: 10.1.3.190, syslog_port: '1515', transport: udp4, rfc5424: true, enabled: true, state: present, ref: {adr: 'services/0010#§1-engine', lib_manager: SyslogDestManager, ansible_module: by_systems.opnsense.opnsense_syslog_dest}}
+
 opn_snat_rules: []
 opn_dnat_rules: []
+# Do not let Unbound register the FW hostname on every interface (WAN public IPs included);
+# the asset records are the explicit host overrides below (NAM-06/08).
+opnsense_unbound_noregrecords: true
+
 opn_unbound:
   enabled: true
   domain: "{{ platform_domain }}"
@@ -1790,6 +1855,22 @@ opn_unbound:
   - grp_net4_internal
   - grp_net6_internal
   host_overrides:
+  # NAM-06/08: the firewall's own asset FQDN → its MGMT (platform management) address, both
+  # families where the interface has one; the template emits the PTRs. The plugin's registration of
+  # the hostname on every interface is off (opnsense_unbound_noregrecords) so this is THE answer.
+  - hostname: vm-opns-test-01
+    domain: "{{ platform_domain }}"
+    rr: A
+    server: 10.11.1.1
+    description: 'FW asset FQDN (MGMT v4) — catalog'
+  # AAAA: test MGMT carries no IPv6 address yet (track6 on a WAN without PD) — add when it does.
+  # prod-only service the test FW must reach by its asset FQDN (Monit SMTP): same answer as the
+  # prod split-DNS twin; the route to it is opn_routes (prod FW OOB next hop).
+  - hostname: vm-mailcow-01
+    domain: "{{ platform_mail_domain }}"
+    rr: A
+    server: 10.1.2.120
+    description: 'prod mailcow — Monit SMTP submission (asset FQDN, prod split-DNS twin)'
   - hostname: lxc-mgmt-deb13-test-01
     domain: "{{ platform_domain }}"
     rr: A
@@ -2131,5 +2212,17 @@ opn_dnscrypt_proxy:
     - quad9-dnscrypt-ip6-filter-pri
   ref:
     adr: "infra/0004#dns-chain"
-    lib_manager: "DnscryptProxyManager (TODO — lib-opnsense#NN)"
-    ansible_module: "opn_dnscrypt_proxy_settings"
+    lib_manager: "DnscryptProxyGeneralManager + DnscryptProxyServiceManager"
+    ansible_module: "by_systems.opnsense.opnsense_dnscrypt_settings + opnsense_dnscrypt_service"
+# Test FW API token: read from the controller secret file (also mirrored to Vault
+# secret/test/opnsense/api). Avoids the Vault delegate+sudo+jump chain for test runs.
+opnsense_api_creds_local_file: "{{ lookup('env','HOME') }}/.openclaw/workspace/infra/secrets/fabric/net-opnsense-test-vm-opns-test-01.json"
+
+# --- opnsense_api_bootstrap (playbooks/opnsense-api-bootstrap.yml) -----------
+# Genesis = the ONE seeded break-glass credential (oob-admin, rendered into the
+# seed from this file's key/secret). The role mints svc-ansible's token from it
+# and stores it at secret/test/opnsense/api; the DR mirror refreshes the
+# local fast-path file opnsense_api_creds reads (same file, so a rotate after a
+# reseed is picked up by every FW play without manual steps).
+opnsense_api_bootstrap_genesis_file: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric/net-opnsense-test-oob-admin.json"
+opnsense_api_bootstrap_collect_file: "{{ opnsense_api_creds_local_file }}"

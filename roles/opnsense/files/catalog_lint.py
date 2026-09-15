@@ -3,10 +3,13 @@
 Checks present entries only:
   §3  every source/destination net + port field is an alias (or any / (self)); ipprotocol ∈ inet|inet6|inet46
   §1a a family-suffixed alias (host4_/host6_/net4_/net6_/grp_net4_/grp_net6_) must have its pair
+  §4  a rule with a source/destination port must be protocol tcp, udp or tcp/udp (OPNsense rejects the rest)
   twins: an inet (inet6) rule on a dual-stack interface must have its inet6 (inet) twin —
          same description with the family marker removed — unless the interface is single-family
 Exit 1 with the list of violations."""
-import json, re, sys
+import json
+import re
+import sys
 
 SUF = re.compile(r"^(host|net|grp_net)([46])_(.+)$")
 KEYWORDS = {"any", "(self)", ""}
@@ -45,6 +48,11 @@ def main(path):
         proto = r.get("ipprotocol", "inet")
         if proto not in ("inet", "inet6", "inet46"):
             v.append(f"rule '{desc}': ipprotocol '{proto}' invalid")
+        # §4 OPNsense rejects ports on anything but tcp/udp ("Destination ports are only
+        # valid for tcp or udp type rules") — catch it here, not at apply time.
+        l4 = str(r.get("protocol", "any") or "any").lower()
+        if any(str(r.get(k, "") or "") for k in ("destination_port", "source_port")) and l4 not in ("tcp", "udp", "tcp/udp"):
+            v.append(f"§4 rule '{desc}': has a port alias but protocol='{l4}' (ports need tcp, udp or tcp/udp)")
         fams.setdefault(base(desc), {})[proto] = r
     for b, byfam in fams.items():
         if "inet46" in byfam or {"inet", "inet6"} <= set(byfam):

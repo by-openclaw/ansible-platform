@@ -1,0 +1,47 @@
+---
+- name: "Token rotation | Directories (bin, user units, state/logs)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - "{{ opnsense_token_rotation_bin_dir }}"
+    - "{{ opnsense_token_rotation_unit_dir }}"
+    - "{{ opnsense_token_rotation_state_dir }}"
+
+- name: "Token rotation | Wrapper (rotate + gate, logs under the state dir)"
+  ansible.builtin.template:
+    src: fw-token-rotate.sh.j2
+    dest: "{{ opnsense_token_rotation_bin_dir }}/fw-token-rotate.sh"
+    mode: "0700"
+
+- name: "Token rotation | systemd user units (template instance per env)"
+  ansible.builtin.template:
+    src: "fw-token-rotation@.{{ item }}.j2"
+    dest: "{{ opnsense_token_rotation_unit_dir }}/fw-token-rotation@.{{ item }}"
+    mode: "0644"
+  loop: [service, timer]
+  register: opnsense_token_rotation_units
+
+- name: "Token rotation | Reload the user systemd"   # noqa: no-handler (same play, must precede enable)
+  ansible.builtin.systemd_service:
+    scope: user
+    daemon_reload: true
+  when: opnsense_token_rotation_units is changed
+
+- name: "Token rotation | Enable/disable the timer per environment"
+  ansible.builtin.systemd_service:
+    scope: user
+    name: "fw-token-rotation@{{ item.env }}.timer"
+    enabled: "{{ item.enabled | bool }}"
+    state: "{{ 'started' if (item.enabled | bool) else 'stopped' }}"
+  loop: "{{ opnsense_token_rotation_envs }}"
+  loop_control:
+    label: "{{ item.env }} ({{ 'enabled' if (item.enabled | bool) else 'disabled' }})"
+
+- name: "Token rotation | Controller user must linger (timers run without a login session)"
+  ansible.builtin.command:
+    cmd: loginctl show-user {{ lookup('env', 'USER') }} -p Linger --value
+  register: opnsense_token_rotation_linger
+  changed_when: false
+  failed_when: opnsense_token_rotation_linger.stdout | trim != 'yes'

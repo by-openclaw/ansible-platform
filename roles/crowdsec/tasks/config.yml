@@ -45,6 +45,41 @@
   when: not (crowdsec_appsec_enabled | bool)
   notify: Restart crowdsec
 
+- name: "config | Syslog feed acquisitions (services/0010 §1 — the firewalls' Suricata EVE)"
+  ansible.builtin.copy:
+    dest: "/etc/crowdsec/acquis.d/syslog-{{ item.name }}.yaml"
+    mode: "0644"
+    content: |
+      # Managed by Ansible role `crowdsec`. Syslog datasource fed by the OPNsense firewalls
+      # (catalog opn_syslog_destinations → this host:{{ item.port }}, RFC5424 over UDP — this datasource is UDP-only).
+      source: syslog
+      listen_addr: 0.0.0.0
+      listen_port: {{ item.port }}
+      max_message_len: {{ item.max_message_len | default(65535) }}
+      labels:
+        type: syslog
+  loop: "{{ crowdsec_syslog_feeds | default([]) }}"
+  loop_control:
+    label: "syslog-{{ item.name }} :{{ item.port }}"
+  notify: Restart crowdsec
+
+- name: "config | Bridge the OPNsense Suricata EVE syslog program onto the hub parser's name"
+  ansible.builtin.template:
+    src: parser-opnsense-suricata-eve.yaml.j2
+    dest: /etc/crowdsec/parsers/s01-parse/00-opnsense-suricata-eve.yaml
+    mode: "0644"
+  when: crowdsec_suricata_syslog_program | default('') | length > 0
+  notify: Restart crowdsec
+
+- name: "config | Remove the Suricata program bridge (disabled, or the retired s00-raw location)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/crowdsec/parsers/s00-raw/zz-opnsense-suricata-eve.yaml   # retired: syslog-logs leaves s00-raw
+    - "{{ '/etc/crowdsec/parsers/s01-parse/00-opnsense-suricata-eve.yaml' if not (crowdsec_suricata_syslog_program | default('') | length > 0) else omit }}"
+  notify: Restart crowdsec
+
 - name: "config | Apply LAPI/AppSec config now"
   ansible.builtin.meta: flush_handlers
 

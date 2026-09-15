@@ -1,0 +1,14 @@
+---
+# DHCP: MGMT zone only (10.1.1.100-199)
+
+- name: Ensure DHCP server enabled on MGMT interface
+  puzzle.opnsense.dhcpv4_leases:
+    interface: "opt1"   # vtnet1.310 — MGMT
+    enabled: "{{ opnsense_dhcp_mgmt_enabled }}"
+    range_from: "{{ opnsense_dhcp_mgmt_range_start }}"
+    range_to: "{{ opnsense_dhcp_mgmt_range_end }}"
+    api_host: "{{ opnsense_host }}"
+    api_key: "{{ opnsense_api_key }}"
+    api_secret: "{{ opnsense_api_secret }}"
+    ssl_verify: "{{ not opnsense_verify_ssl }}"
+  when: opnsense_dhcp_mgmt_enabled | bool

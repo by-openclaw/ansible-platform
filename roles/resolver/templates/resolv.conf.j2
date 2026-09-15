@@ -1,0 +1,15 @@
+# Managed by Ansible — roles/resolver. Manual edits are overwritten.
+{% if inventory_hostname in resolver_self_hosted %}
+# This host runs AdGuard, so it resolves at the firewall rather than through itself.
+{% else %}
+# AdGuard first (filtered + logged); the firewall is the fallback for AdGuard downtime.
+{% endif %}
+# glibc reads at most MAXNS (3) nameservers from this file — anything further is ignored,
+# so the list is truncated here rather than written and silently dropped.
+{% if resolver_search_domain %}
+search {{ resolver_search_domain }}
+{% endif %}
+{% for ns in resolver_nameservers[:3] %}
+nameserver {{ ns }}
+{% endfor %}
+options edns0 trust-ad

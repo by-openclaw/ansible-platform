@@ -1,59 +1,55 @@
 ---
-# Activate plugin services via API reconfigure (NOT root/puzzle/raw).
-# The plugins are installed (firmware.yml) and the config is present (seed/running
-# config), so a reconfigure starts each service with its existing settings.
-# All API — the only door (root SSH is blocked by design).
+# Service activation — contract: by_systems.opnsense modules (lib-opnsense underneath).
+# Each plugin's settings task (dns.yml, dnscrypt.yml, chrony.yml, lldpd.yml) already applies
+# its own config; this file owns the QEMU guest agent and asserts the daemons the health gate
+# expects are RUNNING (idempotent: noop when already up). Unbound/dnscrypt/chrony/lldpd daemon
+# state lives next to their settings; crowdsec is configured by its own play (crowdsec role).
 
-- name: Services | Enable qemu-guest-agent
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/qemuguestagent/settings/set"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: { qemuguestagent: { enabled: "1" } }
-    status_code: [200, 400]
+- name: Services | Ensure the QEMU guest agent is enabled (Proxmox fs-freeze/IP reporting)
+  by_systems.opnsense.opnsense_qemuguestagent_settings:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    enabled: true
   delegate_to: localhost
   become: false
   tags: [services]
 
-- name: Services | Reconfigure each plugin service to (re)start it
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/{{ item }}/service/reconfigure"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: [200, 400, 404]
-  loop:
-    - unbound
-    - dnscryptproxy
-    - crowdsec
-    - qemuguestagent
-  loop_control:
-    label: "{{ item }}"
-  register: opnsense_svc_reconfig
-  failed_when: false
+- name: Services | Ensure the QEMU guest agent is running
+  by_systems.opnsense.opnsense_qemuguestagent_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: running
   delegate_to: localhost
   become: false
   tags: [services]
 
-- name: Services | Reconfigure NetFlow / Insight reporting
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/diagnostics/netflow/reconfigure"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: [200, 400]
+- name: Services | Ensure CrowdSec is running (bouncer for the central LAPI)
+  by_systems.opnsense.opnsense_crowdsec_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: running
+  delegate_to: localhost
+  become: false
+  tags: [services, crowdsec]
+
+- name: Services | Reconfigure NetFlow / Insight reporting (exporter config is seed-owned)
+  by_systems.opnsense.opnsense_netflow_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: reconfigured
+  changed_when: false   # a reconfigure is not a config change; the exporter stays active
   delegate_to: localhost
   become: false
   tags: [services, netflow]
@@ -68,6 +64,7 @@
     validate_certs: false
     status_code: 200
   register: opnsense_svc_states
+  check_mode: false   # read-only GET — must also run under --check
   delegate_to: localhost
   become: false
   tags: [services]
@@ -76,8 +73,8 @@
   ansible.builtin.debug:
     msg: >-
       {{ opnsense_svc_states.json.rows
-         | selectattr('name', 'in', ['unbound','dnscrypt-proxy','crowdsec','qemu-ga','flowd_aggregate','kea-dhcp'])
+         | selectattr('name', 'in', ['unbound','dnscrypt-proxy','crowdsec','qemu-ga','flowd_aggregate','kea-dhcp','chronyd','lldpd'])
          | map(attribute='name') | zip(opnsense_svc_states.json.rows
-             | selectattr('name', 'in', ['unbound','dnscrypt-proxy','crowdsec','qemu-ga','flowd_aggregate','kea-dhcp'])
+             | selectattr('name', 'in', ['unbound','dnscrypt-proxy','crowdsec','qemu-ga','flowd_aggregate','kea-dhcp','chronyd','lldpd'])
              | map(attribute='running')) | list }}
   tags: [services]

@@ -1,0 +1,58 @@
+---
+# Role: resolver — every guest resolves through AdGuard, and keeps honouring router
+# advertisements even when something turns on IPv6 forwarding.
+#
+# Why this is a baseline and not a per-service concern: AdGuard is where DNS is filtered
+# and where query visibility lives. A guest pointed straight at the firewall's Unbound
+# still resolves — and still gets encrypted upstream through dnscrypt — but its queries
+# are neither filtered nor visible. Before this role every guest was pointed at the
+# firewall, because nothing set the resolver at all (surveyed 2026-09-09).
+
+# AdGuard, on both families. The v6 address matters: a dual-stack guest prefers IPv6.
+resolver_primary_v4: 10.1.3.101
+resolver_primary_v6: "fd01:3::101"
+
+# The firewall's Unbound, as fallback ONLY. AdGuard is a single VM: without a fallback its
+# reboot takes name resolution down platform-wide, which is worse than briefly resolving
+# unfiltered. The resolver library only reaches it when AdGuard does not answer.
+resolver_fallback_v4: 10.1.3.1
+resolver_fallback_v6: "fd01:3::1"
+
+resolver_search_domain: "{{ platform_domain | default('') }}"
+
+# glibc reads at most 3 nameservers from /etc/resolv.conf, so the order matters: both
+# AdGuard addresses first, then ONE fallback. systemd-resolved has no such limit and gets
+# the full list.
+
+# AdGuard must not be pointed at itself — it would resolve its own upstream through itself.
+# Listed hosts fall back to the firewall's Unbound, which is what AdGuard forwards to anyway.
+resolver_self_hosted: [vm-adguard-01]
+
+# Subnets the firewall deliberately keeps away from the services VLAN. DMZ holds the
+# internet-facing services, and DMZ -> SVC is blocked on purpose — so those hosts cannot
+# reach AdGuard, and pointing them at it would add a resolver timeout to every lookup before
+# falling back. They resolve at the firewall's Unbound instead: still dnscrypt-encrypted
+# upstream, just not AdGuard-filtered. Opening DNS from DMZ into SVC would be a decision
+# about the isolation, not about DNS, so it is not made here.
+# Verified 2026-09-09: lxc-traefik-01 (10.1.2.110) and vm-mailcow-01 (10.1.2.120) time out
+# to AdGuard on both families; every other guest answers ok.
+resolver_isolated_subnets:
+  - 10.1.2.0/24
+
+# A hypervisor must not depend for DNS on a guest it hosts: AdGuard runs ON the Proxmox node,
+# so a node pointed at it cannot resolve until the VM it is trying to start has started. It
+# resolves at the firewall, which is a separate box on a separate lifecycle.
+resolver_direct_groups:
+  - proxmox_nodes
+
+# Docker enables IPv6 forwarding for its bridge, and Linux reads accept_ra=1 as "accept
+# router advertisements only while forwarding is off" — so the host silently stops
+# processing RAs: no SLAAC address, and no RA change ever reaches it again. 2 = accept
+# regardless. Surveyed 2026-09-09: every Docker guest had forwarding=1 and no SLAAC address,
+# every non-Docker guest had forwarding=0 and one.
+resolver_fix_accept_ra: true
+resolver_accept_ra_value: 2
+
+# /etc/resolv.conf on a Proxmox container is seeded from the CT config at creation, so the
+# same values belong in the Terraform guest definition; this role owns the running state.
+resolver_manage_resolv_conf: true

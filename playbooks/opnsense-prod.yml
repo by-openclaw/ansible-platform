@@ -19,7 +19,6 @@
     ansible_python_interpreter: /usr/bin/python3
     # qemu-guest-agent is already installed by the seed (firmware plugins list);
     # the role's pkg-based install task assumes a shell on the FW (we use the API).
-    opnsense_install_qemu_agent: false
     # Point the role + collection straight at the FW OOB API (no tunnel)
     opnsense_host: "{{ opn_host }}"
     opnsense_port: "{{ opn_port }}"
@@ -28,8 +27,10 @@
     opnsense_api_url: "https://{{ opn_host }}:{{ opn_port }}"
   pre_tasks:
     - name: "FW API credentials from Vault"
-      ansible.builtin.import_role:        # static: `always` propagates to the role tasks
+      ansible.builtin.include_role:
         name: opnsense_api_creds
-      tags: [always]          # creds must load under ANY --tags selection
+        apply:
+          tags: [always]   # inner tasks must run under any --tags subset
+      tags: always
   roles:
     - role: opnsense

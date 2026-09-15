@@ -1,14 +1,166 @@
 ---
-# DHCP: MGMT zone only (10.1.1.100-199)
+# DHCP — Kea DHCPv4/DHCPv6 (subnets + options), radvd (RAs — Kea v6 emits none), Dnsmasq kept OFF.
+# Contract: by_systems.opnsense modules (lib-opnsense underneath) driven by the catalog keys
+# opn_kea_dhcp4 / opn_kea_dhcp6 / opn_radvd / opn_dnsmasq. Friendly interface names in the catalog
+# resolve to slot ids through opnsense_iface_lookup (identity map + opn_interface_map).
+# A freshly seeded FW ships Kea/radvd disabled: these tasks turn them on; every module applies
+# (reconfigure) on change.
 
-- name: Ensure DHCP server enabled on MGMT interface
-  puzzle.opnsense.dhcpv4_leases:
-    interface: "opt1"   # vtnet1.310 — MGMT
-    enabled: "{{ opnsense_dhcp_mgmt_enabled }}"
-    range_from: "{{ opnsense_dhcp_mgmt_range_start }}"
-    range_to: "{{ opnsense_dhcp_mgmt_range_end }}"
-    api_host: "{{ opnsense_host }}"
-    api_key: "{{ opnsense_api_key }}"
-    api_secret: "{{ opnsense_api_secret }}"
-    ssl_verify: "{{ not opnsense_verify_ssl }}"
-  when: opnsense_dhcp_mgmt_enabled | bool
+- name: DHCP | Ensure Kea DHCPv4 general settings match the catalog (enable, interfaces, lifetime)
+  by_systems.opnsense.opnsense_kea4_settings:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    enabled: "{{ opn_kea_dhcp4.general.enabled | default('1') | bool }}"
+    fwrules: "{{ opn_kea_dhcp4.general.fwrules | default('0') | bool }}"
+    valid_lifetime: "{{ opn_kea_dhcp4.general.valid_lifetime | default('4000') | string }}"
+    interfaces: "{{ opn_kea_dhcp4.general.interfaces | map('extract', opnsense_iface_lookup) | list }}"
+  when: opn_kea_dhcp4 is defined
+  delegate_to: localhost
+  become: false
+  tags: [dhcp, kea]
+
+- name: DHCP | Ensure Kea DHCPv4 subnets (pools + options) match the catalog
+  by_systems.opnsense.opnsense_kea4_subnet:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    subnet: "{{ item.subnet }}"
+    pools: "{{ item.pools | default('') }}"
+    description: "{{ item.description | default('') }}"
+    option_data: "{{ item.option_data | default({}) }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opn_kea_dhcp4.subnets | default([]) }}"
+  loop_control:
+    label: "{{ item.subnet }}"
+  when: opn_kea_dhcp4 is defined
+  delegate_to: localhost
+  become: false
+  tags: [dhcp, kea]
+
+- name: DHCP | Ensure Kea DHCPv6 general settings match the catalog
+  by_systems.opnsense.opnsense_kea6_settings:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    enabled: "{{ opn_kea_dhcp6.general.enabled | default('1') | bool }}"
+    fwrules: "{{ opn_kea_dhcp6.general.fwrules | default('0') | bool }}"
+    valid_lifetime: "{{ opn_kea_dhcp6.general.valid_lifetime | default('4000') | string }}"
+    interfaces: "{{ opn_kea_dhcp6.general.interfaces | map('extract', opnsense_iface_lookup) | list }}"
+  when: opn_kea_dhcp6 is defined
+  delegate_to: localhost
+  become: false
+  tags: [dhcp, kea]
+
+- name: DHCP | Ensure Kea DHCPv6 subnets match the catalog
+  by_systems.opnsense.opnsense_kea6_subnet:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    subnet: "{{ item.subnet }}"
+    interface: "{{ opnsense_iface_lookup[item.interface] }}"
+    description: "{{ item.description | default('') }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opn_kea_dhcp6.subnets | default([]) }}"
+  loop_control:
+    label: "{{ item.subnet }} ({{ item.interface }})"
+  when: opn_kea_dhcp6 is defined
+  delegate_to: localhost
+  become: false
+  tags: [dhcp, kea]
+
+- name: DHCP | Ensure the Kea daemon is running
+  by_systems.opnsense.opnsense_kea_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: running
+  when: >-
+    (opn_kea_dhcp4 is defined and (opn_kea_dhcp4.general.enabled | default('1') | bool))
+    or (opn_kea_dhcp6 is defined and (opn_kea_dhcp6.general.enabled | default('1') | bool))
+  delegate_to: localhost
+  become: false
+  tags: [dhcp, kea]
+
+# ── radvd — router advertisements per served interface (Kea v6 emits none) ────────────────
+- name: DHCP | Ensure radvd entries match the catalog
+  by_systems.opnsense.opnsense_radvd_entry:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    interface: "{{ opnsense_iface_lookup[item.interface] }}"
+    mode: "{{ item.mode | default('unmanaged') }}"
+    enabled: "{{ item.enabled | default('1') | bool }}"
+    base6_interface: "{{ item.Base6Interface | default('') }}"
+    # Resolver advertisement (RFC 8106). Kea DHCPv6 hands out no DNS at all, so the RA is
+    # the ONLY thing telling an IPv6 client where to resolve — and advertise_dns with an
+    # empty rdnss advertises the firewall itself, quietly bypassing whatever filtering
+    # resolver IPv4 clients are given. Declared per entry, defaulting to the catalog-wide
+    # resolver so v6 matches v4 by construction.
+    advertise_dns: "{{ item.advertise_dns | default(true) | bool }}"
+    rdnss: "{{ item.RDNSS | default(opn_radvd.rdnss | default('')) }}"
+    dnssl: "{{ item.DNSSL | default(opn_radvd.dnssl | default('')) }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opn_radvd.entries | default([]) }}"
+  loop_control:
+    label: "{{ item.interface }} ({{ item.mode | default('unmanaged') }})"
+  when: opn_radvd is defined and (opn_radvd.enabled | default(true) | bool)
+  delegate_to: localhost
+  become: false
+  tags: [dhcp, radvd]
+
+- name: DHCP | Ensure the radvd daemon is {{ opn_radvd.service_state | default('running') if opn_radvd is defined else 'n/a' }}
+  by_systems.opnsense.opnsense_radvd_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: "{{ opn_radvd.service_state | default('running') }}"
+  when: opn_radvd is defined and (opn_radvd.enabled | default(true) | bool)
+  delegate_to: localhost
+  become: false
+  tags: [dhcp, radvd]
+
+# ── Dnsmasq — kept OFF / strictly bound (Kea holds 67/547, Unbound owns :53) ─────────────
+- name: DHCP | Ensure Dnsmasq settings match the catalog (off / strictly bound)
+  by_systems.opnsense.opnsense_dnsmasq_settings:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    enable: "{{ opn_dnsmasq.settings.enable | default('0') | bool }}"
+    listen_port: "{{ opn_dnsmasq.settings.port | default('53053') | string }}"
+    dns_port: "{{ opn_dnsmasq.settings.dns_port | default('53053') | string }}"
+    strictbind: "{{ opn_dnsmasq.settings.strictbind | default('1') | bool }}"
+    interface: "{{ opn_dnsmasq.settings.interface | default([]) | map('extract', opnsense_iface_lookup) | list }}"
+  when: opn_dnsmasq is defined
+  delegate_to: localhost
+  become: false
+  tags: [dhcp, dnsmasq]
+
+- name: DHCP | Ensure the Dnsmasq daemon is {{ 'running' if (opn_dnsmasq.enabled | default(false) | bool) else 'stopped' }}
+  by_systems.opnsense.opnsense_dnsmasq_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: "{{ 'running' if (opn_dnsmasq.enabled | default(false) | bool) else 'stopped' }}"
+  when: opn_dnsmasq is defined
+  delegate_to: localhost
+  become: false
+  tags: [dhcp, dnsmasq]

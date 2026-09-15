@@ -1,0 +1,58 @@
+---
+# mDNS repeater (os-mdns-repeater) — the ADR infra/0004 exception: Bonjour/Avahi discovery between
+# the catalog's interfaces (MGMT ↔ media/gaming), nothing else. Contract: by_systems.opnsense modules
+# driven by opn_mdns; the plugin itself comes from opnsense_plugins (firmware.yml).
+
+- name: MDNS | Probe the plugin API (read-only) — the plugin is installed by firmware.yml earlier in the play
+  # Under --check the plugin install is only previewed, so on a FW that does not have
+  # os-mdns-repeater yet the settings endpoint answers 404: skip the configuration with a
+  # note instead of failing the preview. In a real run the plugin is present by now.
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/mdnsrepeater/settings/get"
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: [200, 404]
+  register: opnsense_mdns_probe
+  check_mode: false   # read-only GET — must also run under --check
+  delegate_to: localhost
+  become: false
+  tags: [mdns]
+
+- name: MDNS | Plugin not installed yet — configuration deferred to the next run
+  ansible.builtin.debug:
+    msg: >-
+      os-mdns-repeater is not installed on this firewall yet (its install is only previewed
+      under --check); the repeater will be configured on the first real run.
+  when: opnsense_mdns_probe.status | default(200) == 404
+  tags: [mdns]
+
+- name: MDNS | Ensure the repeater settings match the catalog (interfaces)
+  by_systems.opnsense.opnsense_mdnsrepeater_settings:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    enabled: "{{ opn_mdns.enabled | default(true) | bool }}"
+    interfaces: "{{ opn_mdns.interfaces | map('extract', opnsense_iface_lookup) | list }}"
+    enablecarp: false
+  when: opnsense_mdns_probe.status | default(200) == 200
+  delegate_to: localhost
+  become: false
+  tags: [mdns]
+
+- name: MDNS | Ensure the repeater is {{ 'running' if (opn_mdns.enabled | default(true) | bool) else 'stopped' }}
+  by_systems.opnsense.opnsense_mdnsrepeater_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: "{{ 'running' if (opn_mdns.enabled | default(true) | bool) else 'stopped' }}"
+  when: opnsense_mdns_probe.status | default(200) == 200
+  delegate_to: localhost
+  become: false
+  tags: [mdns]

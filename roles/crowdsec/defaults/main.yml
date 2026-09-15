@@ -39,11 +39,32 @@ crowdsec_collections:
   - crowdsecurity/base-http-scenarios
   - crowdsecurity/whitelist-good-actors
   - crowdsecurity/http-cve
+  # services/0010 §1: the firewalls' Suricata (alert-only on WAN) FEEDS CrowdSec — parser
+  # suricata-logs + scenario suricata-alerts (remediation on high/major alerts) + context.
+  - crowdsecurity/suricata
 # AppSec rule collections — installed in the Traefik phase together with the
 # Traefik bouncer + appsec acquis (crowdsec_appsec_enabled).
 crowdsec_appsec_collections:
   - crowdsecurity/appsec-virtual-patching
   - crowdsecurity/appsec-generic-rules
+
+# --- Syslog feeds this engine listens to (acquis.d/syslog-<name>.yaml) ---------------------------
+# The OPNsense firewalls ship Suricata EVE (and everything else) as RFC5424/UDP syslog to this
+# port (the crowdsec syslog datasource listens on UDP only) (catalog opn_syslog_destinations); the syslog-logs parser sets `program`, the suricata
+# collection does the rest. No host firewall on the LXC (nftables input policy accept); the
+# OPNsense rules decide who may reach it.
+crowdsec_syslog_feeds:
+  - {name: suricata, port: 1515, max_message_len: 65535}
+
+# The syslog program name the firewalls' Suricata EVE arrives under (OPNsense uses `suricata` for
+# both the engine log and the EVE stream). A local s00-raw parser maps JSON payloads from it onto
+# `suricata-evelogs`, which is what crowdsecurity/suricata's parser filters on. Empty = no bridge.
+crowdsec_suricata_syslog_program: "suricata"
+
+# Namespace for hub items we write ourselves. CrowdSec names every parser/scenario `author/name`,
+# and ours is the platform's own token — the same one the domain, the zones and every FQDN carry —
+# so a `cscli parsers list` reads like the rest of the estate instead of introducing a new word.
+crowdsec_local_namespace: "by-research"
 
 # --- Bouncers that pull decisions from this LAPI (API keys generated here) -----
 # The OPNsense firewall bouncer is the minimum enforcer. Add the Traefik bouncer

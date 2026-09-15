@@ -1,0 +1,12 @@
+---
+# Reachability for prod-side shared infrastructure referenced from the TEST
+# inventory (single Vault serves both envs; test-env secrets live in secret/test/*).
+# Jump path identical to prod: through the prod OPNsense.
+platform_jump_user: "svc-ansible-prod"
+platform_jump_identity: ""
+platform_jump_host: "10.6.239.196"
+platform_jump_args: >-
+  -o ProxyCommand="ssh -W %h:%p {{ platform_jump_identity }}
+  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+  {{ platform_jump_user }}@{{ platform_jump_host }}"
+  -o StrictHostKeyChecking=no

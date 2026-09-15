@@ -3,12 +3,16 @@
 # rekey, root-token, or audit-device control). Replaces the root token (SEC-06).
 
 # Service secrets (KV v2): full CRUD under {env}, plus archive.
-path "{{ vdi_mount }}/data/{{ vdi_env }}/*"     { capabilities = ["create","read","update","delete","list"] }
-path "{{ vdi_mount }}/metadata/{{ vdi_env }}/*" { capabilities = ["create","read","update","delete","list"] }
+{% for _env in (vdi_envs | default([vdi_env])) %}
+path "{{ vdi_mount }}/data/{{ _env }}/*"     { capabilities = ["create","read","update","delete","list"] }
+path "{{ vdi_mount }}/metadata/{{ _env }}/*" { capabilities = ["create","read","update","delete","list"] }
+{% endfor %}
 path "{{ vdi_mount }}/data/archive/*"           { capabilities = ["create","read","update","list"] }
 path "{{ vdi_mount }}/metadata/archive/*"       { capabilities = ["read","list","delete"] }
 path "{{ vdi_mount }}/metadata"                 { capabilities = ["list"] }
-path "{{ vdi_mount }}/metadata/{{ vdi_env }}"   { capabilities = ["list"] }
+{% for _env in (vdi_envs | default([vdi_env])) %}
+path "{{ vdi_mount }}/metadata/{{ _env }}"   { capabilities = ["list"] }
+{% endfor %}
 
 # Manage per-service policies + AppRoles (the vault_policy role).
 path "sys/policies/acl/*"                        { capabilities = ["create","read","update","delete","list"] }

@@ -21,11 +21,6 @@
   become: false
   vars:
     ansible_python_interpreter: /usr/bin/python3
-  pre_tasks:
-    - name: "FW API credentials from Vault"
-      ansible.builtin.import_role:        # static: `always` propagates to the role tasks
-        name: opnsense_api_creds
-      tags: [always]          # creds must load under ANY --tags selection
   tasks:
     - name: Tunnel | Kill any stale tunnel on port 8443
       ansible.builtin.shell:
@@ -72,6 +67,32 @@
       when: opnsense_use_tunnel | default(false) | bool
       tags: always
 
+- name: "Auth — local user passwords from Vault (never in the catalog)"
+  hosts: lxc-vault-01
+  become: true
+  gather_facts: false
+  tags: [auth]
+  tasks:
+    # One read per declared user, accumulated per item (see the task file for why a looped
+    # include_role with `register` cannot do this). A user with no Vault entry is declared without
+    # a password — fine for an account that authenticates through LDAP; the local record exists to
+    # carry group membership and privileges (#369).
+    - name: "Auth | Read each user's webgui password (read-only)"
+      ansible.builtin.include_tasks: tasks/opnsense_auth_vault_read.yml
+      loop: "{{ hostvars[groups['opnsense'][0]].opn_auth_users | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [auth]
+
+    - name: "Auth | Hand the passwords to the firewall hosts"
+      ansible.builtin.set_fact:
+        opnsense_auth_user_passwords: "{{ opnsense_auth_user_passwords | default({}) }}"
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ groups['opnsense'] }}"
+      no_log: true
+      tags: [auth]
+
 - name: "Monit mail creds — Vault read outside the connection:local play"
   hosts: lxc-vault-01
   become: true
@@ -84,7 +105,10 @@
         apply:
           tags: [services, monit]
       vars:
-        vault_secret_path: "{{ platform_env | default('prod') }}/mail/opnsense"
+        # The service mailbox lives where Mailcow lives (one Mailcow, on prod): `platform_mail_env`
+        # / `platform_mail_domain` (inventories/<env>/group_vars/all/deployment.yml) default to the
+        # deployment's own env/domain and are pinned to prod on test. No test/mail/* secret exists.
+        vault_secret_path: "{{ platform_mail_env | default(platform_env | default('prod')) }}/mail/opnsense"
         vault_secret_init: {}
       tags: [services, monit]
 
@@ -93,17 +117,53 @@
         opnsense_monitchk_smtp:
           # Asset FQDN, not mail. (which split-DNS maps to Traefik / public IP;
           # SMTP is NOT proxied). Wildcard cert *.{domain} covers it -> TLS verify stays ON.
-          smtp_host: "vm-mailcow-01.{{ platform_domain | default('by-research.be') }}"
+          smtp_host: "vm-mailcow-01.{{ platform_mail_domain | default(platform_domain | default('by-research.be')) }}"
           smtp_port: "{{ vault_secret_result.smtp_port }}"
           smtp_username: "{{ vault_secret_result.address }}"
           smtp_password: "{{ vault_secret_result.password }}"
           from_address: "{{ vault_secret_result.address }}"
-          to_address: "alerts@{{ platform_domain | default('by-research.be') }}"
+          to_address: "alerts@{{ platform_mail_domain | default(platform_domain | default('by-research.be')) }}"
       delegate_to: "{{ item }}"
       delegate_facts: true
       loop: "{{ groups['opnsense'] }}"
       no_log: true
       tags: [services, monit]
+
+- name: "ACME DNS-01 creds — Vault read outside the connection:local play"
+  hosts: lxc-vault-01
+  become: true
+  gather_facts: false
+  tags: [acme, certs]
+  tasks:
+    - name: "ACME | Read the Cloudflare zone secret (read-only; token, account id, zone id, ACME e-mail)"
+      ansible.builtin.include_role:
+        name: vault_secret
+        apply:
+          tags: [acme, certs]
+      vars:
+        # One Cloudflare zone secret per DNS zone (roles/cloudflare): the FW's certificate zone
+        # is the deployment's own zone unless the catalog pins another one (opn_acme.zone_secret).
+        vault_secret_path: >-
+          {{ hostvars[groups['opnsense'][0]].opn_acme.zone_secret
+             | default('prod/cloudflare/'
+                       ~ (platform_mail_domain | default(platform_domain | default('by-research.be')) | replace('.', '-'))) }}
+        vault_secret_init: {}
+      tags: [acme, certs]
+      when: hostvars[groups['opnsense'][0]].opn_acme is defined
+
+    - name: "ACME | Hand the DNS-01 credentials to the firewall hosts"
+      ansible.builtin.set_fact:
+        opnsense_acme_dns:
+          api_token: "{{ vault_secret_result.api_token }}"
+          account_id: "{{ vault_secret_result.account_id }}"
+          zone_id: "{{ vault_secret_result.zone_id | default('') }}"
+          acme_email: "{{ vault_secret_result.acme_email }}"
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ groups['opnsense'] }}"
+      no_log: true
+      tags: [acme, certs]
+      when: hostvars[groups['opnsense'][0]].opn_acme is defined
 
 - name: Configure OPNsense
   hosts: opnsense
@@ -112,12 +172,21 @@
   become: false
   vars:
     ansible_python_interpreter: /usr/bin/python3
-    # Collection (ansibleguy.opnsense) connection args — straight to the
+    # Collection (by_systems.opnsense) connection args — straight to the
     # firewall the catalog declares (opn_host), no port-forward in between.
     opnsense_firewall: "{{ opn_host }}"
     opnsense_api_port: "{{ opn_port | default(443) }}"
     # uri-module tasks connection
     opnsense_api_url: "https://{{ opn_host }}:{{ opn_port | default(443) }}"
+  pre_tasks:
+    # Creds must be facts ON THE FW HOST (the tunnel play above runs on localhost,
+    # so its include never reaches this play's host — 401 on the first uri call).
+    - name: "FW API credentials (Vault / local fast-path) on the firewall host"
+      ansible.builtin.include_role:
+        name: opnsense_api_creds
+        apply:
+          tags: [always]   # inner tasks must run under any --tags subset (e.g. --tags firewall)
+      tags: always
   roles:
     - role: opnsense
 

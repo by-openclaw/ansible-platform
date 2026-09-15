@@ -1,0 +1,209 @@
+---
+# Prune — remove from the firewall what the catalog no longer declares (SVC-47: live == merged
+# in BOTH directions). Firewall family: aliases, filter rules, DNAT, SNAT.
+#
+# A candidate must (1) carry the catalog naming marker (naming/0003), so seed/built-in/automatic
+# objects never qualify (bogons, sshlockout, virusprot, __*_network, anti-lockout, CrowdSec,
+# RFC4890, "Auto created rule" …), and (2) be absent from the catalog by its match key:
+#   aliases   name         ^(grp|host|host4|host6|net|net4|net6|port)_
+#   rules     description  ^(PASS|BLOCK|REJECT)\s        (automatic rules use other wording)
+#   DNAT      descr        ^DNAT\s      ·   SNAT   description  ^SNAT\s
+# An item the catalog declares with state: absent is NOT a candidate — its own consumer removes it.
+#
+# The marker gate is a DELETION safety, not a completeness check: an object that does not follow
+# the naming convention is neither declared nor a candidate, so it is invisible in both directions
+# and disappears silently on a rebuild. That is how the factory "Default allow LAN to any rule" on
+# OOB was lost in the 26.7 rebuild, taking the Proxmox node's route to PBS with it (#358).
+# So a SECOND, report-only classification runs alongside: `unmanaged` = live, not in the catalog,
+# and NOT marker-bearing, minus the automatic objects a reseed recreates by itself. It is never
+# deletable — opn_prune does not touch it. It answers "is there anything here the catalog has
+# never heard of?", which is the question a rebuild actually depends on.
+#
+# Always REPORTS the candidates. Deletes only when opn_prune=true (default false) AND the run is
+# unscoped (opn_fw_only empty): a scoped run converges one concern and must never prune.
+# Deletion goes through the same modules as creation (state: absent, lib-first), so --check
+# lists the would-deletes and the lib applies the reload itself.
+
+- name: "Prune | Read the live firewall objects (read-only lookups)"
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/{{ item }}?rowCount=5000"
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  loop:
+    - firewall/alias/searchItem
+    - firewall/filter/searchRule
+    - firewall/d_nat/searchRule
+    - firewall/source_nat/searchRule
+  register: opnsense_prune_live
+  check_mode: false   # read-only GET — must also run under --check
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+- name: "Prune | Candidates = marker-bearing objects the catalog does not declare"
+  ansible.builtin.set_fact:
+    opnsense_prune_aliases: >-
+      {{ opnsense_prune_live.results[0].json.rows
+         | selectattr('name', 'match', '^(grp|host|host4|host6|net|net4|net6|port)_')
+         | rejectattr('name', 'in', opn_aliases | default([]) | map(attribute='name') | list)
+         | map(attribute='name') | list }}
+    opnsense_prune_rules: >-
+      {{ opnsense_prune_live.results[1].json.rows
+         | selectattr('description', 'match', '^(PASS|BLOCK|REJECT)\s')
+         | rejectattr('description', 'in', opn_filter_rules | default([]) | map(attribute='description') | list)
+         | list }}
+    opnsense_prune_dnat: >-
+      {{ opnsense_prune_live.results[2].json.rows
+         | selectattr('descr', 'match', '^DNAT\s')
+         | rejectattr('descr', 'in', opn_dnat_rules | default([]) | map(attribute='descr') | list)
+         | list }}
+    opnsense_prune_snat: >-
+      {{ opnsense_prune_live.results[3].json.rows
+         | selectattr('description', 'match', '^SNAT\s')
+         | rejectattr('description', 'in', opn_snat_rules | default([]) | map(attribute='description') | list)
+         | list }}
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+- name: "Prune | Build the automatic-object pattern"
+  ansible.builtin.set_fact:
+    # (?i): live wording varies in case — "Anti-Lockout Rule" vs the pattern's "anti-lockout".
+    opnsense_prune_builtin_rule_re: "(?i)({{ opnsense_prune_builtin_rule_patterns | join('|') }})"
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+- name: "Prune | Unmanaged = live objects the catalog has never declared (report only)"
+  ansible.builtin.set_fact:
+    # Automatic objects a firewall creates for itself and recreates on a reseed — listing them
+    # as a rebuild risk would be noise. Anything else unmarked and undeclared is a real finding.
+    opnsense_unmanaged_aliases: >-
+      {{ opnsense_prune_live.results[0].json.rows
+         | rejectattr('name', 'match', '^(grp|host|host4|host6|net|net4|net6|port)_')
+         | rejectattr('name', 'match', opnsense_prune_builtin_alias_re)
+         | rejectattr('name', 'in', opn_aliases | default([]) | map(attribute='name') | list)
+         | map(attribute='name') | list }}
+    opnsense_unmanaged_rules: >-
+      {{ opnsense_prune_live.results[1].json.rows
+         | rejectattr('description', 'match', '^(PASS|BLOCK|REJECT)\s')
+         | rejectattr('description', 'search', opnsense_prune_builtin_rule_re)
+         | rejectattr('description', 'in', opn_filter_rules | default([]) | map(attribute='description') | list)
+         | map(attribute='description') | list }}
+    opnsense_unmanaged_dnat: >-
+      {{ opnsense_prune_live.results[2].json.rows
+         | rejectattr('descr', 'match', '^DNAT\s')
+         | rejectattr('descr', 'search', opnsense_prune_builtin_rule_re)
+         | rejectattr('descr', 'in', opn_dnat_rules | default([]) | map(attribute='descr') | list)
+         | map(attribute='descr') | list }}
+    opnsense_unmanaged_snat: >-
+      {{ opnsense_prune_live.results[3].json.rows
+         | rejectattr('description', 'match', '^SNAT\s')
+         | rejectattr('description', 'search', opnsense_prune_builtin_rule_re)
+         | rejectattr('description', 'in', opn_snat_rules | default([]) | map(attribute='description') | list)
+         | map(attribute='description') | list }}
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+- name: "Prune | Report what the catalog has never heard of (a rebuild would lose these)"
+  ansible.builtin.debug:
+    msg: >-
+      unmanaged (report only, never deleted) —
+      aliases: {{ opnsense_unmanaged_aliases | join(', ') or 'none' }} |
+      rules: {{ opnsense_unmanaged_rules | join(', ') or 'none' }} |
+      dnat: {{ opnsense_unmanaged_dnat | join(', ') or 'none' }} |
+      snat: {{ opnsense_unmanaged_snat | join(', ') or 'none' }}
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+- name: "Prune | Report"
+  ansible.builtin.debug:
+    msg: >-
+      prune candidates — aliases: {{ opnsense_prune_aliases | join(', ') or 'none' }} |
+      rules: {{ opnsense_prune_rules | map(attribute='description') | join(', ') or 'none' }} |
+      dnat: {{ opnsense_prune_dnat | map(attribute='descr') | join(', ') or 'none' }} |
+      snat: {{ opnsense_prune_snat | map(attribute='description') | join(', ') or 'none' }}
+      ({{ 'DELETING' if (opn_prune | default(false) | bool) else 'report only — set opn_prune=true to delete' }})
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+# Rules first (they may reference the aliases), then NAT, then aliases.
+- name: "Prune | Remove undeclared filter rules"
+  by_systems.opnsense.opnsense_fw_filter:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    description: "{{ item.description }}"
+    interface: "{{ item.interface }}"
+    direction: "{{ item.direction }}"
+    protocol: "{{ item.protocol }}"
+    state: absent
+  loop: "{{ opnsense_prune_rules }}"
+  loop_control:
+    label: "{{ item.description }}"
+  when: opn_prune | default(false) | bool
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+- name: "Prune | Remove undeclared port forwards (DNAT)"
+  by_systems.opnsense.opnsense_fw_dnat:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    descr: "{{ item.descr }}"
+    interface: "{{ item.interface }}"
+    target: "{{ item.target }}"
+    state: absent
+  loop: "{{ opnsense_prune_dnat }}"
+  loop_control:
+    label: "{{ item.descr }}"
+  when: opn_prune | default(false) | bool
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+- name: "Prune | Remove undeclared outbound NAT (SNAT)"
+  by_systems.opnsense.opnsense_fw_source_nat:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    description: "{{ item.description }}"
+    interface: "{{ item.interface }}"
+    source_net: "{{ item.source_net }}"
+    state: absent
+  loop: "{{ opnsense_prune_snat }}"
+  loop_control:
+    label: "{{ item.description }}"
+  when: opn_prune | default(false) | bool
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]
+
+- name: "Prune | Remove undeclared aliases"
+  by_systems.opnsense.opnsense_fw_alias:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ opnsense_prune_aliases }}"
+  when: opn_prune | default(false) | bool
+  delegate_to: localhost
+  become: false
+  tags: [firewall, prune]

@@ -1,63 +1,50 @@
 ---
-# Chrony (os-chrony) — idempotent via OPNsense REST API.
-# Plugin installed by firmware.yml. Chrony REPLACES the base ntpd: we enable
-# chrony, then stop the legacy ntpd so the two daemons don't both bind :123.
-# Client-only (no allowednetworks). API is the only door (root SSH blocked).
+# Chrony (os-chrony) — THE time sync; the base ntpd is retired (see tasks/_archive/ntp.yml).
+# Contract: by_systems.opnsense modules (lib-opnsense underneath). Chrony REPLACES ntpd:
+# we enable chrony, then keep the legacy daemon stopped (core service) so the two don't both bind :123.
+# Serves NTP to opnsense_chrony_allowed_networks (empty list = client-only).
 
-- name: Chrony | Configure + enable chronyd (client-only)
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/chrony/general/set"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body:
-      general:
-        enabled: "1"
-        # NTP serving port — MUST be 123 (standard) to serve clients. OPNsense's
-        # field defaults to 323 (chrony's cmdport) which only listens locally.
-        port: "123"
-        ntsclient: "0"
-        ntsnocert: "0"
-        peers: "{{ opnsense_chrony_peers | join(',') }}"
-        fallbackpeers: ""
-        # Networks allowed to sync time FROM this FW. Non-empty => chrony opens
-        # :123 and serves NTP to internal clients (empty => client-only).
-        allowednetworks: "{{ opnsense_chrony_allowed_networks | join(',') }}"
-    status_code: [200, 400]
+- name: Chrony | Ensure chronyd settings match the catalog (peers, served networks)
+  by_systems.opnsense.opnsense_chrony_settings:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    enabled: true
+    # NTP serving port — MUST be 123 (standard) to serve clients. OPNsense's field
+    # defaults to 323 (chrony's cmdport) which only listens locally.
+    ntp_port: "123"
+    nts_client: false
+    nts_nocert: false
+    peers: "{{ opnsense_chrony_peers }}"
+    fallback_peers: ""
+    allowed_networks: "{{ opnsense_chrony_allowed_networks | default([]) }}"
   delegate_to: localhost
   become: false
   tags: [ntp, chrony]
 
-- name: Chrony | Reconfigure (apply + start chronyd)
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/chrony/service/reconfigure"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: [200, 400]
+- name: Chrony | Ensure chronyd is running
+  by_systems.opnsense.opnsense_chrony_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: running
   delegate_to: localhost
   become: false
   tags: [ntp, chrony]
 
-- name: Chrony | Stop legacy ntpd (chrony owns time sync now)
-  ansible.builtin.uri:
-    url: "{{ opnsense_api_url }}/api/core/service/stop/ntpd"
-    method: POST
-    url_username: "{{ opnsense_api_key }}"
-    url_password: "{{ opnsense_api_secret }}"
-    force_basic_auth: true
-    validate_certs: false
-    body_format: json
-    body: {}
-    status_code: [200, 400, 404]
-  failed_when: false
+- name: Chrony | Ensure the legacy ntpd is stopped (chrony owns time sync now)
+  by_systems.opnsense.opnsense_core_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: ntpd
+    state: stopped
   delegate_to: localhost
   become: false
   tags: [ntp, chrony]

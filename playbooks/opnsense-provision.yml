@@ -1,0 +1,21 @@
+---
+# ==============================================================================
+# Provision an OPNsense firewall VM from its seed profile — Ansible only, no shell or python
+# script (infra-terraform-proxmox #93).
+#
+#   ansible-playbook playbooks/opnsense-provision.yml -e opnsense_provision_fw=<seed name>
+#   ansible-playbook playbooks/opnsense-provision.yml -e opnsense_provision_fw=<seed name> \
+#                    -e opnsense_provision_recreate=true          # DESTROYS and rebuilds
+#
+# Recreating a prod profile additionally needs -e opnsense_provision_confirm_prod=true.
+# After this: playbooks/opnsense-api-bootstrap.yml, then playbooks/opnsense.yml.
+# ==============================================================================
+- name: Provision an OPNsense firewall VM
+  hosts: localhost
+  # No play-level `connection: local`: it would override the connection of the tasks delegated to
+  # the Proxmox node, running them on the controller instead (they fail on a sudo prompt there).
+  # localhost is local anyway through the implicit inventory entry.
+  gather_facts: false
+  become: false
+  roles:
+    - role: opnsense_provision

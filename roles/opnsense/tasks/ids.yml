@@ -1,0 +1,82 @@
+---
+# Intrusion detection — Suricata alert-only on the WAN edge (ADR services/0006 §1).
+# Contract: by_systems.opnsense modules (lib-opnsense underneath) driven by the catalog key opn_ids:
+#   mode alert → Suricata mode pcap (IDS); interfaces resolved through opnsense_iface_lookup;
+#   HOME_NET = the CIDRs of the members of home_net_alias (a network group in opn_aliases);
+#   rulesets: et_open → every ET Open set (emerging-*), abuse_ch_ssl → abuse.ch SSL fingerprint +
+#   SSL IP blocklists; everything else off; log_to_loki → EVE JSON to syslog (syslog.yml ships it).
+# ORDER MATTERS: a seeded FW stores the OPNsense default interfaces=wan (not a slot on our seeds), so
+# every IDS save fails validation until the settings task below has fixed it — settings first, then
+# rulesets, then the rule download, then the daemon.
+
+- name: IDS | Resolve HOME_NET from the catalog network group {{ opn_ids.home_net_alias }}
+  ansible.builtin.set_fact:
+    opnsense_ids_homenet: >-
+      {{ (opn_aliases | selectattr('name', 'equalto', opn_ids.home_net_alias) | map(attribute='content') | first | default([]))
+         | map('extract', opn_aliases | items2dict(key_name='name', value_name='content')) | flatten | list }}
+  tags: [ids]
+
+- name: IDS | Ensure Suricata general settings match the catalog (mode, interfaces, HOME_NET, EVE → syslog)
+  by_systems.opnsense.opnsense_ids_settings:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    enabled: "{{ opn_ids.enabled | default(true) | bool }}"
+    mode: "{{ 'pcap' if (opn_ids.mode | default('alert')) == 'alert' else 'netmap' }}"
+    interfaces: "{{ opn_ids.interfaces | map('extract', opnsense_iface_lookup) | list }}"
+    homenet: "{{ opnsense_ids_homenet }}"
+    syslog_eve: "{{ opn_ids.log_to_loki | default(true) | bool }}"
+    syslog: "{{ opn_ids.log_to_loki | default(true) | bool }}"
+    promisc: false
+    # Declared so the converge OWNS them (OPNsense defaults unless the catalog says otherwise) —
+    # no knob may be left to ad-hoc changes on a firewall.
+    mpm_algo: "{{ opn_ids.mpm_algo | default('') }}"
+    detect_profile: "{{ opn_ids.detect_profile | default('') }}"
+  delegate_to: localhost
+  become: false
+  tags: [ids]
+
+- name: IDS | Ensure the rulesets match the catalog (ET Open, abuse.ch SSL; everything else off)
+  by_systems.opnsense.opnsense_ids_ruleset:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    enable_prefix: "{{ ['emerging-'] if (opn_ids.rulesets.et_open | default(true) | bool) else [] }}"
+    rulesets:
+      abuse.ch.sslblacklist.rules: "{{ opn_ids.rulesets.abuse_ch_ssl | default(true) | bool }}"
+      abuse.ch.sslipblacklist.rules: "{{ opn_ids.rulesets.abuse_ch_ssl | default(true) | bool }}"
+    disable_others: true
+    apply: false   # one reconfigure after the rule download below
+  register: opnsense_ids_rulesets
+  delegate_to: localhost
+  become: false
+  tags: [ids]
+
+- name: IDS | Download the enabled rulesets (only when the selection changed)  # noqa: no-handler
+  by_systems.opnsense.opnsense_ids_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: rules_updated
+  when: opnsense_ids_rulesets is changed
+  delegate_to: localhost
+  become: false
+  tags: [ids]
+
+- name: IDS | Ensure Suricata is {{ 'running' if (opn_ids.enabled | default(true) | bool) else 'stopped' }}
+  by_systems.opnsense.opnsense_ids_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: "{{ 'running' if (opn_ids.enabled | default(true) | bool) else 'stopped' }}"
+  delegate_to: localhost
+  become: false
+  tags: [ids]
