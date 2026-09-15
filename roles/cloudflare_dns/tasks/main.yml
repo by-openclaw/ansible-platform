@@ -3,22 +3,13 @@
 # diffs each record). Deletions are listed before the CNAME that replaces them
 # (a CNAME cannot coexist with A/AAAA on the same name).
 
-- name: "Cloudflare DNS | Assert API secret is present on controller"
-  ansible.builtin.stat:
-    path: "{{ cloudflare_dns_secret }}"
-  register: cloudflare_dns_secret_stat
-  run_once: true
-
-- name: "Cloudflare DNS | Fail when the Cloudflare secret is missing"
-  ansible.builtin.fail:
-    msg: "Missing Cloudflare secret at {{ cloudflare_dns_secret }}"
-  when: not cloudflare_dns_secret_stat.stat.exists
-  run_once: true
-
-- name: "Cloudflare DNS | Load Cloudflare API token from controller secret"
-  ansible.builtin.set_fact:
-    cloudflare_dns_token: "{{ (lookup('file', cloudflare_dns_secret) | from_json).fields.api_token }}"
-  no_log: true
+- name: "Cloudflare DNS | Require the API token handed over by the playbook pre-play (Vault)"
+  ansible.builtin.assert:
+    that: cloudflare_dns_token | default('') | length > 0
+    fail_msg: >-
+      cloudflare_dns_token is empty — run this role through playbooks/cloudflare-dns.yml,
+      whose pre-play reads Vault {env}/cloudflare/{zone} and hands the token over.
+    quiet: true
   run_once: true
 
 - name: "Cloudflare DNS | Ensure DNS records"

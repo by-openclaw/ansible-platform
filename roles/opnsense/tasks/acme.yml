@@ -1,7 +1,7 @@
 ---
 # ACME (os-acme-client) — the firewall's own TLS certificate (WebGUI) issued and renewed from the
 # catalog (SEC-26/27/33): Let's Encrypt, DNS-01 through Cloudflare (scoped token from Vault, handed
-# over by the playbook's pre-play as opnsense_acme_dns), post-issue action "restart WebGUI".
+# over by the playbook's pre-play as opnsense_cf_zone), post-issue action "restart WebGUI".
 #
 # Contract: by_systems.opnsense acme modules (lib-opnsense Acme* managers). References between the
 # objects are UUIDs, so the account/validation/action uuids come back from their own ensure calls.
@@ -18,9 +18,9 @@
 
 - name: ACME | Require the DNS-01 credentials (set by the vault pre-play)
   ansible.builtin.assert:
-    that: opnsense_acme_dns is defined
+    that: opnsense_cf_zone is defined
     fail_msg: >-
-      opnsense_acme_dns not set — run playbooks/opnsense.yml (its vault pre-play reads
+      opnsense_cf_zone not set — run playbooks/opnsense.yml (its vault pre-play reads
       prod/cloudflare/<zone>), not the role in isolation.
     quiet: true
   tags: [acme, certs]
@@ -49,7 +49,7 @@
     secret: "{{ opnsense_api_secret }}"
     verify_ssl: false
     name: "{{ opn_acme.account.name }}"
-    email: "{{ opnsense_acme_dns.acme_email }}"
+    email: "{{ opnsense_cf_zone.acme_email }}"
     ca: "{{ opn_acme.account.ca | default('letsencrypt') }}"
     description: "{{ opn_acme.account.description | default('catalog (ansible-platform)') }}"
     enabled: true
@@ -69,9 +69,9 @@
     name: "{{ opn_acme.validation.name }}"
     method: dns01
     dns_service: dns_cf
-    dns_cf_token: "{{ opnsense_acme_dns.api_token }}"
-    dns_cf_account_id: "{{ opnsense_acme_dns.account_id }}"
-    dns_cf_zone_id: "{{ opnsense_acme_dns.zone_id | default('') }}"
+    dns_cf_token: "{{ opnsense_cf_zone.api_token }}"
+    dns_cf_account_id: "{{ opnsense_cf_zone.account_id }}"
+    dns_cf_zone_id: "{{ opnsense_cf_zone.zone_id | default('') }}"
     dns_sleep: "{{ opn_acme.validation.dns_sleep | default('30') | string }}"
     description: "{{ opn_acme.validation.description | default('catalog (ansible-platform)') }}"
     enabled: true
