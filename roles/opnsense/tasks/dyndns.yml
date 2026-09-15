@@ -14,33 +14,23 @@
 #   * Static service records (CNAMEs vpn->apex, …) are managed separately via
 #     community.general.cloudflare_dns (present/absent).
 #
-# The Cloudflare API token is read at runtime from the controller secret store and
-# never committed; loaded with no_log. password is no_log in the module spec.
+# The Cloudflare API token + zone id come from Vault ({env}/cloudflare/{zone}), read by
+# the playbook pre-play and handed over as `opnsense_cf_zone` (no_log); never a file.
 
-- name: "DynDNS | Assert Cloudflare secret is present on controller"
-  ansible.builtin.stat:
-    path: "{{ opnsense_cf_secret }}"
-  delegate_to: localhost
-  become: false
-  run_once: true
-  register: opnsense_cf_secret_stat
+- name: "DynDNS | Require the Cloudflare zone secret handed over by the playbook pre-play (Vault)"
+  ansible.builtin.assert:
+    that: opnsense_cf_zone is defined
+    fail_msg: >-
+      opnsense_cf_zone is not set — the playbook's 'Cloudflare zone creds' pre-play
+      (vault_secret {env}/cloudflare/{zone}) did not run for this host.
+    quiet: true
   tags: [dyndns, dns]
-
-- name: "DynDNS | Fail when Cloudflare secret missing"
-  ansible.builtin.fail:
-    msg: "Missing Cloudflare secret at {{ opnsense_cf_secret }}"
-  when: not opnsense_cf_secret_stat.stat.exists
-  run_once: true
-  tags: [dyndns, dns]
-
-- name: "DynDNS | Load Cloudflare API token + zone id from controller secret"
+- name: "DynDNS | Adopt the Cloudflare API token + zone id (Vault, no_log)"
   ansible.builtin.set_fact:
-    opnsense_cf_token: "{{ (lookup('file', opnsense_cf_secret) | from_json).fields.api_token }}"
-    opnsense_cf_zone_id: "{{ (lookup('file', opnsense_cf_secret) | from_json).fields.zone_id }}"
+    opnsense_cf_token: "{{ opnsense_cf_zone.api_token }}"
+    opnsense_cf_zone_id: "{{ opnsense_cf_zone.zone_id }}"
   no_log: true
-  run_once: true
   tags: [dyndns, dns]
-
 # --- Bootstrap the anchor record (create-if-absent; value owned by ddclient) ---
 - name: "DynDNS | Cloudflare — check whether the anchor record already exists"
   ansible.builtin.uri:

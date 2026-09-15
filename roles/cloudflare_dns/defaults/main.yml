@@ -1,7 +1,8 @@
 ---
 # Declarative Cloudflare DNS for the public exposure model ({{ platform_domain }}).
-# Controller-side (community.general.cloudflare_dns). The API token is read at
-# runtime from the workspace secret store (never committed).
+# Controller-side (community.general.cloudflare_dns). The API token comes from Vault
+# ({env}/cloudflare/{zone}), read by the playbook pre-play and handed over as the
+# `cloudflare_dns_token` fact (never a file, never committed).
 #
 # Anchors:
 #   {{ platform_domain }} (apex)  = Telenet STATIC dual-stack  -> the DEFAULT anchor
@@ -17,7 +18,7 @@
 # This repo owns the apex + mailcow (mail/MX/SPF/DKIM/DMARC) records; Resend owns
 # its subdomain. The two senders are deliberately separate (apex=mailcow,
 # resend.{{ platform_domain }}=Resend), each with its own SPF/DKIM.
-cloudflare_dns_secret: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/shared/app-cloudflare-by-research-be.json"
+cloudflare_dns_token: ""   # set by the playbook pre-play from Vault; empty = refuse to run
 cloudflare_dns_zone: "{{ platform_domain }}"
 
 # Telenet static WAN IPs (public; mirror catalog host4/6_wan_pub). Could move to

@@ -1,7 +1,27 @@
 ---
 # Manage public Cloudflare DNS for {{ platform_domain }} (exposure model).
-# Controller-side only — no FW/host connection.
+# Controller-side apply; the API token is read from Vault by a pre-play on the Vault
+# host (a connection:local play cannot delegate into the vault container).
 #   Apply:  ansible-playbook playbooks/cloudflare-dns.yml
+- name: "Cloudflare zone creds — Vault read outside the connection:local play"
+  hosts: lxc-vault-01
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Cloudflare DNS | Read the zone secret from Vault (read-only)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ platform_env | default('prod') }}/cloudflare/{{ platform_domain | replace('.', '-') }}"
+        vault_secret_init: {}
+
+    - name: "Cloudflare DNS | Hand the API token to the controller play"
+      ansible.builtin.set_fact:
+        cloudflare_dns_token: "{{ vault_secret_result.api_token }}"
+      delegate_to: localhost
+      delegate_facts: true
+      no_log: true
+
 - name: Cloudflare public DNS (platform zone)
   hosts: localhost
   vars_files:

@@ -269,10 +269,9 @@ opnsense_plugins:
 #     whichever WAN the apex points to, Traefik + VPN answer symmetrically.
 #   * Never touches the existing Telenet records — only writes the one apex record.
 # Consumes by_systems.opnsense.opnsense_ddns_account (wraps lib DdnsAccountManager).
-# The Cloudflare API token is NEVER stored here — read at runtime from the controller
-# secret store (roles/opnsense/tasks/dyndns.yml, no_log). Cloudflare auth: username
-# empty (no '@') => Bearer-token mode (scoped token).
-opnsense_cf_secret: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/shared/app-cloudflare-by-research-be.json"
+# The Cloudflare API token is NEVER stored here — the playbook pre-play reads Vault
+# {env}/cloudflare/{zone} and hands it over as `opnsense_cf_zone` (dyndns.yml, no_log).
+# Cloudflare auth: username empty (no '@') => Bearer-token mode (scoped token).
 # Placeholder seed for the anchor record on first create (RFC 5737 TEST-NET). The
 # record is created with this value only when absent; os-ddclient overwrites it with
 # the live active-WAN IP on its first push (we restart the daemon to make that immediate).

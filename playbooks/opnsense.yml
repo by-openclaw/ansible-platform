@@ -129,31 +129,37 @@
       no_log: true
       tags: [services, monit]
 
-- name: "ACME DNS-01 creds — Vault read outside the connection:local play"
+- name: "Cloudflare zone creds — Vault read outside the connection:local play"
   hosts: lxc-vault-01
   become: true
   gather_facts: false
-  tags: [acme, certs]
+  tags: [acme, certs, dyndns, dns]
+  vars:
+    # The FW consumes the zone secret twice: ACME DNS-01 (opn_acme) and os-ddclient
+    # (opnsense_dyndns_accounts). One read, one fact, both consumers.
+    opnsense_cf_zone_needed: >-
+      {{ (hostvars[groups['opnsense'][0]].opn_acme is defined)
+         or ((hostvars[groups['opnsense'][0]].opnsense_dyndns_accounts | default([])) | length > 0) }}
   tasks:
-    - name: "ACME | Read the Cloudflare zone secret (read-only; token, account id, zone id, ACME e-mail)"
+    - name: "Cloudflare | Read the zone secret (read-only; token, account id, zone id, ACME e-mail)"
       ansible.builtin.include_role:
         name: vault_secret
         apply:
-          tags: [acme, certs]
+          tags: [acme, certs, dyndns, dns]
       vars:
         # One Cloudflare zone secret per DNS zone (roles/cloudflare): the FW's certificate zone
         # is the deployment's own zone unless the catalog pins another one (opn_acme.zone_secret).
         vault_secret_path: >-
-          {{ hostvars[groups['opnsense'][0]].opn_acme.zone_secret
-             | default('prod/cloudflare/'
+          {{ (hostvars[groups['opnsense'][0]].opn_acme | default({})).zone_secret
+             | default((platform_env | default('prod')) ~ '/cloudflare/'
                        ~ (platform_mail_domain | default(platform_domain | default('by-research.be')) | replace('.', '-'))) }}
         vault_secret_init: {}
-      tags: [acme, certs]
-      when: hostvars[groups['opnsense'][0]].opn_acme is defined
+      tags: [acme, certs, dyndns, dns]
+      when: opnsense_cf_zone_needed | bool
 
-    - name: "ACME | Hand the DNS-01 credentials to the firewall hosts"
+    - name: "Cloudflare | Hand the zone credentials to the firewall hosts"
       ansible.builtin.set_fact:
-        opnsense_acme_dns:
+        opnsense_cf_zone:
           api_token: "{{ vault_secret_result.api_token }}"
           account_id: "{{ vault_secret_result.account_id }}"
           zone_id: "{{ vault_secret_result.zone_id | default('') }}"
@@ -162,8 +168,8 @@
       delegate_facts: true
       loop: "{{ groups['opnsense'] }}"
       no_log: true
-      tags: [acme, certs]
-      when: hostvars[groups['opnsense'][0]].opn_acme is defined
+      tags: [acme, certs, dyndns, dns]
+      when: opnsense_cf_zone_needed | bool
 
 - name: Configure OPNsense
   hosts: opnsense
