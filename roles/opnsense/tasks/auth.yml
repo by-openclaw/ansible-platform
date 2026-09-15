@@ -1,0 +1,90 @@
+---
+# Local users and groups — the auth family. Contract: by_systems.opnsense auth modules
+# (lib-opnsense AuthGroup/AuthUser/AuthPriv managers). Catalog: opn_auth_groups / opn_auth_users.
+#
+# Why this exists: the 26.7 rebuild dropped adm_yboujraf and the oob-admins group, because
+# nothing declared them — the LDAP auth server syncs platform-admins but does not create local
+# users, so an Authentik login with no local record lands on "no page assigned" (#369). The seed
+# owns root, oob-admin, by-research and svc-ansible; everything else lives here.
+#
+# Passwords never live in the catalog. The playbook's Vault pre-play publishes
+# opnsense_auth_user_passwords (name -> password) on the firewall host; a user with no entry there
+# is declared without one, which is fine for an account that authenticates through LDAP.
+
+- name: "Auth | Ensure groups exist"
+  by_systems.opnsense.opnsense_auth_group:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ item.name }}"
+    description: "{{ item.description | default('') }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opn_auth_groups | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  become: false
+  tags: [auth]
+
+- name: "Auth | Ensure each group's privileges"
+  by_systems.opnsense.opnsense_auth_priv:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    priv_id: "{{ item.1 }}"
+    target_type: group
+    target_name: "{{ item.0.name }}"
+    state: present
+  loop: "{{ opn_auth_groups | default([]) | subelements('privileges', skip_missing=true) }}"
+  loop_control:
+    label: "{{ item.0.name }} <- {{ item.1 }}"
+  delegate_to: localhost
+  become: false
+  tags: [auth]
+
+# Membership is by numeric GID on the API, and GIDs are assigned by the firewall — so resolve
+# names to GIDs from the live box (read-only) rather than hardcoding numbers that a rebuild changes.
+- name: "Auth | Resolve group names to the firewall's GIDs (read-only lookup)"
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/auth/group/search"
+    method: POST
+    body_format: json
+    body: {rowCount: 500, current: 1}
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_auth_groups_live
+  check_mode: false   # read-only — must also run under --check
+  delegate_to: localhost
+  become: false
+  tags: [auth]
+
+- name: "Auth | Ensure users exist with their memberships"
+  by_systems.opnsense.opnsense_auth_user:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ item.name }}"
+    description: "{{ item.description | default('') }}"
+    disabled: "{{ item.disabled | default(false) | bool }}"
+    group_memberships: >-
+      {{ opnsense_auth_groups_live.json.rows
+         | selectattr('name', 'in', item.groups | default([]))
+         | map(attribute='gid') | join(',') }}
+    password: "{{ (opnsense_auth_user_passwords | default({}))[item.name] | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ opn_auth_users | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  delegate_to: localhost
+  become: false
+  tags: [auth]
