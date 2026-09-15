@@ -218,6 +218,10 @@ authentik_oidc_apps:
 # redirect to Authentik; authenticated but not in `group` → 403. Add an app here to
 # gate it — same "one list entry" pattern as authentik_oidc_apps.
 authentik_proxy_apps:
+  - slug: jitsi
+    name: "Jitsi Meet"
+    group: "jitsi-users"                          # only members may open the conferencing app (forwardAuth)
+    external_host: "https://meet.{{ platform_domain }}"
   - slug: traefik-dashboard
     name: "Traefik Dashboard"
     group: "traefik-admins"                       # only this group passes forwardAuth
@@ -253,6 +257,7 @@ authentik_groups:
   - jumpserver-users    # access group — only members may SSO into the JumpServer bastion
   - harbor-users        # access group — members may SSO into Harbor (pull/push per project role)
   - harbor-admins       # subset of harbor-users → Harbor system admins (oidc_admin_group)
+  - jitsi-users         # access group — members may open Jitsi Meet (forwardAuth)
   - verdaccio-users     # access group — members may SSO into the npm registry (verdaccio-openid)
   - infra-admins
   - dev

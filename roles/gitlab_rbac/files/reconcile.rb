@@ -227,4 +227,44 @@ end
   end
 end
 
+# --- 10. Per-user SSH + GPG keys (from platform_people) ----------------------
+# Managed set: SSH keys titled "ansible:<label>" (so a person's hand-added keys
+# are never touched); GPG keys matched by content. Add/replace declared, remove
+# managed ones no longer declared. Empty lists = no-op.
+(desired["user_keys"] || []).each do |uk|
+  u = User.find_by_username(uk["username"])
+  next if u.nil?
+  declared = uk["ssh_keys"] || []
+  want = declared.map { |k| "ansible:#{k["label"]}" }.to_set
+  u.keys.where("title LIKE 'ansible:%'").each do |k|
+    next if want.include?(k.title)
+    k.destroy
+    changes += 1
+    puts "sshkey- #{uk["username"]} #{k.title}"
+  end
+  declared.each do |k|
+    title = "ansible:#{k["label"]}"
+    ex = u.keys.find_by(title: title)
+    kattrs = { title: title, key: k["key"] }
+    kattrs[:organization_id] = default_org.id if default_org && Key.column_names.include?("organization_id")
+    if ex.nil?
+      nk = u.keys.new(kattrs)
+      if nk.save then changes += 1; puts "sshkey+ #{uk["username"]} #{title}"
+      else puts "sshkey! #{uk["username"]} #{title}: #{nk.errors.full_messages.join(", ")}" end
+    elsif ex.key.to_s.split[0, 2] != k["key"].to_s.split[0, 2]
+      ex.destroy
+      u.keys.create(kattrs)
+      changes += 1
+      puts "sshkey~ #{uk["username"]} #{title}"
+    end
+  end
+  (uk["gpg_keys"] || []).each do |g|
+    norm = g["key"].to_s.strip
+    next if norm.empty? || u.gpg_keys.exists?(key: norm)
+    gk = u.gpg_keys.new(key: norm)
+    if gk.save then changes += 1; puts "gpgkey+ #{uk["username"]} #{g["label"]}"
+    else puts "gpgkey! #{uk["username"]} #{g["label"]}: #{gk.errors.full_messages.join(", ")}" end
+  end
+end
+
 puts "RBAC_DONE changes=#{changes}"

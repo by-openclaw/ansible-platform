@@ -52,6 +52,47 @@
     mode: "0644"
     directory_mode: "0755"
 
+# --- Per-identity public keys: sourced from Vault (roles/identity_keys escrow) ---
+- name: "RBAC | Managed identities (manage_keys)"
+  ansible.builtin.set_fact:
+    gitlab_rbac_key_people: "{{ platform_people | default([]) | selectattr('manage_keys', 'defined') | selectattr('manage_keys') | list }}"
+
+- name: "RBAC | Vault login for escrowed public keys"
+  ansible.builtin.import_role:
+    name: vault_login
+  when: gitlab_rbac_key_people | length > 0
+
+- name: "RBAC | Read each identity's escrowed public keys"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} vault
+      vault kv get -mount=secret -format=json
+      {{ platform_env | default('prod') }}/users/{{ item.username }}/keys
+  delegate_to: lxc-vault-01
+  become: true
+  loop: "{{ gitlab_rbac_key_people }}"
+  loop_control: { label: "{{ item.username }}" }
+  register: gitlab_rbac_keyreads
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: "RBAC | Assemble user_keys from the Vault reads"
+  ansible.builtin.set_fact:
+    gitlab_rbac_user_keys: "{{ _uk | from_json }}"
+  vars:
+    _uk: >-
+      [
+      {% for r in gitlab_rbac_keyreads.results | default([]) if r.rc | default(1) == 0 %}
+        {% set d = (r.stdout | from_json).data.data %}
+        {"username": "{{ r.item.username }}",
+         "ssh_keys": [{"label": "identity", "key": {{ d.ssh_public_key | to_json }}}],
+         "gpg_keys": [{"label": "identity", "key": {{ d.gpg_public_key | to_json }}}]}{{ "," if not loop.last else "" }}
+      {% endfor %}
+      ]
+  no_log: true
+  when: gitlab_rbac_key_people | length > 0
+
 - name: "RBAC | Render the desired-state JSON"
   ansible.builtin.template:
     src: desired.json.j2

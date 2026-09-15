@@ -23,6 +23,16 @@ Services you can reach (via single sign-on):
 
 Your mailbox {{ io_person.username }}@{{ identity_orchestrator_domain }} is
 created automatically the first time you sign in to webmail.
+{% if (io_person.ssh_keys | default([])) | length > 0 %}
+
+Git access: {{ (io_person.ssh_keys | default([])) | length }} SSH key(s) registered on GitLab
+({{ (io_person.ssh_keys | default([])) | map(attribute='label') | join(', ') }}).
+Clone over SSH: ssh://git@gitlab-ssh.{{ identity_orchestrator_domain }}:22222/<group>/<repo>.git
+{% endif %}
+{% if io_person.attributes is defined and io_person.attributes %}
+
+On record: {{ io_person.attributes | dict2items | map('join', ': ') | join(' · ') }}
+{% endif %}
 
 Questions? Reply to this message — it reaches the platform admins.
 

@@ -38,15 +38,20 @@
       is_active: "{{ (io_person.state | default('active')) == 'active' }}"
       name: "{{ io_person.name }}"
       email: "{{ io_person.email }}"
+      # HR/contact record (Entra-ID-like). Merge onto existing attributes so we
+      # never wipe attributes Authentik or other flows set.
+      attributes: "{{ (io_current.attributes | default({})) | combine(io_person.attributes | default({})) }}"
     status_code: [200]
   vars:
     io_current: "{{ (io_lookup.json.results | default([])) | first | default({}) }}"
-  # PATCH only on drift (new user, or name/email/active differ) → idempotent re-runs
+    io_attrs_merged: "{{ (io_current.attributes | default({})) | combine(io_person.attributes | default({})) }}"
+  # PATCH only on drift (new user, or name/email/active/attributes differ) → idempotent re-runs
   when: >-
     io_created is changed
     or io_current.name | default('') != io_person.name
     or io_current.email | default('') != io_person.email
     or (io_current.is_active | default(true) | bool) != ((io_person.state | default('active')) == 'active')
+    or (io_current.attributes | default({})) != io_attrs_merged
   changed_when: true
   no_log: true
 
