@@ -2377,6 +2377,59 @@ opn_unbound:
     rr: AAAA
     server: fd01:1::1
     description: 'FW asset FQDN (MGMT v6) — catalog'
+  # --- Declared 2026-09-15 (#365): these lived only on the old firewall and the 26.7 rebuild
+  # dropped them. `ldap` is what the firewall's Authentik LDAP auth server resolves — without it
+  # no Authentik user can log in to the firewall. The others are the same gap, noticed later.
+  - hostname: ldap
+    domain: "{{ platform_domain }}"
+    rr: A
+    server: 10.1.3.130
+    description: 'Authentik LDAP outpost (v4) — the firewall auth server resolves this'
+  - hostname: ldap
+    domain: "{{ platform_domain }}"
+    rr: AAAA
+    server: 'fd01:3::130'
+    description: 'Authentik LDAP outpost (v6)'
+  - hostname: fw
+    domain: "{{ platform_domain }}"
+    rr: A
+    server: 10.6.239.196
+    description: 'The firewall itself (OOB v4) — its ACME certificate is issued for this name'
+  - hostname: fw
+    domain: "{{ platform_domain }}"
+    rr: AAAA
+    server: 'fd06:224::1'
+    description: 'The firewall itself (OOB v6)'
+  - hostname: gitlab-ssh
+    domain: "{{ platform_domain }}"
+    rr: A
+    server: 10.1.3.210
+    description: 'git over SSH by name (v4)'
+  - hostname: gitlab-ssh
+    domain: "{{ platform_domain }}"
+    rr: AAAA
+    server: 'fd01:3::210'
+    description: 'git over SSH by name (v6)'
+  - hostname: proxmox
+    domain: "{{ platform_domain }}"
+    rr: A
+    server: 10.1.2.110
+    description: 'PVE UI through Traefik (v4)'
+  - hostname: proxmox
+    domain: "{{ platform_domain }}"
+    rr: AAAA
+    server: 'fd01:2::110'
+    description: 'PVE UI through Traefik (v6)'
+  - hostname: lxc-harbor-01
+    domain: "{{ platform_domain }}"
+    rr: A
+    server: 10.1.3.240
+    description: 'registry host asset name (v4)'
+  - hostname: lxc-harbor-01
+    domain: "{{ platform_domain }}"
+    rr: AAAA
+    server: 'fd01:3::240'
+    description: 'registry host asset name (v6)'
   # --- Real cluster hosts (present) — split-horizon internal records ---
   - {hostname: vm-adguard-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.101}
   - {hostname: vm-adguard-01, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::101'}
