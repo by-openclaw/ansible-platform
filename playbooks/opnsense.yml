@@ -67,6 +67,32 @@
       when: opnsense_use_tunnel | default(false) | bool
       tags: always
 
+- name: "Auth — local user passwords from Vault (never in the catalog)"
+  hosts: lxc-vault-01
+  become: true
+  gather_facts: false
+  tags: [auth]
+  tasks:
+    # One read per declared user, accumulated per item (see the task file for why a looped
+    # include_role with `register` cannot do this). A user with no Vault entry is declared without
+    # a password — fine for an account that authenticates through LDAP; the local record exists to
+    # carry group membership and privileges (#369).
+    - name: "Auth | Read each user's webgui password (read-only)"
+      ansible.builtin.include_tasks: tasks/opnsense_auth_vault_read.yml
+      loop: "{{ hostvars[groups['opnsense'][0]].opn_auth_users | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [auth]
+
+    - name: "Auth | Hand the passwords to the firewall hosts"
+      ansible.builtin.set_fact:
+        opnsense_auth_user_passwords: "{{ opnsense_auth_user_passwords | default({}) }}"
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ groups['opnsense'] }}"
+      no_log: true
+      tags: [auth]
+
 - name: "Monit mail creds — Vault read outside the connection:local play"
   hosts: lxc-vault-01
   become: true

@@ -132,6 +132,20 @@ opn_acme:
     lib_manager: AcmeCertificateManager
     ansible_module: by_systems.opnsense.opnsense_acme_certificate
 
+# --- Auth: local users and groups (#369) -------------------------------------------------------
+# The 26.7 rebuild dropped these — nothing declared them. The LDAP auth server syncs
+# platform-admins from Authentik but does NOT create local users, so a login with no local record
+# gets "no page assigned". The seed owns root, oob-admin, by-research and svc-ansible-prod.
+# by-rune is deliberately absent: it was DISABLED on the old firewall (retired automation identity).
+# Passwords come from Vault ({{ platform_env }}/opnsense/<user>) via the playbook pre-play, never here.
+opn_auth_groups:
+  - {name: oob-admins, description: 'Break-glass admins on the OOB plane', privileges: [page-all]}
+opn_auth_users:
+  - name: adm_yboujraf
+    description: 'Platform admin (Authentik LDAP; local record carries the privileges)'
+    groups: [admins, platform-admins]
+    disabled: false
+
 opn_aliases:
 - name: net4_mgmt
   type: network

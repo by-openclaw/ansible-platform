@@ -1,0 +1,23 @@
+---
+# One user's webgui password, read from Vault and merged into the mapping handed to the firewall
+# hosts. Separate file because include_role cannot accumulate inside a loop: the role publishes
+# vault_secret_result as a fact, so `register` on the loop carries nothing per item — the zip in
+# the first version of this pre-play produced an EMPTY password for every user, and the API
+# refused the create (#369). Same failure mode roles/opnsense_provision hit with the seed secrets.
+
+- name: "Auth | Read this user's webgui password from Vault: {{ item.name }}"
+  ansible.builtin.include_role:
+    name: vault_secret
+    apply:
+      tags: [auth]
+  vars:
+    vault_secret_path: "{{ platform_env | default('prod') }}/opnsense/{{ item.name | replace('_', '-') }}"
+    vault_secret_init: {}
+
+- name: "Auth | Keep it when Vault returned one: {{ item.name }}"
+  ansible.builtin.set_fact:
+    opnsense_auth_user_passwords: >-
+      {{ opnsense_auth_user_passwords | default({})
+         | combine({item.name: vault_secret_result.webgui_password}) }}
+  when: (vault_secret_result | default({})).webgui_password | default('') | length > 0
+  no_log: true
