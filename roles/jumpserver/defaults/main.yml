@@ -98,15 +98,12 @@ jumpserver_settings:
 # {{ platform_org }} (identity/0004 §1: sudo, key-only). JumpServer vaults THAT key,
 # read from Vault at run time (private key + passphrase escrowed under
 # {env}/break-glass/), unlocked only inside the reconcile and shredded afterwards.
-# Per-asset overrides only for the special cases (Proxmox node).
+# Per-asset overrides only where the sshd differs (the firewall listens on 22 until #379).
 jumpserver_asset_default_port: "{{ hardening_ssh_port | default(22222) }}"
 jumpserver_asset_default_account: "{{ platform_org | default('by-research') }}"
 jumpserver_asset_default_privileged: false     # sudo asks the escrowed password ({env}/break-glass/os)
 jumpserver_asset_key_vault_path: "{{ platform_env | default('prod') }}/break-glass/ssh-key"
 jumpserver_asset_key_passphrase_vault_path: "{{ platform_env | default('prod') }}/break-glass/ssh-passphrase"
-# The Proxmox node rejects the standard rune key — it uses the automation key on
-# port 22222 (asset key_file: /tmp/jms_key_automation).
-jumpserver_node_key_path: "~/.ssh/id_ed25519_rune_automation"
 # OPNsense blocks root SSH by design; the break-glass admin logs in with the same
 # escrowed key on port 22. The firewall config stays API-managed — this asset is for
 # AUDITED shell/console access via the bastion (session-recorded), not for editing
@@ -119,8 +116,6 @@ jumpserver_node_key_path: "~/.ssh/id_ed25519_rune_automation"
 # now registered below. Only the jumpserver bastion itself is excluded.
 # Organised by SERVICE TYPE (the JumpServer node tree groups by function, not
 # network zone). Port/account/key come from the asset defaults unless overridden.
-# The Proxmox node is the special case: OOB, port 22222, and the AUTOMATION key
-# (it rejects the standard rune key) -> key_file override.
 jumpserver_assets:
   # --- Databases ---
   - { name: lxc-pgsql-01, address: 10.1.3.110, node: Databases }
@@ -153,5 +148,7 @@ jumpserver_assets:
   - { name: vm-mailcow-01, address: 10.1.2.120, node: Mail }
   # --- IPAM ---
   - { name: lxc-nbox-01, address: 10.1.3.120, node: IPAM }
-  # --- Hypervisor (OOB, port 22222, automation key) ---
-  - { name: srv-proxmox-poc-01, address: 10.6.224.105, node: Hypervisor, account: root, privileged: true, port: 22222, key_file: /tmp/jms_key_automation }
+  # --- Hypervisor (OOB) --- root SSH on the node is carved out to the OOB/FAB networks only
+  # (sshd-hardening Match Address, for Terraform/Ansible); from the SVC bastion the break-glass
+  # admin is the identity, same key, same port as every other host.
+  - { name: srv-proxmox-poc-01, address: 10.6.224.105, node: Hypervisor }
