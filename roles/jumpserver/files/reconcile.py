@@ -35,6 +35,23 @@ for _c in ActionChoices:
 summary = []
 
 
+def _pubkey(private_pem):
+    """Public half of an OpenSSH private key, or None when it cannot be parsed.
+
+    The staged key is re-encoded on every unlock (fresh check bytes), so comparing raw
+    private-key text would re-key every account on every run; the public half is stable.
+    """
+    try:
+        from cryptography.hazmat.primitives import serialization
+
+        key = serialization.load_ssh_private_key(private_pem.encode(), password=None)
+        return key.public_key().public_bytes(
+            serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH
+        )
+    except Exception:  # noqa: BLE001 — unparsable secret == "different", forces a re-key  # pragma: allowlist secret
+        return None
+
+
 def load_key(path):
     with open(path) as f:
         return f.read()
@@ -116,7 +133,7 @@ for a in CFG["assets"]:
         if acct.privileged != privileged:
             acct.privileged = privileged
             acct.save(update_fields=["privileged"])
-        if (acct.secret or "") != key_cache[kp]:   # key rotated/replaced in Vault
+        if _pubkey(acct.secret or "") != _pubkey(key_cache[kp]):  # key rotated/replaced in Vault
             acct.secret = key_cache[kp]
             acct.save()
             n_rekeyed += 1
