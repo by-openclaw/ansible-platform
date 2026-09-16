@@ -145,6 +145,16 @@ opn_auth_users:
     description: 'Platform admin (Authentik LDAP; local record carries the privileges)'
     groups: [admins, platform-admins]
     disabled: false
+  # Seeded identities — declared so membership + password converge after a re-seed
+  # (passwords: Vault {env}/opnsense/<user>, key webgui_password; read by the playbook pre-play).
+  - name: oob-admin            # genesis break-glass — page-all via the oob-admins group
+    description: "Break-glass OOB admin — the ONE seeded API credential (genesis for ansible opnsense_api_bootstrap); GUI password + API key hashes rendered from the seed's genesis_secret file"
+    groups: [admins, oob-admins]
+    disabled: false
+  - name: svc-ansible-prod     # automation (API + SSH jump); GUI password = sudo 'ask password' for become  # pragma: allowlist secret
+    description: "Automation (Ansible jump + API) — naming/0002 §3; SSH key-only, GUI password in Vault for sudo"
+    groups: [admins]
+    disabled: false
 
 opn_aliases:
 - name: net4_mgmt
@@ -2618,6 +2628,7 @@ opn_kea_dhcp4:
         domain_name_servers: "{{ opn_dhcp_dns_servers }}"
         ntp_servers: 10.1.1.1
         domain_name: "{{ platform_domain }}"
+        domain_search: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.2.0/24
       pools: 10.1.2.50-10.1.2.99
@@ -2627,6 +2638,7 @@ opn_kea_dhcp4:
         domain_name_servers: "{{ opn_dhcp_dns_servers }}"
         ntp_servers: 10.1.2.1
         domain_name: "{{ platform_domain }}"
+        domain_search: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.3.0/24
       pools: 10.1.3.50-10.1.3.99
@@ -2636,6 +2648,7 @@ opn_kea_dhcp4:
         domain_name_servers: "{{ opn_dhcp_dns_servers }}"
         ntp_servers: 10.1.3.1
         domain_name: "{{ platform_domain }}"
+        domain_search: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.4.0/24
       pools: 10.1.4.50-10.1.4.99
@@ -2645,6 +2658,7 @@ opn_kea_dhcp4:
         domain_name_servers: "{{ opn_dhcp_dns_servers }}"
         ntp_servers: 10.1.4.1
         domain_name: "{{ platform_domain }}"
+        domain_search: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.10.0/24
       pools: 10.1.10.50-10.1.10.99
@@ -2654,6 +2668,7 @@ opn_kea_dhcp4:
         domain_name_servers: "{{ opn_dhcp_dns_servers }}"
         ntp_servers: 10.1.10.1
         domain_name: "{{ platform_domain }}"
+        domain_search: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.11.0/24
       pools: 10.1.11.50-10.1.11.99
@@ -2663,6 +2678,7 @@ opn_kea_dhcp4:
         domain_name_servers: "{{ opn_dhcp_dns_servers }}"
         ntp_servers: 10.1.11.1
         domain_name: "{{ platform_domain }}"
+        domain_search: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.20.0/24
       pools: 10.1.20.50-10.1.20.99
@@ -2672,6 +2688,7 @@ opn_kea_dhcp4:
         domain_name_servers: "{{ opn_dhcp_dns_servers }}"
         ntp_servers: 10.1.20.1
         domain_name: "{{ platform_domain }}"
+        domain_search: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.30.0/24
       pools: 10.1.30.50-10.1.30.99
@@ -2681,6 +2698,7 @@ opn_kea_dhcp4:
         domain_name_servers: "{{ opn_dhcp_dns_servers }}"
         ntp_servers: 10.1.30.1
         domain_name: "{{ platform_domain }}"
+        domain_search: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.32.0/24
       pools: 10.1.32.50-10.1.32.99
@@ -2690,6 +2708,7 @@ opn_kea_dhcp4:
         domain_name_servers: "{{ opn_dhcp_dns_servers }}"
         ntp_servers: 10.1.32.1
         domain_name: "{{ platform_domain }}"
+        domain_search: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
     - subnet: 10.1.40.0/24
       pools: 10.1.40.50-10.1.40.99
@@ -2699,6 +2718,7 @@ opn_kea_dhcp4:
         domain_name_servers: "{{ opn_dhcp_dns_servers }}"
         ntp_servers: 10.1.40.1
         domain_name: "{{ platform_domain }}"
+        domain_search: "{{ platform_domain }}"
       ref: {adr: "infra/0004", lib_manager: "Kea4SubnetManager", ansible_module: "opn_kea4_subnet"}
 
 # ---------------------------------------------------------------------------

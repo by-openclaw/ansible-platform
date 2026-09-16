@@ -13,14 +13,20 @@
 crowdsec_fw_bouncer_lapi_host: "10.1.3.190"
 crowdsec_fw_bouncer_lapi_port: "8080"
 
-# Controller-side secrets.
-crowdsec_fw_bouncer_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
-# Bouncer api_key registered on the LXC LAPI (name 'opnsense-firewall').
-crowdsec_fw_bouncer_key_file: "fabric/app-crowdsec-bouncer-opnsense.json"
-# FW API + become credentials (canonical, corrected names).
-crowdsec_fw_bouncer_creds_file: "fabric/net-opnsense-prod-vm-opns-01.json"
-crowdsec_fw_bouncer_api_file: "fabric/net-opnsense-vm-opns-01-access.json"
-
+# Secrets — Vault only (read by the playbook pre-play on the Vault host and handed over as
+# facts; a connection:local play cannot delegate into the vault container):
+#   {env}/opnsense/api                 -> crowdsec_fw_bouncer_api   {host, key, secret}
+#   {env}/crowdsec/bouncer-opnsense    -> crowdsec_fw_bouncer_key   {api_key}
+#   {env}/crowdsec/registration-token  -> crowdsec_fw_bouncer_reg_token
+#   {env}/opnsense/svc-ansible-{env}   -> crowdsec_fw_bouncer_become_password (sudo 'ask password')
+crowdsec_fw_bouncer_vault_api: "{{ platform_env | default('prod') }}/opnsense/api"
+crowdsec_fw_bouncer_vault_key: "{{ platform_env | default('prod') }}/crowdsec/bouncer-opnsense"
+crowdsec_fw_bouncer_vault_reg_token: "{{ platform_env | default('prod') }}/crowdsec/registration-token"
+crowdsec_fw_bouncer_vault_become: "{{ platform_env | default('prod') }}/opnsense/svc-ansible-{{ platform_env | default('prod') }}"
+# SSH identity for the one become task: the automation user the seed creates (key-only login,
+# password = sudo 'ask password'; the firewall must carry sudo_allow_wheel=1 — seed-owned).
+crowdsec_fw_bouncer_ssh_user: "svc-ansible-{{ platform_env | default('prod') }}"
+crowdsec_fw_bouncer_ssh_key: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_opnsense"
 # The bouncer config file the plugin manages.
 crowdsec_fw_bouncer_config_path: "/usr/local/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml"
 
@@ -28,8 +34,7 @@ crowdsec_fw_bouncer_config_path: "/usr/local/etc/crowdsec/bouncers/crowdsec-fire
 # The firewall runs a CrowdSec agent enrolled to the CENTRAL LAPI (same as the
 # 12 guests), so it detects events against itself (SSH, etc.) and feeds them to
 # the shared decision store. It does NOT run its own LAPI — lxc-crowdsec-01 is
-# the only LAPI. Reuses the guests' registration token; no new secret.
-crowdsec_fw_bouncer_reg_token_file: "fabric/app-crowdsec-registration-token.json"
+# the only LAPI. Reuses the guests' registration token (Vault, above); no new secret.
 crowdsec_fw_bouncer_machine_name: "vm-opns-01"
 crowdsec_fw_bouncer_lapi_url: "http://{{ crowdsec_fw_bouncer_lapi_host }}:{{ crowdsec_fw_bouncer_lapi_port }}"
 # Collections the FW detects for itself. sshd = brute-force against the FW.
