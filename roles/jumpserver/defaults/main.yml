@@ -92,58 +92,69 @@ jumpserver_smtp_vault_path: "prod/jumpserver/smtp"
 jumpserver_settings:
   ANSIBLE_DOCKER_ENABLED: false
 
-# The single automation key JumpServer vaults as each asset's account (encrypted
-# in JumpServer's own store — the "one credential, root on all" pattern).
-jumpserver_rune_key_path: "~/.ssh/id_ed25519_rune_nopass"
+# --- Asset access follows the hardening baseline (roles/hardening, sshd-hardening) ---
+# Every managed host listens on hardening_ssh_port, denies root, and allows the
+# automation identity svc-ansible-{env} (key-only, sudo NOPASSWD). JumpServer vaults
+# THAT key as each asset's account; per-asset overrides only for the special cases.
+jumpserver_asset_default_port: "{{ hardening_ssh_port | default(22222) }}"
+jumpserver_asset_default_account: "svc-ansible-{{ platform_env | default('prod') }}"
+jumpserver_asset_default_privileged: true      # sudo NOPASSWD on the hardened hosts
+jumpserver_asset_key_path: "~/.ssh/id_ed25519_svc-ansible-{{ platform_env | default('prod') }}"
 # The Proxmox node rejects the standard rune key — it uses the automation key on
 # port 22222 (asset key_file: /tmp/jms_key_automation).
 jumpserver_node_key_path: "~/.ssh/id_ed25519_rune_automation"
-# OPNsense blocks root SSH by design; the break-glass login is by-rune with the
+# OPNsense blocks root SSH by design; the login is the automation identity with the
 # dedicated OPNsense key on port 22 (asset key_file: /tmp/jms_key_opnsense). The
 # firewall config stays API-managed — this asset is for AUDITED shell/console
 # access via the bastion (session-recorded), not for editing config over SSH.
 jumpserver_opnsense_key_path: "~/.ssh/id_ed25519_opnsense"
 
 # Assets to register (SSH). SVC (10.1.3.x) are same-subnet as the bastion →
-# reachable now; DMZ (10.1.2.x) needs the SVC→DMZ FW rule (Phase 4). LXCs log in
-# as root (privileged); VMs as by-systems (sudo). The OOB Proxmox node and the
+# reachable now; DMZ (10.1.2.x) needs the SVC→DMZ FW rule (Phase 4). Every host logs
+# in as the hardened automation identity (defaults above). The OOB Proxmox node and the
 # OPNsense firewall are the special cases (own key/port, non-root login) — both
 # now registered below. Only the jumpserver bastion itself is excluded.
 # Organised by SERVICE TYPE (the JumpServer node tree groups by function, not
-# network zone). LXCs log in as root (privileged); VMs as by-systems (sudo).
+# network zone). Port/account/key come from the asset defaults unless overridden.
 # The Proxmox node is the special case: OOB, port 22222, and the AUTOMATION key
 # (it rejects the standard rune key) -> key_file override.
 jumpserver_assets:
   # --- Databases ---
-  - { name: lxc-pgsql-01, address: 10.1.3.110, node: Databases, account: root, privileged: true }
-  - { name: lxc-redis-01, address: 10.1.3.117, node: Databases, account: root, privileged: true }
-  - { name: lxc-pgadmin-01, address: 10.1.3.140, node: Databases, account: root, privileged: true }
+  - { name: lxc-pgsql-01, address: 10.1.3.110, node: Databases }
+  - { name: lxc-redis-01, address: 10.1.3.117, node: Databases }
+  - { name: lxc-pgadmin-01, address: 10.1.3.140, node: Databases }
   # --- Identity & Secrets ---
-  - { name: lxc-authentik-01, address: 10.1.3.130, node: Identity, account: root, privileged: true }
-  - { name: lxc-vault-01, address: 10.1.3.150, node: Identity, account: root, privileged: true }
-  - { name: lxc-vaultwarden-01, address: 10.1.3.160, node: Identity, account: root, privileged: true }
+  - { name: lxc-authentik-01, address: 10.1.3.130, node: Identity }
+  - { name: lxc-vault-01, address: 10.1.3.150, node: Identity }
+  - { name: lxc-vaultwarden-01, address: 10.1.3.160, node: Identity }
   # --- Storage & Backup ---
-  - { name: lxc-seaweedfs-01, address: 10.1.3.200, node: Storage, account: root, privileged: true }
-  - { name: vm-pbs-01, address: 10.1.3.222, node: Storage, account: by-systems, privileged: false }
-  - { name: lxc-nextcloud-01, address: 10.1.3.170, node: Storage, account: root, privileged: true }
+  - { name: lxc-seaweedfs-01, address: 10.1.3.200, node: Storage }
+  - { name: vm-pbs-01, address: 10.1.3.222, node: Storage }
+  - { name: lxc-nextcloud-01, address: 10.1.3.170, node: Storage }
   # --- Networking ---
-  - { name: lxc-traefik-01, address: 10.1.2.110, node: Networking, account: root, privileged: true }
-  - { name: lxc-netbird-01, address: 10.1.3.181, node: Networking, account: root, privileged: true }
-  - { name: vm-adguard-01, address: 10.1.3.101, node: Networking, account: by-systems, privileged: false }
+  - { name: lxc-traefik-01, address: 10.1.2.110, node: Networking }
+  - { name: lxc-netbird-01, address: 10.1.3.181, node: Networking }
+  - { name: vm-adguard-01, address: 10.1.3.101, node: Networking }
   # OPNsense firewall — special: by-rune login (root SSH blocked), dedicated key,
   # port 22. Reachable from the SVC bastion via the FW's own OOB IP. Shell/console
   # access is audited here; firewall config remains API-managed (not via SSH).
-  - { name: vm-opns-01, address: 10.6.239.196, node: Networking, account: by-rune, privileged: false, port: 22, key_file: /tmp/jms_key_opnsense }
+  - name: vm-opns-01
+    address: 10.6.239.196
+    node: Networking
+    account: "svc-ansible-{{ platform_env | default('prod') }}"   # same identity, FW-side key + port 22
+    privileged: false
+    port: 22
+    key_file: /tmp/jms_key_opnsense
   # --- DevOps / CI ---
-  - { name: lxc-gitlab-01, address: 10.1.3.210, node: DevOps, account: root, privileged: true }
-  - { name: vm-gitlab-runner-01, address: 10.1.3.211, node: DevOps, account: by-systems, privileged: false }
-  - { name: lxc-diagrams-01, address: 10.1.3.220, node: DevOps, account: root, privileged: true }
+  - { name: lxc-gitlab-01, address: 10.1.3.210, node: DevOps }
+  - { name: vm-gitlab-runner-01, address: 10.1.3.211, node: DevOps }
+  - { name: lxc-diagrams-01, address: 10.1.3.220, node: DevOps }
   # --- Monitoring & Security ---
-  - { name: lxc-monitoring-01, address: 10.1.3.230, node: Monitoring, account: root, privileged: true }
-  - { name: lxc-crowdsec-01, address: 10.1.3.190, node: Monitoring, account: root, privileged: true }
+  - { name: lxc-monitoring-01, address: 10.1.3.230, node: Monitoring }
+  - { name: lxc-crowdsec-01, address: 10.1.3.190, node: Monitoring }
   # --- Mail ---
-  - { name: vm-mailcow-01, address: 10.1.2.120, node: Mail, account: by-systems, privileged: false }
+  - { name: vm-mailcow-01, address: 10.1.2.120, node: Mail }
   # --- IPAM ---
-  - { name: lxc-nbox-01, address: 10.1.3.120, node: IPAM, account: root, privileged: true }
+  - { name: lxc-nbox-01, address: 10.1.3.120, node: IPAM }
   # --- Hypervisor (OOB, port 22222, automation key) ---
   - { name: srv-proxmox-poc-01, address: 10.6.224.105, node: Hypervisor, account: root, privileged: true, port: 22222, key_file: /tmp/jms_key_automation }

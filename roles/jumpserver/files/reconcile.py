@@ -71,7 +71,7 @@ def get_node(value):
 
 
 key_cache = {}
-n_hosts = n_accounts = 0
+n_hosts = n_accounts = n_ports = n_stale = 0
 for a in CFG["assets"]:
     node = get_node(a["node"])
     host, h_created = Host.objects.get_or_create(
@@ -85,28 +85,45 @@ for a in CFG["assets"]:
     # set node membership to exactly the configured category (clean reorg — an
     # asset moved to a new service-type node is not left behind in the old one)
     host.nodes.set([node])
+    # port/account/privilege/key follow the hardening baseline unless the asset overrides them
+    D = CFG.get("asset_defaults", {})
+    port = int(a.get("port", D.get("port", 22)))
+    account = a.get("account", D.get("account", "root"))
+    privileged = bool(a.get("privileged", D.get("privileged", False)))
+    kp = a.get("key_file", D.get("key_file", "/tmp/jms_key_asset"))
     proto, _pc = Protocol.objects.get_or_create(
-        asset=host, name=a.get("protocol", "ssh"), defaults={"port": a.get("port", 22)}
+        asset=host, name=a.get("protocol", "ssh"), defaults={"port": port}
     )
-    if proto.port != a.get("port", 22):
-        proto.port = a.get("port", 22)
+    if proto.port != port:
+        proto.port = port
         proto.save(update_fields=["port"])
+        n_ports += 1
     if h_created:
         n_hosts += 1
-    # account (SSH key vaulted into JumpServer); per-asset key_file, default = rune
-    kp = a.get("key_file", "/tmp/jms_key_rune")
+    # account (SSH key vaulted into JumpServer)
     if kp not in key_cache:
         key_cache[kp] = load_key(kp)
     acct, a_created = Account.objects.get_or_create(
         asset=host,
-        username=a["account"],
-        defaults={"name": a["account"], "secret_type": "ssh_key", "privileged": a.get("privileged", False)},
+        username=account,
+        defaults={"name": account, "secret_type": "ssh_key", "privileged": privileged},  # pragma: allowlist secret
     )
     if a_created:
         acct.secret = key_cache[kp]
         acct.save()
         n_accounts += 1
-summary.append(f"assets: +{n_hosts} new hosts, +{n_accounts} new accounts (of {len(CFG['assets'])})")
+    elif acct.privileged != privileged:
+        acct.privileged = privileged
+        acct.save(update_fields=["privileged"])
+    # accounts the catalog no longer declares for this asset (e.g. root after the hardening
+    # switch) cannot log in anyway: drop them so the connect dialog offers only what works
+    for stale in Account.objects.filter(asset=host).exclude(username=account):
+        stale.delete()
+        n_stale += 1
+summary.append(
+    f"assets: +{n_hosts} new hosts, +{n_accounts} new accounts, {n_ports} port fixes, "
+    f"-{n_stale} stale accounts (of {len(CFG['assets'])})"
+)
 
 # --- (4) grant: bastion group -> whole node tree -> all accounts -------------
 perm, p_created = AssetPermission.objects.get_or_create(

@@ -58,13 +58,18 @@
         secret_key: "{{ jumpserver_s3_creds.secret_key }}"
       assets: "{{ jumpserver_assets }}"   # per-asset key_file honoured; reconcile.py defaults to the rune key
       settings: "{{ jumpserver_settings }}"
+      asset_defaults:
+        port: "{{ jumpserver_asset_default_port | int }}"
+        account: "{{ jumpserver_asset_default_account }}"
+        privileged: "{{ jumpserver_asset_default_privileged | bool }}"
+        key_file: /tmp/jms_key_asset
       email: "{{ jumpserver_email_cfg }}"
   no_log: true
 
-- name: "JumpServer reconcile | Stage the rune key on the LXC (0600)"
+- name: "JumpServer reconcile | Stage the hardened automation key (svc-ansible) on the LXC (0600)"
   ansible.builtin.copy:
-    src: "{{ jumpserver_rune_key_path | replace('~', lookup('env', 'HOME')) }}"
-    dest: /tmp/jms_key_rune
+    src: "{{ jumpserver_asset_key_path | replace('~', lookup('env', 'HOME')) }}"
+    dest: /tmp/jms_key_asset
     mode: "0600"
   no_log: true
   changed_when: false  # transient scaffolding, shredded below
@@ -104,7 +109,7 @@
   ansible.builtin.command:
     cmd: "docker cp {{ item.src }} jms_core:{{ item.dst }}"
   loop:
-    - { src: /tmp/jms_key_rune, dst: /tmp/jms_key_rune }
+    - { src: /tmp/jms_key_asset, dst: /tmp/jms_key_asset }
     - { src: /tmp/jms_key_automation, dst: /tmp/jms_key_automation }
     - { src: /tmp/jms_key_opnsense, dst: /tmp/jms_key_opnsense }
     - { src: /tmp/jms_reconcile.json, dst: /tmp/jms_reconcile.json }
@@ -128,7 +133,7 @@
   ansible.builtin.command:
     cmd: "{{ item }}"
   loop:
-    - "docker exec jms_core rm -f /tmp/jms_key_rune /tmp/jms_key_automation /tmp/jms_key_opnsense /tmp/jms_reconcile.json"
-    - "shred -u /tmp/jms_key_rune /tmp/jms_key_automation /tmp/jms_key_opnsense"
+    - "docker exec jms_core rm -f /tmp/jms_key_asset /tmp/jms_key_automation /tmp/jms_key_opnsense /tmp/jms_reconcile.json"
+    - "shred -u /tmp/jms_key_asset /tmp/jms_key_automation /tmp/jms_key_opnsense"
     - "rm -f /tmp/jms_reconcile.json /tmp/jms_reconcile.py"
   changed_when: false  # transient scaffolding, shredded below
