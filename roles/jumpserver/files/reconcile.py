@@ -71,7 +71,7 @@ def get_node(value):
 
 
 key_cache = {}
-n_hosts = n_accounts = n_ports = n_stale = 0
+n_hosts = n_accounts = n_ports = n_stale = n_rekeyed = 0
 for a in CFG["assets"]:
     node = get_node(a["node"])
     host, h_created = Host.objects.get_or_create(
@@ -112,9 +112,14 @@ for a in CFG["assets"]:
         acct.secret = key_cache[kp]
         acct.save()
         n_accounts += 1
-    elif acct.privileged != privileged:
-        acct.privileged = privileged
-        acct.save(update_fields=["privileged"])
+    else:
+        if acct.privileged != privileged:
+            acct.privileged = privileged
+            acct.save(update_fields=["privileged"])
+        if (acct.secret or "") != key_cache[kp]:   # key rotated/replaced in Vault
+            acct.secret = key_cache[kp]
+            acct.save()
+            n_rekeyed += 1
     # accounts the catalog no longer declares for this asset (e.g. root after the hardening
     # switch) cannot log in anyway: drop them so the connect dialog offers only what works
     for stale in Account.objects.filter(asset=host).exclude(username=account):
@@ -122,7 +127,7 @@ for a in CFG["assets"]:
         n_stale += 1
 summary.append(
     f"assets: +{n_hosts} new hosts, +{n_accounts} new accounts, {n_ports} port fixes, "
-    f"-{n_stale} stale accounts (of {len(CFG['assets'])})"
+    f"-{n_stale} stale accounts, {n_rekeyed} re-keyed (of {len(CFG['assets'])})"
 )
 
 # --- (4) grant: bastion group -> whole node tree -> all accounts -------------
