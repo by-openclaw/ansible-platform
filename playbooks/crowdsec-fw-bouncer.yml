@@ -1,8 +1,66 @@
----
 # Point the OPNsense firewall bouncer at the central CrowdSec LAPI.
-# Three plays, one connection mode each, so no task-level connection switching:
-#   1. local  — plugin settings + reconfigure/verify (API via by_systems.opnsense)
-#   2. ssh    — write the bouncer api_key (the one thing with no API), become root
+# Four plays, one connection mode each, so no task-level connection switching:
+#   0. vault  — read every secret on the Vault host and hand them to the firewall host
+#   1. local  — plugin settings (API via by_systems.opnsense)
+#   2. ssh    — enrol the agent + write the bouncer api_key (the one thing with no API), become root
+#   3. local  — reconfigure; then verify on the central LAPI
+# Prerequisites on the firewall (seed-owned): sudo_allow_wheel=1 and the automation user's
+# password in Vault ({env}/opnsense/svc-ansible-{env}, key webgui_password) — see catalog opn_auth_users.
+- name: "CrowdSec FW bouncer — secrets from Vault (read outside the connection:local plays)"
+  hosts: lxc-vault-01
+  become: true
+  gather_facts: false
+  vars:
+    _fw: "{{ groups['opnsense'][0] }}"
+  tasks:
+    - name: "Vault | firewall API token"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ hostvars[_fw].crowdsec_fw_bouncer_vault_api | default((platform_env | default('prod')) ~ '/opnsense/api') }}"
+    - name: "Vault | hand the API token over"
+      ansible.builtin.set_fact:
+        crowdsec_fw_bouncer_api:
+          host: "{{ hostvars[_fw].opn_host }}"
+          key: "{{ vault_secret_result.key }}"
+          secret: "{{ vault_secret_result.secret }}"
+      delegate_to: "{{ _fw }}"
+      delegate_facts: true
+      no_log: true
+    - name: "Vault | bouncer api_key"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ (platform_env | default('prod')) ~ '/crowdsec/bouncer-opnsense' }}"
+    - name: "Vault | hand the bouncer api_key over"
+      ansible.builtin.set_fact:
+        crowdsec_fw_bouncer_key:
+          api_key: "{{ vault_secret_result.api_key }}"
+      delegate_to: "{{ _fw }}"
+      delegate_facts: true
+      no_log: true
+    - name: "Vault | agent registration token"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ (platform_env | default('prod')) ~ '/crowdsec/registration-token' }}"
+    - name: "Vault | hand the registration token over"
+      ansible.builtin.set_fact:
+        crowdsec_fw_bouncer_reg_token: "{{ vault_secret_result.token }}"
+      delegate_to: "{{ _fw }}"
+      delegate_facts: true
+      no_log: true
+    - name: "Vault | automation user's password (sudo 'ask password')"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ (platform_env | default('prod')) ~ '/opnsense/svc-ansible-' ~ (platform_env | default('prod')) }}"
+    - name: "Vault | hand the become password over"
+      ansible.builtin.set_fact:
+        crowdsec_fw_bouncer_become_password: "{{ vault_secret_result.webgui_password }}"
+      delegate_to: "{{ _fw }}"
+      delegate_facts: true
+      no_log: true
 
 - name: "CrowdSec FW bouncer — plugin settings via API"
   hosts: vm-opns-01
@@ -23,13 +81,14 @@
   hosts: vm-opns-01
   gather_facts: false
   vars:
-    _creds: "{{ (lookup('file', lookup('env','HOME') + '/.openclaw/workspace/infra/secrets/fabric/net-opnsense-prod-vm-opns-01.json') | from_json).fields }}"
+    crowdsec_fw_bouncer_ssh_user: "{{ hostvars[inventory_hostname].crowdsec_fw_bouncer_ssh_user | default('svc-ansible-' ~ (platform_env | default('prod'))) }}"
+    crowdsec_fw_bouncer_ssh_key: "{{ hostvars[inventory_hostname].crowdsec_fw_bouncer_ssh_key | default(lookup('env', 'HOME') ~ '/.ssh/id_ed25519_opnsense') }}"
     ansible_connection: ssh
-    ansible_user: "{{ _creds.ssh_user }}"
-    ansible_ssh_private_key_file: "{{ _creds.ssh_key }}"
+    ansible_user: "{{ crowdsec_fw_bouncer_ssh_user }}"
+    ansible_ssh_private_key_file: "{{ crowdsec_fw_bouncer_ssh_key }}"
     ansible_become: true
     ansible_become_method: sudo
-    ansible_become_password: "{{ _creds.byrune_become_password }}"
+    ansible_become_password: "{{ crowdsec_fw_bouncer_become_password }}"
     ansible_python_interpreter: /usr/local/bin/python3
   tasks:
     - name: Load credentials
