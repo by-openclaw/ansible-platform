@@ -1,0 +1,24 @@
+---
+# Proxmox VE web UI via Traefik (VPN-only). PVE serves its own self-signed TLS on
+# :8006 -> insecureSkipVerify on the backend (Traefik still proxies over TLS +
+# handles the noVNC/xterm WebSocket transparently). SSO (Authentik OIDC realm on
+# the node) is a follow-up; this gives the FQDN + the wildcard cert at the edge.
+- name: Proxmox VE — Traefik edge (VPN-only)
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "Proxmox | Publish the PVE UI via Traefik"
+      ansible.builtin.include_role:
+        name: traefik_route
+      vars:
+        traefik_route_name: proxmox
+        traefik_route_fqdn: "proxmox.by-research.be"
+        traefik_route_backend_url: "https://10.6.224.105:8006"
+        traefik_route_backend_insecure_skip_verify: true
+        traefik_route_internal_only: true
+        traefik_route_internal_cidrs:
+          - "10.1.0.0/16"
+          - "100.64.0.0/10"
+          - "fd01::/16"
+          - "127.0.0.1/32"
+          - "::1/128"
