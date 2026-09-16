@@ -116,14 +116,6 @@
   changed_when: true
   no_log: true
 
-- name: "JumpServer reconcile | Stage the automation key (Proxmox node) on the LXC (0600)"
-  ansible.builtin.copy:
-    src: "{{ jumpserver_node_key_path | replace('~', lookup('env', 'HOME')) }}"
-    dest: /tmp/jms_key_automation
-    mode: "0600"
-  no_log: true
-  changed_when: false  # transient scaffolding, shredded below
-
 - name: "JumpServer reconcile | Stage the desired-state config on the LXC (0600)"
   ansible.builtin.copy:
     content: "{{ jumpserver_reconcile_cfg | to_json }}"
@@ -144,7 +136,6 @@
     cmd: "docker cp {{ item.src }} jms_core:{{ item.dst }}"
   loop:
     - { src: /tmp/jms_key_asset, dst: /tmp/jms_key_asset }
-    - { src: /tmp/jms_key_automation, dst: /tmp/jms_key_automation }
     - { src: /tmp/jms_reconcile.json, dst: /tmp/jms_reconcile.json }
     - { src: /tmp/jms_reconcile.py, dst: /tmp/reconcile.py }
   changed_when: false  # transient scaffolding, shredded below
@@ -162,12 +153,14 @@
   ansible.builtin.debug:
     msg: "{{ jumpserver_reconcile_out.stdout_lines | select('match', '^  -') | list }}"
 
-- name: "JumpServer reconcile | Probe: the vaulted identity must log in to the first asset (built-in integration test)"
+- name: "JumpServer reconcile | Probe: the vaulted identity must log in to EVERY inherited asset (built-in integration test)"
   ansible.builtin.command:
     argv:
       - ssh
       - -o
       - BatchMode=yes
+      - -o
+      - ConnectTimeout=8
       - -o
       - StrictHostKeyChecking=no
       - -o
@@ -175,17 +168,29 @@
       - -i
       - /tmp/jms_key_asset
       - -p
-      - "{{ jumpserver_asset_default_port }}"
-      - "{{ jumpserver_asset_default_account }}@{{ (jumpserver_assets | rejectattr('port', 'defined') | first).address }}"
+      - "{{ item.port | default(jumpserver_asset_default_port) }}"
+      - "{{ item.account | default(jumpserver_asset_default_account) }}@{{ item.address }}"
       - "true"
+  loop: "{{ jumpserver_assets | rejectattr('key_file', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
   register: jumpserver_probe
   changed_when: false
+  failed_when: false
 
+- name: "JumpServer reconcile | Every probe must have logged in"
+  ansible.builtin.assert:
+    that: jumpserver_probe.results | rejectattr('rc', 'equalto', 0) | list | length == 0
+    fail_msg: >-
+      bastion login failed for:
+      {{ jumpserver_probe.results | rejectattr('rc', 'equalto', 0) | map(attribute='item.name') | list }}
+      (port/account/key per the hardening baseline — see roles/jumpserver/defaults)
+    success_msg: "bastion login OK on {{ jumpserver_probe.results | length }} assets"
 - name: "JumpServer reconcile | Shred the staged secrets (LXC + container)"
   ansible.builtin.command:
     cmd: "{{ item }}"
   loop:
-    - "docker exec jms_core rm -f /tmp/jms_key_asset /tmp/jms_key_automation /tmp/jms_reconcile.json"
-    - "shred -u /tmp/jms_key_asset /tmp/jms_key_automation"
+    - "docker exec jms_core rm -f /tmp/jms_key_asset /tmp/jms_reconcile.json"
+    - "shred -u /tmp/jms_key_asset"
     - "rm -f /tmp/jms_reconcile.json /tmp/jms_reconcile.py"
   changed_when: false  # transient scaffolding, shredded below
