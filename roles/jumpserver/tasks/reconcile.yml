@@ -58,29 +58,68 @@
         secret_key: "{{ jumpserver_s3_creds.secret_key }}"
       assets: "{{ jumpserver_assets }}"   # per-asset key_file honoured; reconcile.py defaults to the rune key
       settings: "{{ jumpserver_settings }}"
+      asset_defaults:
+        port: "{{ jumpserver_asset_default_port | int }}"
+        account: "{{ jumpserver_asset_default_account }}"
+        privileged: "{{ jumpserver_asset_default_privileged | bool }}"
+        key_file: /tmp/jms_key_asset
       email: "{{ jumpserver_email_cfg }}"
   no_log: true
 
-- name: "JumpServer reconcile | Stage the rune key on the LXC (0600)"
+- name: "JumpServer reconcile | Read the break-glass SSH key from Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ jumpserver_asset_key_vault_path }}"
+
+- name: "JumpServer reconcile | Keep the key material (no_log)"
+  ansible.builtin.set_fact:
+    jumpserver_asset_key_b64: "{{ vault_secret_result.private_b64 }}"
+  no_log: true
+
+- name: "JumpServer reconcile | Read the key passphrase from Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ jumpserver_asset_key_passphrase_vault_path }}"
+
+- name: "JumpServer reconcile | Stage the (still encrypted) key on the LXC (0600)"
   ansible.builtin.copy:
-    src: "{{ jumpserver_rune_key_path | replace('~', lookup('env', 'HOME')) }}"
-    dest: /tmp/jms_key_rune
+    content: "{{ jumpserver_asset_key_b64 | b64decode }}"
+    dest: /tmp/jms_key_asset
     mode: "0600"
   no_log: true
   changed_when: false  # transient scaffolding, shredded below
+
+- name: "JumpServer reconcile | Stage the passphrase + askpass helper (0600/0700, never argv)"
+  ansible.builtin.copy:
+    content: "{{ item.content }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { content: "{{ vault_secret_result.passphrase }}", dest: /tmp/jms_pf, mode: "0600" }
+    - { content: "#!/bin/sh\ncat /tmp/jms_pf\n", dest: /tmp/jms_askpass.sh, mode: "0700" }
+  loop_control:
+    label: "{{ item.dest }}"
+  no_log: true
+
+- name: "JumpServer reconcile | Unlock the staged key for the bastion (passphrase via askpass, not argv)"
+  ansible.builtin.command:
+    argv: [setsid, -w, env, SSH_ASKPASS=/tmp/jms_askpass.sh, SSH_ASKPASS_REQUIRE=force, DISPLAY=:0, ssh-keygen, -p, -f, /tmp/jms_key_asset, -N, ""]
+  changed_when: true
+  no_log: true
+
+- name: "JumpServer reconcile | Shred the passphrase + helper"
+  ansible.builtin.command: shred -u /tmp/jms_pf /tmp/jms_askpass.sh
+  changed_when: true
+  no_log: true
 
 - name: "JumpServer reconcile | Stage the automation key (Proxmox node) on the LXC (0600)"
   ansible.builtin.copy:
     src: "{{ jumpserver_node_key_path | replace('~', lookup('env', 'HOME')) }}"
     dest: /tmp/jms_key_automation
-    mode: "0600"
-  no_log: true
-  changed_when: false  # transient scaffolding, shredded below
-
-- name: "JumpServer reconcile | Stage the OPNsense key (by-rune) on the LXC (0600)"
-  ansible.builtin.copy:
-    src: "{{ jumpserver_opnsense_key_path | replace('~', lookup('env', 'HOME')) }}"
-    dest: /tmp/jms_key_opnsense
     mode: "0600"
   no_log: true
   changed_when: false  # transient scaffolding, shredded below
@@ -104,9 +143,8 @@
   ansible.builtin.command:
     cmd: "docker cp {{ item.src }} jms_core:{{ item.dst }}"
   loop:
-    - { src: /tmp/jms_key_rune, dst: /tmp/jms_key_rune }
+    - { src: /tmp/jms_key_asset, dst: /tmp/jms_key_asset }
     - { src: /tmp/jms_key_automation, dst: /tmp/jms_key_automation }
-    - { src: /tmp/jms_key_opnsense, dst: /tmp/jms_key_opnsense }
     - { src: /tmp/jms_reconcile.json, dst: /tmp/jms_reconcile.json }
     - { src: /tmp/jms_reconcile.py, dst: /tmp/reconcile.py }
   changed_when: false  # transient scaffolding, shredded below
@@ -124,11 +162,30 @@
   ansible.builtin.debug:
     msg: "{{ jumpserver_reconcile_out.stdout_lines | select('match', '^  -') | list }}"
 
+- name: "JumpServer reconcile | Probe: the vaulted identity must log in to the first asset (built-in integration test)"
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -o
+      - BatchMode=yes
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -i
+      - /tmp/jms_key_asset
+      - -p
+      - "{{ jumpserver_asset_default_port }}"
+      - "{{ jumpserver_asset_default_account }}@{{ (jumpserver_assets | rejectattr('port', 'defined') | first).address }}"
+      - "true"
+  register: jumpserver_probe
+  changed_when: false
+
 - name: "JumpServer reconcile | Shred the staged secrets (LXC + container)"
   ansible.builtin.command:
     cmd: "{{ item }}"
   loop:
-    - "docker exec jms_core rm -f /tmp/jms_key_rune /tmp/jms_key_automation /tmp/jms_key_opnsense /tmp/jms_reconcile.json"
-    - "shred -u /tmp/jms_key_rune /tmp/jms_key_automation /tmp/jms_key_opnsense"
+    - "docker exec jms_core rm -f /tmp/jms_key_asset /tmp/jms_key_automation /tmp/jms_reconcile.json"
+    - "shred -u /tmp/jms_key_asset /tmp/jms_key_automation"
     - "rm -f /tmp/jms_reconcile.json /tmp/jms_reconcile.py"
   changed_when: false  # transient scaffolding, shredded below
