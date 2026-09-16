@@ -23,6 +23,10 @@ http:
 {% for cidr in traefik_internal_cidrs %}
           - "{{ cidr }}"
 {% endfor %}
+{# break-glass admin desks (OOB), the same list every internal route appends #}
+{% for cidr in traefik_admin_cidrs | default([]) %}
+          - "{{ cidr }}"
+{% endfor %}
 
     # HSTS — applied to EVERY service via the websecure entrypoint (Traefik
     # terminates TLS, so the backends never see HTTPS and cannot emit it). This
