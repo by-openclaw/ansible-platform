@@ -113,9 +113,15 @@ authentik_oidc_apps:
     offline_access: true          # refresh tokens (NetBird requests offline_access)
     entitlements: true            # per the guide's Selected Scopes
     api_access: true              # goauthentik.io/api — IdP-manager directory reads
-    # PKCE loopback (CLI/mobile) + the dashboard's /auth and /silent-auth callbacks.
+    # PKCE loopback (CLI/mobile) + the dashboard's /auth and /silent-auth callbacks as STRICT
+    # entries: authentik derives the CORS allow-origin for the OIDC endpoints from the strict
+    # redirect URIs, and the dashboard fetches /.well-known/openid-configuration cross-origin.
+    # With only the regex below, no Access-Control-Allow-Origin was sent and the SPA died with
+    # "Error: Unauthenticated" before ever reaching the authorize endpoint (2026-09-16).
     redirect_uris:
       - "http://localhost:53000"
+      - "https://vpn.{{ platform_domain }}/auth"
+      - "https://vpn.{{ platform_domain }}/silent-auth"
     redirect_uris_regex:
       - "https://vpn\\.by-research\\.be/.*"
   - slug: mailcow
