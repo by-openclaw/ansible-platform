@@ -5,6 +5,11 @@
 # password comes from the controller fabric working copy (mirrored to Vault at
 # secret/{env}/svc-ansible/os — security/0001).
 # ==============================================================================
+# --- SSH baseline (security/0001, identity/0004 §9) — ONE source for every host ---------------
+# roles/hardening + roles/sshd-hardening template sshd_config from it on VMs/LXCs/the PVE node;
+# the OPNsense appliance (no API for its sshd) receives it through the seed (opnsense_provision
+# feeds ssh_port/ssh_interfaces from here). Never edit an sshd config by hand.
+platform_ssh_port: 22222
 _os_svc_ansible_secret: "~/.openclaw/workspace/infra/secrets/fabric/os-svc-ansible-{{ platform_env | default('prod') }}.json"
 ansible_become_password: >-
   {{ ((lookup('file', _os_svc_ansible_secret, errors='ignore') or '{"fields":{}}')

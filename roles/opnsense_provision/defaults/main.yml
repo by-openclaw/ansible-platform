@@ -54,3 +54,9 @@ opnsense_provision_confirm_prod: false
 # Seeding: drive the appliance's boot importer and hand it the config on the second disk.
 opnsense_provision_seed_device: vtbd1
 opnsense_provision_seed_timeout: 600
+
+# --- Appliance sshd follows the platform SSH baseline (no API on 26.x → seed-owned) ---------
+# Port from the single source (platform_ssh_port); bound to the management plane only. A profile
+# that sets ssh_port / ssh_interfaces itself wins; these are the defaults every firewall gets.
+opnsense_provision_ssh_port: "{{ platform_ssh_port | default(22222) }}"
+opnsense_provision_ssh_interfaces: ["lan"]   # seed interface names (lan = the OOB plane)
