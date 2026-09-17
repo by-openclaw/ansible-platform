@@ -126,9 +126,29 @@ gitlab_rbac_project_files:
 # Create the webhook in Discord (channel → Integrations → Webhooks), store it:
 #   vault kv put secret/prod/gitlab/discord-<project> webhook=https://discord.com/api/webhooks/...
 # Entries stay inert until a path is listed.
-gitlab_rbac_integrations: []
-#  - { project: platform/support/helpdesk, type: discord, webhook_vault_path: prod/gitlab/discord-helpdesk,
-#      events: { push: true, issues: true, confidential_issues: true, merge_requests: true, pipeline: true, note: false }, branches: default }
+# Webhooks are created by roles/discord_guild (bot svc-chatops-prod) and stored at
+# prod/discord/webhook-<name>; one channel per GitLab group + #helpdesk.
+gitlab_rbac_integrations:
+  - project: platform/support/helpdesk
+    type: discord
+    webhook_vault_path: prod/discord/webhook-gitlab-helpdesk
+    events: { push: false, issues: true, confidential_issues: true, merge_requests: true, pipeline: false, note: false }
+    branches: default
+  - project: platform/devops/npm-check
+    type: discord
+    webhook_vault_path: prod/discord/webhook-gitlab-devops
+    events: { push: true, issues: true, confidential_issues: false, merge_requests: true, pipeline: true, note: false }
+    branches: default
+  - project: platform/infra/ci-templates
+    type: discord
+    webhook_vault_path: prod/discord/webhook-gitlab-infra
+    events: { push: true, issues: true, confidential_issues: false, merge_requests: true, pipeline: true, note: false }
+    branches: default
+  - project: platform/apps/demo
+    type: discord
+    webhook_vault_path: prod/discord/webhook-gitlab-apps
+    events: { push: true, issues: true, confidential_issues: false, merge_requests: true, pipeline: true, note: false }
+    branches: default
 
 # --- Per-user SSH/GPG keys — derived from platform_people (group_vars/all/people.yml).
 # GitLab user must already exist (created via SSO first login or the identity flow).

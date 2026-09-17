@@ -1,0 +1,38 @@
+---
+# ==============================================================================
+# discord_guild — the platform's Discord server as code (chat-ops). Reconciles
+# categories, channels, roles, permission overwrites and one webhook per
+# notification channel through the Discord REST API (bot svc-chatops-prod,
+# token in Vault prod/discord/bot). Webhook URLs are secrets: written to Vault
+# (prod/discord/webhook-<name>), never printed, consumed by gitlab_rbac
+# integrations / Alertmanager / GitHub. Idempotent: run twice → changed=0.
+# ==============================================================================
+discord_guild_vault_bot_path: "{{ platform_env | default('prod') }}/discord/bot"
+discord_guild_vault_webhook_prefix: "{{ platform_env | default('prod') }}/discord/webhook-"
+discord_guild_bot_role: "svc-chatops-prod"       # the bot's managed role (created by Discord on invite)
+
+# Roles mirror Authentik access groups (member sync = follow-up: discord_id per person)
+discord_guild_roles:
+  - { name: platform-admins, color: 15158332, hoist: true }    # red
+  - { name: dev, color: 3447003, hoist: false }               # blue
+
+# Categories → channels. `announce: true` = @everyone read-only, platform-admins + bot post.
+# `webhook: <name>` = create/keep a webhook named gitlab-<name>/<name> and store its URL in Vault.
+discord_guild_categories:
+  - name: Announcements
+    channels:
+      - { name: announcements, topic: "Platform news — admins + chat-ops bot post here", announce: true }
+      - { name: releases, topic: "Release notes from GitHub (release-please) — automated", announce: true, webhook: releases }
+  - name: Platform
+    channels:
+      - { name: infra, topic: "GitLab platform/infra — pipelines, MRs, issues", webhook: gitlab-infra }
+      - { name: apps, topic: "GitLab platform/apps — pipelines, MRs, issues", webhook: gitlab-apps }
+      - { name: devops, topic: "GitLab platform/devops — pipelines, MRs, issues", webhook: gitlab-devops }
+  - name: Support
+    channels:
+      - { name: helpdesk, topic: "Service Desk activity (platform/support/helpdesk) — summaries only", webhook: gitlab-helpdesk }
+  - name: Ops
+    channels:
+      - { name: alerts, topic: "Alertmanager / Grafana alerts (parked until the alerting trio lands)", webhook: alerts }
+
+discord_guild_post_ready_message: true            # one-line "chat-ops online" in #announcements on first creation

@@ -1,0 +1,45 @@
+---
+- name: "Discord | Bot token from Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ discord_guild_vault_bot_path }}"
+
+- name: "Discord | Bind the bot secret"
+  ansible.builtin.set_fact:
+    discord_guild_bot: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "Discord | Reconcile the guild (categories, channels, roles, overwrites, webhooks)"
+  ansible.builtin.command:
+    argv: [python3, "{{ role_path }}/files/discord_reconcile.py"]
+  environment:
+    DISCORD_TOKEN: "{{ discord_guild_bot.token }}"
+    DISCORD_DESIRED: >-
+      {{ {'guild_id': discord_guild_bot.guild_id, 'bot_role': discord_guild_bot_role,
+          'roles': discord_guild_roles, 'categories': discord_guild_categories,
+          'post_ready_message': discord_guild_post_ready_message} | to_json }}
+  become: false                 # runs on the controller; no privilege needed (global become=True would sudo here)
+  register: discord_guild_run
+  changed_when: "'changes=0' not in discord_guild_run.stdout"
+  failed_when: "'DISCORD_DONE' not in discord_guild_run.stdout"
+  no_log: true
+
+- name: "Discord | Report (webhook URLs never shown)"
+  ansible.builtin.debug:
+    msg: "{{ discord_guild_run.stdout_lines | reject('match', '^\\{') | list }}"
+
+- name: "Discord | Webhook URLs → Vault (get-or-create per webhook; secret stays in Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ discord_guild_vault_webhook_prefix }}{{ item.key }}"
+    vault_secret_init:
+      webhook: "{{ item.value.url }}"
+      id: "{{ item.value.id }}"
+      channel: "{{ item.value.channel }}"
+      _note: "Discord webhook (bot svc-chatops-prod, managed by roles/discord_guild) — consumed by gitlab_rbac_integrations / GitHub / Alertmanager"
+  loop: "{{ ((discord_guild_run.stdout_lines | select('match', '^\\{') | last) | from_json).webhooks | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} -> #{{ item.value.channel }}"
+  no_log: true
