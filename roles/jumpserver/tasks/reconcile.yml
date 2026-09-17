@@ -104,16 +104,17 @@
   loop_control:
     label: "{{ item.dest }}"
   no_log: true
+  changed_when: false   # transient scaffolding, shredded before the play ends
 
 - name: "JumpServer reconcile | Unlock the staged key for the bastion (passphrase via askpass, not argv)"
   ansible.builtin.command:
     argv: [setsid, -w, env, SSH_ASKPASS=/tmp/jms_askpass.sh, SSH_ASKPASS_REQUIRE=force, DISPLAY=:0, ssh-keygen, -p, -f, /tmp/jms_key_asset, -N, ""]
-  changed_when: true
+  changed_when: false   # transient scaffolding, no lasting state
   no_log: true
 
 - name: "JumpServer reconcile | Shred the passphrase + helper"
   ansible.builtin.command: shred -u /tmp/jms_pf /tmp/jms_askpass.sh
-  changed_when: true
+  changed_when: false   # transient scaffolding, no lasting state
   no_log: true
 
 - name: "JumpServer reconcile | Stage the desired-state config on the LXC (0600)"
