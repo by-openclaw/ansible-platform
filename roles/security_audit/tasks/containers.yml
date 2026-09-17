@@ -1,0 +1,38 @@
+---
+# Container layer: Trivy scans every RUNNING image (the real service CVE surface;
+# host apt cannot see inside containers). Trivy DB cached in a named volume.
+- name: "SecAudit | Stage the Trivy summariser"
+  ansible.builtin.copy:
+    src: trivy_summarize.py
+    dest: /usr/local/bin/trivy_summarize.py
+    mode: "0755"
+  become: true
+
+- name: "SecAudit | Running images on this host"
+  ansible.builtin.shell:
+    cmd: "set -o pipefail; docker ps --format '{{ '{{' }}.Image{{ '}}' }}' | sort -u"
+    executable: /bin/bash
+  register: security_audit_images
+  changed_when: false
+
+- name: "SecAudit | Trivy scan each running image (HIGH/CRITICAL counts)"
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      docker run --rm -v {{ security_audit_trivy_cache_volume }}:/root/.cache/
+      -v /var/run/docker.sock:/var/run/docker.sock {{ security_audit_trivy_image }}
+      image --quiet --scanners vuln --severity {{ security_audit_trivy_severity }}
+      --format json "{{ item }}" 2>/dev/null
+      | python3 /usr/local/bin/trivy_summarize.py "{{ item }}"
+    executable: /bin/bash
+  loop: "{{ security_audit_images.stdout_lines }}"
+  loop_control: { label: "{{ item }}" }
+  register: security_audit_trivy
+  changed_when: false
+  failed_when: false
+
+- name: "SecAudit | Aggregate container findings"
+  ansible.builtin.set_fact:
+    security_audit_containers: >-
+      {{ security_audit_trivy.results | map(attribute='stdout')
+         | select('match', '^\\{') | map('from_json') | list }}

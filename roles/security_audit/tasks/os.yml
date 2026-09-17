@@ -1,0 +1,35 @@
+---
+# OS layer: security-relevant apt updates + Debian CVE list (debsecan) + reboot flag.
+- name: "SecAudit | debsecan (Debian CVE ↔ package)"
+  ansible.builtin.apt:
+    name: debsecan
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "SecAudit | Stage the OS-posture helper"
+  ansible.builtin.copy:
+    src: os_posture.py
+    dest: /usr/local/bin/os_posture.py
+    mode: "0755"
+  become: true
+
+- name: "SecAudit | Collect OS posture"
+  ansible.builtin.shell: |
+    set -o pipefail
+    . /etc/os-release
+    SUITE="{{ security_audit_debsecan_suite or '' }}"; [ -n "$SUITE" ] || SUITE="$VERSION_CODENAME"
+    SEC=$(apt-get -s dist-upgrade 2>/dev/null | grep '^Inst' | grep -ci security || true)
+    TOT=$(apt-get -s dist-upgrade 2>/dev/null | grep -c '^Inst' || true)
+    # debsecan: CVEs with a fix available for installed packages
+    CVE=$(debsecan --suite "$SUITE" --only-fixed --format packages 2>/dev/null | sort -u | wc -l || echo 0)
+    CVELIST=$(debsecan --suite "$SUITE" --only-fixed --format detail 2>/dev/null | grep -oE 'CVE-[0-9]{4}-[0-9]+' | sort -u | head -50 | tr '\n' ' ')
+    RB=$([ -f /var/run/reboot-required ] && echo yes || echo no)
+    SEC="$SEC" TOT="$TOT" CVE="$CVE" RB="$RB" CVELIST="$CVELIST" python3 /usr/local/bin/os_posture.py
+  args: { executable: /bin/bash }
+  register: security_audit_os_raw
+  changed_when: false
+
+- name: "SecAudit | Parse OS posture"
+  ansible.builtin.set_fact:
+    security_audit_os: "{{ security_audit_os_raw.stdout | from_json }}"

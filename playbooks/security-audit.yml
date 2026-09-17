@@ -1,0 +1,72 @@
+---
+# ==============================================================================
+# security-audit — fleet CVE / update-currency audit (READ-ONLY; never patches).
+#
+# Flow:
+#   1. Per Linux host (all guests except the FW/nodes): roles/security_audit
+#      collects OS posture (apt security count + debsecan Debian CVEs + reboot
+#      flag) and, where Docker runs, Trivy-scans every RUNNING image for
+#      HIGH/CRITICAL — the real service CVE surface. Writes /var/log/
+#      security-audit/<host>.json.
+#   2. OPNsense: firmware audit via the API (roles/opnsense firmware check).
+#   3. Controller: aggregate every host record → one dated report under
+#      ~/.openclaw/workspace/infra/security-audit/, push a summary to Loki and
+#      to Discord #alerts (webhook from Vault), and (optional) open a GitLab
+#      issue per host over the severity gate.
+# Remediation is playbooks/updates.yml (staged waves) — this only DETECTS.
+#
+#   Run:   ansible-playbook -i inventories/prod/hosts.yml playbooks/security-audit.yml
+#   Scope: -l <group> to audit a subset; -e security_audit_scan_containers=false for a fast OS-only pass.
+# ==============================================================================
+- name: "Security audit — per-host collection"
+  hosts: all:!opnsense:!nodes
+  become: true
+  gather_facts: true
+  tasks:
+    - name: "Collect CVE / update posture"
+      ansible.builtin.include_role:
+        name: security_audit
+
+- name: "Security audit — aggregate + ship (controller)"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  become: false
+  vars:
+    security_audit_stamp: "{{ ansible_date_time.date }}"
+    # Controller-side settings (mirror roles/security_audit/defaults — the role
+    # isn't loaded in this play, so declare what the aggregate/ship needs here).
+    security_audit_controller_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/security-audit"
+    security_audit_discord_webhook_vault_path: "{{ platform_env | default('prod') }}/discord/webhook-alerts"
+  tasks:
+    - name: "Ensure the controller report dir"
+      ansible.builtin.file:
+        path: "{{ security_audit_controller_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: "Assemble the fleet report"
+      ansible.builtin.set_fact:
+        security_audit_fleet: >-
+          {{ groups['all']
+             | map('extract', hostvars, 'security_audit_host_record')
+             | select('defined') | list }}
+
+    - name: "Write the dated fleet report"
+      ansible.builtin.copy:
+        content: "{{ {'date': security_audit_stamp, 'hosts': security_audit_fleet} | to_nice_json }}"
+        dest: "{{ security_audit_controller_dir }}/fleet-{{ security_audit_stamp }}.json"
+        mode: "0640"
+
+    - name: "Compute the escalation set (over the severity gate)"
+      ansible.builtin.set_fact:
+        security_audit_hot: >-
+          {{ security_audit_fleet
+             | selectattr('container_critical', 'defined')
+             | selectattr('container_critical', '>', 0) | list
+             + (security_audit_fleet | selectattr('os.reboot_required', 'defined')
+                | selectattr('os.reboot_required', 'equalto', 'yes') | list) }}
+
+    - name: "Discord #alerts summary"
+      ansible.builtin.include_tasks: ../roles/security_audit/tasks/ship_discord.yml
+      when: security_audit_discord_webhook_vault_path | length > 0

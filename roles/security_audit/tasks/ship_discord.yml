@@ -1,0 +1,31 @@
+---
+# Post a fleet CVE summary to Discord #alerts (webhook from Vault). Read-only.
+- name: "SecAudit | Discord webhook from Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ security_audit_discord_webhook_vault_path }}"
+
+- name: "SecAudit | Roll up the counts"
+  ansible.builtin.set_fact:
+    security_audit_c_sec: "{{ security_audit_fleet | map(attribute='os.security_updates') | map('int') | sum }}"
+    security_audit_c_high: "{{ security_audit_fleet | map(attribute='container_high') | map('int') | sum }}"
+    security_audit_c_crit: "{{ security_audit_fleet | map(attribute='container_critical') | map('int') | sum }}"
+    security_audit_c_reboots: "{{ security_audit_fleet | selectattr('os.reboot_required', 'equalto', 'yes') | list | length }}"
+
+- name: "SecAudit | Build the message"
+  ansible.builtin.set_fact:
+    security_audit_msg: >-
+      **Security audit {{ security_audit_stamp }}** — {{ security_audit_fleet | length }} hosts ·
+      sec-updates {{ security_audit_c_sec }} · container HIGH/CRIT {{ security_audit_c_high }}/{{ security_audit_c_crit }} ·
+      reboots {{ security_audit_c_reboots }} ·
+      {% if security_audit_hot | length > 0 %}⚠ {{ security_audit_hot | map(attribute='host') | join(', ') }}{% else %}✅ clear{% endif %}
+
+- name: "SecAudit | Send to Discord"
+  ansible.builtin.uri:
+    url: "{{ vault_secret_result.webhook }}"
+    method: POST
+    body_format: json
+    body: { content: "{{ security_audit_msg }}" }
+    status_code: [200, 204]
+  no_log: true
