@@ -11,7 +11,10 @@
 
 - name: "Provision | Read the seed profile (the single source for this firewall's hardware)"
   ansible.builtin.set_fact:
-    opnsense_provision_seed: "{{ lookup('file', opnsense_provision_seed_profile) | from_json }}"
+    opnsense_provision_seed: >-
+      {{ {'ssh_port': opnsense_provision_ssh_port | int,
+          'ssh_interfaces': opnsense_provision_ssh_interfaces}
+         | combine(lookup('file', opnsense_provision_seed_profile) | from_json) }}
 
 - name: "Provision | Profile facts"
   ansible.builtin.set_fact:
