@@ -10,7 +10,13 @@ jitsi_fqdn: "meet.{{ platform_domain | default('by-research.be') }}"
 jitsi_http_ip: "0.0.0.0"                   # bind all; ufw (internal only) + OPNsense FW gate it; Traefik is the ingress
 jitsi_http_port: 8000
 jitsi_jvb_port: 10000                      # UDP media
-jitsi_public_ip: "{{ jitsi_wan_ip | default('') }}"   # JVB advertises this for external peers (set from FW WAN)
+# Addresses the video bridge advertises as ICE candidates (docker-jitsi-meet JVB_ADVERTISE_IPS):
+# the host address for LAN/VPN peers and the public address for peers on the internet. Without
+# them the bridge only offers its Docker-network address (172.18.x) and every call drops after
+# ICE fails (2026-09-17). Media port = jitsi_jvb_port/udp, published by compose on the host.
+jitsi_wan_ip: "{{ platform_public_ipv4 | default('') }}"
+jitsi_public_ip: "{{ jitsi_wan_ip }}"
+jitsi_advertise_ips: "{{ [ansible_host | default(''), jitsi_wan_ip] | select | unique | join(',') }}"
 jitsi_env: "{{ platform_env | default('prod') }}"
 jitsi_vault_path: "{{ jitsi_env }}/jitsi/secrets"      # component/auth secrets
 jitsi_tz: "Europe/Brussels"
