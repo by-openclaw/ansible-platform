@@ -33,7 +33,13 @@ gitlab_rbac_settings:
   diagramsnet_url: "https://drawio.{{ platform_domain }}"
   # --- Track B: safe instance settings ---
   default_branch_name: "main"                        # default branch for new repos
-  vscode_extension_marketplace_enabled: true         # Web IDE (VS Code) extension marketplace (open-vsx)
+  # Web IDE: extensions from the marketplace; assets from GitLab's external CDN ONLY —
+  # the single-origin fallback (serving VS Code from the GitLab origin) is an XSS-class
+  # risk flagged by the admin dashboard on 19.3. Browsers must reach the CDN.
+  vscode_extension_marketplace:
+    enabled: true
+    extension_host_domain: cdn.web-ide.gitlab-static.net
+    single_origin_fallback_enabled: false
   usage_ping_enabled: false                          # no telemetry phone-home (private instance)
   default_project_deletion_protection: true          # guard against accidental project deletion
 
