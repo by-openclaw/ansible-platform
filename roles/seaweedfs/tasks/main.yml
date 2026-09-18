@@ -86,7 +86,14 @@
     mode: "0640"
   no_log: true
   when: seaweedfs_sse_enabled | bool
-  notify: Restart seaweedfs
+  # Both processes derive keys from this file at START-UP only: the S3 server
+  # encrypts with it, and `weed filer.backup` needs it to decrypt objects before
+  # pushing them offsite. Restarting only the server left the backup process
+  # without a key → every SSE object failed to decrypt and the offsite copy
+  # stalled on the first encrypted object (2026-08-22 → found 2026-09-18).
+  notify:
+    - Restart seaweedfs
+    - Restart seaweedfs-backup
 
 - name: "SeaweedFS | Render systemd unit"
   ansible.builtin.template:
