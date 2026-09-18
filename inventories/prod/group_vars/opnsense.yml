@@ -2578,6 +2578,19 @@ opn_unbound:
   # ports are not proxied by Traefik — so the record points at the DMZ host.
   - {hostname: mail, domain: "{{ platform_domain }}", rr: A,    server: 10.1.2.120}
   - {hostname: mail, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::120'}
+  # --- every managed host resolves by its asset FQDN (mail sender domain / HELO, monitoring).
+  #     A records from the inventory; AAAA only where the host carries a STATIC ULA address
+  #     (the others use SLAAC EUI-64 — give them a static v6 in infra before adding AAAA).
+  - {hostname: lxc-crowdsec-01,   domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.190}
+  - {hostname: lxc-jitsi-01,      domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.193}
+  - {hostname: lxc-jitsi-01,      domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:3::193'}
+  - {hostname: lxc-monitoring-01, domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.230}
+  - {hostname: lxc-stepca-01,     domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.192}
+  - {hostname: lxc-verdaccio-01,  domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.191}
+  - {hostname: lxc-warden-01,     domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.250}
+  - {hostname: vm-gitlab-runner-01, domain: "{{ platform_domain }}", rr: A,  server: 10.1.3.211}
+  - {hostname: vm-pbs-01,         domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.222}
+  - {hostname: srv-proxmox-poc-01, domain: "{{ platform_domain }}", rr: A,   server: 10.6.224.105}
   # (20 stale probe-fleet overrides pruned 2026-06-06 — never-built hosts.)
   # Query Forwarding — chain step: Unbound → dnscrypt-proxy on loopback.
   # Empty domain = catch-all → Unbound creates a `forward-zone "."` from these entries.
