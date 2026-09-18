@@ -193,11 +193,24 @@
     - { key: "shareapi_expire_after_n_days", value: "{{ nextcloud_share_default_expire_days | string }}" }
     - { key: "shareapi_enforce_expire_date", value: "{{ 'yes' if nextcloud_share_enforce_expire else 'no' }}" }
     - { key: "shareapi_enforce_links_password", value: "{{ 'yes' if nextcloud_share_enforce_password else 'no' }}" }
+    # internal shares (users/groups) — limited time as well (#396 contract)
+    - { key: "shareapi_default_internal_expire_date", value: "yes" }
+    - { key: "shareapi_internal_expire_after_n_days", value: "{{ nextcloud_share_internal_expire_days | string }}" }
+    - { key: "shareapi_enforce_internal_expire_date", value: "{{ 'yes' if nextcloud_share_internal_enforce_expire else 'no' }}" }
+    - { key: "shareapi_allow_share_dialog_user_enumeration", value: "yes" }   # colleagues are findable in the share dialog
   loop_control:
     label: "{{ item.key }}"
   changed_when: true
 
 # --- Setup-check + security hardening + clean instance -------------------------
+- name: "post-install | Federated (server-to-server) shares off — externals get links or guest accounts"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:app:set files_sharing
+      {{ item }} --value="{{ 'yes' if nextcloud_share_allow_federation else 'no' }}"
+  loop: [outgoing_server2server_share_enabled, incoming_server2server_share_enabled]
+  changed_when: true
+
 - name: "post-install | Apply system hardening config"
   ansible.builtin.command:
     cmd: >-
