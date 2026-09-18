@@ -32,6 +32,17 @@
     or ((tb_gf.groups | default({}))[tb.group].permissions | default(0) | int) != 31
   changed_when: true
 
+# The break-glass admin (group "admin") also gets the folder: it publishes the guides
+# through WebDAV and can help members without holding an SSO group.
+- name: "teams | {{ tb.name }} | Grant the admin group on the folder (only on drift)"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ groupfolders:group {{ tb_gf_id }} {{ nextcloud_team_admin_group }} {{ tb.folder_permissions }}
+  when: >-
+    tb_gf | length == 0
+    or (tb_gf.groups | default({}))[nextcloud_team_admin_group] is not defined
+    or ((tb_gf.groups | default({}))[nextcloud_team_admin_group].permissions | default(0) | int) != 31
+  changed_when: true
+
 - name: "teams | {{ tb.name }} | Folder quota {{ tb.folder_quota }} (only on drift)"
   ansible.builtin.command:
     cmd: docker exec -u www-data nextcloud php occ groupfolders:quota {{ tb_gf_id }} "{{ tb.folder_quota }}"
