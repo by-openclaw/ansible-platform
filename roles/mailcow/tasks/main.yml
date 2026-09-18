@@ -59,10 +59,10 @@
   vars:
     seaweedfs_bucket_identity: mailcow
     seaweedfs_bucket_names: [mailcow-backups]
-    seaweedfs_bucket_secret_file: "{{ mailcow_backup_s3_secret_file }}"
-  when:
-    - mailcow_deploy_stack | bool
-    - mailcow_backup_enabled | bool
+    seaweedfs_bucket_vault_path: "{{ mailcow_backup_s3_vault_path }}"
+  # Backup is NOT gated on mailcow_deploy_stack (that flag guards the outward-facing
+  # `compose up`); backup.yml asserts itself that the stack is running.
+  when: mailcow_backup_enabled | bool
   tags: [mailcow, backup]
 
 - name: Configure mailcow backups (dump -> S3)
@@ -70,9 +70,7 @@
     file: backup.yml
     apply:
       tags: [mailcow, backup]
-  when:
-    - mailcow_deploy_stack | bool
-    - mailcow_backup_enabled | bool
+  when: mailcow_backup_enabled | bool
   tags: [mailcow, backup]
 
 - name: Schedule the daily app-consistent backup (host-local)

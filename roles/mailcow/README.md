@@ -11,7 +11,7 @@ Run: `ansible-playbook -i inventories/prod/hosts.yml playbooks/mailcow.yml`
 
 ## Backup & restore
 
-Class **B**: `mailcow-backup.timer` 01:00 runs the official helper (vmail+mysql+redis+conf) → `/var/backups/mailcow` → PBS 01:30; `--tags backup` pushes to S3. Full matrix + drills: [`docs/backup.md`](../../docs/backup.md).
+Class **B**: `mailcow-backup.timer` 01:00 runs the official helper (vmail+mysql+redis+conf) → `/var/backups/mailcow` → PBS 01:30; the control node runs `--tags backup` nightly at 03:30 (cron) → archive → SeaweedFS `mailcow-backups` (key in Vault `prod/mailcow/s3`) → Contabo replica; local and S3 copies pruned after `mailcow_backup_retention_days`. Full matrix + drills: [`docs/backup.md`](../../docs/backup.md).
 
 ## Runbook
 
