@@ -12,6 +12,13 @@
   when: hardening_email_relay_enabled | bool
   tags: [hardening, email, postfix]
 
+# Every host with a local postfix gets a sender domain that resolves (asset FQDN
+# + platform domain) — independent of the optional relay above.
+- name: Apply mail identity (postfix myhostname/myorigin)
+  ansible.builtin.import_tasks: mail-identity.yml
+  when: hardening_mail_identity_enabled | bool
+  tags: [hardening, email, postfix, mail_identity]   # runnable alone: hardening.yml --tags mail_identity
+
 # --- Part-B baseline (CIS-L1 ≈ NIS2/GDPR) — added 2026-08 --------------------
 - name: "Hardening | Detect unprivileged LXC vs VM"
   ansible.builtin.set_fact:

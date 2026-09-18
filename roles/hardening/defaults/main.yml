@@ -61,6 +61,13 @@ hardening_email_relay_password: ""
 hardening_email_from: "alerts@{{ platform_domain | default('by-research.be') }}"
 hardening_email_alert_dest: "alerts@{{ platform_domain | default('by-research.be') }}"
 hardening_email_hostname: "{{ inventory_hostname }}"
+# Mail identity for ANY host that carries a local postfix (Debian default MTA), relay or
+# not: myhostname = <inventory_hostname>.<platform_domain> (resolves via the FW overrides),
+# myorigin = <platform_domain>. Without it system mail goes out as root@<host>.localdomain,
+# mailcow answers 450 "Sender address rejected: Domain not found", the queue retries
+# forever and CrowdSec read that as postfix-spam (2026-09-18 self-ban of every SVC host).
+hardening_mail_identity_enabled: true
+hardening_mail_domain: "{{ platform_domain | default('by-research.be') }}"
 
 # ------------------------------------------------------------------------------
 # Part-B baseline (CIS-L1 ≈ NIS2 Art.21 / GDPR Art.32) — mandatory-now hardening
