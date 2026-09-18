@@ -1,9 +1,20 @@
 ---
-- name: "IdentityOrch | Load the Authentik admin token"
+- name: "IdentityOrch | Read the Authentik admin token (Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ identity_orchestrator_ak_vault_path }}"
+    vault_secret_init: {}
+
+- name: "IdentityOrch | Bind the Authentik admin token"
   ansible.builtin.set_fact:
-    io_ak_token: "{{ (lookup('file', identity_orchestrator_secret_dir + '/' + identity_orchestrator_ak_secret_file) | from_json).fields.bootstrap_token }}"
+    io_ak_token: "{{ vault_secret_result.bootstrap_token }}"
     io_ak_base: "http://{{ identity_orchestrator_ak_host }}:{{ identity_orchestrator_ak_port }}/api/v3"
   no_log: true
+
+- name: "IdentityOrch | mailcow facts (API key + S3 export creds from Vault)"
+  ansible.builtin.include_tasks: mailcow_facts.yml
+  when: identity_orchestrator_mailbox_enabled | bool
 
 - name: "IdentityOrch | Reconcile each person"
   ansible.builtin.include_tasks: person.yml
