@@ -73,6 +73,20 @@ nextcloud_apps:
   - user_oidc
   - sharebymail
   - twofactor_totp
+  # --- groupware / Teams parity (#396 §10, phase 1) ---------------------------
+  - calendar            # CalDAV server, shared calendars, Talk rooms in events, appointment booking
+  - contacts            # CardDAV server, system address book, shared Company book
+  - mail                # mail front door on mailcow (provisioned below with the Dovecot master user)
+  - spreed              # Talk: chat, presence, calls (HPB + coturn arrive in phase 2)
+  - groupfolders        # team drives owned by groups
+  - deck                # kanban (Planner)
+  - tasks               # to-do lists (CalDAV VTODO → phones)
+  - notes               # notes with mobile apps
+  - forms               # forms / surveys
+  - polls               # scheduling + opinion polls
+  - tables              # structured lists
+  - twofactor_webauthn  # security keys / passkeys next to TOTP
+  - files_external      # core app (disabled by default): mounts the Jitsi recordings bucket later
 
 # --- Authentik OIDC SSO (wired only when the client secret file exists) ---------
 # Official user_oidc app, configured idempotently via occ. Access is gated
@@ -139,3 +153,31 @@ nextcloud_apps_disabled:
   - files_reminders
   - support
   - federation
+
+# --- Mail app provisioning (admin API) — every SSO user gets their mailcow account
+#     automatically, logging in with the Dovecot master user: no user ever types a
+#     mail password in Nextcloud. Values that are secrets come from Vault.
+nextcloud_mail_provisioning_enabled: true
+nextcloud_vault_master_path: "{{ platform_env | default('prod') }}/mailcow/master-user"   # login + password (roles/mailcow mints it)
+nextcloud_vault_api_token_path: "{{ platform_env | default('prod') }}/nextcloud/api-token" # break-glass admin app password for the admin APIs (minted here once)
+nextcloud_mail_host: "vm-mailcow-01.{{ platform_domain }}"   # asset FQDN (split-DNS → DMZ IP; wildcard cert valid)
+nextcloud_mail_provisioning:
+  provisioningDomain: "{{ platform_domain }}"
+  emailTemplate: "%EMAIL%"          # the account's e-mail (people.yml email = username@domain)
+  imapUser: "%EMAIL%*{{ nextcloud_master.login }}"   # Dovecot master-user login form
+  imapHost: "{{ nextcloud_mail_host }}"
+  imapPort: 993
+  imapSslMode: "ssl"
+  smtpUser: "%EMAIL%*{{ nextcloud_master.login }}"
+  smtpHost: "{{ nextcloud_mail_host }}"
+  smtpPort: 587
+  smtpSslMode: "tls"
+  sieveEnabled: true
+  sieveUser: "%EMAIL%*{{ nextcloud_master.login }}"
+  sieveHost: "{{ nextcloud_mail_host }}"
+  sievePort: 4190
+  sieveSslMode: "tls"
+  masterPasswordEnabled: true
+  masterPassword: "{{ nextcloud_master.password }}"
+  ldapAliasesProvisioning: false
+  ldapAliasesAttribute: ""

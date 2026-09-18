@@ -13,7 +13,7 @@
 
 - name: Resolve / generate Nextcloud secrets
   ansible.builtin.import_tasks: secrets.yml
-  tags: [nextcloud, secrets]
+  tags: [always]   # every tagged phase (post, mail, route…) needs these facts
 
 - name: Run the Nextcloud containers (web + cron)
   ansible.builtin.import_tasks: containers.yml
@@ -37,7 +37,7 @@
           nextcloud_share_enforce_password | default(''), nextcloud_default_quota | default(''),
           nextcloud_phone_region | default(''), nextcloud_maintenance_window_start | default(''),
           nextcloud_locking | default(''), nextcloud_skeleton_empty | default(''),
-          nextcloud_apps_present | default([]), nextcloud_apps_disabled | default([]),
+          nextcloud_apps | default([]), nextcloud_apps_disabled | default([]),
           nextcloud_objectstore | default({}), nextcloud_oidc_app_slug | default(''),
           nextcloud_pg_sslrootcert | default('')] | to_json | hash('sha256') }}
   register: nextcloud_post_fingerprint
@@ -48,6 +48,11 @@
   ansible.builtin.import_tasks: post-install.yml
   when: nextcloud_post_fingerprint.changed or (nextcloud_post_force | default(false) | bool)
   tags: [nextcloud, post]
+
+- name: Mail app provisioning (all SSO users, Dovecot master user)
+  ansible.builtin.import_tasks: mail-provisioning.yml
+  when: nextcloud_mail_provisioning_enabled | bool
+  tags: [nextcloud, mail]
 
 - name: Publish Nextcloud via Traefik (public + rate-limit)
   ansible.builtin.include_role:

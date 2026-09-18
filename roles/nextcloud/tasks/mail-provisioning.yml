@@ -1,0 +1,165 @@
+---
+# ==============================================================================
+# Role: nextcloud — Mail app provisioning through the app's admin API.
+# One provisioning config per platform domain: every user gets a Mail account for
+# their own address on mailcow, authenticated with the Dovecot MASTER user
+# (`<mailbox>*<master login>` + master password), so nobody types a mail password.
+# Idempotent: GET → compare the visible fields → POST/PUT only on drift → then
+# "provision all" so existing users get their account immediately.
+# Admin API auth = the break-glass admin + an app password minted ONCE with occ and
+# kept in Vault (prod/nextcloud/api-token). Nothing on disk.
+# ==============================================================================
+- name: "mail | Read the Dovecot master user (Vault, minted by roles/mailcow)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ nextcloud_vault_master_path }}"
+    vault_secret_init: {}
+
+- name: "mail | Bind the master user"
+  ansible.builtin.set_fact:
+    nextcloud_master: "{{ vault_secret_result }}"
+  no_log: true
+
+# --- admin app password: get from Vault or mint once with occ ------------------
+- name: "mail | Vault deploy token"
+  ansible.builtin.include_role:
+    name: vault_login
+
+- name: "mail | Read the admin API token from Vault (tolerate absent)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} vault
+      vault kv get -mount=secret -format=json {{ nextcloud_vault_api_token_path }}
+  delegate_to: lxc-vault-01
+  become: true
+  register: nextcloud_api_token_read
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "mail | Mint the admin app password once (occ, login password via env)"
+  ansible.builtin.command:
+    cmd: docker exec -e NC_PASS -u www-data nextcloud php occ user:add-app-password {{ nextcloud_secrets.admin_user }} --name ansible-admin-api --password-from-env
+  environment:
+    NC_PASS: "{{ nextcloud_secrets.admin_password }}"
+  register: nextcloud_api_token_mint
+  when: nextcloud_api_token_read.rc != 0
+  changed_when: true
+  no_log: true
+
+- name: "mail | Store the admin app password in Vault (stdin, no argv)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -i -e VAULT_TOKEN={{ vault_deploy_token }} vault
+      vault kv put -mount=secret {{ nextcloud_vault_api_token_path }} -
+    stdin: >-
+      {{ {'uid': nextcloud_secrets.admin_user,
+          'token': (nextcloud_api_token_mint.stdout | regex_search('[A-Za-z0-9]{40,}')),
+          'name': 'ansible-admin-api',
+          'note': 'Nextcloud admin app password for Ansible admin-API calls (Mail provisioning)'} | to_json }}
+  delegate_to: lxc-vault-01
+  become: true
+  when: nextcloud_api_token_read.rc != 0
+  changed_when: true
+  no_log: true
+
+- name: "mail | Bind the admin API credentials"
+  ansible.builtin.set_fact:
+    nextcloud_api_auth:
+      user: "{{ nextcloud_secrets.admin_user }}"
+      token: >-
+        {{ (nextcloud_api_token_read.stdout | from_json).data.data.token
+           if nextcloud_api_token_read.rc == 0
+           else (nextcloud_api_token_mint.stdout | regex_search('[A-Za-z0-9]{40,}')) }}
+  no_log: true
+
+# --- desired vs current -----------------------------------------------------------
+- name: "mail | Current provisioning configs"
+  ansible.builtin.uri:
+    url: "https://{{ nextcloud_fqdn }}/apps/mail/api/settings/provisioning"
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { OCS-APIRequest: "true", Accept: "application/json" }
+    return_content: true
+    status_code: [200]
+  register: nextcloud_mail_prov_cur
+  check_mode: false
+  no_log: true
+
+- name: "mail | Match the config for {{ platform_domain }}"
+  ansible.builtin.set_fact:
+    nextcloud_mail_prov_existing: >-
+      {{ (nextcloud_mail_prov_cur.json | default([]))
+         | selectattr('provisioningDomain', 'equalto', nextcloud_mail_provisioning.provisioningDomain) | list | first | default({}) }}
+  no_log: true
+
+- name: "mail | Drift on the visible fields (masterPassword is write-only)"
+  ansible.builtin.set_fact:
+    nextcloud_mail_prov_diff_keys: >-
+      {%- set ns = namespace(diff=[]) -%}
+      {%- for k, v in nextcloud_mail_provisioning.items() if k != 'masterPassword' -%}
+        {%- if (nextcloud_mail_prov_existing.get(k) | default('', true) | string | lower) != (v | default('', true) | string | lower) -%}
+          {%- set ns.diff = ns.diff + [k] -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ns.diff }}
+  no_log: true
+
+- name: "mail | Drift verdict"
+  ansible.builtin.set_fact:
+    nextcloud_mail_prov_drift: "{{ nextcloud_mail_prov_existing | length == 0 or (nextcloud_mail_prov_diff_keys | length > 0) }}"
+
+- name: "mail | Create the provisioning config"
+  ansible.builtin.uri:
+    url: "https://{{ nextcloud_fqdn }}/apps/mail/api/settings/provisioning"
+    method: POST
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { OCS-APIRequest: "true", Accept: "application/json" }
+    body_format: json
+    body: { data: "{{ nextcloud_mail_provisioning }}" }
+    status_code: [200]
+  when: nextcloud_mail_prov_existing | length == 0
+  register: nextcloud_mail_prov_create
+  changed_when: true
+  no_log: true
+
+- name: "mail | Update the provisioning config"
+  ansible.builtin.uri:
+    url: "https://{{ nextcloud_fqdn }}/apps/mail/api/settings/provisioning/{{ nextcloud_mail_prov_existing.id }}"
+    method: PUT
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { OCS-APIRequest: "true", Accept: "application/json" }
+    body_format: json
+    body: { data: "{{ nextcloud_mail_provisioning }}" }
+    status_code: [200]
+  when:
+    - nextcloud_mail_prov_existing | length > 0
+    - nextcloud_mail_prov_drift | bool
+  register: nextcloud_mail_prov_update
+  changed_when: true
+  no_log: true
+
+# The app also provisions each user at login; this applies the config to existing
+# users right away. Runs after a create/update, or on demand with
+# -e nextcloud_mail_provision_force=true.
+- name: "mail | Provision all users now"
+  ansible.builtin.uri:
+    url: "https://{{ nextcloud_fqdn }}/apps/mail/api/settings/provisioning/all"
+    method: PUT
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { OCS-APIRequest: "true", Accept: "application/json" }
+    status_code: [200]
+  when: >-
+    (nextcloud_mail_prov_create is changed) or (nextcloud_mail_prov_update is changed)
+    or (nextcloud_mail_provision_force | default(false) | bool)
+  changed_when: true
+  no_log: true
