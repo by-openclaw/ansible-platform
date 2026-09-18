@@ -2,13 +2,32 @@
 # ==============================================================================
 # Role: mailcow — backup (Ansible-native, no custom shell). Snapshot via mailcow's
 # OWN official helper (vendor CLI, invoked by Ansible) → archive → push to
-# SeaweedFS S3 (amazon.aws.s3_object) → prune. SeaweedFS tier-3 auto-offsites the
-# bucket to Contabo, giving live(local vmail)+backup(SeaweedFS)+offsite(Contabo).
-# Run on demand: ansible-playbook mailcow.yml --tags backup
+# SeaweedFS S3 (amazon.aws.s3_object) → prune local + S3 beyond retention.
+# SeaweedFS tier-3 auto-offsites the bucket to Contabo, giving
+# live(local vmail) + backup(SeaweedFS) + offsite(Contabo).
+# Credentials: Vault {{ mailcow_backup_s3_vault_path }} (minted by seaweedfs_bucket).
+# Runs nightly from the control node (cron below) or on demand:
+#   ansible-playbook -i inventories/prod playbooks/mailcow.yml --tags backup
 # ==============================================================================
-- name: "backup | Load the S3 backup credentials (SeaweedFS)"
+- name: "backup | Assert the mailcow stack is running (helper needs mysql/redis up)"
+  ansible.builtin.command:
+    cmd: docker compose ps --status running -q
+    chdir: "{{ mailcow_install_dir }}"
+  register: mailcow_backup_stack
+  changed_when: false
+  check_mode: false   # read-only probe, valid under --check
+  failed_when: mailcow_backup_stack.rc != 0 or (mailcow_backup_stack.stdout_lines | length) == 0
+
+- name: "backup | Read the S3 backup credentials from Vault (read-only, minted by seaweedfs_bucket)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ mailcow_backup_s3_vault_path }}"
+    vault_secret_init: {}
+
+- name: "backup | Bind the S3 credentials"
   ansible.builtin.set_fact:
-    mailcow_s3: "{{ (lookup('file', mailcow_secret_dir + '/' + mailcow_backup_s3_secret_file) | from_json).fields }}"
+    mailcow_s3: "{{ vault_secret_result }}"
   no_log: true
 
 - name: "backup | Ensure boto3 (for the S3 module) + staging dir"
@@ -19,6 +38,7 @@
         state: present
         update_cache: true
         cache_valid_time: 3600
+
     - name: "backup | Staging dir (world-writable: mailcow helper needs o+w)"
       ansible.builtin.file:
         path: "{{ mailcow_backup_dir }}"
@@ -34,7 +54,7 @@
   environment:
     MAILCOW_BACKUP_LOCATION: "{{ mailcow_backup_dir }}"
   register: mailcow_backup_run
-  changed_when: true
+  changed_when: true   # a backup run always produces a new set (operation, not state)
 
 - name: "backup | Locate the newest backup set"
   ansible.builtin.find:
@@ -85,15 +105,65 @@
   loop_control:
     label: "{{ item.path | basename }}"
 
+# --- S3 retention: the bucket keeps the same {{ mailcow_backup_retention_days }} days.
+#     Object names carry the set date (mailcow-YYYY-MM-DD-hh-mm-ss.tar.gz); anything
+#     older than the cut-off is removed. The SeaweedFS→Contabo replica follows.
+- name: "backup | List the S3 archives"
+  amazon.aws.s3_object:
+    endpoint_url: "{{ mailcow_s3.endpoint }}"
+    access_key: "{{ mailcow_s3.access_key }}"
+    secret_key: "{{ mailcow_s3.secret_key }}"
+    bucket: "{{ mailcow_s3.buckets[0] }}"
+    mode: list
+    prefix: "mailcow-"
+  register: mailcow_s3_list
+  no_log: true
+  changed_when: false
+  check_mode: false   # read-only listing, valid under --check
+
+- name: "backup | Select S3 archives beyond retention"
+  ansible.builtin.set_fact:
+    mailcow_s3_old: >-
+      {{ (mailcow_s3_list.s3_keys | default([]))
+         | select('match', '^mailcow-\d{4}-\d{2}-\d{2}-')
+         | select('lt', 'mailcow-' ~ (mailcow_backup_cutoff_date))
+         | list }}
+  vars:
+    mailcow_backup_cutoff_date: "{{ '%Y-%m-%d' | strftime(ansible_date_time.epoch | int - (mailcow_backup_retention_days | int) * 86400) }}"
+
+- name: "backup | Delete S3 archives beyond retention"
+  amazon.aws.s3_object:
+    endpoint_url: "{{ mailcow_s3.endpoint }}"
+    access_key: "{{ mailcow_s3.access_key }}"
+    secret_key: "{{ mailcow_s3.secret_key }}"
+    bucket: "{{ mailcow_s3.buckets[0] }}"
+    object: "{{ item }}"
+    mode: delobj
+  loop: "{{ mailcow_s3_old }}"
+  loop_control:
+    label: "{{ item }}"
+  no_log: true
+
+# --- Nightly schedule on the CONTROL NODE: cron → ansible-playbook --tags backup.
+#     Vault auth = the deploy AppRole file the controller already uses; the log
+#     lives under the operator's state dir (cron runs unprivileged).
+- name: "backup | Control-node log dir for the nightly run"
+  ansible.builtin.file:
+    path: "{{ mailcow_backup_log_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  become: false
+  when: mailcow_backup_schedule_enabled | bool
+
 - name: "backup | Schedule the nightly backup (control node → ansible-playbook)"
   ansible.builtin.cron:
     name: "mailcow-backup-s3"
     minute: "{{ mailcow_backup_cron_minute }}"
     hour: "{{ mailcow_backup_cron_hour }}"
     job: >-
-      cd {{ mailcow_repo_dir }} && ansible-playbook -i inventories/prod/hosts.yml
-      playbooks/mailcow.yml --tags backup >> /var/log/mailcow-backup.log 2>&1
+      cd {{ mailcow_repo_dir }} && {{ mailcow_backup_ansible_bin }} -i inventories/prod
+      playbooks/mailcow.yml --tags backup >> {{ mailcow_backup_log_dir }}/mailcow-backup.log 2>&1
+    state: "{{ 'present' if mailcow_backup_schedule_enabled | bool else 'absent' }}"
   delegate_to: localhost
   become: false
-  when: mailcow_backup_schedule_enabled | bool
-  tags: [mailcow, backup]
