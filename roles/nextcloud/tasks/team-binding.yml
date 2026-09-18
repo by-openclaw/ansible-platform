@@ -1,0 +1,179 @@
+---
+# One team binding (tb): group folder → Talk room → shared calendar → shared address book.
+- name: "teams | {{ tb.name }} | facts"
+  ansible.builtin.set_fact:
+    tb_gf: "{{ (nextcloud_gf_list.stdout | from_json) | selectattr('mountPoint', 'equalto', tb.folder) | list | first | default({}) }}"
+    tb_room: "{{ (nextcloud_talk_rooms.json.ocs.data | default([])) | selectattr('name', 'equalto', tb.talk_room) | list | first | default({}) }}"
+    tb_members: "{{ (nextcloud_group_list.stdout | from_json)[tb.group] | default([]) }}"
+    tb_cal_slug: "{{ tb.calendar | lower | regex_replace('[^a-z0-9]+', '-') }}"
+    tb_ab_slug: "{{ tb.addressbook | lower | regex_replace('[^a-z0-9]+', '-') }}"
+    tb_dav_base: "https://{{ nextcloud_fqdn }}/remote.php/dav"
+    tb_group_principal: "principal:principals/groups/{{ tb.group }}"
+    tb_quota_bytes: "{{ tb.folder_quota | human_to_bytes }}"
+
+# --- group folder (team drive) ---------------------------------------------------
+- name: "teams | {{ tb.name }} | Create the group folder {{ tb.folder }}"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ groupfolders:create "{{ tb.folder }}"
+  register: tb_gf_create
+  when: tb_gf | length == 0
+  changed_when: true
+
+- name: "teams | {{ tb.name }} | Group folder id"
+  ansible.builtin.set_fact:
+    tb_gf_id: "{{ tb_gf.id if tb_gf | length > 0 else (tb_gf_create.stdout | regex_search('[0-9]+')) }}"
+
+- name: "teams | {{ tb.name }} | Grant {{ tb.group }} on the folder (only on drift)"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ groupfolders:group {{ tb_gf_id }} {{ tb.group }} {{ tb.folder_permissions }}
+  when: >-
+    tb_gf | length == 0
+    or (tb_gf.groups | default({}))[tb.group] is not defined
+    or ((tb_gf.groups | default({}))[tb.group].permissions | default(0) | int) != 31
+  changed_when: true
+
+- name: "teams | {{ tb.name }} | Folder quota {{ tb.folder_quota }} (only on drift)"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ groupfolders:quota {{ tb_gf_id }} "{{ tb.folder_quota }}"
+  when: tb_gf | length == 0 or (tb_gf.quota | default(-3) | int) != (tb_quota_bytes | int)
+  changed_when: true
+
+# --- Talk room ---------------------------------------------------------------------
+- name: "teams | {{ tb.name }} | Create the Talk room {{ tb.talk_room }} (listable, group invited)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ talk:room:create "{{ tb.talk_room }}"
+      --user {{ nextcloud_api_auth.user }} --group {{ tb.group }}
+      --owner {{ nextcloud_api_auth.user }} --moderator {{ nextcloud_api_auth.user }} --listable 1
+      --description "Team room for {{ tb.group }} (managed by Ansible)"
+  when: tb_room | length == 0
+  changed_when: true
+
+- name: "teams | {{ tb.name }} | Re-read the rooms after creation"
+  ansible.builtin.uri:
+    url: "https://{{ nextcloud_fqdn }}/ocs/v2.php/apps/spreed/api/v4/room?format=json"
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { OCS-APIRequest: "true", Accept: "application/json" }
+    return_content: true
+    status_code: [200]
+  register: tb_rooms_now
+  when: tb_room | length == 0
+  check_mode: false
+  no_log: true
+
+- name: "teams | {{ tb.name }} | Room token"
+  ansible.builtin.set_fact:
+    tb_room_token: >-
+      {{ (tb_room.token if tb_room | length > 0
+          else ((tb_rooms_now.json.ocs.data | default([])) | selectattr('name', 'equalto', tb.talk_room) | map(attribute='token') | first | default(''))) }}
+
+- name: "teams | {{ tb.name }} | Room participants"
+  ansible.builtin.uri:
+    url: "https://{{ nextcloud_fqdn }}/ocs/v2.php/apps/spreed/api/v4/room/{{ tb_room_token }}/participants?format=json"
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { OCS-APIRequest: "true", Accept: "application/json" }
+    return_content: true
+    status_code: [200]
+  register: tb_participants
+  when: tb_room_token | length > 0
+  check_mode: false
+  no_log: true
+
+- name: "teams | {{ tb.name }} | Invite group members not yet in the room"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ talk:room:add {{ tb_room_token }} --group {{ tb.group }}
+  when:
+    - tb_room_token | length > 0
+    - (tb_members | difference((tb_participants.json.ocs.data | default([])) | map(attribute='actorId') | list)) | length > 0
+  changed_when: true
+
+# --- shared calendar + address book (owned by the admin, shared read-write with the group) ---
+- name: "teams | {{ tb.name }} | Calendar exists?"
+  ansible.builtin.uri:
+    url: "{{ tb_dav_base }}/calendars/{{ nextcloud_api_auth.user }}/{{ tb_cal_slug }}/"
+    method: PROPFIND
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { Depth: "0", Content-Type: "application/xml" }
+    body: '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><d:displayname/><oc:invite/></d:prop></d:propfind>'
+    return_content: true
+    status_code: [207, 404]
+  register: tb_cal
+  check_mode: false
+  no_log: true
+
+- name: "teams | {{ tb.name }} | Create the calendar {{ tb.calendar }}"
+  ansible.builtin.uri:
+    url: "{{ tb_dav_base }}/calendars/{{ nextcloud_api_auth.user }}/{{ tb_cal_slug }}/"
+    method: MKCALENDAR
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { Content-Type: "application/xml" }
+    body: '<?xml version="1.0"?><c:mkcalendar xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:set><d:prop><d:displayname>{{ tb.calendar }}</d:displayname></d:prop></d:set></c:mkcalendar>'
+    status_code: [201]
+  when: tb_cal.status == 404
+  changed_when: true
+  no_log: true
+
+- name: "teams | {{ tb.name }} | Share the calendar with {{ tb.group }} (only when not shared)"
+  ansible.builtin.uri:
+    url: "{{ tb_dav_base }}/calendars/{{ nextcloud_api_auth.user }}/{{ tb_cal_slug }}/"
+    method: POST
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { Content-Type: "application/xml" }
+    body: '<?xml version="1.0"?><oc:share xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><oc:set><d:href>{{ tb_group_principal }}</d:href><oc:read-write/></oc:set></oc:share>'
+    status_code: [200]
+  when: tb_cal.status == 404 or (tb_group_principal not in (tb_cal.content | default('')))
+  changed_when: true
+  no_log: true
+
+- name: "teams | {{ tb.name }} | Address book exists?"
+  ansible.builtin.uri:
+    url: "{{ tb_dav_base }}/addressbooks/users/{{ nextcloud_api_auth.user }}/{{ tb_ab_slug }}/"
+    method: PROPFIND
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { Depth: "0", Content-Type: "application/xml" }
+    body: '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><d:displayname/><oc:invite/></d:prop></d:propfind>'
+    return_content: true
+    status_code: [207, 404]
+  register: tb_ab
+  check_mode: false
+  no_log: true
+
+- name: "teams | {{ tb.name }} | Create the address book {{ tb.addressbook }}"
+  ansible.builtin.uri:
+    url: "{{ tb_dav_base }}/addressbooks/users/{{ nextcloud_api_auth.user }}/{{ tb_ab_slug }}/"
+    method: MKCOL
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { Content-Type: "application/xml" }
+    body: '<?xml version="1.0"?><d:mkcol xmlns:d="DAV:" xmlns:card="urn:ietf:params:xml:ns:carddav"><d:set><d:prop><d:resourcetype><d:collection/><card:addressbook/></d:resourcetype><d:displayname>{{ tb.addressbook }}</d:displayname></d:prop></d:set></d:mkcol>'
+    status_code: [201]
+  when: tb_ab.status == 404
+  changed_when: true
+  no_log: true
+
+- name: "teams | {{ tb.name }} | Share the address book with {{ tb.group }} (only when not shared)"
+  ansible.builtin.uri:
+    url: "{{ tb_dav_base }}/addressbooks/users/{{ nextcloud_api_auth.user }}/{{ tb_ab_slug }}/"
+    method: POST
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { Content-Type: "application/xml" }
+    body: '<?xml version="1.0"?><oc:share xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><oc:set><d:href>{{ tb_group_principal }}</d:href><oc:read-write/></oc:set></oc:share>'
+    status_code: [200]
+  when: tb_ab.status == 404 or (tb_group_principal not in (tb_ab.content | default('')))
+  changed_when: true
+  no_log: true

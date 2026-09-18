@@ -1,0 +1,38 @@
+---
+# Team bindings — one include per entry of nextcloud_team_bindings (see defaults).
+- name: "teams | Admin API credentials (Vault-held app password)"
+  ansible.builtin.import_tasks: admin-api-token.yml
+
+- name: "teams | Current group folders"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ groupfolders:list --output=json
+  register: nextcloud_gf_list
+  changed_when: false
+  check_mode: false
+
+- name: "teams | Nextcloud groups + members"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ group:list --output=json
+  register: nextcloud_group_list
+  changed_when: false
+  check_mode: false
+
+- name: "teams | Talk rooms the admin sees"
+  ansible.builtin.uri:
+    url: "https://{{ nextcloud_fqdn }}/ocs/v2.php/apps/spreed/api/v4/room?format=json"
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { OCS-APIRequest: "true", Accept: "application/json" }
+    return_content: true
+    status_code: [200]
+  register: nextcloud_talk_rooms
+  check_mode: false
+  no_log: true
+
+- name: "teams | Reconcile each binding"
+  ansible.builtin.include_tasks: team-binding.yml
+  loop: "{{ nextcloud_team_bindings }}"
+  loop_control:
+    loop_var: tb
+    label: "{{ tb.name }}"

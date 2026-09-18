@@ -181,3 +181,18 @@ nextcloud_mail_provisioning:
   masterPassword: "{{ nextcloud_master.password }}"
   ldapAliasesProvisioning: false
   ldapAliasesAttribute: ""
+
+# --- Team bindings (#396 row 9) — everything a group needs, bound to the GROUP so
+#     membership follows the SSO `groups` claim (people.yml → Authentik → Nextcloud):
+#     a group folder (team drive), a Talk room (listable, group members invited on
+#     every run), a shared calendar and a shared address book owned by the
+#     break-glass admin and shared read-write with the group.
+nextcloud_team_bindings:
+  - name: company
+    group: nextcloud-users          # everyone with Nextcloud access
+    folder: "Company"               # group folder mount point
+    folder_quota: "500 GB"
+    folder_permissions: "read write share delete"
+    talk_room: "General"
+    calendar: "Company"             # DAV slug = name | lower | regex_replace('[^a-z0-9]+', '-')
+    addressbook: "Company"

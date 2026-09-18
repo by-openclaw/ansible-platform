@@ -1,0 +1,59 @@
+---
+# ==============================================================================
+# Role: nextcloud — admin-api-token.yml (shared by mail-provisioning + team-bindings)
+# The break-glass admin + an app password minted ONCE with occ (login password via
+# env) and kept in Vault (prod/nextcloud/api-token). Binds nextcloud_api_auth
+# {user, token} for the admin HTTP APIs (Mail provisioning, Talk OCS, DAV sharing).
+# ==============================================================================
+- name: "admin-api | Vault deploy token"
+  ansible.builtin.include_role:
+    name: vault_login
+
+- name: "admin-api | Read the admin API token from Vault (tolerate absent)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} vault
+      vault kv get -mount=secret -format=json {{ nextcloud_vault_api_token_path }}
+  delegate_to: lxc-vault-01
+  become: true
+  register: nextcloud_api_token_read
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "admin-api | Mint the admin app password once (occ, login password via env)"
+  ansible.builtin.command:
+    cmd: docker exec -e NC_PASS -u www-data nextcloud php occ user:add-app-password {{ nextcloud_secrets.admin_user }} --name ansible-admin-api --password-from-env
+  environment:
+    NC_PASS: "{{ nextcloud_secrets.admin_password }}"
+  register: nextcloud_api_token_mint
+  when: nextcloud_api_token_read.rc != 0
+  changed_when: true
+  no_log: true
+
+- name: "admin-api | Store the admin app password in Vault (stdin, no argv)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -i -e VAULT_TOKEN={{ vault_deploy_token }} vault
+      vault kv put -mount=secret {{ nextcloud_vault_api_token_path }} -
+    stdin: >-
+      {{ {'uid': nextcloud_secrets.admin_user,
+          'token': (nextcloud_api_token_mint.stdout | regex_search('[A-Za-z0-9]{40,}')),
+          'name': 'ansible-admin-api',
+          'note': 'Nextcloud admin app password for Ansible admin-API calls (Mail provisioning)'} | to_json }}
+  delegate_to: lxc-vault-01
+  become: true
+  when: nextcloud_api_token_read.rc != 0
+  changed_when: true
+  no_log: true
+
+- name: "admin-api | Bind the admin API credentials"
+  ansible.builtin.set_fact:
+    nextcloud_api_auth:
+      user: "{{ nextcloud_secrets.admin_user }}"
+      token: >-
+        {{ (nextcloud_api_token_read.stdout | from_json).data.data.token
+           if nextcloud_api_token_read.rc == 0
+           else (nextcloud_api_token_mint.stdout | regex_search('[A-Za-z0-9]{40,}')) }}
+  no_log: true
