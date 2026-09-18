@@ -1,0 +1,45 @@
+---
+# Once per run: mailcow API key + the scoped S3 key of the mailcow-backups bucket
+# (leaver exports). Both from Vault; nothing on disk.
+- name: "IdentityOrch | mailcow | Read the API key (Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ identity_orchestrator_mailcow_vault_path }}"
+    vault_secret_init: {}
+
+- name: "IdentityOrch | mailcow | Bind the API header"
+  ansible.builtin.set_fact:
+    io_mc_hdr:
+      X-API-Key: "{{ vault_secret_result.api_key }}"
+      Content-Type: "application/json"
+  no_log: true
+
+- name: "IdentityOrch | mailcow | Read the backup-bucket S3 key (Vault, minted by seaweedfs_bucket)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ identity_orchestrator_mailcow_s3_vault_path }}"
+    vault_secret_init: {}
+
+- name: "IdentityOrch | mailcow | Bind the S3 key"
+  ansible.builtin.set_fact:
+    io_mc_s3: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "IdentityOrch | mailcow | Existing aliases (for idempotent alias creation)"
+  ansible.builtin.uri:
+    url: "{{ identity_orchestrator_mailcow_api }}/get/alias/all"
+    headers: "{{ io_mc_hdr }}"
+    validate_certs: false
+    status_code: [200]
+    return_content: true
+  delegate_to: "{{ identity_orchestrator_mailcow_host }}"
+  become: true
+  register: io_mc_alias_all
+  no_log: true
+  check_mode: false   # read-only, valid under --check
+
+- name: "IdentityOrch | mailcow | Bind the alias list"
+  ansible.builtin.set_fact:
+    io_mc_aliases: "{{ (io_mc_alias_all.json | default([])) | map(attribute='address') | list }}"

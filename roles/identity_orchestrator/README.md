@@ -4,8 +4,19 @@ The Entra-ID-like account fan-out. **Authentik is the front door** (define the
 person + groups); this role reconciles a declarative people list into Authentik
 (user + group memberships) and emails each person a confirmation bundle.
 
-Human **mailboxes auto-provision** on first SSO login (the `mailcow-users` group
-grants access) — this role does not create mailboxes; group membership drives it.
+Human **mailboxes** are reconciled by this role through the mailcow API (Vault-native:
+`prod/authentik/admin` token, `prod/mailcow/admin` API key, `prod/mailcow/s3` export key)
+for every person holding the `mailcow-users` group:
+- **joiner** — the mailbox exists *before* the first SSO login (`authsource: generic-oidc`,
+  display name, quota 5 GB by default, aliases); the generated password is never used or stored.
+- **mover** — name / quota / active / authsource reconciled only when they drift; aliases added idempotently.
+- **leaver** (`state: disabled`) — login disallowed while mail is still accepted (mailcow `active=2`),
+  optional forward + auto-reply as a prefilter sieve script (`sieve_filters`, what the UI writes),
+  one-time export of the maildir to S3 `mailcow-backups/leavers/<user>-<date>.tar.gz`. Never deleted.
+  Proven 2026-09-18 on a throwaway mailbox: Dovecot `sieve: redirect action: forwarded`, `vacation action: sent`,
+  export object listed in S3, second run `changed=0`.
+
+Per-person optional block: `mailbox: {quota_mb: 5120, aliases: [y.boujraf], forward_to: "x@…", leave_message: "…"}`.
 
 ## People schema
 
