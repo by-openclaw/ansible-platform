@@ -13,12 +13,21 @@
 {%   set _net_mw = '' %}
 {% endif %}
 {% set _mws = [] %}
+{% if traefik_route_path_prefix | length > 0 and traefik_route_strip_prefix | bool %}{% set _ = _mws.append(traefik_route_name ~ '-strip') %}{% endif %}
 {% if _net_mw %}{% set _ = _mws.append(_net_mw) %}{% endif %}
+{% if traefik_route_path_prefix | length > 0 %}
+{%   set _rule = traefik_route_rule ~ ' && PathPrefix(`' ~ traefik_route_path_prefix ~ '`)' %}
+{% else %}
+{%   set _rule = traefik_route_rule %}
+{% endif %}
 {% if traefik_route_forward_auth | bool %}{% set _ = _mws.append('authentik') %}{% endif %}
 http:
   routers:
     {{ traefik_route_name }}:
-      rule: "{{ traefik_route_rule }}"
+      rule: "{{ _rule }}"
+{% if traefik_route_path_prefix | length > 0 %}
+      priority: 50   # path route wins over the plain host route of the same name
+{% endif %}
       entryPoints:
         - websecure
       service: {{ traefik_route_name }}
@@ -60,10 +69,17 @@ http:
     {{ traefik_route_name }}-transport:
       insecureSkipVerify: true
 {% endif %}
-{% if _net_mw %}
+{% if _net_mw or (traefik_route_path_prefix | length > 0 and traefik_route_strip_prefix | bool) %}
 
   middlewares:
-{% if traefik_route_internal_only | bool %}
+{% if traefik_route_path_prefix | length > 0 and traefik_route_strip_prefix | bool %}
+    {{ traefik_route_name }}-strip:
+      stripPrefix:
+        prefixes:
+          - "{{ traefik_route_path_prefix }}"
+{% endif %}
+{% if not _net_mw %}
+{% elif traefik_route_internal_only | bool %}
     {{ traefik_route_name }}-internal:
       ipAllowList:
         sourceRange:

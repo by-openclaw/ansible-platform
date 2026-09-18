@@ -54,3 +54,10 @@ traefik_route_ratelimit_burst: 600     # short burst allowance
 # Access is IdP-gated by the app's proxy-provider group (authentik_proxy_apps).
 # Combine with internal_only=true so it's also network-gated (VPN/LAN).
 traefik_route_forward_auth: false
+
+# --- Path-prefix routes (several backends under ONE host name, e.g. the Talk backend
+#     under nextcloud.<domain>/standalone-signaling/). The rule becomes
+#     Host(fqdn) && PathPrefix(prefix); with strip_prefix the prefix is removed before
+#     the request reaches the backend. Plain host routes are unaffected (both empty).
+traefik_route_path_prefix: ""        # e.g. "/standalone-signaling"
+traefik_route_strip_prefix: false    # add a stripPrefix middleware for the prefix
