@@ -68,15 +68,9 @@
     owner: root
     group: root
     mode: "0644"
-    content: |
-      {
-        "ipv6": true,
-        "ip6tables": true,
-        "experimental": true,
-        "fixed-cidr-v6": "fd00:d0c6:1::/64",
-        "log-driver": "json-file",
-        "log-opts": {"max-size": "10m", "max-file": "3"}
-      }
+    # Rendered like roles/docker (to_nice_json → sorted keys, 4-space indent) so the
+    # two roles never fight over byte layout; journald = platform logging standard.
+    content: "{{ mailcow_docker_daemon | to_nice_json }}\n"
   notify: Restart docker for mailcow
 
 # Apply the docker restart NOW (before clone/compose) rather than at play end,
