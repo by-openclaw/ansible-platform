@@ -1,0 +1,40 @@
+---
+# One guide: PUT the repo file into a group folder via WebDAV as the admin, only when the
+# content differs (GET + compare). The admin sees group folders under its own Files root.
+- name: "teams | guide | Current {{ guide.dest }}"
+  ansible.builtin.uri:
+    url: "https://{{ nextcloud_fqdn }}/remote.php/dav/files/{{ nextcloud_api_auth.user }}/{{ guide.dest }}"
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200, 404]
+  register: guide_cur
+  check_mode: false
+  no_log: true
+
+- name: "teams | guide | Parent folder for {{ guide.dest }}"
+  ansible.builtin.uri:
+    url: "https://{{ nextcloud_fqdn }}/remote.php/dav/files/{{ nextcloud_api_auth.user }}/{{ guide.dest | dirname }}/"
+    method: MKCOL
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    status_code: [201, 405]   # 405 = already exists
+  when: guide_cur.status == 404
+  changed_when: false
+  no_log: true
+
+- name: "teams | guide | Upload {{ guide.dest }} (only when the content differs)"
+  ansible.builtin.uri:
+    url: "https://{{ nextcloud_fqdn }}/remote.php/dav/files/{{ nextcloud_api_auth.user }}/{{ guide.dest }}"
+    method: PUT
+    url_username: "{{ nextcloud_api_auth.user }}"
+    url_password: "{{ nextcloud_api_auth.token }}"
+    force_basic_auth: true
+    headers: { Content-Type: "text/markdown" }
+    body: "{{ lookup('file', guide.src) | replace('<domain>', platform_domain) }}"
+    status_code: [201, 204]
+  when: guide_cur.status == 404 or (guide_cur.content | default('')) != (lookup('file', guide.src) | replace('<domain>', platform_domain))
+  changed_when: true
+  no_log: true
