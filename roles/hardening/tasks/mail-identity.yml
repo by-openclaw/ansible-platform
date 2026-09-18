@@ -1,0 +1,62 @@
+---
+# ==============================================================================
+# Role: hardening — mail-identity.yml
+# Every host that carries a local postfix (Debian's default MTA) must send system
+# mail (cron, unattended-upgrades, PBS notifications) with a sender domain that
+# resolves, or mailcow answers "450 Sender address rejected: Domain not found",
+# the queue retries forever and CrowdSec reads the retries as postfix-spam
+# (2026-09-18: every SVC host banned). Independent of the optional relay.
+#   myhostname = <inventory_hostname>.<domain>   (asset FQDN — FW Unbound override)
+#   myorigin   = <domain>                        (root@<domain> is always valid)
+# ==============================================================================
+- name: "mail-identity | Is a local postfix present?"
+  ansible.builtin.stat:
+    path: /etc/postfix/main.cf
+  register: hardening_postfix_cf
+
+- name: "mail-identity | Current identity"
+  ansible.builtin.command:
+    cmd: postconf -h myhostname myorigin
+  register: hardening_postfix_cur
+  changed_when: false
+  check_mode: false
+  when: hardening_postfix_cf.stat.exists
+
+- name: "mail-identity | Desired identity"
+  ansible.builtin.set_fact:
+    hardening_postfix_desired:
+      - "{{ inventory_hostname }}.{{ hardening_mail_domain }}"
+      - "{{ hardening_mail_domain }}"
+
+- name: "mail-identity | Set myhostname / myorigin (only on drift)"
+  ansible.builtin.command:
+    cmd: >-
+      postconf -e
+      "myhostname = {{ hardening_postfix_desired[0] }}"
+      "myorigin = {{ hardening_postfix_desired[1] }}"
+  register: hardening_postfix_set
+  when:
+    - hardening_postfix_cf.stat.exists
+    - (hardening_postfix_cur.stdout_lines | default([])) != hardening_postfix_desired
+  notify: Restart postfix
+
+- name: "mail-identity | /etc/mailname = platform domain (Debian tools read it)"
+  ansible.builtin.copy:
+    dest: /etc/mailname
+    content: "{{ hardening_mail_domain }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when: hardening_postfix_cf.stat.exists
+  notify: Restart postfix
+
+- name: "mail-identity | Restart postfix now if the identity changed"
+  ansible.builtin.meta: flush_handlers
+
+- name: "mail-identity | Retry deferred mail now (the queue was stuck on the old sender)"
+  ansible.builtin.command:
+    cmd: postqueue -f
+  when:
+    - hardening_postfix_cf.stat.exists
+    - hardening_postfix_set is changed
+  changed_when: false
