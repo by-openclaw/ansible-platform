@@ -50,12 +50,12 @@ nextcloud_s3_region: "eu2"
 nextcloud_s3_usepath_style: "true"   # Contabo requires path-style addressing
 nextcloud_s3_autocreate: "false"     # we precreate the bucket
 
-# Controller secret store.
-nextcloud_secret_dir: "~/.openclaw/workspace/infra/secrets"
-nextcloud_secret_file: "fabric/nextcloud.json"                 # admin_user + admin_password
-nextcloud_pg_secret_file: "fabric/db-pgsql-nextcloud.json"     # written by postgres_db
-nextcloud_redis_secret_file: "fabric/db-redis.json"
-nextcloud_s3_secret_file: "fabric/infra-backup-s3-contabo.json"
+# Vault IS the secret store (no controller files). KV v2 paths under mount `secret`:
+nextcloud_vault_admin_path: "{{ platform_env | default('prod') }}/nextcloud/admin"      # admin_user + admin_password (+url); get-or-create
+nextcloud_vault_db_path: "{{ platform_env | default('prod') }}/nextcloud/db-pgsql"      # minted by postgres_db (Vault mode)
+nextcloud_vault_redis_path: "{{ platform_env | default('prod') }}/redis/admin"          # shared Redis requirepass (owner: roles/redis)
+nextcloud_vault_s3_path: "{{ platform_env | default('prod') }}/backup/s3-contabo"       # Contabo primary storage creds (until the SeaweedFS move)
+nextcloud_vault_oidc_path: "{{ platform_env | default('prod') }}/nextcloud/oidc"        # minted by roles/authentik (Vault-native app)
 
 # Initial local break-glass admin (kept alongside SSO as the break-glass login).
 nextcloud_admin_user: "admin"
@@ -78,7 +78,6 @@ nextcloud_apps:
 # Official user_oidc app, configured idempotently via occ. Access is gated
 # IdP-side by the nextcloud-admins group (authentik restrict_to_group); groups
 # are provisioned into Nextcloud from the `groups` claim.
-nextcloud_oidc_secret_file: "fabric/app-oidc-nextcloud.json"
 nextcloud_authentik_base: "https://authentik.{{ platform_domain }}"
 nextcloud_oidc_app_slug: "nextcloud"
 nextcloud_oidc_provider_id: "authentik"

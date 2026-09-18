@@ -15,8 +15,9 @@ pinned `nextcloud:33-apache` image). Upgrade = bump `nextcloud_image` tag.
   with the system CA bundle; Redis is also the `memcache.locking`/distributed
   backend). The host CA store is mounted into every container.
 - Secrets: local break-glass admin (`admin` + generated password) stored once in
-  the controller secret store (`nextcloud.json`, `no_log`). DB / Redis / S3
-  credentials loaded from their own secret files.
+  Vault (`prod/nextcloud/admin`, get-or-create, `no_log`). DB / Redis / S3 / OIDC
+  credentials are read from Vault too (`prod/nextcloud/db-pgsql`, `prod/redis/admin`,
+  `prod/backup/s3-contabo`, `prod/nextcloud/oidc`) — no controller secret files.
 - **Internal-only:** published via `traefik_route` (`nextcloud.by-research.be`,
   wildcard TLS + `ipAllowList`). Traefik (`10.1.2.110`) set as `TRUSTED_PROXIES`.
 - Post-install (occ): installs + enables the **drawio** app idempotently; asserts
