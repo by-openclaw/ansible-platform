@@ -126,18 +126,29 @@
     creates: "{{ mailcow_install_dir }}/data/assets/ssl/dhparams.pem"
 
 # mailcow's unbound recurses to root servers on :53, which the platform blocks
-# (force DNS through the chain). Make it FORWARD to the platform resolver and
-# drop local DNSSEC validation (the chain validates upstream) so it stays healthy.
-- name: "install | Point mailcow unbound at the platform DNS chain (forward, no recurse)"
+# (force DNS through the chain). Make it FORWARD to the platform resolver, both
+# families for resilience. Validation STAYS ON: mailcow's watchdog requires the
+# `ad` flag (`dig com +dnssec`), and with "iterator" only it counted an error on
+# every check, drove the health level to 0 and restarted unbound in a loop
+# (intermittent "Domain not found" rejects, 2026-09-18). The platform resolver
+# is DNSSEC-validating and returns RRSIGs, so local validation works through it.
+- name: "install | Point mailcow unbound at the platform DNS chain (forward, validate)"
   ansible.builtin.blockinfile:
     path: "{{ mailcow_install_dir }}/data/conf/unbound/unbound.conf"
     marker: "# {mark} ANSIBLE MANAGED — forward to platform DNS chain"
     block: |
       server:
-        module-config: "iterator"
+        module-config: "validator iterator"
+        # split-horizon: the platform resolver answers {{ platform_domain }} from its own
+        # host overrides (unsigned) while the public zone is DNSSEC-signed → tell the
+        # validator not to expect signatures there, else every internal name SERVFAILs.
+        domain-insecure: "{{ platform_domain }}"
       forward-zone:
         name: "."
-        forward-addr: {{ mailcow_unbound_forward_to }}
+      {% for fwd in mailcow_unbound_forward_to %}
+        forward-addr: {{ fwd }}
+      {% endfor %}
+  notify: Restart mailcow unbound
 
 # NOTE: vmail = mailcow's default docker volume on the local disk (no override).
 # example.com internal-only postfix restriction is applied in config.yml (after
