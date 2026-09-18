@@ -172,6 +172,12 @@ mailcow_ssl_dir: "{{ mailcow_install_dir }}/data/assets/ssl"
 mailcow_backup_enabled: true
 mailcow_backup_dir: "/var/backups/mailcow" # transient local staging before S3 push
 mailcow_backup_s3_vault_path: "{{ platform_env | default('prod') }}/mailcow/s3"  # SeaweedFS bucket + scoped key, minted by seaweedfs_bucket (Vault-native, no file)
+
+# --- Dovecot master user (Vault, get-or-create) — the Nextcloud Mail app logs in
+#     as `person@domain*<user>@mailcow.local` with this password, so people never
+#     type a mail password in Nextcloud. Alphanumeric only (mailcow.conf rule).
+mailcow_master_vault_path: "{{ platform_env | default('prod') }}/mailcow/master-user"
+mailcow_master_user: "nextcloud"                        # expands to nextcloud@mailcow.local
 mailcow_backup_cron_hour: 3
 mailcow_backup_cron_minute: 30
 mailcow_backup_components: "all" # backup_and_restore.sh scope (vmail+mysql+redis+conf+...)
@@ -196,3 +202,12 @@ mailcow_deploy_stack: false
 mailcow_oidc_sso_mailboxes:
   - "yboujraf@{{ platform_domain }}"
   - "adm_yboujraf@{{ platform_domain }}"   # admin identity (naming/0002 §2) — svc-mailbox delegate
+
+# Docker daemon.json on the mailcow host (dual-stack for the DNS chain + journald logging,
+# the platform standard promtail → Loki). Same rendering as roles/docker.
+mailcow_docker_daemon:
+  ipv6: true
+  ip6tables: true
+  experimental: true
+  fixed-cidr-v6: "fd00:d0c6:1::/64"
+  log-driver: "journald"

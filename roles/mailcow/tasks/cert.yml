@@ -90,10 +90,17 @@
   when: not mailcow_cert_stat.stat.exists
   no_log: true
 
-- name: "cert | Renew wildcard certificate (subsequent runs, tolerant)"
+# `lego renew` needs the account e-mail exactly like `run` does — without it lego
+# exits 1 ("You have to pass an account (email address)"). This task used to hide
+# that behind failed_when: false; the wildcard silently expired on 2026-09-17.
+# Now: same flags as the issue step, a real failure is a real failure, and
+# "changed" means lego actually wrote a new certificate.
+- name: "cert | Renew wildcard certificate (subsequent runs)"
   ansible.builtin.command:
     cmd: >-
       /usr/local/bin/lego
+      --email {{ mailcow_acme_email }}
+      --accept-tos
       --dns cloudflare
       --dns.propagation-wait 60s
       --domains "*.{{ mailcow_domain }}"
@@ -107,8 +114,8 @@
     LEGO_PATH: /etc/lego/cert
   when: mailcow_cert_stat.stat.exists
   register: mailcow_renew
-  changed_when: "'no renewal' not in (mailcow_renew.stdout | lower) and 'is not due' not in (mailcow_renew.stdout | lower)"
-  failed_when: false
+  changed_when: false   # the honest change signal is the cert.pem copy step below
+  failed_when: mailcow_renew.rc != 0
   no_log: true
 
 # --- deploy into mailcow's bring-your-own cert path (idempotent on content) ----
