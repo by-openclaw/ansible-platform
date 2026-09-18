@@ -20,3 +20,18 @@ ansible_connection: ssh
 # video bridge (advertised candidate for external peers) all mean this address.
 platform_public_ipv4: "213.214.47.222"
 platform_public_ipv6: "2a02:1802:21::5"
+
+# --- Trusted address space (ONE source) -------------------------------------------------------
+# Networks the platform must never ban itself out of: every internal zone (v4 + ULA v6), the OOB
+# and fabric management nets, the VPN peer range and the Telenet /29 that carries the office
+# egress (pfSense01 .218) and both firewalls. Consumed by the CrowdSec whitelist parser on every
+# agent (roles/crowdsec_agent, roles/crowdsec). Attackers come from the WAN; a deferred system
+# mail or a failed health check from inside must never turn into a ban (2026-09-18: all SVC hosts
+# and the office were banned by postfix-spam on 450-deferred mail → Traefik 403 for everything).
+platform_trusted_cidrs:
+  - "10.1.0.0/16"          # service zones (MGMT, DMZ, SVC, VPN, IoT, VoIP, storage, media, …)
+  - "10.6.224.0/20"        # OOB management
+  - "10.6.240.0/20"        # fabric management VLAN 600
+  - "fd01::/16"            # ULA v6 of the same zones
+  - "100.64.0.0/10"        # NetBird VPN peers
+  - "213.214.47.216/29"    # Telenet /29: office egress (.218), prod FW (.222), test FW (.220)

@@ -14,3 +14,13 @@
     and 'nothing to do' not in (crowdsec_coll.stdout | default('') | lower)
     and 'nothing to install' not in (crowdsec_coll.stdout | default('') | lower)
   notify: Restart crowdsec
+
+- name: "collections | Whitelist the platform's own address space (parser, s02-enrich)"
+  ansible.builtin.template:
+    src: ../../crowdsec_agent/templates/whitelist-platform.yaml.j2   # one template for every agent
+    dest: /etc/crowdsec/parsers/s02-enrich/00-platform-whitelist.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  when: crowdsec_whitelist_cidrs | length > 0
+  notify: Restart crowdsec

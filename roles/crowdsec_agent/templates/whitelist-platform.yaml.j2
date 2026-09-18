@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/crowdsec_agent + roles/crowdsec) — do not edit by hand.
+# CrowdSec parser whitelist (s02-enrich): events from the platform's own address space never
+# become alerts or decisions. Source of truth: platform_trusted_cidrs (group_vars/all/deployment.yml).
+name: platform/whitelist-internal
+description: "Never ban the platform's own networks, VPN peers or the office egress"
+whitelist:
+  reason: "platform trusted address space"
+  cidr:
+{% for c in crowdsec_whitelist_cidrs %}
+    - "{{ c }}"
+{% endfor %}
