@@ -72,6 +72,7 @@
     type: Custom          # free-form condition → Custom (Existence would coerce and never converge)
     condition: does not exist
     action: alert
+  register: opnsense_monit_processdown_res
   delegate_to: localhost
   become: false
   tags: [services, monit]
@@ -107,6 +108,7 @@
   loop: "{{ opnsense_monit_processes }}"
   loop_control:
     label: "{{ item.name }}"
+  register: opnsense_monit_processes_res
   delegate_to: localhost
   become: false
   tags: [services, monit]
@@ -126,6 +128,7 @@
   loop: "{{ opnsense_monit_host_tests }}"
   loop_control:
     label: "{{ item.name }}"
+  register: opnsense_monit_host_tests_res
   delegate_to: localhost
   become: false
   tags: [services, monit]
@@ -162,6 +165,26 @@
   loop: "{{ opnsense_monit_hosts }}"
   loop_control:
     label: "{{ item.name }} ({{ item.address }})"
+  register: opnsense_monit_hosts_res
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+# A created/changed check only reaches monitrc through a reconfigure; "running" alone
+# leaves a live daemon on its old config (found 2026-09-19: the resolver probes were
+# stored but not monitored). -e opn_monit_reconfigure=true forces it once.
+- name: Monit | Reconfigure the daemon when checks changed (regenerates + loads monitrc)
+  by_systems.opnsense.opnsense_monit_daemon:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: reconfigured
+  when: >-
+    (opnsense_monit_processdown_res is changed) or (opnsense_monit_processes_res is changed)
+    or (opnsense_monit_host_tests_res is changed) or (opnsense_monit_hosts_res is changed)
+    or (opn_monit_reconfigure | default(false) | bool)
   delegate_to: localhost
   become: false
   tags: [services, monit]
