@@ -49,6 +49,11 @@ hardening_fail2ban_extra_jails: []
 # Rules are additive — specify what to open, everything else is blocked
 hardening_ufw_allowed_ports:
   - { port: "{{ hardening_ssh_port }}", proto: "tcp", from: "10.6.224.0/20", comment: "SSH from OOB" }
+  # The controller reaches guests THROUGH the firewall (ProxyJump): the connection arrives from the
+  # FW's zone address (10.1.x.1), and JumpServer (SVC) is the human bastion — both inside the platform
+  # supernet. Without these, an active ufw blocks Ansible after the first reboot (vm-k3s-01, 2026-09-19).
+  - { port: "{{ hardening_ssh_port }}", proto: "tcp", from: "10.1.0.0/16", comment: "SSH from the platform (FW jump, JumpServer)" }
+  - { port: "{{ hardening_ssh_port }}", proto: "tcp", from: "fd01::/16", comment: "SSH from the platform v6 (FW jump, JumpServer)" }
 
 # ------------------------------------------------------------------------------
 # Email relay (postfix satellite)

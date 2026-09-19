@@ -1,0 +1,143 @@
+---
+- name: "k3s | Kernel prerequisites (modules + sysctl)"
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k3s.conf
+    content: "br_netfilter\noverlay\n"
+    mode: "0644"
+
+- name: "k3s | sysctl for bridged traffic + forwarding"
+  ansible.posix.sysctl:
+    name: "{{ item.k }}"
+    value: "{{ item.v }}"
+    sysctl_file: /etc/sysctl.d/90-k3s.conf
+    sysctl_set: true
+    reload: true
+  loop:
+    - { k: net.bridge.bridge-nf-call-iptables, v: "1" }
+    - { k: net.ipv4.ip_forward, v: "1" }
+    - { k: net.ipv6.conf.all.forwarding, v: "1" }
+  failed_when: false   # br_netfilter loads at boot; first run may precede it
+
+- name: "k3s | Kernel defaults the kubelet enforces (protect-kernel-defaults=true refuses to start otherwise)"
+  ansible.posix.sysctl:
+    name: "{{ item.k }}"
+    value: "{{ item.v }}"
+    sysctl_file: /etc/sysctl.d/90-kubelet.conf
+    sysctl_set: true
+    reload: true
+  loop:
+    - { k: vm.overcommit_memory, v: "1" }
+    - { k: kernel.panic, v: "10" }
+    - { k: kernel.panic_on_oops, v: "1" }
+    - { k: vm.panic_on_oom, v: "0" }
+
+- name: "k3s | Directories"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [/etc/rancher/k3s, /var/lib/rancher/k3s]
+
+- name: "k3s | Pinned binary ({{ k3s_version }}, checksum verified)"
+  ansible.builtin.get_url:
+    url: "{{ k3s_download_url }}"
+    dest: /usr/local/bin/k3s
+    checksum: "sha256:{{ k3s_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart k3s
+
+- name: "k3s | kubectl / crictl / ctr symlinks"
+  ansible.builtin.file:
+    src: /usr/local/bin/k3s
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+    force: true    # --check on a fresh host: the binary is not downloaded yet, the link target may be absent
+  loop: [kubectl, crictl, ctr]
+
+- name: "k3s | Server configuration"
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart k3s
+
+- name: "k3s | Registry mirrors (Docker Hub through Harbor)"
+  ansible.builtin.template:
+    src: registries.yaml.j2
+    dest: /etc/rancher/k3s/registries.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart k3s
+
+- name: "k3s | systemd unit (rendered)"
+  ansible.builtin.template:
+    src: k3s.service.j2
+    dest: /etc/systemd/system/k3s.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart k3s
+
+- name: "k3s | Enabled + running"
+  ansible.builtin.systemd_service:
+    name: k3s
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: "k3s | Flush handlers"
+  ansible.builtin.meta: flush_handlers
+
+- name: "k3s | Node Ready (read-only)"
+  ansible.builtin.command:
+    cmd: kubectl get nodes --no-headers
+  register: k3s_nodes
+  retries: 30
+  delay: 10
+  until: "' Ready ' in k3s_nodes.stdout"
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: "k3s | CI deployers per namespace"
+  ansible.builtin.include_tasks: ci-namespace.yml
+  loop: "{{ k3s_ci_namespaces }}"
+  loop_control:
+    loop_var: ns
+    label: "{{ ns.name }}"
+  when: not ansible_check_mode
+
+- name: "k3s | Open the ingress + API to Traefik / runner / VPN when ufw is active"
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.0 | string }}"
+    proto: tcp
+    from_ip: "{{ item.1 }}"
+    comment: "k3s ingress/API"
+  loop: "{{ [k3s_ingress_http_port, 6443] | product(['10.1.0.0/16', '100.64.0.0/10']) | list }}"
+  failed_when: false
+
+# --- publish the apps on the platform Traefik (internal-only, SSO forwardAuth) -------------
+- name: "k3s | Traefik routes for the published apps"
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: "{{ item.name }}"
+    traefik_route_fqdn: "{{ item.fqdn }}"
+    traefik_route_backend_url: "http://{{ k3s_node_ip }}:{{ k3s_ingress_http_port }}"
+    traefik_route_internal_only: true
+    traefik_route_forward_auth: true
+  loop: "{{ k3s_published_apps }}"
+  loop_control:
+    label: "{{ item.name }} → {{ item.fqdn }}"
+  tags: [route]

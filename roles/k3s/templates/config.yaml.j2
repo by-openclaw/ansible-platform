@@ -1,0 +1,18 @@
+# Managed by Ansible (role: k3s). Do not edit by hand.
+node-ip: "{{ k3s_node_ip }}"
+node-name: "{{ inventory_hostname }}"
+tls-san:
+  - "{{ k3s_fqdn }}"
+  - "{{ k3s_node_ip }}"
+cluster-cidr: "{{ k3s_cluster_cidr }}"
+service-cidr: "{{ k3s_service_cidr }}"
+write-kubeconfig-mode: "0640"
+disable:
+{% for d in k3s_disable %}
+  - {{ d }}
+{% endfor %}
+secrets-encryption: true
+# anonymous-auth stays at the k3s default: the supervisor's own /readyz + CRD waits probe the
+# API anonymously — with it off, controllers never start ("failed waiting on CRD helmchartconfigs").
+kubelet-arg:
+  - "protect-kernel-defaults=true"

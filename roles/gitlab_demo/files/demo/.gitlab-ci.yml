@@ -11,6 +11,7 @@ include:
 stages:
   - security
   - build
+  - deploy
   - pages
 
 # --- Build + push a container image with Kaniko -------------------------------
@@ -45,3 +46,27 @@ pages:
   artifacts:
     paths:
       - public
+
+# Deploy to the k3s application platform (roles/k3s): namespace-scoped kubeconfig from the
+# project variable KUBECONFIG_B64, image pulled with the k3s-pull deploy token, published as
+# demo.<domain> through the platform Traefik (TLS + SSO).
+deploy-k3s:
+  stage: deploy
+  tags: [linux]
+  image:
+    name: alpine/k8s:1.37.0     # kubectl + helm on alpine (bitnami tags are no longer published); minor matches the k3s server
+    entrypoint: [""]
+  variables:
+    APP_HOST: demo.$PLATFORM_DOMAIN
+  before_script:
+    - mkdir -p ~/.kube && echo "$KUBECONFIG_B64" | base64 -d > ~/.kube/config && chmod 600 ~/.kube/config
+  script:
+    - >-
+      kubectl create secret docker-registry gitlab-registry --docker-server="$CI_REGISTRY"
+      --docker-username="$K8S_PULL_USER" --docker-password="$K8S_PULL_TOKEN" --dry-run=client -o yaml
+      | kubectl apply -f -
+    - sed -i "s|IMAGE_PLACEHOLDER|$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA|; s|HOST_PLACEHOLDER|$APP_HOST|" k8s/deployment.yaml k8s/ingress.yaml
+    - kubectl apply -k k8s/
+    - kubectl rollout status deployment/demo --timeout=120s
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

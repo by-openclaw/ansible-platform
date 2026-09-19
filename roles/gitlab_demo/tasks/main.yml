@@ -28,8 +28,11 @@
       - /opt/gitlab-demo
       - "{{ gitlab_demo_path }}"
       - "{{ gitlab_demo_name }}"
+  environment:
+    PLATFORM_DOMAIN: "{{ platform_domain }}"
   register: gitlab_demo_run
-  changed_when: "'commit+' in gitlab_demo_run.stdout or 'project+' in gitlab_demo_run.stdout"
+  changed_when: >-
+    gitlab_demo_run.stdout is search('(commit|project|deploytoken|variable)[+~]')
   failed_when: "'DEMO_DONE' not in gitlab_demo_run.stdout"
 
 - name: "Demo | Result"

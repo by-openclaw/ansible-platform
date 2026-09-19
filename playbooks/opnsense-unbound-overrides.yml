@@ -32,7 +32,7 @@
         server: "{{ item.server }}"
         description: "{{ item.description | default('split-DNS (catalog)') }}"
         enabled: true
-        state: present
+        state: "{{ item.state | default('present') }}"   # retired names are declared absent in the catalog (never just removed)
       loop: "{{ opn_unbound.host_overrides | default([]) }}"
       loop_control:
         label: "{{ item.hostname }}.{{ item.domain }} {{ item.rr }} -> {{ item.server }}"
