@@ -15,6 +15,10 @@ prometheus_node_groups:
   - mailcow
   - pbs
   - monitoring
+  - gitlab_runner          # the CI runner VM (not in cluster)
+# Per-container metrics (roles/cadvisor) on every Docker host
+prometheus_cadvisor_group: docker_hosts
+prometheus_cadvisor_port: 9180
 # Bind to localhost only — Grafana is co-located and Traefik/edge (if any) fronts it.
 prometheus_listen: "127.0.0.1"
 
@@ -48,6 +52,7 @@ prometheus_blackbox_dns_v4: ["10.1.3.101:53"]
 prometheus_blackbox_dns_v6: ["[fd01:3::101]:53"]
 # Plain TCP listeners (Talk TURN on the collab host)
 prometheus_blackbox_tcp:
+  - "10.1.3.195:6443"     # k3s API server (application platform)
   - "10.1.3.194:3478"     # Talk TURN listener (collab)
   - "10.1.3.192:9000"     # step-ca (HTTPS probe once its root is in the trust store, A.4)
   - "10.1.3.181:33073"    # NetBird management (public name is WAN-only from inside)

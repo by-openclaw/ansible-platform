@@ -53,3 +53,17 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "Prometheus has no Alertmanager — alerts are not delivered"
+  - name: platform-containers
+    rules:
+      - alert: ContainerRestarting
+        expr: changes(container_start_time_seconds{name!=""}[15m]) > 2
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Container {{ '{{' }} $labels.name {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} restarted {{ '{{' }} $value {{ '}}' }} times in 15 min"
+      - alert: ContainerMemoryNearLimit
+        expr: (container_memory_working_set_bytes{name!=""} / (container_spec_memory_limit_bytes{name!=""} > 0)) > 0.9
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Container {{ '{{' }} $labels.name {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} uses {{ '{{' }} $value | humanizePercentage {{ '}}' }} of its memory limit"
