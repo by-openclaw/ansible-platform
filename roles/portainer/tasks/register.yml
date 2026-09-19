@@ -56,9 +56,10 @@
     body:
       Name: "{{ item.0 }}"
       EndpointCreationType: "2"          # agent (Docker or Kubernetes — the agent reports which)
-      URL: "{{ item.1 }}"
+      URL: "tcp://{{ item.1 }}"
       TLS: "true"                        # agents speak TLS with their own certificate
       TLSSkipVerify: "true"              # self-signed agent cert; trust = the shared AGENT_SECRET
+      TLSSkipClientVerify: "true"        # no client certificate either — without this the API demands a cert file (400 "Invalid certificate file")
     status_code: [200]
   loop: "{{ portainer_wanted | rejectattr('0', 'in', portainer_endpoints.json | map(attribute='Name') | list) | list }}"
   loop_control:
