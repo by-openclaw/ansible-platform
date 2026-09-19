@@ -170,21 +170,23 @@
   become: false
   tags: [services, monit]
 
-# A created/changed check only reaches monitrc through a reconfigure; "running" alone
-# leaves a live daemon on its old config (found 2026-09-19: the resolver probes were
-# stored but not monitored). -e opn_monit_reconfigure=true forces it once.
-- name: Monit | Reconfigure the daemon when checks changed (regenerates + loads monitrc)
+# A created/changed check reaches the running daemon only through a STOP + START:
+# "reconfigured" regenerates and syntax-checks monitrc but the daemon keeps its old
+# config, and a reload does not pick up new checks either (verified 2026-09-19: the
+# resolver probes were stored, rendered, and not monitored until a restart).
+# -e opn_monit_restart=true forces it once.
+- name: Monit | Stop the daemon when checks changed (part 1 of the restart)
   by_systems.opnsense.opnsense_monit_daemon:
     host: "{{ opn_host }}"
     port: "{{ opn_port | default(443) }}"
     key: "{{ opnsense_api_key }}"
     secret: "{{ opnsense_api_secret }}"
     verify_ssl: false
-    state: reconfigured
+    state: stopped
   when: >-
     (opnsense_monit_processdown_res is changed) or (opnsense_monit_processes_res is changed)
     or (opnsense_monit_host_tests_res is changed) or (opnsense_monit_hosts_res is changed)
-    or (opn_monit_reconfigure | default(false) | bool)
+    or (opn_monit_restart | default(false) | bool)
   delegate_to: localhost
   become: false
   tags: [services, monit]
