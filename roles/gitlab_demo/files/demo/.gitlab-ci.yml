@@ -61,7 +61,10 @@ deploy-k3s:
   before_script:
     - mkdir -p ~/.kube && echo "$KUBECONFIG_B64" | base64 -d > ~/.kube/config && chmod 600 ~/.kube/config
   script:
-    - kubectl create secret docker-registry gitlab-registry --docker-server="$CI_REGISTRY" --docker-username="$K8S_PULL_USER" --docker-password="$K8S_PULL_TOKEN" --dry-run=client -o yaml | kubectl apply -f -
+    - >-
+      kubectl create secret docker-registry gitlab-registry --docker-server="$CI_REGISTRY"
+      --docker-username="$K8S_PULL_USER" --docker-password="$K8S_PULL_TOKEN" --dry-run=client -o yaml
+      | kubectl apply -f -
     - sed -i "s|IMAGE_PLACEHOLDER|$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA|; s|HOST_PLACEHOLDER|$APP_HOST|" k8s/deployment.yaml k8s/ingress.yaml
     - kubectl apply -k k8s/
     - kubectl rollout status deployment/demo --timeout=120s
