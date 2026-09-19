@@ -16,6 +16,33 @@
     validate: "{{ omit if ansible_check_mode else '/usr/bin/prometheus-blackbox-exporter --config.check --config.file=%s' }}"
   notify: Restart blackbox exporter
 
+- name: "Blackbox | systemd drop-in directory"
+  ansible.builtin.file:
+    path: /etc/systemd/system/prometheus-blackbox-exporter.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "Blackbox | systemd drop-in: raw-socket capability for the ICMP prober"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/prometheus-blackbox-exporter.service.d/override.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (role: blackbox_exporter) — ICMP probes need CAP_NET_RAW
+      [Service]
+      AmbientCapabilities=CAP_NET_RAW
+      CapabilityBoundingSet=CAP_NET_RAW
+  register: blackbox_exporter_dropin
+  notify: Restart blackbox exporter
+
+- name: "Blackbox | Reload systemd when the drop-in changed"
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: blackbox_exporter_dropin.changed and not ansible_check_mode
+
 - name: "Blackbox | Runtime args (loopback listen) — /etc/default/prometheus-blackbox-exporter"
   ansible.builtin.copy:
     dest: /etc/default/prometheus-blackbox-exporter
