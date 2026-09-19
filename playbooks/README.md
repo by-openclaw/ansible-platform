@@ -1,6 +1,6 @@
 # Playbooks — index & flows
 
-All 68 playbooks in this repo, grouped by scope. Each runs against `inventories/prod/hosts.yml` unless noted. Every playbook also carries a header comment with its own detailed flow; per-role detail lives in each role's `README.md`.
+All 69 playbooks in this repo, grouped by scope. Each runs against `inventories/prod/hosts.yml` unless noted. Every playbook also carries a header comment with its own detailed flow; per-role detail lives in each role's `README.md`.
 
 > Convention: **roles** hold the logic + a role README; **playbooks** compose roles for a run. Idempotent; safe to re-run. Merge gate = CI pre-commit; apply is user-driven.
 
@@ -105,6 +105,7 @@ All 68 playbooks in this repo, grouped by scope. Each runs against `inventories/
 | `netbird.yml` | Configure PROD NetBird CE (lxc-netbird-01, SVC) — official MULTI-CONTAINER model: dashboard + management + signal + relay + coturn, behind our Traefik, with |
 | `netbox.yml` | Configure PROD NetBox (lxc-nbox-01, SVC) — Docker IPAM/source-of-truth. |
 | `nextcloud-upgrade.yml` | Playbook: nextcloud-upgrade.yml — sequential major upgrade for Nextcloud. Nextcloud refuses to skip majors, and each major applies its own database migrations via `occ upgrade`. Ju |
+| `collab.yml` | Nextcloud collaboration backend (#396 phase 2): ONLYOFFICE Docs + Talk HPB/TURN + recording + whiteboard on lxc-collab-01, then the Nextcloud side (apps + occ: signaling, TURN/STUN, recording, whiteboard, ONLYOFFICE connector). |
 | `nextcloud.yml` | Configure PROD Nextcloud (lxc-nextcloud-01, SVC) — Docker files/drawio, Contabo S3 primary storage. |
 | `pgadmin.yml` | Configure PROD pgAdmin (lxc-pgadmin-01, SVC) — Docker + Traefik route. |
 | `step-ca.yml` | step-ca — internal certificate authority (lxc-stepca-01, VPN-only). Guest = infra-terraform-proxmox svc-stepca.tf (VMID 506). Born through roles/service_scaffold. CA key password + |

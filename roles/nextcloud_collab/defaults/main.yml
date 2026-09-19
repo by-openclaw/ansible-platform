@@ -1,0 +1,36 @@
+---
+# ==============================================================================
+# Role: nextcloud_collab — Talk High-Performance Backend (signaling + Janus + TURN,
+# the Nextcloud "aio-talk" image), Talk recording server and the Whiteboard server
+# for the Nextcloud front door (#396 phase 2). Docker-in-LXC on lxc-collab-01.
+# The Nextcloud side (occ settings) lives in roles/nextcloud/tasks/collab.yml.
+# ==============================================================================
+nextcloud_collab_env: "{{ platform_env | default('prod') }}"
+nextcloud_collab_dir: "/opt/collab"
+nextcloud_collab_bind_ip: "{{ ansible_host }}"          # Traefik (DMZ) reaches the SVC address
+# Pinned images (Nextcloud release containers; date tags, never :latest)
+nextcloud_collab_talk_image: "ghcr.io/nextcloud-releases/aio-talk:20260916_075031"
+nextcloud_collab_recording_image: "ghcr.io/nextcloud-releases/aio-talk-recording:20260916_075031"
+nextcloud_collab_whiteboard_image: "ghcr.io/nextcloud-releases/whiteboard:v2.0.0"   # must match the whiteboard APP major (store gave 2.0.0 on NC 34)
+# Names
+nextcloud_collab_nc_domain: "nextcloud.{{ platform_domain }}"   # the Nextcloud host name (public)
+nextcloud_collab_talk_host: "talk.{{ platform_domain }}"        # TURN/STUN host name → WAN address (no split-DNS!)
+# Ports. TURN listens on 3478 in the container (published tcp+udp on every host address);
+# the WANs expose it as 3479 because 3478 already belongs to NetBird's coturn (FW catalog
+# port_turn_pub). The eturnal relay range is NOT exposed: browsers only use the TURN data
+# channel and the relay peer is the co-located Janus (Nextcloud AIO pattern).
+nextcloud_collab_turn_port: 3478
+nextcloud_collab_turn_public_port: 3479
+nextcloud_collab_turn_domain_internal: "127.0.0.1"   # Janus → local eturnal (no NAT hairpin through the WAN address)
+nextcloud_collab_signaling_port: 8081      # HTTP/websocket, published to Traefik under /standalone-signaling/
+nextcloud_collab_recording_port: 1234      # HTTP, under /recording/
+nextcloud_collab_whiteboard_port: 3002     # HTTP/websocket, under /whiteboard/
+# Path prefixes on the Nextcloud host name (Traefik strips them)
+nextcloud_collab_signaling_prefix: "/standalone-signaling"
+nextcloud_collab_recording_prefix: "/recording"
+nextcloud_collab_whiteboard_prefix: "/whiteboard"
+# Secrets (get-or-create): turn_secret, signaling_secret, internal_secret, recording_secret, whiteboard_jwt
+nextcloud_collab_vault_path: "{{ nextcloud_collab_env }}/collab/secrets"
+nextcloud_collab_timezone: "Europe/Brussels"
+nextcloud_collab_talk_max_stream_bitrate: 1048576    # bits/s per stream (AIO default)
+nextcloud_collab_talk_max_screen_bitrate: 2097152

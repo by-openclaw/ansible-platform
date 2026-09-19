@@ -22,14 +22,12 @@
 # The 28 occ set-calls cannot report honest per-key change state (occ always
 # "sets"), so the block is gated by a fingerprint of every input var: it runs
 # fully on first deploy or whenever any input changes, and skips cleanly
-# otherwise (F13). Force a full reconverge with:  -e nextcloud_post_force=true
+# otherwise (F13). The fingerprint is persisted only AFTER the block succeeded,
+# so a failed post-install is retried on the next run instead of being skipped.
+# Force a full reconverge with:  -e nextcloud_post_force=true
 - name: Post-install | Fingerprint the occ inputs
-  ansible.builtin.copy:
-    dest: /etc/nextcloud-postinstall.fingerprint
-    mode: "0600"
-    owner: root
-    group: root
-    content: >-
+  ansible.builtin.set_fact:
+    nextcloud_post_fingerprint_value: >-
       {{ [nextcloud_redis_host, nextcloud_redis_port, nextcloud_redis_password,
           nextcloud_mail | default({}), nextcloud_authentik_base | default(''),
           nextcloud_trusted_proxy | default(''), nextcloud_docker_bridge_cidr | default(''),
@@ -37,16 +35,40 @@
           nextcloud_share_enforce_password | default(''), nextcloud_default_quota | default(''),
           nextcloud_phone_region | default(''), nextcloud_maintenance_window_start | default(''),
           nextcloud_locking | default(''), nextcloud_skeleton_empty | default(''),
-          nextcloud_apps | default([]), nextcloud_apps_disabled | default([]),
+          nextcloud_apps | default([]), nextcloud_apps_disabled | default([]), nextcloud_apps_pinned | default([]),
           nextcloud_objectstore | default({}), nextcloud_oidc_app_slug | default(''),
           nextcloud_pg_sslrootcert | default('')] | to_json | hash('sha256') }}
-  register: nextcloud_post_fingerprint
   no_log: true
   tags: [nextcloud, post]
 
-- name: Post-install (occ — TLS config, trusted proxy, drawio)
+- name: Post-install | Fingerprint persisted by the last successful post-install
+  ansible.builtin.slurp:
+    src: /etc/nextcloud-postinstall.fingerprint
+  register: nextcloud_post_fingerprint_file
+  failed_when: false
+  tags: [nextcloud, post]
+
+- name: Post-install | Decide whether the occ block runs
+  ansible.builtin.set_fact:
+    nextcloud_post_needed: >-
+      {{ (nextcloud_post_force | default(false) | bool)
+         or ((nextcloud_post_fingerprint_file.content | default('') | b64decode | trim)
+             != (nextcloud_post_fingerprint_value | trim)) }}
+  tags: [nextcloud, post]
+
+- name: Post-install (occ — TLS config, trusted proxy, apps, SSO)
   ansible.builtin.import_tasks: post-install.yml
-  when: nextcloud_post_fingerprint.changed or (nextcloud_post_force | default(false) | bool)
+  when: nextcloud_post_needed | bool
+  tags: [nextcloud, post]
+
+- name: Post-install | Persist the fingerprint (only after the block succeeded)
+  ansible.builtin.copy:
+    dest: /etc/nextcloud-postinstall.fingerprint
+    content: "{{ nextcloud_post_fingerprint_value | trim }}"
+    mode: "0600"
+    owner: root
+    group: root
+  when: nextcloud_post_needed | bool
   tags: [nextcloud, post]
 
 - name: Mail app provisioning (all SSO users, Dovecot master user)
@@ -58,6 +80,11 @@
   ansible.builtin.import_tasks: team-bindings.yml
   when: nextcloud_team_bindings | length > 0
   tags: [nextcloud, teams]
+
+- name: Collab backend bindings (Talk HPB/TURN/STUN/recording, whiteboard, ONLYOFFICE connector)
+  ansible.builtin.import_tasks: collab.yml
+  when: nextcloud_collab_enabled | bool
+  tags: [nextcloud, collab]
 
 - name: Publish Nextcloud via Traefik (public + rate-limit)
   ansible.builtin.include_role:

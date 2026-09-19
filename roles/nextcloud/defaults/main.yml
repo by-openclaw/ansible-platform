@@ -87,6 +87,19 @@ nextcloud_apps:
   - tables              # structured lists
   - twofactor_webauthn  # security keys / passkeys next to TOTP
   - files_external      # core app (disabled by default): mounts the Jitsi recordings bucket later
+  # --- phase 2 (collab backend on lxc-collab-01, roles/onlyoffice + roles/nextcloud_collab) ---
+  - onlyoffice          # Word/Excel/PowerPoint editor (ONLYOFFICE Docs connector, JWT) — pinned tarball below
+  - whiteboard          # real-time whiteboard (needs the whiteboard server)
+
+# Apps installed from a PINNED release tarball instead of the store's latest: occ
+# app:install has no version switch and takes whatever the store lists — on
+# 2026-09-19 the store's onlyoffice 10.2.0 pointed at a GitHub asset that 404s.
+# The tarball is fetched on the host, copied into the container and unpacked into
+# custom_apps as www-data; re-run = no-op while the installed version matches.
+nextcloud_apps_pinned:
+  - id: onlyoffice
+    version: "10.1.2"
+    url: "https://github.com/ONLYOFFICE/onlyoffice-nextcloud/releases/download/v10.1.2/onlyoffice.tar.gz"
 
 # --- Authentik OIDC SSO (wired only when the client secret file exists) ---------
 # Official user_oidc app, configured idempotently via occ. Access is gated
@@ -206,3 +219,16 @@ nextcloud_team_bindings:
 nextcloud_guides:
   - src: "{{ playbook_dir }}/../docs/devices.md"
     dest: "Company/Guides/Devices.md"
+
+# --- Collab backend (#396 phase 2, lxc-collab-01: roles/onlyoffice + roles/nextcloud_collab) ---
+# The backend roles mint the shared secrets in Vault; this role only READS them and
+# wires Talk (HPB, TURN/STUN, recording), the whiteboard and the ONLYOFFICE connector.
+nextcloud_collab_enabled: true
+nextcloud_collab_vault_path: "{{ platform_env | default('prod') }}/collab/secrets"
+nextcloud_onlyoffice_vault_path: "{{ platform_env | default('prod') }}/onlyoffice/secrets"
+nextcloud_onlyoffice_fqdn: "office.{{ platform_domain }}"
+nextcloud_collab_talk_host: "talk.{{ platform_domain }}"   # TURN/STUN — public DNS only (no split-DNS override)
+nextcloud_collab_turn_public_port: 3479                    # 3478 on the WANs is NetBird's coturn (FW alias port_turn_pub)
+nextcloud_collab_signaling_prefix: "/standalone-signaling"
+nextcloud_collab_recording_prefix: "/recording"
+nextcloud_collab_whiteboard_prefix: "/whiteboard"

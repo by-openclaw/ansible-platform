@@ -1,0 +1,35 @@
+# Managed by Ansible (roles/nextcloud_collab). Talk HPB + TURN, Talk recording, Whiteboard — pinned.
+services:
+  talk:
+    # signaling (8081) + Janus + eturnal TURN (3478 tcp/udp). Bridge network on purpose:
+    # eturnal advertises the container address as relay, Janus (same container) is the
+    # only relay peer, so the relay range never leaves the container (AIO pattern).
+    image: {{ nextcloud_collab_talk_image }}
+    restart: unless-stopped
+    ports:
+      - "{{ nextcloud_collab_turn_port }}:{{ nextcloud_collab_turn_port }}/tcp"
+      - "{{ nextcloud_collab_turn_port }}:{{ nextcloud_collab_turn_port }}/udp"
+      - "{{ nextcloud_collab_bind_ip }}:{{ nextcloud_collab_signaling_port }}:8081"
+    env_file: [talk.env]
+    shm_size: "2gb"
+  talk-recording:
+    image: {{ nextcloud_collab_recording_image }}
+    restart: unless-stopped
+    ports:
+      - "{{ nextcloud_collab_bind_ip }}:{{ nextcloud_collab_recording_port }}:1234"
+    env_file: [recording.env]
+    shm_size: "2gb"
+    volumes:
+      - recording-data:/tmp/recordings
+    depends_on: [talk]
+  whiteboard:
+    image: {{ nextcloud_collab_whiteboard_image }}
+    restart: unless-stopped
+    ports:
+      - "{{ nextcloud_collab_bind_ip }}:{{ nextcloud_collab_whiteboard_port }}:3002"
+    env_file: [whiteboard.env]
+    volumes:
+      - whiteboard-data:/app/data
+volumes:
+  recording-data: {}
+  whiteboard-data: {}
