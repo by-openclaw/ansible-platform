@@ -30,12 +30,54 @@
     mode: "0644"
   register: harbor_dl
 
+# The running version is recorded next to the install dir: `creates: prepare` alone
+# would keep an OLD tree forever, so a pin bump downloaded a new installer and never
+# applied it (found 2026-09-19 while moving 2.12 → 2.15).
+- name: "Container | Version currently installed"
+  ansible.builtin.slurp:
+    src: "{{ harbor_install_dir }}/.installed-version"
+  register: harbor_installed_raw
+  failed_when: false
+  check_mode: false
+
+- name: "Container | Decide whether the tree must be replaced"
+  ansible.builtin.set_fact:
+    harbor_tree_stale: >-
+      {{ (harbor_installed_raw.content | default('') | b64decode | trim) != harbor_version }}
+
+# Harbor's own upgrade order: stop the stack, THEN swap the tree, then prepare + up.
+- name: "Container | Stop the stack before swapping the tree ({{ harbor_version }})"
+  ansible.builtin.command:
+    cmd: docker-compose down
+    chdir: "{{ harbor_install_dir }}"
+  when: harbor_tree_stale and not ansible_check_mode
+  failed_when: false
+  changed_when: true
+
 - name: "Container | Extract the installer"
   ansible.builtin.unarchive:
     src: "/opt/harbor-online-installer-{{ harbor_version }}.tgz"
     dest: "/opt/"
     remote_src: true
     creates: "{{ harbor_install_dir }}/prepare"
+  when: not harbor_tree_stale
+
+- name: "Container | Replace the tree with {{ harbor_version }}"
+  ansible.builtin.unarchive:
+    src: "/opt/harbor-online-installer-{{ harbor_version }}.tgz"
+    dest: "/opt/"
+    remote_src: true
+  register: harbor_tree_swapped
+  when: harbor_tree_stale and not ansible_check_mode
+
+- name: "Container | Record the installed version"
+  ansible.builtin.copy:
+    dest: "{{ harbor_install_dir }}/.installed-version"
+    content: "{{ harbor_version }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when: not ansible_check_mode
 
 - name: "Container | Render harbor.yml"
   ansible.builtin.template:
@@ -51,7 +93,7 @@
     chdir: "{{ harbor_install_dir }}"
   register: harbor_prepare
   changed_when: true
-  when: harbor_cfg is changed or harbor_dl is changed
+  when: harbor_cfg is changed or harbor_dl is changed or (harbor_tree_swapped is defined and harbor_tree_swapped is changed)
 
 - name: "Container | Bring up the Harbor stack"
   ansible.builtin.command:
