@@ -70,13 +70,14 @@
   register: adguard_installed_raw
   changed_when: false
   failed_when: false
+  check_mode: false   # read-only probe: must run under --check too
   when: adguard_bin.stat.exists
 
 - name: "install | Decide whether an install or upgrade is needed"
   ansible.builtin.set_fact:
     adguard_installed_version: >-
-      {{ (adguard_installed_raw.stdout | default('')
-          | regex_search('v([0-9]+\.[0-9]+\.[0-9]+)', '\1') | first) | default('none', true) }}
+      {{ ((adguard_installed_raw.stdout | default('', true)
+           | regex_search('v([0-9]+\.[0-9]+\.[0-9]+)', '\1')) or ['none']) | first }}
 
 - name: "install | Report the version decision"
   ansible.builtin.debug:
@@ -121,22 +122,33 @@
     - adguard_installed_version != adguard_version
     - not ansible_check_mode
 
-- name: "install | Check whether AdGuardHome systemd unit is registered"
-  ansible.builtin.stat:
-    path: /etc/systemd/system/AdGuardHome.service
-  register: adguard_unit
+- name: "install | Render the AdGuardHome systemd unit (WorkingDirectory pinned to the install dir)"
+  ansible.builtin.template:
+    src: AdGuardHome.service.j2
+    dest: /etc/systemd/system/AdGuardHome.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: adguard_unit_file
+  notify: Restart AdGuardHome
 
-- name: "install | Register AdGuardHome systemd service"
-  ansible.builtin.command:
-    cmd: "{{ adguard_home_dir }}/AdGuardHome -s install"
-    creates: /etc/systemd/system/AdGuardHome.service
-  when: not adguard_unit.stat.exists
+- name: "install | Reload systemd when the unit changed"
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: adguard_unit_file.changed
+
+- name: "install | AdGuardHome enabled + running"
+  ansible.builtin.systemd:
+    name: AdGuardHome
+    enabled: true
+    state: started
 
 # ------------------------------------------------------------------------------
 # lego — ACME client (Debian package too old for the Cloudflare DNS provider)
 # ------------------------------------------------------------------------------
 - name: "install | Detect installed lego version"
   ansible.builtin.command: /usr/local/bin/lego --version
+  check_mode: false   # read-only probe: must run under --check too
   register: adguard_lego_check
   changed_when: false
   failed_when: false

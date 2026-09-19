@@ -6,9 +6,14 @@
 # Managed by Ansible role `adguard` (tasks/renew.yml). Do not edit by hand.
 # Renews the wildcard *.{{ adguard_domain }} cert via Cloudflare DNS-01 and
 # reloads AdGuardHome on success.
+# AdGuardHome is restarted ONLY when the certificate file actually changed:
+# a nightly restart on "no renewal needed" is what took the resolver down on
+# 2026-09-18 (the unit could not start again).
 set -e
 . /etc/lego/cloudflare.env
 export CF_DNS_API_TOKEN CF_ZONE_API_TOKEN LEGO_PATH=/etc/lego/cert
+CERT="/etc/lego/cert/certificates/_.{{ adguard_domain }}.crt"
+before=$(sha256sum "$CERT" 2>/dev/null | cut -d' ' -f1)
 if /usr/local/bin/lego \
     --email {{ adguard_acme_email }} \
     --accept-tos \
@@ -17,8 +22,13 @@ if /usr/local/bin/lego \
     --domains "*.{{ adguard_domain }}" \
     --domains "{{ adguard_domain }}" \
     renew --days {{ adguard_renew_days }} 2>&1; then
-    /usr/bin/systemctl reload-or-restart AdGuardHome
-    echo "[$(date)] renew check OK"
+    after=$(sha256sum "$CERT" 2>/dev/null | cut -d' ' -f1)
+    if [ "$before" != "$after" ]; then
+        /usr/bin/systemctl reload-or-restart AdGuardHome
+        echo "[$(date)] certificate renewed — AdGuardHome restarted"
+    else
+        echo "[$(date)] renew check OK (no renewal, no restart)"
+    fi
 else
     echo "[$(date)] renew failed (non-zero exit)"
 fi
