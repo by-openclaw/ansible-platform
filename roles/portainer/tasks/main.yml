@@ -1,0 +1,77 @@
+---
+# Server lives in the cluster; agents live on the Docker hosts. The play targets the
+# k3s host for the server part and the docker hosts for the agent part (agents.yml).
+- name: "Portainer | Agent shared key (get-or-create in Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ portainer_vault_path }}"
+    vault_secret_init:
+      secret: "{{ lookup('community.general.random_string', length=48, special=false) }}"
+      _note: "Portainer agent shared key (roles/portainer): the server proves itself to every agent with it"
+
+- name: "Portainer | Bind the agent key"
+  ansible.builtin.set_fact:
+    portainer_agent_secret: "{{ vault_secret_result.secret }}"
+  no_log: true
+
+- name: "Portainer | Initial admin password (get-or-create in Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ portainer_admin_vault_path }}"
+    vault_secret_init:
+      password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+      username: "{{ portainer_admin_user }}"
+      _note: "Portainer local admin (roles/portainer) — break-glass only; humans arrive through Authentik forwardAuth"
+
+- name: "Portainer | Bind the admin password"
+  ansible.builtin.set_fact:
+    portainer_admin_password: "{{ vault_secret_result.password }}"
+  no_log: true
+
+- name: "Portainer | Server manifests"
+  ansible.builtin.template:
+    src: server.yaml.j2
+    dest: /etc/rancher/k3s/portainer.yaml
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: "Portainer | Apply the server (kubectl, server-side idempotent)"
+  ansible.builtin.command:
+    cmd: kubectl apply -f /etc/rancher/k3s/portainer.yaml
+  register: portainer_apply
+  changed_when: "' created' in portainer_apply.stdout or ' configured' in portainer_apply.stdout"
+
+- name: "Portainer | Wait for the server to answer"
+  ansible.builtin.command:
+    cmd: kubectl -n {{ portainer_namespace }} rollout status deployment/portainer --timeout=180s
+  register: portainer_rollout
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: "Portainer | The Docker hosts that get an environment (one per host in portainer_agent_groups)"
+  ansible.builtin.set_fact:
+    portainer_api_base: "http://{{ k3s_node_ip | default(ansible_host) }}:{{ k3s_ingress_http_port | default(80) }}"
+    portainer_docker_hosts: >-
+      {{ portainer_agent_groups | map('extract', groups) | select('defined')
+         | sum(start=[]) | unique | sort | map('extract', hostvars) | list }}
+
+- name: "Portainer | Register the Docker environments (API, idempotent)"
+  ansible.builtin.include_tasks: endpoints.yml
+  when: not ansible_check_mode
+
+- name: "Portainer | Publish on the platform Traefik (internal, SSO in front)"
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: portainer
+    traefik_route_fqdn: "{{ portainer_fqdn }}"
+    traefik_route_backend_url: "http://{{ k3s_node_ip | default(ansible_host) }}:{{ k3s_ingress_http_port | default(80) }}"
+    traefik_route_internal_only: true
+    traefik_route_forward_auth: true
+  tags: [route]

@@ -1,0 +1,50 @@
+---
+# Register every Docker host as an agent environment, through the API, idempotently.
+# Called on the k3s host after the server answers; talks to the cluster ingress
+# directly so the proxy's forwardAuth does not sit in front of the API.
+- name: "Portainer | API session (admin from Vault)"
+  ansible.builtin.uri:
+    url: "{{ portainer_api_base }}/api/auth"
+    method: POST
+    body_format: json
+    body: { username: "{{ portainer_admin_user }}", password: "{{ portainer_admin_password }}" }
+    headers: { Host: "{{ portainer_fqdn }}" }
+    status_code: [200]
+  register: portainer_auth
+  no_log: true
+  check_mode: false
+
+- name: "Portainer | Environments registered today"
+  ansible.builtin.uri:
+    url: "{{ portainer_api_base }}/api/endpoints"
+    headers:
+      Host: "{{ portainer_fqdn }}"
+      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
+    return_content: true
+    status_code: [200]
+  register: portainer_endpoints
+  no_log: true
+  changed_when: false
+  check_mode: false
+
+- name: "Portainer | Register the Docker hosts that are missing"
+  ansible.builtin.uri:
+    url: "{{ portainer_api_base }}/api/endpoints"
+    method: POST
+    headers:
+      Host: "{{ portainer_fqdn }}"
+      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
+    body_format: form-multipart
+    body:
+      Name: "{{ item.inventory_hostname }}"
+      EndpointCreationType: "2"          # agent
+      URL: "{{ item.ansible_host }}:{{ portainer_agent_port }}"
+      TLS: "false"
+    status_code: [200, 409]
+  loop: >-
+    {{ portainer_docker_hosts
+       | rejectattr('inventory_hostname', 'in', portainer_endpoints.json | map(attribute='Name') | list) | list }}
+  loop_control:
+    label: "{{ item.inventory_hostname }} ({{ item.ansible_host }})"
+  register: portainer_endpoint_add
+  changed_when: portainer_endpoint_add.status == 200

@@ -1,0 +1,23 @@
+---
+# ==============================================================================
+# Portainer — one console for both container worlds: the k3s cluster (server runs
+# in-cluster) and every Docker-in-LXC host (agent per host). Published internally
+# through the platform Traefik with Authentik in front. Rerun = changed=0.
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/portainer.yml
+# ==============================================================================
+- name: "Portainer — server (in the k3s cluster)"
+  hosts: k3s
+  become: true
+  gather_facts: true
+  roles:
+    - role: portainer
+
+- name: "Portainer — agent on every Docker host"
+  hosts: cluster:mailcow:!lxc-pgsql-01:!lxc-redis-01
+  become: true
+  gather_facts: true
+  tasks:
+    - name: "Portainer | agent"
+      ansible.builtin.import_role:
+        name: portainer
+        tasks_from: agent.yml
