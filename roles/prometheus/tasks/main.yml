@@ -19,9 +19,9 @@
   ansible.builtin.set_fact:
     prometheus_blackbox_http_targets: >-
       {{ ((prometheus_traefik_hosts.stdout_lines | map('trim') | unique | sort | difference(prometheus_blackbox_http_exclude)
-             | difference(prometheus_blackbox_http_overrides.keys() | list))
+             | difference(prometheus_blackbox_http_overrides | map(attribute='host') | list))
           | map('regex_replace', '^', 'https://') | map('regex_replace', '$', '/') | list
-          + (prometheus_blackbox_http_overrides.values() | list)
+          + (prometheus_blackbox_http_overrides | map(attribute='url') | list)
           + prometheus_blackbox_http_extra) | unique | sort }}
 
 - name: "Prometheus | Rules directory"

@@ -35,8 +35,9 @@ prometheus_blackbox_http_exclude:
   - "vpn.{{ platform_domain }}"
 # Per-host URL override when the internal path differs from the public one (split-DNS sends
 # mail.<domain> straight to the mail server, which serves HTTPS on 8443, not 443).
+# (a list, not a dict: Ansible does not template dict KEYS, so "mail.{{ domain }}" as a key never matched)
 prometheus_blackbox_http_overrides:
-  "mail.{{ platform_domain }}": "https://mail.{{ platform_domain }}:8443/"
+  - { host: "mail.{{ platform_domain }}", url: "https://mail.{{ platform_domain }}:8443/" }
 prometheus_blackbox_http_extra:
   - "https://nextcloud.{{ platform_domain }}/status.php"
   - "https://nextcloud.{{ platform_domain }}/standalone-signaling/api/v1/welcome"
