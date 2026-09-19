@@ -72,6 +72,7 @@
     type: Custom          # free-form condition → Custom (Existence would coerce and never converge)
     condition: does not exist
     action: alert
+  register: opnsense_monit_processdown_res
   delegate_to: localhost
   become: false
   tags: [services, monit]
@@ -107,6 +108,85 @@
   loop: "{{ opnsense_monit_processes }}"
   loop_control:
     label: "{{ item.name }}"
+  register: opnsense_monit_processes_res
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+# --- remote-host probes (SVC daemons reachable from the FW, e.g. the resolver) ------------
+- name: Monit | Ensure the remote-host tests exist
+  by_systems.opnsense.opnsense_monit_test:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ item.name }}"
+    type: "{{ item.type | default('Custom') }}"   # must equal the type OPNsense derives from the condition
+    condition: "{{ item.condition }}"
+    action: "{{ item.action | default('alert') }}"
+  loop: "{{ opnsense_monit_host_tests }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: opnsense_monit_host_tests_res
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Resolve the test uuids (read-only lookup)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/monit/settings/searchTest?searchPhrase="
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_monitchk_all_tests
+  check_mode: false   # read-only GET — must also run under --check
+  when: opnsense_monit_hosts | length > 0
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Ensure a remote-host check per probed daemon
+  by_systems.opnsense.opnsense_monit_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ item.name }}"
+    description: "{{ item.description | default('') }}"
+    enabled: true
+    type: host
+    address: "{{ item.address }}"
+    tests: "{{ (opnsense_monitchk_all_tests.json.rows | selectattr('name', 'equalto', item.test) | map(attribute='uuid') | first) | default('') }}"
+  loop: "{{ opnsense_monit_hosts }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.address }})"
+  register: opnsense_monit_hosts_res
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+# A created/changed check reaches the running daemon only through a STOP + START:
+# "reconfigured" regenerates and syntax-checks monitrc but the daemon keeps its old
+# config, and a reload does not pick up new checks either (verified 2026-09-19: the
+# resolver probes were stored, rendered, and not monitored until a restart).
+# -e opn_monit_restart=true forces it once.
+- name: Monit | Stop the daemon when checks changed (part 1 of the restart)
+  by_systems.opnsense.opnsense_monit_daemon:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    state: stopped
+  when: >-
+    (opnsense_monit_processdown_res is changed) or (opnsense_monit_processes_res is changed)
+    or (opnsense_monit_host_tests_res is changed) or (opnsense_monit_hosts_res is changed)
+    or (opn_monit_restart | default(false) | bool)
   delegate_to: localhost
   become: false
   tags: [services, monit]
