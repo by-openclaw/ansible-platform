@@ -53,7 +53,15 @@
     - { key: "memcache.locking", value: "\\OC\\Memcache\\Redis" }
   changed_when: true
 
-# --- drawio app ---------------------------------------------------------------
+# --- pinned apps (release tarballs) -------------------------------------------
+- name: "post-install | Pinned apps (release tarball, version-gated)"
+  ansible.builtin.include_tasks: app-pinned.yml
+  loop: "{{ nextcloud_apps_pinned }}"
+  loop_control:
+    loop_var: pinned
+    label: "{{ pinned.id }} {{ pinned.version }}"
+
+# --- store apps -----------------------------------------------------------------
 - name: "post-install | List installed apps"
   ansible.builtin.command:
     cmd: docker exec -u www-data nextcloud php occ app:list --output=json

@@ -48,14 +48,9 @@
     cache_valid_time: 3600
 
 - name: "ONLYOFFICE | Pull the pinned image"
-  ansible.builtin.command:
-    cmd: docker-compose pull
-    chdir: "{{ onlyoffice_dir }}"
-  register: onlyoffice_pull
-  changed_when: >-
-    'Downloaded' in (onlyoffice_pull.stderr | default(''))
-    or ('Pulling' in (onlyoffice_pull.stderr | default(''))
-        and 'Image is up to date' not in (onlyoffice_pull.stderr | default('')))
+  community.docker.docker_image:
+    name: "{{ onlyoffice_image }}"
+    source: pull
 
 - name: "ONLYOFFICE | Start / reconcile the stack"
   ansible.builtin.command:

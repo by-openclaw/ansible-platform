@@ -51,11 +51,13 @@
     cache_valid_time: 3600
 
 - name: "Collab | Pull the pinned images"
-  ansible.builtin.command:
-    cmd: docker-compose pull
-    chdir: "{{ nextcloud_collab_dir }}"
-  register: nextcloud_collab_pull
-  changed_when: "'Downloaded' in (nextcloud_collab_pull.stderr | default(''))"
+  community.docker.docker_image:
+    name: "{{ item }}"
+    source: pull
+  loop:
+    - "{{ nextcloud_collab_talk_image }}"
+    - "{{ nextcloud_collab_recording_image }}"
+    - "{{ nextcloud_collab_whiteboard_image }}"
 
 - name: "Collab | Start / reconcile the stack"
   ansible.builtin.command:

@@ -1,0 +1,58 @@
+---
+# ==============================================================================
+# Role: nextcloud — app-pinned.yml: one app from a pinned release tarball.
+# Runs only when the installed version differs from the pin (fresh install or
+# version move). Fetch on the host → docker cp → unpack as www-data into
+# custom_apps → app:enable (fresh) → occ upgrade (migrations on a version move).
+# ==============================================================================
+- name: "post-install | {{ pinned.id }} | Installed apps"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ app:list --output=json
+  register: pinned_list
+  changed_when: false
+  check_mode: false
+
+- name: "post-install | {{ pinned.id }} | Installed version"
+  ansible.builtin.set_fact:
+    pinned_current: >-
+      {{ ((pinned_list.stdout | from_json).enabled | combine((pinned_list.stdout | from_json).disabled))[pinned.id] | default('') }}
+
+- name: "post-install | {{ pinned.id }} | Install {{ pinned.version }} from the release tarball"
+  when: pinned_current != pinned.version
+  block:
+    - name: "post-install | {{ pinned.id }} | Download the release tarball"
+      ansible.builtin.get_url:
+        url: "{{ pinned.url }}"
+        dest: "/tmp/nc-app-{{ pinned.id }}-{{ pinned.version }}.tar.gz"
+        checksum: "{{ pinned.checksum | default(omit) }}"
+        mode: "0644"
+
+    - name: "post-install | {{ pinned.id }} | Copy the tarball into the container"
+      ansible.builtin.command:
+        cmd: docker cp /tmp/nc-app-{{ pinned.id }}-{{ pinned.version }}.tar.gz nextcloud:/tmp/nc-app-{{ pinned.id }}.tar.gz
+      changed_when: true
+
+    - name: "post-install | {{ pinned.id }} | Unpack as www-data (replaces the app code directory)"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -u www-data nextcloud sh -c
+          "rm -rf /var/www/html/custom_apps/{{ pinned.id }}
+          && tar -xzf /tmp/nc-app-{{ pinned.id }}.tar.gz -C /var/www/html/custom_apps
+          && rm -f /tmp/nc-app-{{ pinned.id }}.tar.gz"
+      changed_when: true
+
+    - name: "post-install | {{ pinned.id }} | Enable"
+      ansible.builtin.command:
+        cmd: docker exec -u www-data nextcloud php occ app:enable {{ pinned.id }}
+      changed_when: true
+
+    - name: "post-install | {{ pinned.id }} | Run pending migrations (version move)"
+      ansible.builtin.command:
+        cmd: docker exec -u www-data nextcloud php occ upgrade --no-interaction
+      when: pinned_current | length > 0
+      changed_when: true
+
+    - name: "post-install | {{ pinned.id }} | Remove the host-side tarball"
+      ansible.builtin.file:
+        path: "/tmp/nc-app-{{ pinned.id }}-{{ pinned.version }}.tar.gz"
+        state: absent

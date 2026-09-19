@@ -88,8 +88,18 @@ nextcloud_apps:
   - twofactor_webauthn  # security keys / passkeys next to TOTP
   - files_external      # core app (disabled by default): mounts the Jitsi recordings bucket later
   # --- phase 2 (collab backend on lxc-collab-01, roles/onlyoffice + roles/nextcloud_collab) ---
-  - onlyoffice          # Word/Excel/PowerPoint editor (ONLYOFFICE Docs connector, JWT)
+  - onlyoffice          # Word/Excel/PowerPoint editor (ONLYOFFICE Docs connector, JWT) — pinned tarball below
   - whiteboard          # real-time whiteboard (needs the whiteboard server)
+
+# Apps installed from a PINNED release tarball instead of the store's latest: occ
+# app:install has no version switch and takes whatever the store lists — on
+# 2026-09-19 the store's onlyoffice 10.2.0 pointed at a GitHub asset that 404s.
+# The tarball is fetched on the host, copied into the container and unpacked into
+# custom_apps as www-data; re-run = no-op while the installed version matches.
+nextcloud_apps_pinned:
+  - id: onlyoffice
+    version: "10.1.2"
+    url: "https://github.com/ONLYOFFICE/onlyoffice-nextcloud/releases/download/v10.1.2/onlyoffice.tar.gz"
 
 # --- Authentik OIDC SSO (wired only when the client secret file exists) ---------
 # Official user_oidc app, configured idempotently via occ. Access is gated
