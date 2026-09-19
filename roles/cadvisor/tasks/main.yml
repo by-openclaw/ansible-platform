@@ -10,6 +10,13 @@
     fail_msg: "{{ inventory_hostname }} is in docker_hosts but has no Docker socket — fix the inventory group"
     quiet: true
 
+# /dev/kmsg exists on VMs but not in unprivileged LXCs; cAdvisor only uses it for
+# kernel OOM events, so it is mapped where present and skipped elsewhere.
+- name: "cAdvisor | Kernel message device present?"
+  ansible.builtin.stat:
+    path: /dev/kmsg
+  register: cadvisor_kmsg
+
 - name: "cAdvisor | Pull the pinned image"
   community.docker.docker_image:
     name: "{{ cadvisor_image }}"
@@ -23,7 +30,7 @@
     restart_policy: unless-stopped
     pull: false
     privileged: false
-    devices: ["/dev/kmsg"]
+    devices: "{{ ['/dev/kmsg'] if cadvisor_kmsg.stat.exists else omit }}"
     published_ports:
       - "{{ cadvisor_listen_ip }}:{{ cadvisor_port }}:8080"
     volumes:
