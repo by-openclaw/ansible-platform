@@ -90,6 +90,7 @@ All 69 playbooks in this repo, grouped by scope. Each runs against `inventories/
 | `gitlab-project-archive.yml` | GitLab — archive (export) + restore (import) ONE project, via the REST API. Proves per-project backup/restore end-to-end. Uses a short-lived admin token |
 | `gitlab-rbac.yml` | GitLab RBAC — reconcile instance admins + groups + memberships from desired state (roles/gitlab_rbac/defaults). Re-run whenever the desired state changes; |
 | `gitlab-runner.yml` | GitLab CI runner (Linux + Docker + Kaniko) on vm-gitlab-runner-01. Installs Docker + gitlab-runner, mints/reads the auth token from Vault, and registers via a declarative config.to |
+| `gitlab-upgrade.yml` | Sequential upgrade for GitLab CE (#384): latest patch of the current minor first (security releases), then the next minor; each rung re-runs the gitlab role, waits for the migrations and verifies runit + readiness before the next. Dry run by default; apply with `-e upgrade_path_apply=true`. |
 | `gitlab.yml` | GitLab CE (#8) — full dependency-composed deploy. Order matters (deps first): Play 1  PVE host    : persistent ZFS git-data bind-mount (survives destroy) |
 | `harbor-gitlab-ci.yml` | Harbor <-> GitLab integration (topic 2a): publish the Harbor CI robot creds as GitLab INSTANCE-level CI/CD variables so every pipeline can docker login "$HARBOR_HOST" -u "$HARBOR_R |
 | `harbor.yml` | Configure PROD Harbor (lxc-harbor-01, SVC 10.1.3.240) — OCI container registry. Order (see roles/harbor/tasks/main.yml): DB -> S3 bucket -> secrets -> install -> |

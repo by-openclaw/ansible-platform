@@ -1,0 +1,61 @@
+---
+# ==============================================================================
+# Playbook: gitlab-upgrade.yml — sequential upgrade for GitLab CE (#384).
+#
+# GitLab requires the LATEST PATCH of the current minor before moving to the next
+# minor, and every step runs its own database migrations during reconfigure. The
+# ladder is therefore explicit and each rung is verified before the next starts.
+#
+#   DRY RUN (prints the ladder, changes nothing):
+#     ansible-playbook -i inventories/prod/hosts.yml playbooks/gitlab-upgrade.yml
+#
+#   APPLY (GitLab restarts on every rung — running CI jobs are interrupted):
+#     ansible-playbook -i inventories/prod/hosts.yml playbooks/gitlab-upgrade.yml \
+#       -e upgrade_path_apply=true
+#
+# Take a backup first (playbooks/gitlab-backup.yml or the nightly PBS job):
+# a failed migration is restored, not retried.
+# ==============================================================================
+
+- name: "GitLab CE — sequential upgrade"
+  hosts: gitlab
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+
+  roles:
+    - role: upgrade_path
+      vars:
+        upgrade_path_service: gitlab
+
+        # Latest patch of the CURRENT minor first (this is the security release),
+        # then the next minor. GitLab's own requirement, not a preference.
+        upgrade_path_steps:
+          - version: "19.3.2-ce.0"
+            image: "19.3.2-ce.0"
+            note: "latest 19.3.x — critical patch release (security), required before leaving the minor"
+          - version: "19.4.0-ce.0"
+            image: "19.4.0-ce.0"
+            note: "minor 19.3 -> 19.4"
+
+        # `dpkg-query` is the truth for a package install (the UI banner lags).
+        upgrade_path_current_cmd: >-
+          dpkg-query -W -f='${Version}' gitlab-ce
+
+        # Re-run the gitlab role with this rung's version so the upgrade takes the
+        # normal deploy path (apt pin + reconfigure) instead of a hand-rolled apt call.
+        upgrade_path_role: gitlab
+        upgrade_path_image_var: gitlab_version
+
+        # reconfigure runs the migrations; this makes sure they finished and the
+        # background migrations are not stuck before the next rung is applied.
+        upgrade_path_migrate_cmd: >-
+          gitlab-ctl status >/dev/null &&
+          gitlab-rake db:migrate:status 2>/dev/null | grep -c '^\s*down' | grep -qx 0
+
+        # Health gate: every runit service up, the app answers, no failed migration.
+        upgrade_path_verify_cmd: >-
+          gitlab-ctl status | grep -qv '^down:' &&
+          curl -fsS -o /dev/null http://127.0.0.1:8080/-/readiness
+
+        upgrade_path_settle_seconds: 90
