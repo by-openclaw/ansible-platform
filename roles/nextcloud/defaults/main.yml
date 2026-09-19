@@ -10,7 +10,7 @@
 # Exact pin, never a stream tag. Majors are NOT bumped here — Nextcloud refuses
 # to skip majors and migrates the database per major, so use
 # playbooks/nextcloud-upgrade.yml, which walks the ladder one rung at a time.
-nextcloud_image: "nextcloud:34.0.3-apache"
+nextcloud_image: "nextcloud:34.0.4-apache"   # latest 34.x; 35.0.0 waits for stable app releases (D15, 2026-09-19)
 
 nextcloud_fqdn: "nextcloud.{{ platform_domain }}"
 
@@ -96,6 +96,11 @@ nextcloud_apps:
 # 2026-09-19 the store's onlyoffice 10.2.0 pointed at a GitHub asset that 404s.
 # The tarball is fetched on the host, copied into the container and unpacked into
 # custom_apps as www-data; re-run = no-op while the installed version matches.
+# Store apps follow their latest release for the RUNNING major on every play
+# (roles/nextcloud/tasks/apps-update.yml, drift-gated via --showonly). Pinned
+# apps are excluded there and move only through nextcloud_apps_pinned.
+nextcloud_apps_autoupdate: true
+
 nextcloud_apps_pinned:
   - id: onlyoffice
     version: "10.1.2"

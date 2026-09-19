@@ -71,6 +71,11 @@
   when: nextcloud_post_needed | bool
   tags: [nextcloud, post]
 
+- name: Store app updates (latest release for the running major, pinned apps excluded)
+  ansible.builtin.import_tasks: apps-update.yml
+  when: nextcloud_apps_autoupdate | bool
+  tags: [nextcloud, apps]
+
 - name: Mail app provisioning (all SSO users, Dovecot master user)
   ansible.builtin.import_tasks: mail-provisioning.yml
   when: nextcloud_mail_provisioning_enabled | bool
