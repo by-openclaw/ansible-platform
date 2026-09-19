@@ -122,7 +122,7 @@
     secret: "{{ opnsense_api_secret }}"
     verify_ssl: false
     name: "{{ item.name }}"
-    type: Custom          # free-form condition (e.g. "failed port 53 type udp protocol dns")
+    type: "{{ item.type | default('Custom') }}"   # must equal the type OPNsense derives from the condition
     condition: "{{ item.condition }}"
     action: "{{ item.action | default('alert') }}"
   loop: "{{ opnsense_monit_host_tests }}"
