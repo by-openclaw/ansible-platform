@@ -12,6 +12,8 @@
   roles:
     - role: portainer
 
+# Environments can only be registered once the agents answer, so this is a third
+# play rather than a step inside the server role.
 - name: "Portainer — agent on every Docker host"
   hosts: cluster:mailcow:!lxc-pgsql-01:!lxc-redis-01
   become: true
@@ -21,3 +23,30 @@
       ansible.builtin.import_role:
         name: portainer
         tasks_from: agent.yml
+
+- name: "Portainer — register every Docker host as an environment"
+  hosts: k3s
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Portainer | secrets + the host list"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ portainer_admin_vault_path }}"
+        vault_secret_init: {}
+
+    - name: "Portainer | Bind the admin password and the host list"
+      ansible.builtin.set_fact:
+        portainer_admin_password: "{{ vault_secret_result.password }}"
+        portainer_api_base: "http://{{ k3s_node_ip | default(ansible_host) }}:{{ k3s_ingress_http_port | default(80) }}"
+        portainer_docker_hosts: >-
+          {{ portainer_agent_groups | map('extract', groups) | select('defined')
+             | sum(start=[]) | unique | sort | map('extract', hostvars) | list }}
+      no_log: true
+
+    - name: "Portainer | Register the Docker environments (API, idempotent)"
+      ansible.builtin.include_role:
+        name: portainer
+        tasks_from: endpoints.yml
+      when: not ansible_check_mode

@@ -52,17 +52,6 @@
   check_mode: false
   when: not ansible_check_mode
 
-- name: "Portainer | The Docker hosts that get an environment (one per host in portainer_agent_groups)"
-  ansible.builtin.set_fact:
-    portainer_api_base: "http://{{ k3s_node_ip | default(ansible_host) }}:{{ k3s_ingress_http_port | default(80) }}"
-    portainer_docker_hosts: >-
-      {{ portainer_agent_groups | map('extract', groups) | select('defined')
-         | sum(start=[]) | unique | sort | map('extract', hostvars) | list }}
-
-- name: "Portainer | Register the Docker environments (API, idempotent)"
-  ansible.builtin.include_tasks: endpoints.yml
-  when: not ansible_check_mode
-
 - name: "Portainer | Publish on the platform Traefik (internal, SSO in front)"
   ansible.builtin.include_role:
     name: traefik_route
