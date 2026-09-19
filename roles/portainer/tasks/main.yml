@@ -35,6 +35,11 @@
           secret: "{{ lookup('community.general.random_string', length=48, special=false) }}"
           _note: "Portainer agent shared key (roles/portainer)"
 
+    - name: "Portainer | Bind the agent key (the console signs its requests with it — same value as every agent)"
+      ansible.builtin.set_fact:
+        portainer_agent_secret: "{{ vault_secret_result.secret }}"
+      no_log: true
+
     - name: "Portainer | Layout directory"
       ansible.builtin.file:
         path: "{{ portainer_dir }}"
@@ -58,6 +63,7 @@
         source: pull
 
     - name: "Portainer | Run the server (one container, managed directly)"
+      no_log: true   # env carries the agent key
       community.docker.docker_container:
         name: portainer
         image: "{{ portainer_server_image }}"
@@ -65,6 +71,8 @@
         restart_policy: unless-stopped
         pull: false
         command: ["--http-enabled", "--admin-password-file=/run/secrets/admin"]
+        env:
+          AGENT_SECRET: "{{ portainer_agent_secret }}"   # without it the agents answer 403 "Invalid request signature" (shown as "already paired")
         published_ports:
           - "{{ portainer_listen_ip }}:{{ portainer_http_port }}:9000"
         volumes:
