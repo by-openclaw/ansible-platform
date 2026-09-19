@@ -1,10 +1,10 @@
 # Managed by Ansible (role: alertmanager). Do not edit by hand. Secrets from Vault.
 global:
   resolve_timeout: 5m
-  smtp_smarthost: "{{ alertmanager_smtp.smtp_host }}:{{ alertmanager_smtp_port }}"
-  smtp_from: "{{ alertmanager_smtp.from_address }}"
-  smtp_auth_username: "{{ alertmanager_smtp.smtp_username }}"
-  smtp_auth_password: "{{ alertmanager_smtp.smtp_api_key }}"
+  smtp_smarthost: "{{ alertmanager_smtp_host }}:{{ alertmanager_smtp_port }}"
+  smtp_from: "{{ alertmanager_smtp.address }}"
+  smtp_auth_username: "{{ alertmanager_smtp.address }}"
+  smtp_auth_password: "{{ alertmanager_smtp.password }}"
   smtp_require_tls: true
 
 route:
@@ -30,7 +30,7 @@ inhibit_rules:
 receivers:
   - name: platform-ops
     email_configs:
-      - to: "{{ alertmanager_smtp.to_address }}"
+      - to: "{{ alertmanager_to_address }}"
         send_resolved: true
         headers:
           subject: '[{{ platform_domain }}] {{ "{{" }} .Status | toUpper {{ "}}" }} {{ "{{" }} .CommonLabels.alertname {{ "}}" }} {{ "{{" }} .CommonLabels.instance {{ "}}" }}'
