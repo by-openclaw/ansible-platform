@@ -1,0 +1,29 @@
+---
+# ==============================================================================
+# Role: nextcloud — groups.yml: group hygiene. user_oidc creates groups from the
+# Authentik claim and never removes them, so a platform group that was retired
+# (service decommissioned) survives as an empty orphan. Declared here as
+# state ABSENT (nextcloud_groups_retired) and removed idempotently; every other
+# empty group is only REPORTED so a human can add it to the retired list.
+# ==============================================================================
+- name: "groups | Groups today"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ group:list --output=json
+  register: nextcloud_groups_now
+  changed_when: false
+  check_mode: false
+
+- name: "groups | Retire groups the platform no longer declares (state absent)"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ group:delete {{ item | quote }}
+  loop: "{{ nextcloud_groups_retired }}"
+  when: item in (nextcloud_groups_now.stdout | from_json)
+  changed_when: true
+
+- name: "groups | Report empty groups not yet declared retired (candidates)"
+  ansible.builtin.debug:
+    msg: >-
+      {{ (nextcloud_groups_now.stdout | from_json) | dict2items
+         | selectattr('value', 'equalto', {}) | map(attribute='key')
+         | reject('in', nextcloud_groups_retired) | reject('in', nextcloud_groups_empty_ok) | list
+         or ['no orphan groups'] }}
