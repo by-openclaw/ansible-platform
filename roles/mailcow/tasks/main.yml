@@ -15,8 +15,14 @@
   ansible.builtin.import_tasks: install.yml
   tags: [mailcow, install]
 
+# include_tasks does not pass its tags to the included tasks: without `apply`, a run
+# scoped to --tags compose skipped the whole phase (found during the 2026-09-19 restore,
+# #454). cert.yml and config.yml below already use the same pattern.
 - name: Bring the mailcow stack up (gated)
-  ansible.builtin.include_tasks: compose.yml
+  ansible.builtin.include_tasks:
+    file: compose.yml
+    apply:
+      tags: [mailcow, compose]
   when: mailcow_deploy_stack | bool
   tags: [mailcow, compose]
 
