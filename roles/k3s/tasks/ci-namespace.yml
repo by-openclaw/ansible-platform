@@ -60,7 +60,7 @@
           'current-context': ns.name} | to_nice_yaml | b64encode }}
   no_log: true
 
-- name: "k3s | {{ ns.name }} | Kubeconfig → Vault (get-or-create; rotate with vault_secret_force_fields)"
+- name: "k3s | {{ ns.name }} | Kubeconfig → Vault (get-or-create)"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
@@ -68,7 +68,22 @@
     vault_secret_init:
       kubeconfig_b64: "{{ k3s_ns_kubeconfig_b64 }}"
       gitlab_project: "{{ ns.gitlab_project }}"
-      _note: "namespace-scoped k3s deployer for GitLab CI (roles/k3s); token rotates when the SA secret is recreated"
+      _note: "namespace-scoped k3s deployer for GitLab CI (roles/k3s); rewritten whenever the SA token changes"
+
+# The SA token is the source of truth: a recreated cluster/SA yields a new token and the
+# escrowed kubeconfig must follow (otherwise CI deploys with a dead token). Idempotent:
+# nothing is written when Vault already holds the live one.
+- name: "k3s | {{ ns.name }} | Kubeconfig → Vault (rewrite when the live token differs)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ k3s_vault_path }}/ci-{{ ns.name }}"
+    vault_secret_init: {}
+    vault_secret_force_fields:
+      kubeconfig_b64: "{{ k3s_ns_kubeconfig_b64 }}"
+      gitlab_project: "{{ ns.gitlab_project }}"
+      _note: "namespace-scoped k3s deployer for GitLab CI (roles/k3s); rewritten whenever the SA token changes"
+  when: vault_secret_result.kubeconfig_b64 != k3s_ns_kubeconfig_b64
 
 - name: "k3s | {{ ns.name }} | GitLab CI variable KUBECONFIG_B64 on {{ ns.gitlab_project }} (upsert, masked, protected)"
   ansible.builtin.command:
