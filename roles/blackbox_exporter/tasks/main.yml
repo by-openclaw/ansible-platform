@@ -1,0 +1,69 @@
+---
+- name: "Blackbox | Install prometheus-blackbox-exporter (Debian package)"
+  ansible.builtin.apt:
+    name: prometheus-blackbox-exporter
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Blackbox | Probe modules ({{ blackbox_exporter_config }})"
+  ansible.builtin.template:
+    src: blackbox.yml.j2
+    dest: "{{ blackbox_exporter_config }}"
+    owner: root
+    group: prometheus
+    mode: "0640"
+    validate: "{{ omit if ansible_check_mode else '/usr/bin/prometheus-blackbox-exporter --config.check --config.file=%s' }}"
+  notify: Restart blackbox exporter
+
+- name: "Blackbox | Unprivileged ICMP: allow every group to open ping sockets (ambient CAP_NET_RAW is not honoured in an unprivileged LXC)"
+  ansible.posix.sysctl:
+    name: net.ipv4.ping_group_range
+    value: "0 65535"
+    sysctl_file: /etc/sysctl.d/90-blackbox-icmp.conf
+    sysctl_set: true
+    reload: true
+
+- name: "Blackbox | Retired capability drop-in absent (2026-09-19: had no effect in the LXC)"
+  ansible.builtin.file:
+    path: /etc/systemd/system/prometheus-blackbox-exporter.service.d/override.conf
+    state: absent
+  register: blackbox_exporter_dropin_gone
+  notify: Restart blackbox exporter
+
+- name: "Blackbox | Reload systemd when the drop-in was removed"
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: blackbox_exporter_dropin_gone.changed and not ansible_check_mode
+
+- name: "Blackbox | Runtime args (loopback listen) — /etc/default/prometheus-blackbox-exporter"
+  ansible.builtin.copy:
+    dest: /etc/default/prometheus-blackbox-exporter
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (role: blackbox_exporter)
+      ARGS="--config.file={{ blackbox_exporter_config }} --web.listen-address={{ blackbox_exporter_listen }}"
+  notify: Restart blackbox exporter
+
+- name: "Blackbox | Enabled + running"
+  ansible.builtin.systemd_service:
+    name: prometheus-blackbox-exporter
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: "Blackbox | Flush handlers so the probe endpoint answers before Prometheus scrapes it"
+  ansible.builtin.meta: flush_handlers
+
+- name: "Blackbox | Exporter answers (read-only)"
+  ansible.builtin.uri:
+    url: "http://{{ blackbox_exporter_listen }}/-/healthy"
+    status_code: [200]
+  check_mode: false
+  retries: 5
+  delay: 3
+  register: blackbox_exporter_health
+  until: blackbox_exporter_health.status == 200
+  when: not ansible_check_mode

@@ -5,3 +5,7 @@
 node_exporter_port: 9100
 node_exporter_listen: "0.0.0.0"   # reachable by Prometheus on the SVC/DMZ nets
 # Collectors are the package defaults (cpu, meminfo, filesystem, netdev, systemd, ...).
+
+# Hosts allowed to scrape :9100 when a host firewall (ufw) is active — the monitoring
+# group's addresses. Hosts without ufw are unaffected (SVC → SVC is open on the FW).
+node_exporter_scrapers: "{{ groups['monitoring'] | default([]) | map('extract', hostvars, 'ansible_host') | list }}"

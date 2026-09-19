@@ -1,0 +1,42 @@
+# Managed by Ansible (role: alertmanager). Do not edit by hand. Secrets from Vault.
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: "{{ alertmanager_smtp_host }}:{{ alertmanager_smtp_port }}"
+  smtp_from: "{{ alertmanager_smtp.address }}"
+  smtp_auth_username: "{{ alertmanager_smtp.address }}"
+  smtp_auth_password: "{{ alertmanager_smtp.password }}"
+  smtp_require_tls: true
+
+route:
+  receiver: platform-ops
+  group_by: [alertname, instance]
+  group_wait: {{ alertmanager_group_wait }}
+  group_interval: {{ alertmanager_group_interval }}
+  repeat_interval: {{ alertmanager_repeat_interval }}
+  routes:
+    - matchers: [severity="critical"]
+      receiver: platform-ops
+      repeat_interval: {{ alertmanager_repeat_interval_critical }}
+
+inhibit_rules:
+  # a critical alert on an instance silences its warnings
+  - source_matchers: [severity="critical"]
+    target_matchers: [severity="warning"]
+    equal: [instance]
+  # a dead resolver explains every failed probe: keep only the resolver alert
+  - source_matchers: [alertname="ResolverDown"]
+    target_matchers: [alertname=~"ProbeFailed|TargetDown"]
+
+receivers:
+  - name: platform-ops
+    email_configs:
+      - to: "{{ alertmanager_to_address }}"
+        send_resolved: true
+        headers:
+          subject: '[{{ platform_domain }}] {{ "{{" }} .Status | toUpper {{ "}}" }} {{ "{{" }} .CommonLabels.alertname {{ "}}" }} {{ "{{" }} .CommonLabels.instance {{ "}}" }}'
+{% if alertmanager_discord_enabled | bool %}
+    discord_configs:
+      - webhook_url: "{{ alertmanager_discord.webhook }}"
+        send_resolved: true
+        title: '{{ "{{" }} .Status | toUpper {{ "}}" }}: {{ "{{" }} .CommonLabels.alertname {{ "}}" }}'
+{% endif %}

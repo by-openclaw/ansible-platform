@@ -7,6 +7,41 @@
     update_cache: true
     cache_valid_time: 3600
 
+- name: "Prometheus | Live Traefik host names — HTTPS probe targets follow the routes (read-only)"
+  ansible.builtin.command:
+    cmd: grep -rhoP 'Host\(`\K[^`]+' {{ prometheus_traefik_dynamic_dir }} --include=*.yml
+  delegate_to: "{{ prometheus_traefik_host }}"
+  register: prometheus_traefik_hosts
+  changed_when: false
+  check_mode: false
+
+- name: "Prometheus | HTTPS probe target list (routes minus exclusions, plus deep health paths)"
+  ansible.builtin.set_fact:
+    prometheus_blackbox_http_targets: >-
+      {{ ((prometheus_traefik_hosts.stdout_lines | map('trim') | unique | sort | difference(prometheus_blackbox_http_exclude)
+             | difference(prometheus_blackbox_http_overrides | map(attribute='host') | list))
+          | map('regex_replace', '^', 'https://') | map('regex_replace', '$', '/') | list
+          + (prometheus_blackbox_http_overrides | map(attribute='url') | list)
+          + prometheus_blackbox_http_extra) | unique | sort }}
+
+- name: "Prometheus | Rules directory"
+  ansible.builtin.file:
+    path: "{{ prometheus_rules_dir }}"
+    state: directory
+    owner: root
+    group: prometheus
+    mode: "0750"
+
+- name: "Prometheus | Alert rules ({{ prometheus_rules_dir }}/platform.yml)"
+  ansible.builtin.template:
+    src: platform.rules.yml.j2
+    dest: "{{ prometheus_rules_dir }}/platform.yml"
+    owner: root
+    group: prometheus
+    mode: "0640"
+    validate: "promtool check rules %s"
+  notify: Restart prometheus
+
 - name: "Prometheus | Scrape config (/etc/prometheus/prometheus.yml)"
   ansible.builtin.template:
     src: prometheus.yml.j2

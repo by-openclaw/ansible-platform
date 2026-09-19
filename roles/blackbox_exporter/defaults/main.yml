@@ -1,0 +1,17 @@
+---
+# ==============================================================================
+# Role: blackbox_exporter — synthetic probes (HTTPS, DNS, TCP/TLS, SMTP STARTTLS,
+# ICMP) on lxc-monitoring-01, Debian package, loopback only (Prometheus scrapes it).
+# Targets are declared on the prometheus role (data-driven); modules live here.
+# ==============================================================================
+blackbox_exporter_listen: "127.0.0.1:9115"
+blackbox_exporter_config: "/etc/prometheus/blackbox.yml"
+blackbox_exporter_timeout: "10s"
+# HTTP: follow redirects (SSO routes land on the IdP login = 200); 401/403 accepted for
+# API-only hosts (registry, S3) and allow-listed admin routes — the probe proves the
+# route, TLS and the backend answered, not authorisation.
+blackbox_exporter_http_valid_status: [200, 201, 204, 301, 302, 303, 307, 308, 401, 403]
+# DNS module: the name every guest resolves through the platform resolver and the
+# answer it must give (unbound override → Traefik).
+blackbox_exporter_dns_query: "nextcloud.{{ platform_domain }}"
+blackbox_exporter_dns_expect: '10\.1\.2\.110'

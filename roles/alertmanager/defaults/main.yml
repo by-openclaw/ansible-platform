@@ -1,0 +1,24 @@
+---
+# ==============================================================================
+# Role: alertmanager — Prometheus Alertmanager on lxc-monitoring-01 (Debian
+# package, loopback). Receivers: mail through the platform relay (same secret and
+# recipient as the firewall's Monit alerts) + a Discord channel webhook. Both
+# secrets are READ from Vault (minted elsewhere: monit/smtp-resend, discord_guild).
+# ==============================================================================
+alertmanager_listen: "127.0.0.1:9093"
+alertmanager_config: "/etc/prometheus/alertmanager.yml"
+alertmanager_env: "{{ platform_env | default('prod') }}"
+# Mail goes through the platform's own mail server with the monitoring service mailbox
+# (mailbox concern-role: prod/mail/monitoring → address, password, smtp_port), to the
+# alerts@ mailbox — exactly like the firewall's Monit. The asset FQDN is used for SMTP
+# because mail.<domain> is split-DNS'd to Traefik, which does not proxy SMTP.
+alertmanager_vault_smtp_path: "{{ alertmanager_env }}/mail/monitoring"
+alertmanager_smtp_host: "vm-mailcow-01.{{ platform_domain }}"
+alertmanager_smtp_port: 587                                                   # submission, STARTTLS
+alertmanager_to_address: "alerts@{{ platform_domain }}"
+alertmanager_discord_enabled: true
+alertmanager_vault_discord_path: "{{ alertmanager_env }}/discord/webhook-alerts"   # field: webhook (discord_guild channel 'alerts')
+alertmanager_group_wait: "30s"
+alertmanager_group_interval: "5m"
+alertmanager_repeat_interval: "4h"
+alertmanager_repeat_interval_critical: "1h"

@@ -24,3 +24,19 @@
     enabled: true
     state: started
   when: not ansible_check_mode
+
+- name: "node_exporter | ufw present?"
+  ansible.builtin.stat:
+    path: /usr/sbin/ufw
+  register: node_exporter_ufw
+
+- name: "node_exporter | Allow the scrapers on :9100 when ufw is active (Jitsi was unreachable, TargetDown)"
+  community.general.ufw:
+    rule: allow
+    port: "9100"
+    proto: tcp
+    from_ip: "{{ item }}"
+    comment: "Prometheus node exporter scrape"
+  loop: "{{ node_exporter_scrapers }}"
+  when: node_exporter_ufw.stat.exists
+  failed_when: false
