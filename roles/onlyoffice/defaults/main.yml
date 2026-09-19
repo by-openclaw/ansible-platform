@@ -1,0 +1,15 @@
+---
+# ==============================================================================
+# Role: onlyoffice — ONLYOFFICE Docs (Document Server, Community, AGPL) for the
+# Nextcloud front door (#396 phase 2). Docker-in-LXC on lxc-collab-01. Stores no
+# user data: it edits Nextcloud files in place. JWT between Nextcloud and Docs.
+# ==============================================================================
+onlyoffice_image: "onlyoffice/documentserver:9.4.0.1"   # pinned (9.4: no connection limit, single process)
+onlyoffice_env: "{{ platform_env | default('prod') }}"
+onlyoffice_fqdn: "office.{{ platform_domain }}"          # public (browsers load the editor from it)
+onlyoffice_dir: "/opt/onlyoffice"
+onlyoffice_http_ip: "{{ ansible_host }}"                # Traefik (DMZ) reaches the SVC address
+onlyoffice_http_port: 8000
+onlyoffice_jwt_header: "Authorization"
+onlyoffice_vault_path: "{{ onlyoffice_env }}/onlyoffice/secrets"   # jwt_secret (get-or-create)
+onlyoffice_timezone: "Europe/Brussels"

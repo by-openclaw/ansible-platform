@@ -1,0 +1,131 @@
+---
+- name: "Collab | Get-or-create the backend secrets in Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ nextcloud_collab_vault_path }}"
+    vault_secret_init:
+      turn_secret: "{{ lookup('community.general.random_string', length=48, special=false) }}"
+      signaling_secret: "{{ lookup('community.general.random_string', length=48, special=false) }}"
+      internal_secret: "{{ lookup('community.general.random_string', length=48, special=false) }}"
+      recording_secret: "{{ lookup('community.general.random_string', length=48, special=false) }}"
+      whiteboard_jwt: "{{ lookup('community.general.random_string', length=48, special=false) }}"
+      note: "Nextcloud Talk HPB/TURN/recording + whiteboard shared secrets (roles/nextcloud_collab <-> roles/nextcloud)"
+
+- name: "Collab | Bind the secrets"
+  ansible.builtin.set_fact:
+    nextcloud_collab_secrets: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "Collab | Layout directory"
+  ansible.builtin.file:
+    path: "{{ nextcloud_collab_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: "Collab | Render env files (secrets)"
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ nextcloud_collab_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: [talk.env, recording.env, whiteboard.env]
+  no_log: true
+
+- name: "Collab | Render docker-compose.yml"
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ nextcloud_collab_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: "Collab | Ensure Compose v2 (Debian standalone docker-compose)"
+  ansible.builtin.apt:
+    name: docker-compose
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Collab | Pull the pinned images"
+  ansible.builtin.command:
+    cmd: docker-compose pull
+    chdir: "{{ nextcloud_collab_dir }}"
+  register: nextcloud_collab_pull
+  changed_when: "'Downloaded' in (nextcloud_collab_pull.stderr | default(''))"
+
+- name: "Collab | Start / reconcile the stack"
+  ansible.builtin.command:
+    cmd: docker-compose up -d --remove-orphans
+    chdir: "{{ nextcloud_collab_dir }}"
+  register: nextcloud_collab_up
+  changed_when: >-
+    'Started' in (nextcloud_collab_up.stderr | default(''))
+    or 'Created' in (nextcloud_collab_up.stderr | default(''))
+    or 'Recreat' in (nextcloud_collab_up.stderr | default(''))
+
+- name: "Collab | Wait for the signaling server"
+  ansible.builtin.uri:
+    url: "http://{{ nextcloud_collab_bind_ip }}:{{ nextcloud_collab_signaling_port }}/api/v1/welcome"
+    return_content: true
+    status_code: [200]
+  register: nextcloud_collab_sig
+  retries: 30
+  delay: 4
+  until: nextcloud_collab_sig.status == 200
+
+- name: "Collab | Wait for the recording server"
+  ansible.builtin.uri:
+    url: "http://{{ nextcloud_collab_bind_ip }}:{{ nextcloud_collab_recording_port }}/api/v1/welcome"
+    return_content: true
+    status_code: [200]
+  register: nextcloud_collab_rec
+  retries: 30
+  delay: 4
+  until: nextcloud_collab_rec.status == 200
+
+- name: "Collab | Wait for the whiteboard server"
+  ansible.builtin.uri:
+    url: "http://{{ nextcloud_collab_bind_ip }}:{{ nextcloud_collab_whiteboard_port }}/"
+    status_code: [200, 404]
+  register: nextcloud_collab_wb
+  retries: 30
+  delay: 4
+  until: nextcloud_collab_wb.status in [200, 404]
+
+- name: "Collab | Open the backend ports to Traefik / VPN when ufw is active"
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.0 | string }}"
+    proto: tcp
+    from_ip: "{{ item.1 }}"
+    comment: "Nextcloud collab backend via Traefik"
+  loop: >-
+    {{ [nextcloud_collab_signaling_port, nextcloud_collab_recording_port, nextcloud_collab_whiteboard_port]
+       | product(['10.1.0.0/16', '100.64.0.0/10']) | list }}
+  failed_when: false
+
+# --- Traefik: three path routes under the Nextcloud host name (prefix stripped) ------
+- name: "Collab | Traefik path routes on {{ nextcloud_collab_nc_domain }}"
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: "{{ item.name }}"
+    traefik_route_fqdn: "{{ nextcloud_collab_nc_domain }}"
+    traefik_route_backend_url: "http://{{ nextcloud_collab_bind_ip }}:{{ item.port }}"
+    traefik_route_path_prefix: "{{ item.prefix }}"
+    traefik_route_strip_prefix: true
+    traefik_route_internal_only: false
+    traefik_route_public_hardening: true
+  loop:
+    - { name: nextcloud-signaling, prefix: "{{ nextcloud_collab_signaling_prefix }}", port: "{{ nextcloud_collab_signaling_port }}" }
+    - { name: nextcloud-recording, prefix: "{{ nextcloud_collab_recording_prefix }}", port: "{{ nextcloud_collab_recording_port }}" }
+    - { name: nextcloud-whiteboard, prefix: "{{ nextcloud_collab_whiteboard_prefix }}", port: "{{ nextcloud_collab_whiteboard_port }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  tags: [route]

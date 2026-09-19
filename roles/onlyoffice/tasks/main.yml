@@ -1,0 +1,102 @@
+---
+- name: "ONLYOFFICE | Get-or-create the JWT secret in Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ onlyoffice_vault_path }}"
+    vault_secret_init:
+      jwt_secret: "{{ lookup('community.general.random_string', length=48, special=false) }}"
+      note: "ONLYOFFICE Docs <-> Nextcloud connector JWT (header Authorization)"
+
+- name: "ONLYOFFICE | Bind the secrets"
+  ansible.builtin.set_fact:
+    onlyoffice_secrets: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "ONLYOFFICE | Layout directory"
+  ansible.builtin.file:
+    path: "{{ onlyoffice_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: "ONLYOFFICE | Render .env (secrets)"
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ onlyoffice_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  register: onlyoffice_env_file
+
+- name: "ONLYOFFICE | Render docker-compose.yml"
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ onlyoffice_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: onlyoffice_compose_file
+
+- name: "ONLYOFFICE | Ensure Compose v2 (Debian standalone docker-compose)"
+  ansible.builtin.apt:
+    name: docker-compose
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "ONLYOFFICE | Pull the pinned image"
+  ansible.builtin.command:
+    cmd: docker-compose pull
+    chdir: "{{ onlyoffice_dir }}"
+  register: onlyoffice_pull
+  changed_when: >-
+    'Downloaded' in (onlyoffice_pull.stderr | default(''))
+    or ('Pulling' in (onlyoffice_pull.stderr | default(''))
+        and 'Image is up to date' not in (onlyoffice_pull.stderr | default('')))
+
+- name: "ONLYOFFICE | Start / reconcile the stack"
+  ansible.builtin.command:
+    cmd: docker-compose up -d --remove-orphans
+    chdir: "{{ onlyoffice_dir }}"
+  register: onlyoffice_up
+  changed_when: >-
+    'Started' in (onlyoffice_up.stderr | default(''))
+    or 'Created' in (onlyoffice_up.stderr | default(''))
+    or 'Recreat' in (onlyoffice_up.stderr | default(''))
+
+- name: "ONLYOFFICE | Wait for the Document Server health check"
+  ansible.builtin.uri:
+    url: "http://{{ onlyoffice_http_ip }}:{{ onlyoffice_http_port }}/healthcheck"
+    return_content: true
+    status_code: [200]
+  register: onlyoffice_health
+  retries: 40
+  delay: 5
+  until: onlyoffice_health.status == 200 and 'true' in (onlyoffice_health.content | default(''))
+
+- name: "ONLYOFFICE | Open the port to Traefik / VPN when ufw is active"
+  community.general.ufw:
+    rule: allow
+    port: "{{ onlyoffice_http_port | string }}"
+    proto: tcp
+    from_ip: "{{ item }}"
+    comment: "ONLYOFFICE via Traefik"
+  loop: ["10.1.0.0/16", "100.64.0.0/10"]
+  failed_when: false
+
+- name: "ONLYOFFICE | Scaffold the platform concerns (public route, no mailbox, no SSO — JWT with Nextcloud)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+  vars:
+    service_scaffold_def:
+      name: onlyoffice
+      fqdn: "{{ onlyoffice_fqdn }}"
+      backend_url: "http://{{ onlyoffice_http_ip }}:{{ onlyoffice_http_port }}"
+      exposure: public
+      forward_auth: false
+      mailbox: false
+      vault_secrets:
+        - path: "{{ onlyoffice_vault_path }}"

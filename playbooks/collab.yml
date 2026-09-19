@@ -1,0 +1,26 @@
+---
+# ==============================================================================
+# Nextcloud collaboration backend (#396 phase 2): ONLYOFFICE Docs + Talk HPB/TURN
+# + Talk recording + Whiteboard server on lxc-collab-01, then the Nextcloud side
+# (apps + occ: signaling, TURN/STUN, recording, whiteboard, ONLYOFFICE connector).
+# Rerun = changed=0.
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/collab.yml
+# ==============================================================================
+- name: "Collab backend — containers (ONLYOFFICE, Talk HPB/TURN, recording, whiteboard)"
+  hosts: collab
+  become: true
+  gather_facts: true
+  roles:
+    - role: onlyoffice
+    - role: nextcloud_collab
+
+- name: "Collab backend — Nextcloud side (occ settings)"
+  hosts: nextcloud
+  become: true
+  gather_facts: true
+  tasks:
+    - name: "Nextcloud | collab bindings (talk signaling/turn/stun/recording, whiteboard, onlyoffice)"
+      ansible.builtin.import_role:
+        name: nextcloud
+        tasks_from: collab.yml
+      when: nextcloud_collab_enabled | bool

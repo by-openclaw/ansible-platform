@@ -1,0 +1,150 @@
+---
+# ==============================================================================
+# Role: nextcloud — collab.yml: the Nextcloud side of phase 2 (#396):
+#   Talk  → signaling server (HPB) under /standalone-signaling/, TURN + STUN on
+#           talk.<domain>:3478, recording server under /recording/
+#   Whiteboard → collab backend under /whiteboard/ + shared JWT
+#   ONLYOFFICE → connector settings (public URL, internal URL, JWT)
+# Secrets are read from the same Vault paths the backend roles mint.
+# ==============================================================================
+- name: "collab | Read the backend secrets (Vault, minted by roles/nextcloud_collab)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ nextcloud_collab_vault_path }}"
+    vault_secret_init: {}
+
+- name: "collab | Bind the backend secrets"
+  ansible.builtin.set_fact:
+    nextcloud_collab_secrets: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "collab | Read the ONLYOFFICE JWT (Vault, minted by roles/onlyoffice)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ nextcloud_onlyoffice_vault_path }}"
+    vault_secret_init: {}
+
+- name: "collab | Bind the ONLYOFFICE JWT"
+  ansible.builtin.set_fact:
+    nextcloud_onlyoffice_secrets: "{{ vault_secret_result }}"
+  no_log: true
+
+# --- Talk: signaling ---------------------------------------------------------------
+- name: "collab | Talk signaling servers configured today"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ talk:signaling:list --output=json
+  register: nextcloud_talk_sig
+  changed_when: false
+  check_mode: false
+
+- name: "collab | Register the signaling server (HPB)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ talk:signaling:add
+      "https://{{ nextcloud_fqdn }}{{ nextcloud_collab_signaling_prefix }}/" "{{ nextcloud_collab_secrets.signaling_secret }}" --verify
+  when: nextcloud_collab_signaling_prefix not in (nextcloud_talk_sig.stdout | default(''))
+  changed_when: true
+  no_log: true
+
+# --- Talk: TURN + STUN -------------------------------------------------------------
+- name: "collab | Talk TURN servers configured today"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ talk:turn:list --output=json
+  register: nextcloud_talk_turn
+  changed_when: false
+  check_mode: false
+
+- name: "collab | Register the TURN server (turn + turns, udp + tcp)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ talk:turn:add turn
+      "{{ nextcloud_collab_talk_host }}:{{ nextcloud_collab_turn_public_port }}" udp,tcp
+      --secret "{{ nextcloud_collab_secrets.turn_secret }}"
+  when: nextcloud_collab_talk_host not in (nextcloud_talk_turn.stdout | default(''))
+  changed_when: true
+  no_log: true
+
+- name: "collab | Talk STUN servers configured today"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ talk:stun:list --output=json
+  register: nextcloud_talk_stun
+  changed_when: false
+  check_mode: false
+
+- name: "collab | Register the STUN server"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ talk:stun:add "{{ nextcloud_collab_talk_host }}:{{ nextcloud_collab_turn_public_port }}"
+  when: nextcloud_collab_talk_host not in (nextcloud_talk_stun.stdout | default(''))
+  changed_when: true
+
+# --- Talk: recording server -------------------------------------------------------
+- name: "collab | Recording servers configured today"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ config:app:get spreed recording_servers
+  register: nextcloud_talk_rec
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "collab | Desired recording configuration"
+  ansible.builtin.set_fact:
+    nextcloud_talk_rec_desired:
+      servers:
+        - server: "https://{{ nextcloud_fqdn }}{{ nextcloud_collab_recording_prefix }}/"
+          verify: true
+      secret: "{{ nextcloud_collab_secrets.recording_secret }}"  # pragma: allowlist secret
+  no_log: true
+
+- name: "collab | Register the recording server (only on drift)"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ config:app:set spreed recording_servers --value={{ nextcloud_talk_rec_desired | to_json | quote }}
+  when: >-
+    nextcloud_talk_rec.rc != 0
+    or (nextcloud_talk_rec.stdout | trim | length == 0)
+    or ((nextcloud_talk_rec.stdout | trim | from_json) != nextcloud_talk_rec_desired)
+  changed_when: true
+  no_log: true
+
+# --- Whiteboard + ONLYOFFICE app settings (drift-gated via config:list) --------------
+- name: "collab | Whiteboard + ONLYOFFICE app settings today"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ config:list {{ item }} --private --output=json
+  loop: [whiteboard, onlyoffice]
+  register: nextcloud_collab_cfg
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "collab | Bind the current app settings"
+  ansible.builtin.set_fact:
+    nextcloud_collab_cfg_now: >-
+      {{ nextcloud_collab_cfg.results | map(attribute='stdout') | map('from_json')
+         | map(attribute='apps') | list | combine }}
+  no_log: true
+
+- name: "collab | Desired app settings"
+  ansible.builtin.set_fact:
+    nextcloud_collab_settings:
+      - { app: whiteboard, key: collabBackendUrl, value: "https://{{ nextcloud_fqdn }}{{ nextcloud_collab_whiteboard_prefix }}" }
+      - { app: whiteboard, key: jwt_secret_key, value: "{{ nextcloud_collab_secrets.whiteboard_jwt }}" }  # pragma: allowlist secret
+      - { app: onlyoffice, key: DocumentServerUrl, value: "https://{{ nextcloud_onlyoffice_fqdn }}/" }
+      - { app: onlyoffice, key: DocumentServerInternalUrl, value: "https://{{ nextcloud_onlyoffice_fqdn }}/" }
+      - { app: onlyoffice, key: StorageUrl, value: "https://{{ nextcloud_fqdn }}/" }
+      - { app: onlyoffice, key: jwt_secret, value: "{{ nextcloud_onlyoffice_secrets.jwt_secret }}" }  # pragma: allowlist secret
+      - { app: onlyoffice, key: jwt_header, value: "Authorization" }
+  no_log: true
+
+- name: "collab | Apply the app settings (only on drift)"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ config:app:set {{ item.app }} {{ item.key }} --value={{ item.value | quote }}
+  loop: "{{ nextcloud_collab_settings }}"
+  loop_control:
+    label: "{{ item.app }}/{{ item.key }}"
+  vars:
+    _cur: "{{ nextcloud_collab_cfg_now[item.app] | default({}) }}"
+  when: not (_cur is mapping and (_cur[item.key] | default('')) == item.value)
+  changed_when: true
+  no_log: true
