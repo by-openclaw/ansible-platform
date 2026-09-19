@@ -21,3 +21,13 @@
     name: cron
     enabled: true
     state: started
+
+- name: "base | Guest agent enabled + running on VMs (Proxmox and the Terraform provider wait for it; LXCs have none)"
+  ansible.builtin.systemd_service:
+    name: qemu-guest-agent
+    enabled: true
+    state: started
+  when:
+    - ansible_virtualization_role | default('') == 'guest'
+    - ansible_virtualization_type | default('') == 'kvm'
+    - not ansible_check_mode

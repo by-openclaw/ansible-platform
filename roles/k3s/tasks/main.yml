@@ -18,6 +18,19 @@
     - { k: net.ipv6.conf.all.forwarding, v: "1" }
   failed_when: false   # br_netfilter loads at boot; first run may precede it
 
+- name: "k3s | Kernel defaults the kubelet enforces (protect-kernel-defaults=true refuses to start otherwise)"
+  ansible.posix.sysctl:
+    name: "{{ item.k }}"
+    value: "{{ item.v }}"
+    sysctl_file: /etc/sysctl.d/90-kubelet.conf
+    sysctl_set: true
+    reload: true
+  loop:
+    - { k: vm.overcommit_memory, v: "1" }
+    - { k: kernel.panic, v: "10" }
+    - { k: kernel.panic_on_oops, v: "1" }
+    - { k: vm.panic_on_oom, v: "0" }
+
 - name: "k3s | Directories"
   ansible.builtin.file:
     path: "{{ item }}"
