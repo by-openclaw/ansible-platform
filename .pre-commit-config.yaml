@@ -12,6 +12,17 @@ repos:
             \.env\.example
           )$
 
+  # Image pins — no moving tags (:latest/:stable/:edge) and no untagged image
+  # variable: a redeploy must never change the running software silently.
+  - repo: local
+    hooks:
+      - id: image-pins
+        name: image pins (no :latest, no untagged image)
+        entry: scripts/check_image_pins.sh
+        language: script
+        pass_filenames: false
+        files: ^(roles|playbooks|inventories)/.*
+
   # General hygiene
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
