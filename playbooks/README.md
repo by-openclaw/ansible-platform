@@ -1,6 +1,6 @@
 # Playbooks — index & flows
 
-All 69 playbooks in this repo, grouped by scope. Each runs against `inventories/prod/hosts.yml` unless noted. Every playbook also carries a header comment with its own detailed flow; per-role detail lives in each role's `README.md`.
+All 70 playbooks in this repo, grouped by scope. Each runs against `inventories/prod/hosts.yml` unless noted. Every playbook also carries a header comment with its own detailed flow; per-role detail lives in each role's `README.md`.
 
 > Convention: **roles** hold the logic + a role README; **playbooks** compose roles for a run. Idempotent; safe to re-run. Merge gate = CI pre-commit; apply is user-driven.
 
@@ -61,6 +61,7 @@ All 69 playbooks in this repo, grouped by scope. Each runs against `inventories/
 | Playbook | Flow |
 |---|---|
 | `cloudflare-dns.yml` | Manage public Cloudflare DNS for {{ platform_domain }} (exposure model). Controller-side only — no FW/host connection. Apply:  ansible-playbook playbooks/cloudflare-dns.yml |
+| `cadvisor.yml` | Per-container metrics on every Docker host (inventory group `docker_hosts`): cAdvisor pinned, SVC-bound, scraped by Prometheus (job `cadvisor`), with container restart / memory alerts. Asserts every member really runs Docker. |
 | `crowdsec-agents.yml` | Playbook: crowdsec-agents.yml — a CrowdSec log processor on every guest. Standing rule: every LXC/VM runs an agent. Per the CrowdSec multi-server guide, these hosts are LOG PROCESS |
 | `crowdsec-fw-bouncer.yml` | Point the OPNsense firewall bouncer at the central CrowdSec LAPI. Three plays, one connection mode each, so no task-level connection switching: 1. local  — plugin settings + reconf |
 | `crowdsec.yml` | Playbook: crowdsec.yml — PROD CrowdSec central LAPI/engine (lxc-crowdsec-01, SVC). Native crowdsec daemon: LAPI listens on the LAN for agents + bouncers, base + |

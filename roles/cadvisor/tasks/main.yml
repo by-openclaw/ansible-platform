@@ -1,0 +1,70 @@
+---
+- name: "cAdvisor | This host must run Docker (docker_hosts membership is asserted, not assumed)"
+  ansible.builtin.stat:
+    path: /var/run/docker.sock
+  register: cadvisor_sock
+
+- name: "cAdvisor | Fail loudly on inventory drift"
+  ansible.builtin.assert:
+    that: cadvisor_sock.stat.exists
+    fail_msg: "{{ inventory_hostname }} is in docker_hosts but has no Docker socket — fix the inventory group"
+    quiet: true
+
+# /dev/kmsg exists on VMs but not in unprivileged LXCs; cAdvisor only uses it for
+# kernel OOM events, so it is mapped where present and skipped elsewhere.
+- name: "cAdvisor | Kernel message device present?"
+  ansible.builtin.stat:
+    path: /dev/kmsg
+  register: cadvisor_kmsg
+
+- name: "cAdvisor | Pull the pinned image"
+  community.docker.docker_image:
+    name: "{{ cadvisor_image }}"
+    source: pull
+
+- name: "cAdvisor | Run the container (read-only host mounts, SVC address only)"
+  community.docker.docker_container:
+    name: cadvisor
+    image: "{{ cadvisor_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    privileged: false
+    devices: "{{ ['/dev/kmsg'] if cadvisor_kmsg.stat.exists else [] }}"
+    comparisons:
+      devices: strict        # a container left over with a device this host lacks must be recreated, not restarted
+    published_ports:
+      - "{{ cadvisor_listen_ip }}:{{ cadvisor_port }}:8080"
+    volumes:
+      - "/:/rootfs:ro"
+      - "/var/run:/var/run:ro"
+      - "/sys:/sys:ro"
+      - "/var/lib/docker/:/var/lib/docker:ro"
+      - "/dev/disk/:/dev/disk:ro"
+    command:
+      - "--docker_only=true"
+      - "--housekeeping_interval={{ cadvisor_housekeeping_interval }}"
+      - "--disable_metrics={{ cadvisor_disable_metrics }}"
+      - "--store_container_labels=false"
+      - "--whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service"
+    log_driver: journald
+
+- name: "cAdvisor | Allow the monitoring host to scrape it when ufw is active"
+  community.general.ufw:
+    rule: allow
+    port: "{{ cadvisor_port | string }}"
+    proto: tcp
+    from_ip: "{{ item }}"
+    comment: "cAdvisor scrape (Prometheus)"
+  loop: "{{ cadvisor_scrapers }}"
+  failed_when: false
+
+- name: "cAdvisor | Answers /metrics"
+  ansible.builtin.uri:
+    url: "http://{{ cadvisor_listen_ip }}:{{ cadvisor_port }}/healthz"
+    status_code: [200]
+  register: cadvisor_health
+  retries: 10
+  delay: 3
+  until: cadvisor_health.status == 200
+  when: not ansible_check_mode

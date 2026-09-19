@@ -32,6 +32,15 @@ scrape_configs:
           instance: "{{ h }}"
 {% endfor %}
 
+  - job_name: cadvisor
+    scrape_interval: 30s
+    static_configs:
+{% for h in (groups[prometheus_cadvisor_group] | default([])) | sort %}
+      - targets: ['{{ hostvars[h].ansible_host }}:{{ prometheus_cadvisor_port }}']
+        labels:
+          instance: "{{ h }}"
+{% endfor %}
+
 {# --- synthetic probes through the local blackbox exporter ------------------------- #}
 {% macro blackbox_job(name, module, targets) %}
   - job_name: {{ name }}

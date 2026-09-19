@@ -1,4 +1,13 @@
 ---
+# A fresh minimal image (Debian 13 LXC template) has neither curl nor gpg: the role
+# declares what it needs instead of assuming roles/base ran first (lxc-portainer-01, 2026-09-19).
+- name: "Promtail | Prerequisites for fetching and importing the signing key"
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, gnupg]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: "Promtail | Grafana APT signing key (dearmored)"
   ansible.builtin.shell:
     cmd: "set -o pipefail; curl -fsSL {{ promtail_apt_key_url }} | gpg --dearmor -o /usr/share/keyrings/grafana.gpg"
@@ -28,8 +37,7 @@
   ansible.builtin.apt:
     name: promtail
     state: present
-    update_cache: true
-    cache_valid_time: 3600
+    update_cache: true   # always: the repo may have been added seconds ago (a cache marked fresh by an earlier task would hide it)
 
 - name: "Promtail | Config + positions directories"
   ansible.builtin.file:

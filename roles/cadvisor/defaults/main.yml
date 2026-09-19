@@ -1,0 +1,14 @@
+---
+# ==============================================================================
+# Role: cadvisor — per-container metrics (CPU, memory, network, filesystem per
+# container) on every Docker host, scraped by Prometheus. Node exporter covers the
+# host; this covers what runs on it. Pinned, bound to the SVC address only.
+# ==============================================================================
+cadvisor_image: "ghcr.io/google/cadvisor:v0.60.6"
+cadvisor_port: 9180                     # 8080 is taken on several hosts
+cadvisor_listen_ip: "{{ ansible_host }}"
+cadvisor_scrapers: "{{ groups['monitoring'] | default([]) | map('extract', hostvars, 'ansible_host') | list }}"
+# Keep the metric set small: per-container CPU/memory/network/fs is what the alerts
+# and the service view need; the rest multiplies series without adding signal.
+cadvisor_disable_metrics: "advtcp,cpu_topology,cpuset,hugetlb,memory_numa,percpu,process,referenced_memory,resctrl,sched,tcp,udp"
+cadvisor_housekeeping_interval: "15s"

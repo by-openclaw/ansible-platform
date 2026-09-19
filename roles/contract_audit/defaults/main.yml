@@ -125,6 +125,12 @@ contract_audit_service_checks:
     expect: "^[1-9]"
     groups: ["gitlab_runner"]
 
+  - id: DOCKER-ONE-ENGINE
+    desc: "exactly one container engine installed (docker.io XOR docker-ce) — #454"
+    probe: "dpkg-query -W -f='${Package} ${Status}\n' docker.io docker-ce 2>/dev/null | grep -c 'install ok installed'"
+    expect: "^1$"
+    groups: ["docker_hosts"]
+
   - id: SVC-STEPCA
     desc: "step-ca internal CA health endpoint answering"
     probe: "curl -sk -o /dev/null -w '%{http_code}' -m5 https://127.0.0.1:9000/health || echo 000"
