@@ -14,7 +14,8 @@ k3s_download_url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_versio
 k3s_env: "{{ platform_env | default('prod') }}"
 k3s_node_ip: "{{ ansible_host }}"
 k3s_fqdn: "k3s.{{ platform_domain }}"                 # API name (tls-san), internal only
-k3s_apps_domain: "apps.{{ platform_domain }}"          # every app = <app>.apps.<domain> through the platform Traefik
+# Apps are published as <app>.<domain> (ONE label: the Let's Encrypt wildcard covers *.<domain> only;
+# a second level such as demo.apps.<domain> would get Traefik's default certificate).
 k3s_ingress_http_port: 80                              # embedded Traefik (servicelb) — HTTP only, TLS is the platform Traefik's
 k3s_cluster_cidr: "10.42.0.0/16"
 k3s_service_cidr: "10.43.0.0/16"
@@ -31,4 +32,4 @@ k3s_gitlab_host: "lxc-gitlab-01"                       # where gitlab-rails runs
 # Each entry also needs: an unbound override <fqdn> → Traefik (catalog) and an Authentik
 # proxy app (roles/authentik authentik_proxy_apps) with the same slug.
 k3s_published_apps:
-  - { name: demo-apps, fqdn: "demo.apps.{{ platform_domain }}" }
+  - { name: demo-apps, fqdn: "demo.{{ platform_domain }}" }

@@ -1,6 +1,6 @@
 # role: k3s
 
-Single-node k3s on `vm-k3s-01` (SVC): the application platform. GitLab CI builds with Kaniko, pushes to the project registry, and a namespace-scoped deployer applies Kubernetes manifests; apps are published as `<app>.apps.<domain>` through the **platform** Traefik (TLS, forwardAuth SSO) which forwards plain HTTP to the k3s ingress (embedded Traefik, servicelb on :80).
+Single-node k3s on `vm-k3s-01` (SVC): the application platform. GitLab CI builds with Kaniko, pushes to the project registry, and a namespace-scoped deployer applies Kubernetes manifests; apps are published as `<app>.<domain>` (one label: the wildcard certificate covers one level) through the **platform** Traefik (TLS, forwardAuth SSO) which forwards plain HTTP to the k3s ingress (embedded Traefik, servicelb on :80).
 
 ## Contract map
 
@@ -22,6 +22,6 @@ ansible-playbook -i inventories/prod/hosts.yml playbooks/k3s.yml
 
 ## Runbook
 
-- `kubectl get nodes`, `kubectl -n demo get all`; ingress answers `curl -H 'Host: demo.apps.<domain>' http://10.1.3.195/`.
+- `kubectl get nodes`, `kubectl -n demo get all`; ingress answers `curl -H 'Host: demo.<domain>' http://10.1.3.195/`.
 - A deploy job fails with 401 on the API → the SA token was recreated: re-run the play (Vault + CI variable refresh with `vault_secret_force_fields`).
 - Image pull errors → the deploy token (`k3s-pull`) or the Harbor mirror; `crictl pull` on the node shows which.

@@ -49,15 +49,15 @@ pages:
 
 # Deploy to the k3s application platform (roles/k3s): namespace-scoped kubeconfig from the
 # project variable KUBECONFIG_B64, image pulled with the k3s-pull deploy token, published as
-# demo.apps.<domain> through the platform Traefik (TLS + SSO).
+# demo.<domain> through the platform Traefik (TLS + SSO).
 deploy-k3s:
   stage: deploy
   tags: [linux]
   image:
-    name: bitnami/kubectl:1.33.4
+    name: alpine/k8s:1.37.0     # kubectl + helm on alpine (bitnami tags are no longer published); minor matches the k3s server
     entrypoint: [""]
   variables:
-    APP_HOST: demo.apps.$PLATFORM_DOMAIN
+    APP_HOST: demo.$PLATFORM_DOMAIN
   before_script:
     - mkdir -p ~/.kube && echo "$KUBECONFIG_B64" | base64 -d > ~/.kube/config && chmod 600 ~/.kube/config
   script:
