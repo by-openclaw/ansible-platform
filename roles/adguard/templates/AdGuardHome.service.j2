@@ -1,0 +1,27 @@
+# Copyright (c) BY-SYSTEMS SRL
+# SPDX-License-Identifier: Apache-2.0
+# Source: https://github.com/by-openclaw/ansible-platform
+#
+# Managed by Ansible role `adguard` (tasks/install.yml). Do not edit by hand.
+# Rendered instead of `AdGuardHome -s install`: the installer bakes the CALLER's
+# current directory into WorkingDirectory — on 2026-09-18 that was a home
+# directory that no longer existed and the resolver crash-looped for 12 hours.
+[Unit]
+Description=AdGuard Home: Network-level blocker
+ConditionFileIsExecutable={{ adguard_home_dir }}/AdGuardHome
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+StartLimitInterval=5
+StartLimitBurst=10
+ExecStart={{ adguard_home_dir }}/AdGuardHome -s run -w {{ adguard_home_dir }}
+WorkingDirectory={{ adguard_home_dir }}
+StandardOutput=journal
+StandardError=journal
+Restart=always
+RestartSec=10
+EnvironmentFile=-/etc/sysconfig/AdGuardHome
+
+[Install]
+WantedBy=multi-user.target
