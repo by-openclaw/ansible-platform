@@ -30,7 +30,9 @@
     restart_policy: unless-stopped
     pull: false
     privileged: false
-    devices: "{{ ['/dev/kmsg'] if cadvisor_kmsg.stat.exists else omit }}"
+    devices: "{{ ['/dev/kmsg'] if cadvisor_kmsg.stat.exists else [] }}"
+    comparisons:
+      devices: strict        # a container left over with a device this host lacks must be recreated, not restarted
     published_ports:
       - "{{ cadvisor_listen_ip }}:{{ cadvisor_port }}:8080"
     volumes:
