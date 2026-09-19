@@ -39,6 +39,27 @@
     state: present
     update_cache: true   # always: the repo may have been added seconds ago (a cache marked fresh by an earlier task would hide it)
 
+- name: "Promtail | Read + traverse on declared log trees (ACL, current entries)"
+  ansible.posix.acl:
+    path: "{{ item }}"
+    entity: promtail
+    etype: user
+    permissions: rX
+    recursive: true
+    state: present
+  loop: "{{ promtail_acl_dirs }}"
+
+- name: "Promtail | Same as a DEFAULT ACL, so entries created later inherit it"
+  ansible.posix.acl:
+    path: "{{ item }}"
+    entity: promtail
+    etype: user
+    permissions: rX
+    default: true
+    recursive: true
+    state: present
+  loop: "{{ promtail_acl_dirs }}"
+
 - name: "Promtail | Config + positions directories"
   ansible.builtin.file:
     path: "{{ item }}"
