@@ -1,0 +1,29 @@
+---
+# ==============================================================================
+# Role: portainer — ONE web console for both container worlds: the k3s cluster
+# and every Docker-in-LXC host. Server runs IN k3s (no new guest); each Docker
+# host runs the read/write agent on the SVC address only. Authentik OIDC is the
+# only way in (no local admin password after the first boot), restricted to the
+# platform-admins group.
+# ==============================================================================
+portainer_version: "2.45.1"
+portainer_server_image: "portainer/portainer-ce:{{ portainer_version }}-alpine"
+portainer_agent_image: "portainer/agent:{{ portainer_version }}"
+portainer_env: "{{ platform_env | default('prod') }}"
+portainer_fqdn: "portainer.{{ platform_domain }}"
+portainer_namespace: "portainer"
+portainer_http_port: 9000              # server UI (HTTP; TLS is the platform Traefik's)
+portainer_agent_port: 9001             # agent on each Docker host, SVC-facing only
+portainer_storage_size: "2Gi"          # local-path PVC for its own database
+# Docker hosts that get an agent = every host in these inventory groups that runs docker.
+portainer_agent_groups:
+  - cluster
+  - mailcow
+# Secrets: agent shared key (get-or-create) + the OIDC client (minted by roles/authentik)
+portainer_vault_path: "{{ portainer_env }}/portainer/agent"        # field: secret
+portainer_admin_vault_path: "{{ portainer_env }}/portainer/admin"  # field: password (initial admin)
+portainer_admin_user: "admin"
+# Access is gated at the proxy: Authentik forwardAuth, members of this group only.
+# Native OIDC inside Portainer is the follow-up (its API can configure it once the
+# console is up); until then the local admin exists only as a break-glass account.
+portainer_admin_group: "platform-admins"
