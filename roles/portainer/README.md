@@ -13,7 +13,7 @@ The container console, on its **own guest** `lxc-portainer-01` (SVC, 2 vCPU / 2 
 | Firewall | catalog aliases `host4/host6_portainer`, `port_portainer`; rule `PASS DMZ Traefik→SVC portainer` (v4/v6). Agents: SVC→SVC and SVC→DMZ are open by default policy; each agent's ufw accepts the console host only. |
 | Mailbox | `portainer@<domain>` via the scaffold + `playbooks/mailboxes.yml` fan-out. |
 | Audit | `contract_audit` row `SVC-PORTAINER` (API answers on the console host). |
-| Agents | Docker: compose stack on each `docker_hosts` member, shared key read **once** from Vault `prod/portainer/agent`. Kubernetes: Deployment + NodePort 30778 in namespace `portainer-agent`. Environments registered through the API from the inventory, idempotent. |
+| Agents | Docker: one container per `docker_hosts` member (managed directly, **no compose file, no package install** — the first version installed Debian's docker-compose, which pulled Debian's engine onto a docker-ce VM and took the mail stack down, 2026-09-19), shared key read **once** from Vault `prod/portainer/agent`. Kubernetes: Deployment + NodePort 30778 in namespace `portainer-agent`. Environments registered through the API from the inventory, idempotent. |
 | Monitoring | node exporter + promtail (group `cluster`), cAdvisor (group `docker_hosts`), HTTPS probe on the route (read from the live Traefik host list). |
 | Backup | class D: no platform data; the guest is in the PBS jobs and the play rebuilds the console from Vault + inventory. |
 | Lifecycle | `-e portainer_state=absent` stops and removes the stack; the guest is removed by Terraform; Vault paths stay (archive rule). |
@@ -27,6 +27,6 @@ ansible-playbook -i inventories/prod/hosts.yml playbooks/portainer.yml
 ## Runbook
 
 - Sign-in: "Login with OAuth" → Authentik. Only `platform-admins` get through the IdP.
-- An environment shows down: `docker ps` in `/opt/portainer-agent` on that host (Docker) or `kubectl -n portainer-agent get pods` (cluster); the console host must reach port 9001 / 30778.
+- An environment shows down: `docker ps -f name=portainer-agent` on that host (Docker) or `kubectl -n portainer-agent get pods` (cluster); the console host must reach port 9001 / 30778.
 - First deployment only: `--check` fails on the Vault secrets (a get-or-create cannot mint under check mode). Run once for real; afterwards `--check` is clean.
 - Rotating the agent key: `vault_secret_force_fields` on `prod/portainer/agent`, then re-run — server and every agent are rendered from the same value.

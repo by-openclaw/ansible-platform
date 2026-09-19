@@ -52,35 +52,26 @@
         mode: "0600"
       no_log: true
 
-    - name: "Portainer | docker-compose.yml"
-      ansible.builtin.template:
-        src: docker-compose.yml.j2
-        dest: "{{ portainer_dir }}/docker-compose.yml"
-        owner: root
-        group: root
-        mode: "0644"
-
-    - name: "Portainer | Ensure Compose v2"
-      ansible.builtin.apt:
-        name: docker-compose
-        state: present
-        update_cache: true
-        cache_valid_time: 3600
-
     - name: "Portainer | Pull the pinned server image"
       community.docker.docker_image:
         name: "{{ portainer_server_image }}"
         source: pull
 
-    - name: "Portainer | Start / reconcile"
-      ansible.builtin.command:
-        cmd: docker-compose up -d --remove-orphans
-        chdir: "{{ portainer_dir }}"
-      register: portainer_up
-      changed_when: >-
-        'Started' in (portainer_up.stderr | default(''))
-        or 'Created' in (portainer_up.stderr | default(''))
-        or 'Recreat' in (portainer_up.stderr | default(''))
+    - name: "Portainer | Run the server (one container, managed directly)"
+      community.docker.docker_container:
+        name: portainer
+        image: "{{ portainer_server_image }}"
+        state: started
+        restart_policy: unless-stopped
+        pull: false
+        command: ["--http-enabled", "--admin-password-file=/run/secrets/admin"]
+        published_ports:
+          - "{{ portainer_listen_ip }}:{{ portainer_http_port }}:9000"
+        volumes:
+          - "portainer-data:/data"
+          - "{{ portainer_dir }}/admin-password:/run/secrets/admin:ro"
+        security_opts: ["no-new-privileges:true"]
+        log_driver: journald
 
     - name: "Portainer | API answers"
       ansible.builtin.uri:

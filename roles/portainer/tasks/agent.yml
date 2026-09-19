@@ -26,44 +26,41 @@
     portainer_agent_secret: "{{ hostvars[ansible_play_hosts_all[0]].vault_secret_result.secret }}"
   no_log: true
 
-- name: "Portainer agent | Layout directory"
+# One container, managed directly (community.docker): no compose file, no extra
+# package. The first version installed Debian's docker-compose, which pulled Debian's
+# docker.io engine onto the two docker-ce VMs and killed their stacks (2026-09-19).
+- name: "Portainer agent | Retire the compose-managed container of the first version"
+  community.docker.docker_container:
+    name: portainer-agent_agent_1
+    state: absent
+
+- name: "Portainer agent | Retire the compose layout of the first version"
   ansible.builtin.file:
     path: /opt/portainer-agent
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
-
-- name: "Portainer agent | docker-compose.yml (key inside)"
-  ansible.builtin.template:
-    src: agent-compose.yml.j2
-    dest: /opt/portainer-agent/docker-compose.yml
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-
-- name: "Portainer agent | Ensure Compose v2"
-  ansible.builtin.apt:
-    name: docker-compose
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+    state: absent
 
 - name: "Portainer agent | Pull the pinned image"
   community.docker.docker_image:
     name: "{{ portainer_agent_image }}"
     source: pull
 
-- name: "Portainer agent | Start / reconcile"
-  ansible.builtin.command:
-    cmd: docker-compose up -d --remove-orphans
-    chdir: /opt/portainer-agent
-  register: portainer_agent_up
-  changed_when: >-
-    'Started' in (portainer_agent_up.stderr | default(''))
-    or 'Created' in (portainer_agent_up.stderr | default(''))
-    or 'Recreat' in (portainer_agent_up.stderr | default(''))
+- name: "Portainer agent | Run the agent (this host's daemon, SVC address only)"
+  community.docker.docker_container:
+    name: portainer-agent
+    image: "{{ portainer_agent_image }}"
+    state: started
+    restart_policy: unless-stopped
+    pull: false
+    published_ports:
+      - "{{ hostvars[inventory_hostname].ansible_host }}:{{ portainer_agent_port }}:9001"
+    env:
+      AGENT_SECRET: "{{ portainer_agent_secret }}"
+      LOG_LEVEL: "INFO"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    log_driver: journald
+  no_log: true
 
 - name: "Portainer agent | Reachable from the console host only (ufw)"
   community.general.ufw:
