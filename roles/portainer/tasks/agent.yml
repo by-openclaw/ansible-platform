@@ -18,7 +18,7 @@
       community.docker.docker_container:
         name: "{{ item }}"
         state: absent
-      loop: [portainer-agent, portainer-agent_agent_1]
+      loop: [portainer-agent, portainer-agent_agent_1, portainer-agent-agent-1]
 
     - name: "Portainer agent | Remove the first version's compose layout (opt-out)"
       ansible.builtin.file:
@@ -46,10 +46,11 @@
     # One container, managed directly (community.docker): no compose file, no extra
     # package. The first version installed Debian's docker-compose, which pulled Debian's
     # docker.io engine onto the two docker-ce VMs and killed their stacks (2026-09-19).
-    - name: "Portainer agent | Retire the compose-managed container of the first version"
+    - name: "Portainer agent | Retire the compose-managed container of the first version (either compose naming scheme)"
       community.docker.docker_container:
-        name: portainer-agent_agent_1
+        name: "{{ item }}"
         state: absent
+      loop: [portainer-agent_agent_1, portainer-agent-agent-1]
 
     - name: "Portainer agent | Retire the compose layout of the first version"
       ansible.builtin.file:
