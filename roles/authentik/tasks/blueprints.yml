@@ -64,10 +64,10 @@
 # the next cycle — apply it now (idempotent; no restart involved).
 - name: "blueprints | Apply the OIDC blueprint of each retired proxy app now (the provider it was blocking)"
   ansible.builtin.command:
-    argv: [docker, exec, authentik-server, ak, apply_blueprint, "/blueprints/oidc-{{ item }}.yaml"]
+    argv: [docker, exec, authentik-server, ak, apply_blueprint, "/blueprints/custom/oidc-{{ item }}.yaml"]
   loop: "{{ authentik_proxy_apps_retired | default([]) }}"
   register: authentik_retired_apply
-  changed_when: "'Successfully applied' in (authentik_retired_apply.stdout ~ authentik_retired_apply.stderr) or 'applied' in (authentik_retired_apply.stdout ~ authentik_retired_apply.stderr) | lower"
+  changed_when: "'applied' in ((authentik_retired_apply.stdout ~ authentik_retired_apply.stderr) | lower)"
   failed_when: authentik_retired_apply.rc != 0 and 'No such file' not in (authentik_retired_apply.stderr | default(''))
   when: authentik_proxy_apps_retired | default([]) | length > 0
 
