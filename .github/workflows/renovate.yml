@@ -12,6 +12,10 @@ on:
         default: info
         type: choice
         options: [info, debug]
+      force:
+        description: Ignore the weekly schedule and open the pending PRs now (security patches)
+        default: false
+        type: boolean
 permissions:
   contents: read
 jobs:
@@ -27,6 +31,8 @@ jobs:
           renovate-version: 44.103.2
         env:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
+          # A security release cannot wait for Monday: this run ignores the schedule.
+          RENOVATE_FORCE: ${{ inputs.force && '{"schedule":null}' || '' }}
           RENOVATE_REPOSITORIES: ${{ github.repository }}
           RENOVATE_PLATFORM: github
           RENOVATE_ONBOARDING: "false"
