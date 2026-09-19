@@ -1,7 +1,15 @@
 # BY-SYSTEMS demo pipeline: build an image with Kaniko (rootless, no privileged
 # daemon) → push to THIS project's container registry using the CI job token, then
 # publish a GitLab Pages site. Runs on the linux+kaniko runner (VM-isolated).
+# Platform CI templates (platform/infra/ci-templates, pushed by roles/gitlab_rbac):
+# security-scan = Semgrep SAST + Syft SBOM + Trivy fs (vuln/secret/misconfig), artifacts kept.
+include:
+  - project: platform/infra/ci-templates
+    ref: main
+    file: security-scan.gitlab-ci.yml
+
 stages:
+  - security
   - build
   - pages
 
