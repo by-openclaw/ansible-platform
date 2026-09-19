@@ -72,6 +72,16 @@
   delay: 5
   until: onlyoffice_health.status == 200 and 'true' in (onlyoffice_health.content | default(''))
 
+- name: "ONLYOFFICE | Wait for the font set (AllFonts.js) — the editor cannot load without it"
+  ansible.builtin.command:
+    cmd: docker exec onlyoffice-onlyoffice-1 test -s /var/www/onlyoffice/documentserver/sdkjs/common/AllFonts.js
+  register: onlyoffice_fonts
+  retries: 60
+  delay: 10
+  until: onlyoffice_fonts.rc == 0
+  changed_when: false
+  check_mode: false
+
 - name: "ONLYOFFICE | Open the port to Traefik / VPN when ufw is active"
   community.general.ufw:
     rule: allow
