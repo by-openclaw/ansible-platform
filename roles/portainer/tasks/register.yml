@@ -26,6 +26,9 @@
   no_log: true
   check_mode: false
 
+- name: "Portainer | Native SSO (first: people must be able to sign in even if an agent is unreachable)"
+  ansible.builtin.include_tasks: sso.yml
+
 - name: "Portainer | Environments registered today"
   ansible.builtin.uri:
     url: "{{ portainer_api }}/api/endpoints"
@@ -65,6 +68,3 @@
   loop_control:
     label: "{{ item.0 }} ({{ item.1 }})"
   changed_when: true
-
-- name: "Portainer | Native SSO"
-  ansible.builtin.include_tasks: sso.yml
