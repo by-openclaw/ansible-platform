@@ -130,6 +130,11 @@ contract_audit_service_checks:
     probe: "dpkg-query -W -f='${Package} ${Status}\n' docker.io docker-ce 2>/dev/null | grep -c 'install ok installed'"
     expect: "^1$"
     groups: ["docker_hosts"]
+  - id: SVC-PORTAINER
+    desc: "Portainer console API answering on its own guest"
+    probe: "curl -s -o /dev/null -w '%{http_code}' -m5 http://{{ ansible_host }}:9000/api/status || echo 000"
+    expect: "^200$"
+    groups: ["portainer"]
 
   - id: SVC-STEPCA
     desc: "step-ca internal CA health endpoint answering"
