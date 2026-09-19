@@ -1,0 +1,54 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":disableDependencyDashboard"],
+  "dependencyDashboard": true,
+  "dependencyDashboardTitle": "Version tracker — pinned images and releases (Renovate)",
+  "timezone": "Europe/Brussels",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 5,
+  "labels": ["deps", "review:opus"],
+  "commitMessagePrefix": "chore(deps):",
+  "semanticCommits": "enabled",
+  "automerge": false,
+  "rangeStrategy": "pin",
+  "ignorePaths": ["docs/archive/**", "**/archive/**"],
+  "packageRules": [
+    { "description": "One PR per role: group every pin that lives in the same role defaults file",
+      "matchFileNames": ["roles/**/defaults/main.yml"],
+      "groupName": "{{packageFileDir}}",
+      "groupSlug": "{{packageFileDir}}" },
+    { "description": "Majors are separate PRs with a warning label — they go through an upgrade ladder, never a plain pin bump",
+      "matchUpdateTypes": ["major"],
+      "groupName": null,
+      "labels": ["deps", "major", "review:opus"],
+      "prPriority": -1 },
+    { "description": "Nextcloud majors wait for the app ecosystem (D15) — surface them, never auto-open",
+      "matchDepNames": ["nextcloud"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true },
+    { "description": "Vault and PostgreSQL majors are data migrations — dashboard approval only",
+      "matchDepNames": ["hashicorp/vault", "postgres"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true },
+    { "description": "Digest-only and lock-file noise off — the platform pins tags",
+      "matchUpdateTypes": ["digest", "lockFileMaintenance", "pinDigest"],
+      "enabled": false }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Docker image pins in role defaults: <var>_image: \"repo:tag\"",
+      "managerFilePatterns": ["/^roles/.+/defaults/main\\.yml$/"],
+      "matchStrings": ["^[a-z0-9_]+_image: \"(?<depName>[^\"\\s:{]+):(?<currentValue>[^\"\\s{]+)\""],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Version pins annotated on the previous line: # renovate: datasource=<ds> depName=<name> [versioning=<v>] [extractVersion=<re>]",
+      "managerFilePatterns": ["/^roles/.+/defaults/main\\.yml$/", "/^playbooks/.+\\.yml$/"],
+      "matchStrings": ["# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>[^\\s]+)(?: versioning=(?<versioning>[^\\s]+))?(?: extractVersion=(?<extractVersion>[^\\s]+))?\\n[a-z0-9_]+: \"(?<currentValue>[^\"\\s{]+)\""],
+      "versioningTemplate": "{{#if versioning}}{{{versioning}}}{{else}}semver-coerced{{/if}}"
+    }
+  ]
+}
