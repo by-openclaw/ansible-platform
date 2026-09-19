@@ -18,8 +18,8 @@
   ansible.builtin.set_fact:
     nextcloud_apps_to_update: >-
       {{ nextcloud_apps_showonly.stdout_lines
-         | map('regex_search', '^(\\S+) new version available', '\\1')
-         | reject('none') | map('first') | list
+         | select('search', ' new version available')
+         | map('trim') | map('split', ' ') | map('first') | list
          | difference(nextcloud_apps_pinned | default([]) | map(attribute='id') | list) }}
 
 - name: "apps | Update to the latest release for this major"
