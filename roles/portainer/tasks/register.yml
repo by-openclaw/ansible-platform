@@ -36,15 +36,16 @@
   changed_when: false
   check_mode: false
 
-- name: "Portainer | Desired environments (every Docker host + the cluster)"
+- name: "Portainer | Desired environments (every Docker host with an agent + the cluster)"
   ansible.builtin.set_fact:
     portainer_wanted: >-
-      {{ (groups['docker_hosts'] | default([]) | map('extract', hostvars) | list
-          | map(attribute='inventory_hostname')
-          | zip(groups['docker_hosts'] | default([]) | map('extract', hostvars, 'ansible_host')
-                | map('regex_replace', '$', ':' ~ portainer_agent_port))
-          | list)
-         + [[portainer_k8s_host ~ ' (k3s)', hostvars[portainer_k8s_host].ansible_host ~ ':' ~ portainer_k8s_agent_nodeport]] }}
+      {%- set out = [] -%}
+      {%- for h in groups['docker_hosts'] | default([]) | sort -%}
+        {%- if hostvars[h].portainer_agent | default(true) -%}
+          {%- set _ = out.append([h, hostvars[h].ansible_host ~ ':' ~ portainer_agent_port]) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out + [[portainer_k8s_host ~ ' (k3s)', hostvars[portainer_k8s_host].ansible_host ~ ':' ~ portainer_k8s_agent_nodeport]] }}
 
 - name: "Portainer | Register the missing environments"
   ansible.builtin.uri:
