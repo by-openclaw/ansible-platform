@@ -2927,3 +2927,15 @@ opn_syslog_destinations:
   - {description: 'Loki — promtail syslog listener (all logs, RFC5424/TCP)', hostname: 10.1.3.230, syslog_port: '1514', transport: tcp4, rfc5424: true, enabled: true, state: present, ref: {adr: 'services/0006#logging', lib_manager: SyslogDestManager, ansible_module: by_systems.opnsense.opnsense_syslog_dest}}
   # services/0010 §1: the same stream to the CrowdSec engine (Suricata EVE → suricata-alerts scenario)
   - {description: 'CrowdSec — Suricata EVE feed (all logs, RFC5424/UDP)', hostname: 10.1.3.190, syslog_port: '1515', transport: udp4, rfc5424: true, enabled: true, state: present, ref: {adr: 'services/0010#§1-engine', lib_manager: SyslogDestManager, ansible_module: by_systems.opnsense.opnsense_syslog_dest}}
+
+# ------------------------------------------------------------------------------
+# Monit remote-host probes (roles/opnsense/tasks/monit.yml) — SVC daemons the FW can
+# reach and alert on through the same Resend mail as the process checks. Added after
+# the 2026-09-18 resolver outage (#424): AdGuard was down 12 h and surfaced only as
+# "everything is slow". Addresses = the platform resolver (host4/host6_adguard).
+# ------------------------------------------------------------------------------
+opnsense_monit_host_tests:
+  - {name: ResolverDown, condition: "failed port 53 type udp protocol dns", action: alert}
+opnsense_monit_hosts:
+  - {name: adguard-dns-v4, address: "10.1.3.101", test: ResolverDown, description: "platform resolver (AdGuard) v4"}
+  - {name: adguard-dns-v6, address: "fd01:3::101", test: ResolverDown, description: "platform resolver (AdGuard) v6"}

@@ -111,6 +111,61 @@
   become: false
   tags: [services, monit]
 
+# --- remote-host probes (SVC daemons reachable from the FW, e.g. the resolver) ------------
+- name: Monit | Ensure the remote-host tests exist
+  by_systems.opnsense.opnsense_monit_test:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ item.name }}"
+    type: Custom          # free-form condition (e.g. "failed port 53 type udp protocol dns")
+    condition: "{{ item.condition }}"
+    action: "{{ item.action | default('alert') }}"
+  loop: "{{ opnsense_monit_host_tests }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Resolve the test uuids (read-only lookup)
+  ansible.builtin.uri:
+    url: "{{ opnsense_api_url }}/api/monit/settings/searchTest?searchPhrase="
+    method: GET
+    url_username: "{{ opnsense_api_key }}"
+    url_password: "{{ opnsense_api_secret }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: opnsense_monitchk_all_tests
+  check_mode: false   # read-only GET — must also run under --check
+  when: opnsense_monit_hosts | length > 0
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
+- name: Monit | Ensure a remote-host check per probed daemon
+  by_systems.opnsense.opnsense_monit_service:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    name: "{{ item.name }}"
+    description: "{{ item.description | default('') }}"
+    enabled: true
+    type: host
+    address: "{{ item.address }}"
+    tests: "{{ (opnsense_monitchk_all_tests.json.rows | selectattr('name', 'equalto', item.test) | map(attribute='uuid') | first) | default('') }}"
+  loop: "{{ opnsense_monit_hosts }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.address }})"
+  delegate_to: localhost
+  become: false
+  tags: [services, monit]
+
 - name: Monit | Ensure the Monit daemon is running (config regenerated + syntax-tested by the plugin)
   by_systems.opnsense.opnsense_monit_daemon:
     host: "{{ opn_host }}"
