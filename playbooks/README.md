@@ -1,6 +1,6 @@
 # Playbooks — index & flows
 
-All 69 playbooks in this repo, grouped by scope. Each runs against `inventories/prod/hosts.yml` unless noted. Every playbook also carries a header comment with its own detailed flow; per-role detail lives in each role's `README.md`.
+All 70 playbooks in this repo, grouped by scope. Each runs against `inventories/prod/hosts.yml` unless noted. Every playbook also carries a header comment with its own detailed flow; per-role detail lives in each role's `README.md`.
 
 > Convention: **roles** hold the logic + a role README; **playbooks** compose roles for a run. Idempotent; safe to re-run. Merge gate = CI pre-commit; apply is user-driven.
 
@@ -76,6 +76,7 @@ All 69 playbooks in this repo, grouped by scope. Each runs against `inventories/
 | `adguard-prod.yml` | Playbook: adguard-prod — configure PROD AdGuard Home (vm-adguard-01) Applies the `adguard` role: install + wildcard TLS + per-VLAN clients + renew. Reach the SVC VLAN via the prod  |
 | `mailboxes.yml` | Per-service rx/tx mailboxes (SVC-16) + the mandatory catchall@ (SVC-09), via the reusable mailbox concern-role. Idempotent. NOT here: postmaster@/abuse@ (RFC boxes, mailcow role) a |
 | `mailcow.yml` | Playbook: mailcow.yml — PROD mailcow mail server (vm-mailcow-01, DMZ vlan1020) Self-contained mailcow-dockerized stack; vmail on Synology NFS; web UI via |
+| `portainer.yml` | One web console for both container worlds: Portainer server in the k3s cluster + an agent on every Docker host, environments registered from the inventory through the API, published internally behind Authentik. |
 | `postgresql.yml` | Configure PROD PostgreSQL (lxc-pgsql-01, SVC). |
 | `redis.yml` | Configure PROD Redis (lxc-redis-01, SVC). |
 | `seaweedfs.yml` | SeaweedFS — S3 object-storage backend (replaces EOL MinIO). Play 1 (PVE host): persistent ZFS dataset tank/data/seaweedfs + bind-mount into lxc-seaweedfs-01 at /data — DATA survive |
