@@ -234,6 +234,11 @@ authentik_oidc_apps:
 # /outpost.goauthentik.io/). Traefik calls it via forwardAuth: unauthenticated →
 # redirect to Authentik; authenticated but not in `group` → 403. Add an app here to
 # gate it — same "one list entry" pattern as authentik_oidc_apps.
+# Proxy (forwardAuth) apps that were declared once and must go: blueprints only add, so a
+# retired proxy provider stays and — sharing the name — blocks the OIDC provider of the same
+# service (Portainer, 2026-09-19: "Redirect URI Error"). Explicit list, never implicit pruning.
+authentik_proxy_apps_retired:
+  - portainer            # replaced by the native OIDC app (authentik_oidc_apps)
 authentik_proxy_apps:
   - slug: jitsi
     name: "Jitsi Meet"

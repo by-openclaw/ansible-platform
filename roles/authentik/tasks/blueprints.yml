@@ -35,6 +35,30 @@
   when: authentik_proxy_apps | default([]) | length > 0
   notify: Restart authentik
 
+- name: "blueprints | Retire proxy providers that are declared retired (the OIDC provider of the same name can then exist)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - authentik-server
+      - ak
+      - shell
+      - -c
+      - |
+        from authentik.providers.proxy.models import ProxyProvider
+        names = {{ authentik_proxy_apps_retired | default([]) | to_json }}
+        qs = ProxyProvider.objects.filter(name__in=names)
+        n = qs.count()
+        for p in qs:
+            for o in p.outpost_set.all():
+                o.providers.remove(p)
+        qs.delete()
+        print("retired=%d" % n)
+  register: authentik_proxy_retired
+  changed_when: "'retired=0' not in authentik_proxy_retired.stdout"
+  when: authentik_proxy_apps_retired | default([]) | length > 0
+  notify: Restart authentik
+
 - name: "blueprints | Render the identity blueprint (groups + users)"
   ansible.builtin.template:
     src: identity.yaml.j2
