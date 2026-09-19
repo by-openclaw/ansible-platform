@@ -58,7 +58,7 @@ end
 dt = proj.deploy_tokens.find_by(name: 'k3s-pull')
 if dt.nil?
   # the internal service sets the sharding columns a plain create! leaves null (check violation)
-  res = DeployTokens::CreateService.new(proj, User.find_by(username: 'root'),
+  res = Projects::DeployTokens::CreateService.new(proj, User.find_by(username: "root"),
                                         { name: 'k3s-pull', read_registry: true, expires_at: 2.years.from_now.to_date.iso8601 }).execute
   abort "deploy token failed: #{res[:message]}" unless res[:status] == :success
   dt = res[:deploy_token]
