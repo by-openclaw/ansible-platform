@@ -27,7 +27,16 @@ prometheus_blackbox_url: "127.0.0.1:9115"
 # it is published. Deep health paths and exclusions are declared here.
 prometheus_traefik_host: "lxc-traefik-01"
 prometheus_traefik_dynamic_dir: "/etc/traefik/dynamic"
-prometheus_blackbox_http_exclude: []
+# Names that cannot be probed from inside: ca.<domain> has no internal record (VPN-only name)
+# and vpn.<domain> resolves to the WAN address (no NAT reflection). Their daemons are probed
+# on TCP below; external reachability is the status page's job.
+prometheus_blackbox_http_exclude:
+  - "ca.{{ platform_domain }}"
+  - "vpn.{{ platform_domain }}"
+# Per-host URL override when the internal path differs from the public one (split-DNS sends
+# mail.<domain> straight to the mail server, which serves HTTPS on 8443, not 443).
+prometheus_blackbox_http_overrides:
+  "mail.{{ platform_domain }}": "https://mail.{{ platform_domain }}:8443/"
 prometheus_blackbox_http_extra:
   - "https://nextcloud.{{ platform_domain }}/status.php"
   - "https://nextcloud.{{ platform_domain }}/standalone-signaling/api/v1/welcome"
@@ -37,7 +46,10 @@ prometheus_blackbox_http_extra:
 prometheus_blackbox_dns_v4: ["10.1.3.101:53"]
 prometheus_blackbox_dns_v6: ["[fd01:3::101]:53"]
 # Plain TCP listeners (Talk TURN on the collab host)
-prometheus_blackbox_tcp: ["10.1.3.194:3478"]
+prometheus_blackbox_tcp:
+  - "10.1.3.194:3478"     # Talk TURN listener (collab)
+  - "10.1.3.192:9000"     # step-ca (HTTPS probe once its root is in the trust store, A.4)
+  - "10.1.3.181:33073"    # NetBird management (public name is WAN-only from inside)
 # TLS listeners — also yields the certificate expiry (mail-port wildcard expired unseen on 2026-09-17)
 prometheus_blackbox_tcp_tls: ["vm-mailcow-01.{{ platform_domain }}:993"]
 prometheus_blackbox_smtp_starttls: ["vm-mailcow-01.{{ platform_domain }}:587", "vm-mailcow-01.{{ platform_domain }}:25"]
