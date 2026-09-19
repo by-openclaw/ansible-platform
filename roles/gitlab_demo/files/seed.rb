@@ -57,7 +57,11 @@ end
 # Deploy token for the k3s pull secret (read_registry) → CI variables the deploy job uses.
 dt = proj.deploy_tokens.find_by(name: 'k3s-pull')
 if dt.nil?
-  dt = proj.deploy_tokens.create!(name: 'k3s-pull', read_registry: true, deploy_token_type: :project_type, expires_at: 2.years.from_now.to_date.iso8601)
+  # the internal service sets the sharding columns a plain create! leaves null (check violation)
+  res = DeployTokens::CreateService.new(proj, User.find_by(username: 'root'),
+                                        { name: 'k3s-pull', read_registry: true, expires_at: 2.years.from_now.to_date.iso8601 }).execute
+  abort "deploy token failed: #{res[:message]}" unless res[:status] == :success
+  dt = res[:deploy_token]
   { 'K8S_PULL_USER' => dt.username, 'K8S_PULL_TOKEN' => dt.token }.each do |k, v|
     var = proj.variables.find_by(key: k)
     var ? var.update!(value: v) : proj.variables.create!(key: k, value: v, masked: (k == 'K8S_PULL_TOKEN'), protected: true)
