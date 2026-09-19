@@ -41,6 +41,7 @@ Guest images capture everything on the rootfs and named docker volumes.
 | **vaultwarden** | **A** | DB in cluster PG; `vaultwarden-data` (attachments/sends) | PG dump + volume in PBS | play + PG restore + volume |
 | **jumpserver** | **A + C** | **bundled** PG+Redis named volumes; session recordings → S3 | volumes in PBS; recordings offsite | play + volume restore from PBS |
 | **verdaccio** | **C** | packages + package db in SeaweedFS bucket `verdaccio` (identity in Vault `prod/verdaccio/s3`); `/opt/verdaccio/storage` = openid token store only | S3 offsite `filer.backup`; guest disposable (class D) | play (rebuilds image + config) — packages are already in S3 |
+| **portainer** | **D** | `portainer-data` volume = console state only (environments, users, settings); agents stateless | PBS guest image (convenience); secrets in Vault `prod/portainer/*`; Authentik client in the blueprint | re-run the play (server, agents, environments and SSO are declared) |
 | **jitsi** | **D** | none — stateless (no recordings); config + secrets regenerable | code (role) + Vault `prod/jitsi/secrets`; LXC in the guest jobs | redeploy `playbooks/jitsi.yml` |
 | **step-ca** | **A ⚠** | `step-ca-data` volume (CA keys) | volume in PBS; CA password + root fingerprint in Vault | **volume + Vault password = the CA.** Lose both = re-init a new CA |
 | **crowdsec** | **A** | LAPI sqlite (machines/bouncers) | PBS guest image; decisions ephemeral | play re-enrols agents/bouncers |
