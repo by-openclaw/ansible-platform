@@ -1,6 +1,6 @@
 # Playbooks — index & flows
 
-All 69 playbooks in this repo, grouped by scope. Each runs against `inventories/prod/hosts.yml` unless noted. Every playbook also carries a header comment with its own detailed flow; per-role detail lives in each role's `README.md`.
+All 68 playbooks in this repo, grouped by scope. Each runs against `inventories/prod/hosts.yml` unless noted. Every playbook also carries a header comment with its own detailed flow; per-role detail lives in each role's `README.md`.
 
 > Convention: **roles** hold the logic + a role README; **playbooks** compose roles for a run. Idempotent; safe to re-run. Merge gate = CI pre-commit; apply is user-driven.
 
@@ -66,7 +66,6 @@ All 69 playbooks in this repo, grouped by scope. Each runs against `inventories/
 | `crowdsec.yml` | Playbook: crowdsec.yml — PROD CrowdSec central LAPI/engine (lxc-crowdsec-01, SVC). Native crowdsec daemon: LAPI listens on the LAN for agents + bouncers, base + |
 | `opnsense-bootstrap.yml` | OPNsense Bootstrap Playbook One-shot. Run once after fresh OPNsense install. Sets hostname + WAN static IP via OPNsense REST API (uri module). After this, all further config is han |
 | `opnsense-config-backup.yml` | OPNsense config export → NFS (issue #13). Runs on the PVE host (has the Synology share mounted at /mnt/pve/poc-backup and reaches the FW over OOB). ansible-playbook -i inventories/ |
-| `opnsense-prod.yml` | OPNsense PROD configuration playbook — vm-opns-01 (FW 100). Direct connection: Rune (10.6.239.103) reaches the FW OOB (10.6.239.196) on the same OOB subnet, so NO Proxmox SSH tunne |
 | `opnsense-unbound-overrides.yml` | Apply opn_unbound.host_overrides (split-DNS: service name -> Traefik / mailcow) to the FW's Unbound through the collection module (lib-opnsense UbHostOverrideManager underneath — l |
 | `opnsense.yml` | OPNsense Configuration Playbook Idempotent. Safe to run repeatedly. Configures: system, interfaces (VLANs), DNS, DHCP, NTP, firewall aliases+rules, WireGuard. |
 
