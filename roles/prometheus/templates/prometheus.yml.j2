@@ -11,6 +11,14 @@ global:
   external_labels:
     cluster: by-systems-poc
 
+rule_files:
+  - "{{ prometheus_rules_dir }}/*.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['{{ prometheus_alertmanager_url }}']
+
 scrape_configs:
   - job_name: prometheus
     static_configs:
@@ -23,3 +31,37 @@ scrape_configs:
         labels:
           instance: "{{ h }}"
 {% endfor %}
+
+{# --- synthetic probes through the local blackbox exporter ------------------------- #}
+{% macro blackbox_job(name, module, targets) -%}
+  - job_name: {{ name }}
+    metrics_path: /probe
+    params:
+      module: [{{ module }}]
+    static_configs:
+      - targets:
+{% for t in targets %}
+          - '{{ t }}'
+{% endfor %}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: {{ prometheus_blackbox_url }}
+{%- endmacro %}
+
+{{ blackbox_job('blackbox_http', 'http_2xx', prometheus_blackbox_http_targets | default([])) }}
+
+{{ blackbox_job('blackbox_dns_v4', 'dns_platform_v4', prometheus_blackbox_dns_v4) }}
+
+{{ blackbox_job('blackbox_dns_v6', 'dns_platform_v6', prometheus_blackbox_dns_v6) }}
+
+{{ blackbox_job('blackbox_tcp', 'tcp_connect', prometheus_blackbox_tcp) }}
+
+{{ blackbox_job('blackbox_tcp_tls', 'tcp_tls', prometheus_blackbox_tcp_tls) }}
+
+{{ blackbox_job('blackbox_smtp_starttls', 'smtp_starttls', prometheus_blackbox_smtp_starttls) }}
+
+{{ blackbox_job('blackbox_icmp', 'icmp', prometheus_blackbox_icmp) }}

@@ -1,0 +1,66 @@
+# Managed by Ansible (role: blackbox_exporter). Do not edit by hand.
+modules:
+  http_2xx:
+    prober: http
+    timeout: {{ blackbox_exporter_timeout }}
+    http:
+      method: GET
+      follow_redirects: true
+      preferred_ip_protocol: ip4
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: {{ blackbox_exporter_http_valid_status | to_json }}
+      fail_if_ssl: false
+      fail_if_not_ssl: true
+  dns_platform_v4:
+    prober: dns
+    timeout: 5s
+    dns:
+      transport_protocol: udp
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: false
+      query_name: "{{ blackbox_exporter_dns_query }}"
+      query_type: A
+      valid_rcodes: [NOERROR]
+      validate_answer_rrs:
+        fail_if_none_matches_regexp: ["{{ blackbox_exporter_dns_expect }}"]
+  dns_platform_v6:
+    prober: dns
+    timeout: 5s
+    dns:
+      transport_protocol: udp
+      preferred_ip_protocol: ip6
+      ip_protocol_fallback: false
+      query_name: "{{ blackbox_exporter_dns_query }}"
+      query_type: A
+      valid_rcodes: [NOERROR]
+      validate_answer_rrs:
+        fail_if_none_matches_regexp: ["{{ blackbox_exporter_dns_expect }}"]
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4
+  tcp_tls:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4
+      tls: true
+  smtp_starttls:
+    prober: tcp
+    timeout: 10s
+    tcp:
+      preferred_ip_protocol: ip4
+      query_response:
+        - expect: "^220 "
+        - send: "EHLO probe.{{ platform_domain }}"
+        - expect: "^250-STARTTLS"
+        - send: "STARTTLS"
+        - expect: "^220 "
+        - starttls: true
+        - send: "QUIT"
+  icmp:
+    prober: icmp
+    timeout: 5s
+    icmp:
+      preferred_ip_protocol: ip4

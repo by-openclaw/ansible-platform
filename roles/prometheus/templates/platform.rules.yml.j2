@@ -1,0 +1,55 @@
+# Managed by Ansible (role: prometheus). Do not edit by hand.
+groups:
+  - name: platform-probes
+    rules:
+      - alert: ResolverDown
+        expr: probe_success{job=~"blackbox_dns_v[46]"} == 0
+        for: {{ prometheus_alert_resolver_for }}
+        labels: {severity: critical}
+        annotations:
+          summary: "Platform resolver {{ '{{' }} $labels.instance {{ '}}' }} does not answer"
+          description: "Every guest lists it first; lookups stall up to 5 s until it is back (#424)."
+      - alert: ProbeFailed
+        expr: probe_success{job!~"blackbox_dns_v[46]"} == 0
+        for: {{ prometheus_alert_probe_for }}
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ '{{' }} $labels.job {{ '}}' }} probe failed for {{ '{{' }} $labels.instance {{ '}}' }}"
+      - alert: TLSCertExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < {{ prometheus_alert_cert_warn_days }}
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "Certificate on {{ '{{' }} $labels.instance {{ '}}' }} expires in {{ '{{' }} $value | printf \"%.0f\" {{ '}}' }} days"
+      - alert: TLSCertExpiryCritical
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < {{ prometheus_alert_cert_crit_days }}
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "Certificate on {{ '{{' }} $labels.instance {{ '}}' }} expires in {{ '{{' }} $value | printf \"%.0f\" {{ '}}' }} days"
+  - name: platform-hosts
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ '{{' }} $labels.job {{ '}}' }} target {{ '{{' }} $labels.instance {{ '}}' }} is not scrapeable"
+      - alert: HostDiskAlmostFull
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes) < {{ prometheus_alert_disk_free_ratio }}
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ '{{' }} $labels.instance {{ '}}' }} {{ '{{' }} $labels.mountpoint {{ '}}' }} has {{ '{{' }} $value | humanizePercentage {{ '}}' }} free"
+      - alert: HostOutOfMemory
+        expr: (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < {{ prometheus_alert_mem_free_ratio }}
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ '{{' }} $labels.instance {{ '}}' }} has {{ '{{' }} $value | humanizePercentage {{ '}}' }} memory available"
+      - alert: AlertmanagerUnreachable
+        expr: prometheus_notifications_alertmanagers_discovered < 1
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Prometheus has no Alertmanager — alerts are not delivered"

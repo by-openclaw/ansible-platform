@@ -1,0 +1,76 @@
+---
+- name: "Alertmanager | Read the mail relay credentials (Vault, minted with the Monit alerts)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ alertmanager_vault_smtp_path }}"
+    vault_secret_init: {}
+
+- name: "Alertmanager | Bind the mail relay credentials"
+  ansible.builtin.set_fact:
+    alertmanager_smtp: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "Alertmanager | Read the Discord webhook (Vault, minted by roles/discord_guild)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ alertmanager_vault_discord_path }}"
+    vault_secret_init: {}
+  when: alertmanager_discord_enabled | bool
+
+- name: "Alertmanager | Bind the Discord webhook"
+  ansible.builtin.set_fact:
+    alertmanager_discord: "{{ vault_secret_result }}"
+  no_log: true
+  when: alertmanager_discord_enabled | bool
+
+- name: "Alertmanager | Install prometheus-alertmanager (Debian package)"
+  ansible.builtin.apt:
+    name: prometheus-alertmanager
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Alertmanager | Configuration ({{ alertmanager_config }}, secrets inside)"
+  ansible.builtin.template:
+    src: alertmanager.yml.j2
+    dest: "{{ alertmanager_config }}"
+    owner: root
+    group: prometheus
+    mode: "0640"
+    validate: "amtool check-config %s"
+  no_log: true
+  notify: Restart alertmanager
+
+- name: "Alertmanager | Runtime args (loopback listen) — /etc/default/prometheus-alertmanager"
+  ansible.builtin.copy:
+    dest: /etc/default/prometheus-alertmanager
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (role: alertmanager)
+      ARGS="--config.file={{ alertmanager_config }} --web.listen-address={{ alertmanager_listen }} --cluster.listen-address="
+  notify: Restart alertmanager
+
+- name: "Alertmanager | Enabled + running"
+  ansible.builtin.systemd_service:
+    name: prometheus-alertmanager
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: "Alertmanager | Flush handlers"
+  ansible.builtin.meta: flush_handlers
+
+- name: "Alertmanager | Ready (read-only)"
+  ansible.builtin.uri:
+    url: "http://{{ alertmanager_listen }}/-/ready"
+    status_code: [200]
+  check_mode: false
+  retries: 5
+  delay: 3
+  register: alertmanager_ready
+  until: alertmanager_ready.status == 200
+  when: not ansible_check_mode
