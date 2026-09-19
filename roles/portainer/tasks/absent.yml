@@ -1,0 +1,16 @@
+---
+# Decommission (-e portainer_state=absent): the console holds no platform data, so
+# nothing is archived; the guest itself is removed by Terraform. Agents are removed
+# by the agent play with the same flag. Vault paths are left in place (archive rule).
+- name: "Portainer | Stop and remove the server stack"
+  ansible.builtin.command:
+    cmd: docker-compose down --volumes
+    chdir: "{{ portainer_dir }}"
+  register: portainer_down
+  failed_when: false
+  changed_when: portainer_down.rc == 0
+
+- name: "Portainer | Remove the layout directory"
+  ansible.builtin.file:
+    path: "{{ portainer_dir }}"
+    state: absent

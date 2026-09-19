@@ -1,8 +1,4 @@
 ---
-# Native SSO: Portainer authenticates against Authentik itself (OAuth/OIDC), so the
-# console knows WHO acted, not just that someone passed the proxy. Applied through the
-# API because Portainer keeps settings in its own database. Idempotent: the settings
-# are read first and written only when they differ.
 - name: "Portainer | OIDC client credentials (Vault, minted by roles/authentik)"
   ansible.builtin.include_role:
     name: vault_secret
@@ -15,34 +11,19 @@
     portainer_oidc: "{{ vault_secret_result }}"
   no_log: true
 
-- name: "Portainer | API session (admin from Vault)"
-  ansible.builtin.uri:
-    url: "{{ portainer_api_base }}/api/auth"
-    method: POST
-    body_format: json
-    body: { username: "{{ portainer_admin_user }}", password: "{{ portainer_admin_password }}" }
-    headers: { Host: "{{ portainer_fqdn }}" }
-    status_code: [200]
-  register: portainer_sso_auth
-  no_log: true
-  check_mode: false
-
 - name: "Portainer | Settings today"
   ansible.builtin.uri:
-    url: "{{ portainer_api_base }}/api/settings"
-    headers:
-      Host: "{{ portainer_fqdn }}"
-      Authorization: "Bearer {{ portainer_sso_auth.json.jwt }}"
+    url: "{{ portainer_api }}/api/settings"
+    headers: { Authorization: "Bearer {{ portainer_auth.json.jwt }}" }
     return_content: true
-    status_code: [200]
   register: portainer_settings
   no_log: true
   changed_when: false
   check_mode: false
 
-- name: "Portainer | Desired OAuth settings (Authentik)"
+- name: "Portainer | Desired OAuth settings"
   ansible.builtin.set_fact:
-    portainer_oauth_desired:
+    portainer_oauth:
       ClientID: "{{ portainer_oidc.client_id }}"
       ClientSecret: "{{ portainer_oidc.client_secret }}"
       AuthorizationURI: "{{ portainer_authentik_base }}/application/o/authorize/"
@@ -54,24 +35,19 @@
       Scopes: "openid profile email"
       OAuthAutoCreateUsers: true
       SSO: true
-      HideInternalAuth: false      # the local admin stays reachable as break-glass
   no_log: true
 
-- name: "Portainer | Point the console at Authentik (only on drift)"
+- name: "Portainer | Authenticate people against Authentik (only on drift)"
   ansible.builtin.uri:
-    url: "{{ portainer_api_base }}/api/settings"
+    url: "{{ portainer_api }}/api/settings"
     method: PUT
+    headers: { Authorization: "Bearer {{ portainer_auth.json.jwt }}" }
     body_format: json
-    body:
-      AuthenticationMethod: 3       # 1=internal, 2=LDAP, 3=OAuth
-      OAuthSettings: "{{ portainer_oauth_desired }}"
-    headers:
-      Host: "{{ portainer_fqdn }}"
-      Authorization: "Bearer {{ portainer_sso_auth.json.jwt }}"
+    body: { AuthenticationMethod: 3, OAuthSettings: "{{ portainer_oauth }}" }
     status_code: [200]
   when: >-
     (portainer_settings.json.AuthenticationMethod | default(1)) != 3
     or (portainer_settings.json.OAuthSettings.ClientID | default('')) != portainer_oidc.client_id
-    or (portainer_settings.json.OAuthSettings.AuthorizationURI | default('')) != portainer_oauth_desired.AuthorizationURI
+    or (portainer_settings.json.OAuthSettings.AuthorizationURI | default('')) != portainer_oauth.AuthorizationURI
   changed_when: true
   no_log: true

@@ -1,0 +1,17 @@
+# Managed by Ansible (role: portainer). Portainer CE server, pinned.
+services:
+  portainer:
+    image: {{ portainer_server_image }}
+    restart: unless-stopped
+    command:
+      - "--http-enabled"                              # TLS terminates on the platform Traefik
+      - "--admin-password-file=/run/secrets/admin"    # declared from Vault: the first-run wizard cannot be claimed
+    ports:
+      - "{{ portainer_listen_ip }}:{{ portainer_http_port }}:9000"
+    volumes:
+      - portainer-data:/data
+      - {{ portainer_dir }}/admin-password:/run/secrets/admin:ro
+    security_opt: ["no-new-privileges:true"]
+    read_only: false
+volumes:
+  portainer-data: {}

@@ -1,60 +1,50 @@
 ---
 # ==============================================================================
-# Portainer — one console for both container worlds: the k3s cluster (server runs
-# in-cluster) and every Docker-in-LXC host (agent per host). Published internally
-# through the platform Traefik with Authentik in front. Rerun = changed=0.
+# Portainer — the container console on its OWN guest (lxc-portainer-01): one UI for
+# every Docker host (inventory group docker_hosts) and the k3s cluster. Four plays,
+# in dependency order. Rerun = changed=0.
 #   ansible-playbook -i inventories/prod/hosts.yml playbooks/portainer.yml
+#   decommission:   ... -e portainer_state=absent
+# Bring-up of the guest first: identity-baseline → hardening → this.
 # ==============================================================================
-- name: "Portainer — server (in the k3s cluster)"
-  hosts: k3s
+- name: "Portainer — console (server, scaffold: route, mailbox, Vault, SSO assertion)"
+  hosts: portainer
   become: true
   gather_facts: true
   roles:
     - role: portainer
 
-# Environments can only be registered once the agents answer, so this is a third
-# play rather than a step inside the server role.
-- name: "Portainer — agent on every Docker host"
-  hosts: cluster:mailcow        # every candidate; the role gives an agent only where Docker runs
+- name: "Portainer — Docker agent on every Docker host"
+  hosts: docker_hosts
   become: true
-  gather_facts: true
+  gather_facts: false
   tasks:
-    - name: "Portainer | agent"
+    - name: "Portainer | Docker agent"
       ansible.builtin.import_role:
         name: portainer
         tasks_from: agent.yml
+      when: portainer_state | default('present') == 'present'
 
-- name: "Portainer — register every Docker host as an environment"
+- name: "Portainer — Kubernetes agent in the k3s cluster (the console does not run there)"
   hosts: k3s
   become: true
   gather_facts: false
   tasks:
-    - name: "Portainer | secrets + the host list"
-      ansible.builtin.include_role:
-        name: vault_secret
-      vars:
-        vault_secret_path: "{{ portainer_admin_vault_path }}"
-        vault_secret_init: {}
-
-    - name: "Portainer | Bind the admin password and the host list"
-      ansible.builtin.set_fact:
-        portainer_admin_password: "{{ vault_secret_result.password }}"
-        portainer_api_base: "http://{{ k3s_node_ip | default(ansible_host) }}:{{ k3s_ingress_http_port | default(80) }}"
-        # only the hosts where the agent play found a Docker socket
-        portainer_docker_hosts: >-
-          {{ portainer_agent_groups | map('extract', groups) | select('defined')
-             | sum(start=[]) | unique | sort | map('extract', hostvars)
-             | selectattr('portainer_has_docker', 'defined') | selectattr('portainer_has_docker') | list }}
-      no_log: true
-
-    - name: "Portainer | Register the Docker environments (API, idempotent)"
-      ansible.builtin.include_role:
+    - name: "Portainer | Kubernetes agent"
+      ansible.builtin.import_role:
         name: portainer
-        tasks_from: endpoints.yml
-      when: not ansible_check_mode
+        tasks_from: k8s_agent.yml
+      when: portainer_state | default('present') == 'present'
 
-    - name: "Portainer | Authenticate the console against Authentik (native OIDC)"
-      ansible.builtin.include_role:
+- name: "Portainer — register every environment, then native SSO"
+  hosts: portainer
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Portainer | Environments + Authentik"
+      ansible.builtin.import_role:
         name: portainer
-        tasks_from: sso.yml
-      when: not ansible_check_mode
+        tasks_from: register.yml
+      when:
+        - portainer_state | default('present') == 'present'
+        - not ansible_check_mode
