@@ -37,8 +37,12 @@
         cmd: >-
           docker exec -u www-data nextcloud sh -c
           "rm -rf /var/www/html/custom_apps/{{ pinned.id }}
-          && tar -xzf /tmp/nc-app-{{ pinned.id }}.tar.gz -C /var/www/html/custom_apps
-          && rm -f /tmp/nc-app-{{ pinned.id }}.tar.gz"
+          && tar -xzf /tmp/nc-app-{{ pinned.id }}.tar.gz -C /var/www/html/custom_apps"
+      changed_when: true
+
+    - name: "post-install | {{ pinned.id }} | Remove the container-side tarball (root-owned by docker cp)"
+      ansible.builtin.command:
+        cmd: docker exec nextcloud rm -f /tmp/nc-app-{{ pinned.id }}.tar.gz
       changed_when: true
 
     - name: "post-install | {{ pinned.id }} | Enable"
