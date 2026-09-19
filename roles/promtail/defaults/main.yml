@@ -25,6 +25,10 @@ promtail_auditd_log: "/var/log/audit/audit.log"
 promtail_env_label: "{{ platform_env | default('prod') }}"
 promtail_vault_audit_log: ""   # set on the vault host: path of Vault's file audit log (SEC-07)
 promtail_extra_file_jobs: []   # [{name: traefik_access, path: /var/log/traefik/access.log}]
+# Directories a file job needs that are not world-readable (e.g. the kubelet's /var/log/pods,
+# root:root 0750): promtail gets read+traverse through an ACL, with a DEFAULT ACL so files the
+# owner creates later inherit it. Declared per host group (group_vars), never chmod'ed.
+promtail_acl_dirs: []           # ["/var/log/pods"]
 # Syslog listeners (RFC5424 over TCP) — e.g. the firewall shipping its logs to
 # Loki. Each entry opens the port in ufw for allow_from (FW-originated traffic
 # needs no FW rule). Labels: job=<name>, host=<syslog hostname>, app=<app-name>.
