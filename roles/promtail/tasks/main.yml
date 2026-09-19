@@ -39,6 +39,14 @@
     state: present
     update_cache: true   # always: the repo may have been added seconds ago (a cache marked fresh by an earlier task would hide it)
 
+- name: "Promtail | ACL tooling (setfacl is not on a minimal image)"
+  ansible.builtin.apt:
+    name: acl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: promtail_acl_dirs | length > 0
+
 - name: "Promtail | Read + traverse on declared log trees (ACL, current entries)"
   ansible.posix.acl:
     path: "{{ item }}"
