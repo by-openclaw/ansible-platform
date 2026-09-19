@@ -18,7 +18,7 @@ apiVersion: v1
 kind: Secret
 metadata: { name: portainer-agent, namespace: {{ portainer_k8s_namespace }} }
 type: Opaque
-stringData: { AGENT_SECRET: "{{ portainer_agent_secret }}" }
+data: { AGENT_SECRET: "{{ portainer_agent_secret | b64encode }}" }   # data, not stringData: kubectl apply then reports 'unchanged' on a re-run
 ---
 apiVersion: apps/v1
 kind: Deployment
