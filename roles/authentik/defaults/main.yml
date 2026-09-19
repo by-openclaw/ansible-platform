@@ -153,6 +153,17 @@ authentik_oidc_apps:
       - "https://pbs.{{ platform_domain }}"
     redirect_uris_regex:
       - "https://pbs\\.by-research\\.be/.*"
+  - slug: portainer
+    launch_url: "https://portainer.{{ platform_domain }}"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/portainer.svg"
+    name: "Portainer (containers)"
+    group: "platform-admins"            # ACCESS group — the console can restart and exec into containers
+    vault_path: "prod/portainer/oidc"   # Vault-native client creds; roles/portainer configures Portainer with them
+    restrict_to_group: true             # IdP-enforced: only platform-admins may sign in
+    redirect_uris:
+      - "https://portainer.{{ platform_domain }}/"
+    logout_uris:
+      - "https://portainer.{{ platform_domain }}/"
   - slug: grafana
     launch_url: "https://grafana.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/grafana.svg"
@@ -232,10 +243,6 @@ authentik_proxy_apps:
     name: "Demo app (k3s)"
     group: "nextcloud-users"                      # every platform user (forwardAuth on the demo route)
     external_host: "https://demo.{{ platform_domain }}"
-  - slug: portainer
-    name: "Portainer (containers)"
-    group: "platform-admins"                      # the console can restart and exec into containers
-    external_host: "https://portainer.{{ platform_domain }}"
   - slug: traefik-dashboard
     name: "Traefik Dashboard"
     group: "traefik-admins"                       # only this group passes forwardAuth
