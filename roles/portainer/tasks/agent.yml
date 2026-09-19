@@ -1,62 +1,77 @@
 ---
-# Runs on every Docker host: the agent exposes THIS host's daemon to the server.
-- name: "Portainer agent | Shared key (Vault, minted by the server play)"
+# Runs on every candidate host; only hosts that actually run Docker get an agent.
+- name: "Portainer agent | Does this host run Docker?"
+  ansible.builtin.stat:
+    path: /var/run/docker.sock
+  register: portainer_docker_sock
+
+- name: "Portainer agent | Record it (the registration play reads this fact)"
+  ansible.builtin.set_fact:
+    portainer_has_docker: "{{ portainer_docker_sock.stat.exists }}"
+
+# The key is the same for every host: read it ONCE. A read per host opened twenty
+# SSH sessions to the Vault host at the same moment and it refused some (2026-09-19).
+- name: "Portainer agent | Shared key (Vault, read once for the whole fleet)"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
     vault_secret_path: "{{ portainer_vault_path }}"
     vault_secret_init: {}
+  run_once: true
 
-- name: "Portainer agent | Bind the key"
+- name: "Portainer agent | Bind the key on every host"
   ansible.builtin.set_fact:
-    portainer_agent_secret: "{{ vault_secret_result.secret }}"
+    portainer_agent_secret: "{{ hostvars[ansible_play_hosts_all[0]].vault_secret_result.secret }}"
   no_log: true
 
-- name: "Portainer agent | Layout directory"
-  ansible.builtin.file:
-    path: /opt/portainer-agent
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
+- name: "Portainer agent | Install on Docker hosts only"
+  when: portainer_has_docker | bool
+  block:
+    - name: "Portainer agent | Layout directory"
+      ansible.builtin.file:
+        path: /opt/portainer-agent
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
 
-- name: "Portainer agent | docker-compose.yml (key inside)"
-  ansible.builtin.template:
-    src: agent-compose.yml.j2
-    dest: /opt/portainer-agent/docker-compose.yml
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
+    - name: "Portainer agent | docker-compose.yml (key inside)"
+      ansible.builtin.template:
+        src: agent-compose.yml.j2
+        dest: /opt/portainer-agent/docker-compose.yml
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
 
-- name: "Portainer agent | Ensure Compose v2"
-  ansible.builtin.apt:
-    name: docker-compose
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+    - name: "Portainer agent | Ensure Compose v2"
+      ansible.builtin.apt:
+        name: docker-compose
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
 
-- name: "Portainer agent | Pull the pinned image"
-  community.docker.docker_image:
-    name: "{{ portainer_agent_image }}"
-    source: pull
+    - name: "Portainer agent | Pull the pinned image"
+      community.docker.docker_image:
+        name: "{{ portainer_agent_image }}"
+        source: pull
 
-- name: "Portainer agent | Start / reconcile"
-  ansible.builtin.command:
-    cmd: docker-compose up -d --remove-orphans
-    chdir: /opt/portainer-agent
-  register: portainer_agent_up
-  changed_when: >-
-    'Started' in (portainer_agent_up.stderr | default(''))
-    or 'Created' in (portainer_agent_up.stderr | default(''))
-    or 'Recreat' in (portainer_agent_up.stderr | default(''))
+    - name: "Portainer agent | Start / reconcile"
+      ansible.builtin.command:
+        cmd: docker-compose up -d --remove-orphans
+        chdir: /opt/portainer-agent
+      register: portainer_agent_up
+      changed_when: >-
+        'Started' in (portainer_agent_up.stderr | default(''))
+        or 'Created' in (portainer_agent_up.stderr | default(''))
+        or 'Recreat' in (portainer_agent_up.stderr | default(''))
 
-- name: "Portainer agent | Reachable from the cluster only (ufw)"
-  community.general.ufw:
-    rule: allow
-    port: "{{ portainer_agent_port | string }}"
-    proto: tcp
-    from_ip: "{{ item }}"
-    comment: "Portainer agent (server in k3s)"
-  loop: ["10.1.0.0/16", "fd01::/16"]
-  failed_when: false
+    - name: "Portainer agent | Reachable from the cluster only (ufw)"
+      community.general.ufw:
+        rule: allow
+        port: "{{ portainer_agent_port | string }}"
+        proto: tcp
+        from_ip: "{{ item }}"
+        comment: "Portainer agent (server in k3s)"
+      loop: ["10.1.0.0/16", "fd01::/16"]
+      failed_when: false

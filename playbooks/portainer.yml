@@ -15,7 +15,7 @@
 # Environments can only be registered once the agents answer, so this is a third
 # play rather than a step inside the server role.
 - name: "Portainer — agent on every Docker host"
-  hosts: cluster:mailcow:!lxc-pgsql-01:!lxc-redis-01
+  hosts: cluster:mailcow        # every candidate; the role gives an agent only where Docker runs
   become: true
   gather_facts: true
   tasks:
@@ -40,9 +40,11 @@
       ansible.builtin.set_fact:
         portainer_admin_password: "{{ vault_secret_result.password }}"
         portainer_api_base: "http://{{ k3s_node_ip | default(ansible_host) }}:{{ k3s_ingress_http_port | default(80) }}"
+        # only the hosts where the agent play found a Docker socket
         portainer_docker_hosts: >-
           {{ portainer_agent_groups | map('extract', groups) | select('defined')
-             | sum(start=[]) | unique | sort | map('extract', hostvars) | list }}
+             | sum(start=[]) | unique | sort | map('extract', hostvars)
+             | selectattr('portainer_has_docker', 'defined') | selectattr('portainer_has_docker') | list }}
       no_log: true
 
     - name: "Portainer | Register the Docker environments (API, idempotent)"
