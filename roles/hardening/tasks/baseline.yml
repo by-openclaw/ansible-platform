@@ -73,14 +73,31 @@
     name: libpam-tmpdir
     state: present
 
-- name: "Baseline | Initialise the AIDE database (FINT-4402 — once)"
+# aideinit runs in the background (10+ min on a busy host). An async launch with poll: 0
+# always reports "changed" — so gate it on the database file and on a build already running,
+# otherwise every hardening pass re-launched a full AIDE build (and reported a change).
+- name: "Baseline | AIDE database present?"
+  ansible.builtin.stat:
+    path: /var/lib/aide/aide.db
+  register: hardening_aide_db
+
+- name: "Baseline | AIDE build already running?"
+  ansible.builtin.command: pgrep -x aide
+  register: hardening_aide_running
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "Baseline | Initialise the AIDE database (FINT-4402 — once, in the background)"
   ansible.builtin.command: aideinit -y -f
   args:
     creates: /var/lib/aide/aide.db
   async: 900
   poll: 0
-  register: hardening_aideinit
-  changed_when: hardening_aideinit is changed
+  when:
+    - not hardening_aide_db.stat.exists
+    - hardening_aide_running.rc != 0
+  changed_when: true
 
 - name: "Baseline | Password hashing rounds (AUTH-9230)"
   ansible.builtin.lineinfile:
