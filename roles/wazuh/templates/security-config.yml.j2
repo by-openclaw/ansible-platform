@@ -1,0 +1,40 @@
+# Managed by Ansible (role: wazuh). OpenSearch security: internal users for the service
+# accounts (order 0), OpenID against Authentik for people (order 1). The Authentik group
+# claim (`groups`) becomes the backend role mapped in roles_mapping.yml.
+---
+_meta:
+  type: "config"
+  config_version: 2
+
+config:
+  dynamic:
+    http:
+      anonymous_auth_enabled: false
+      xff:
+        enabled: false
+    authc:
+      basic_internal_auth_domain:
+        description: "service users (kibanaserver, admin)"
+        http_enabled: true
+        transport_enabled: true
+        order: 0
+        http_authenticator:
+          type: basic
+          challenge: false
+        authentication_backend:
+          type: intern
+      openid_auth_domain:
+        description: "people — Authentik OpenID Connect"
+        http_enabled: true
+        transport_enabled: false
+        order: 1
+        http_authenticator:
+          type: openid
+          challenge: false
+          config:
+            subject_key: preferred_username
+            roles_key: groups
+            openid_connect_url: "{{ wazuh_authentik_base }}/application/o/{{ wazuh_oidc_slug }}/.well-known/openid-configuration"
+        authentication_backend:
+          type: noop
+    authz: {}

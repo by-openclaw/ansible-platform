@@ -1,0 +1,23 @@
+# Managed by Ansible (role: wazuh). Dashboard: HTTP behind the platform Traefik (TLS at
+# the edge, SEC-28), TLS to the indexer, OpenID against Authentik for people.
+server.host: 0.0.0.0
+server.port: 5601
+server.ssl.enabled: false
+opensearch.hosts: https://wazuh.indexer:9200
+opensearch.ssl.verificationMode: certificate
+opensearch.ssl.certificateAuthorities: ["/usr/share/wazuh-dashboard/certs/root-ca.pem"]
+opensearch.requestHeadersWhitelist: ["securitytenant", "Authorization"]
+opensearch_security.multitenancy.enabled: false
+opensearch_security.readonly_mode.roles: ["kibana_read_only"]
+uiSettings.overrides.defaultRoute: /app/wz-home
+opensearch_security.cookie.ttl: 900000
+opensearch_security.session.ttl: 900000
+opensearch_security.session.keepalive: true
+opensearch_security.cookie.secure: true
+opensearch_security.auth.type: "openid"
+opensearch_security.openid.connect_url: "{{ wazuh_authentik_base }}/application/o/{{ wazuh_oidc_slug }}/.well-known/openid-configuration"
+opensearch_security.openid.client_id: "{{ wazuh_oidc.client_id }}"
+opensearch_security.openid.client_secret: "{{ wazuh_oidc.client_secret }}"
+opensearch_security.openid.scope: "openid profile email groups"
+opensearch_security.openid.base_redirect_url: "https://{{ wazuh_fqdn }}"
+opensearch_security.openid.logout_url: "{{ wazuh_authentik_base }}/application/o/{{ wazuh_oidc_slug }}/end-session/"

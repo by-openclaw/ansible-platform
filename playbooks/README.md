@@ -1,6 +1,6 @@
 # Playbooks — index & flows
 
-All 70 playbooks in this repo, grouped by scope. Each runs against `inventories/prod/hosts.yml` unless noted. Every playbook also carries a header comment with its own detailed flow; per-role detail lives in each role's `README.md`.
+All 71 playbooks in this repo, grouped by scope. Each runs against `inventories/prod/hosts.yml` unless noted. Every playbook also carries a header comment with its own detailed flow; per-role detail lives in each role's `README.md`.
 
 > Convention: **roles** hold the logic + a role README; **playbooks** compose roles for a run. Idempotent; safe to re-run. Merge gate = CI pre-commit; apply is user-driven.
 
@@ -50,6 +50,7 @@ All 70 playbooks in this repo, grouped by scope. Each runs against `inventories/
 | `secrets-validate.yml` | Validate that the secrets in Vault are the REAL, working credentials — by authenticating against each live service with the value pulled from Vault. Data-driven: each check declare |
 | `vault-approle.yml` | One-time bootstrap: a minimal AppRole for the Ansible controller — the first R-29 closure step (no more root token for runtime reads). Scope: READ-ONLY on |
 | `vault-approles.yml` | Provision a per-service Vault identity (policy + AppRole) for every service (SEC-04 least-privilege policy scoped to its own prefix, SEC-05 AppRole auth). |
+| `wazuh.yml` | Security monitoring: Wazuh manager + indexer + dashboard on `lxc-wazuh-01` (vendor single-node, pinned, Vault secrets, edge TLS, Authentik OpenID), then the agent on every guest (FIM, log collection, inventory), enrolled with a Vault-held password. Decommission with `-e wazuh_state=absent`. |
 | `vault-backup.yml` | Vault DR backup: install the daily raft-snapshot timer on the vault host and pull the newest snapshot to the controller store for an immediate off-host copy. |
 | `vault-kv-sync.yml` | Mirror controller-side secret files into Vault KV v2 (secret/<island>/<name>), per the "secrets in Vault AND local" rule. Idempotent: reads the current Vault |
 | `vault-migrate-cleanup.yml` | One-shot cleanup AFTER secrets-to-vault.yml has populated the ADR-convention tree secret/{env}/{service}/{key}. Verify-then-retire, never lossy: A. Old flat entries secret/fabric/< |

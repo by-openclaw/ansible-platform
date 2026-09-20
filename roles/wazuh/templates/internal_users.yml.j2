@@ -1,0 +1,18 @@
+# Managed by Ansible (role: wazuh). Internal (basic-auth) service users of the indexer;
+# hashes from the Vault-held passwords. People sign in through Authentik (openid).
+---
+_meta:
+  type: "internalusers"
+  config_version: 2
+
+admin:
+  hash: "{{ wazuh_admin_password | password_hash('bcrypt', wazuh_admin_salt) }}"
+  reserved: true
+  backend_roles:
+  - "admin"
+  description: "indexer admin (Vault {{ wazuh_vault_admin }})"
+
+kibanaserver:
+  hash: "{{ wazuh_dashboard_password | password_hash('bcrypt', wazuh_dashboard_salt) }}"
+  reserved: true
+  description: "dashboard → indexer service user (Vault {{ wazuh_vault_dashboard }})"
