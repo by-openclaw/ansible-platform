@@ -58,6 +58,7 @@ contract_audit_checks:
   - id: SEC-20
     desc: "Lynis hardening index >= the host's gate (default 80; documented exceptions via hardening_lynis_min_score)"
     probe: >-
+      for i in $(seq 1 24); do pgrep -x lynis >/dev/null || break; sleep 5; done;
       awk -F= -v MIN={{ hardening_lynis_min_score | default(80) }}
       '/hardening_index/{print ($2>=MIN)?"PASS":"FAIL "$2}'
       /var/log/lynis-report.dat 2>/dev/null | head -1 || echo NOREPORT
