@@ -1,6 +1,7 @@
 ---
-# Delete FOREIGN accounts (never part of the identity model). Distinct from the
-# disable-never-delete path for managed identities (account.yml). Idempotent.
+# Delete FOREIGN accounts (never part of the identity model: cloud-init/install artifacts).
+# Distinct from the disable-never-delete path for managed identities (account.yml).
+# The home is archived under /var/backups/retired-accounts first. Idempotent.
 
 - name: "User-mgmt | Guard — never purge a managed identity"
   ansible.builtin.assert:
@@ -10,6 +11,23 @@
       Refusing to purge a managed identity — user_mgmt_purge_accounts may only
       list foreign/install-artifact accounts, never {{ user_mgmt_org }} or svc-*.
     quiet: true
+
+- name: "User-mgmt | Archive the home of a foreign account before it is deleted (never lose data)"
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      h=$(getent passwd "{{ item }}" | cut -d: -f6);
+      if [ -n "$h" ] && [ -d "$h" ]; then
+        mkdir -p /var/backups/retired-accounts && chmod 0700 /var/backups/retired-accounts;
+        tar -czf "/var/backups/retired-accounts/{{ item }}-$(date +%Y%m%dT%H%M%S).tar.gz" -C "$(dirname "$h")" "$(basename "$h")" && echo archived;
+      fi
+    executable: /bin/bash
+  loop: "{{ user_mgmt_purge_accounts }}"
+  loop_control:
+    label: "{{ item }}"
+  register: user_mgmt_purge_archive
+  changed_when: "'archived' in user_mgmt_purge_archive.stdout"
+  when: not ansible_check_mode
 
 - name: "User-mgmt | Delete foreign account (+ home, mail spool)"
   ansible.builtin.user:

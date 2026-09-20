@@ -76,7 +76,7 @@ For emergency access when certificates/keys are unavailable:
 
 ```bash
 # Add user to break-glass group on target host
-sudo usermod -aG break-glass by-systems
+sudo usermod -aG break-glass by-research
 ```
 
 ### Key variables (defaults)
@@ -84,7 +84,7 @@ sudo usermod -aG break-glass by-systems
 | Variable | Default | Description |
 |---|---|---|
 | `hardening_ssh_port` | `22222` | SSH port |
-| `hardening_ssh_allow_groups` | `[by-systems, rune]` | Groups allowed SSH key login |
+| `hardening_ssh_allow_groups` | `[by-research, rune]` | Groups allowed SSH key login |
 | `hardening_ssh_break_glass_group` | `break-glass` | Group allowed password login |
 | `hardening_ssh_break_glass_networks` | OOB + MGMT | Networks where break-glass is allowed |
 | `hardening_fail2ban_ssh_maxretry` | `5` | Attempts before ban |
