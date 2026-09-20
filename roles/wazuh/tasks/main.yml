@@ -94,15 +94,84 @@
         source: pull
       loop: ["{{ wazuh_manager_image }}", "{{ wazuh_indexer_image }}", "{{ wazuh_dashboard_image }}"]
 
-    # The vendor mounts single FILES into the containers. Ansible replaces a file
-    # atomically (new inode), so a running container keeps reading the old one and
-    # compose sees no definition change: recreate the stack whenever a mounted file changed.
+    # --- stale-inode detection ------------------------------------------------------------
+    # The vendor mounts single FILES into the containers. Ansible replaces a file atomically
+    # (new inode), so a running container keeps reading the OLD content while compose sees
+    # no definition change. Compare what each container sees with the host file and
+    # recreate the stack when they differ (or when a mounted file changed on this run).
+    - name: "Wazuh | Running containers of the stack"
+      ansible.builtin.command:
+        cmd: docker compose ps -q
+        chdir: "{{ wazuh_dir }}"
+      register: wazuh_ps
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: "Wazuh | Bind mounts of the running containers"
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'inspect'] + wazuh_ps.stdout_lines }}"
+      register: wazuh_inspect
+      changed_when: false
+      check_mode: false
+      when: (wazuh_ps.stdout_lines | default([])) | length > 0
+
+    - name: "Wazuh | Files mounted from the service directory"
+      ansible.builtin.set_fact:
+        wazuh_bind_files: >-
+          {%- set out = [] -%}
+          {%- for c in (wazuh_inspect.stdout | default('[]', true) | from_json) -%}
+            {%- for m in c.Mounts if m.Type == 'bind' and m.Source.startswith(wazuh_dir ~ '/') -%}
+              {%- set _ = out.append({'c': c.Name | regex_replace('^/', ''), 'src': m.Source, 'dst': m.Destination}) -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: "Wazuh | Checksum of the mounted files as the containers see them"
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ item.c }}", sha256sum, "{{ item.dst }}"]
+      loop: "{{ wazuh_bind_files }}"
+      loop_control:
+        label: "{{ item.c }}:{{ item.dst }}"
+      register: wazuh_mount_in
+      changed_when: false
+      failed_when: false            # a directory mount fails here and is skipped below
+      check_mode: false
+
+    - name: "Wazuh | Checksum of the same files on the host"
+      ansible.builtin.stat:
+        path: "{{ item.src }}"
+        checksum_algorithm: sha256
+      loop: "{{ wazuh_bind_files }}"
+      loop_control:
+        label: "{{ item.src }}"
+      register: wazuh_mount_host
+
+    - name: "Wazuh | Containers still reading a replaced file (stale inode)"
+      ansible.builtin.set_fact:
+        wazuh_mounts_stale: >-
+          {%- set stale = [] -%}
+          {%- for r in wazuh_mount_in.results | default([]) -%}
+            {%- set h = wazuh_mount_host.results[loop.index0].stat -%}
+            {%- if r.rc | default(1) == 0 and h.exists and h.isreg and (r.stdout.split(' ')[0] != h.checksum) -%}
+              {%- set _ = stale.append(r.item.c ~ ':' ~ r.item.dst) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ stale }}
+
+    - name: "Wazuh | Stale mounts found → the stack will be recreated"
+      ansible.builtin.debug:
+        msg: "{{ wazuh_mounts_stale }}"
+      when: wazuh_mounts_stale | length > 0
+
     - name: "Wazuh | Stack up (compose v2, present = create/start, recreate on config change)"
       community.docker.docker_compose_v2:
         project_src: "{{ wazuh_dir }}"
         state: present
         pull: never
-        recreate: "{{ 'always' if (wazuh_cfg is changed or wazuh_authd_pass is changed) else 'auto' }}"
+        recreate: >-
+          {{ 'always' if (wazuh_cfg is changed or wazuh_authd_pass is changed or wazuh_mounts_stale | length > 0)
+             else 'auto' }}
       register: wazuh_up
       when: not ansible_check_mode
 
