@@ -27,3 +27,13 @@ ansible-playbook -i inventories/prod/hosts.yml playbooks/wazuh.yml
 - Agents: dashboard → Agents; on a guest `/var/ossec/bin/wazuh-control status`, `/var/ossec/logs/ossec.log` for enrolment errors (wrong password → "Invalid password").
 - A changed group mapping or OpenID setting: re-run the play; the role pushes it with `securityadmin`.
 - First deployment only: `--check` fails on the Vault secrets (get-or-create cannot mint under check mode).
+
+## Unprivileged-LXC and bind-mount notes
+
+- No `memlock` ulimit (runc "rlimit type 8"), `nofile` ≤ the guest hard limit (`wazuh_manager_nofile`, "type 7").
+- The vendor mounts single files; Ansible's atomic write gives a new inode the running container does not see.
+  The role checksums every bind-mounted file inside the containers against the host and recreates the stack on a
+  mismatch (or when a mounted file changed on this run).
+- Security plugin: the vendor bootstraps the index from the mounted files at first start only; the role pushes
+  `securityadmin` (with `JAVA_HOME`) on drift of the rendered files or whenever the indexer reports 503.
+- Agent groups declared in `wazuh_agent_groups` are created on the manager; `authd` refuses unknown groups.

@@ -17,7 +17,7 @@ Wazuh 4.14.x, the vendor's `wazuh-docker` single-node layout pinned by `wazuh_ve
 
 ## 3. Pre-requisites
 
-Guest by Terraform (`svc-wazuh.tf`, vmid 512, 10.1.3.197), bootstrapped (identity baseline, hardening). `vm.max_map_count` ≥ 262144 on the node (set to 1,048,576; containers inherit it). Authentik running (client minted by `playbooks/authentik.yml`).
+Guest by Terraform (`svc-wazuh.tf`, vmid 512, 10.1.3.197), bootstrapped (identity baseline, hardening). `vm.max_map_count` ≥ 262144 on the node (set to 1,048,576; containers inherit it). The guest is an unprivileged LXC: runc cannot raise `memlock` (dropped) and `nofile` must stay ≤ the guest hard limit (`ulimit -Hn` = 524288 → `wazuh_manager_nofile`). Authentik running (client minted by `playbooks/authentik.yml`).
 
 ## 4. Secrets (Vault KV paths)
 
@@ -33,11 +33,11 @@ Internal PKI between the components generated once by the pinned vendor generato
 
 ## 7. Provisioning
 
-`playbooks/wazuh.yml`: play 1 server (secrets, configuration, PKI once, stack, health, security config push on drift, ufw, scaffold); play 2 agent on every guest.
+`playbooks/wazuh.yml`: play 1 server (secrets, configuration, PKI once, stale-mount detection, stack, security config push on drift or when the index is not initialised, health, agent groups, ufw, scaffold); play 2 agent on every guest (group `docker` on `docker_hosts`, `default` elsewhere).
 
 ## 8. Exposure / routing
 
-Internal only: split-DNS `wazuh` → Traefik; firewall rules 1091–1094. No public record.
+Internal only: split-DNS `wazuh` → Traefik; firewall rules 1091–1096 (v4 + v6 twins). No public record.
 
 ## 9. Installation steps
 
@@ -68,6 +68,12 @@ Indexer `_cluster/health`, dashboard `/api/status`, manager API `/`; contract-au
 | agent "Invalid password" on enrolment | `authd.pass` differs from Vault | re-run the play on the guest |
 | dashboard login loops | OpenID client or redirect URI | `authentik_oidc_apps` slug `wazuh`, redirect `/auth/openid/login` |
 | user signed in but no data | group not mapped | `roles_mapping.yml` → `all_access` backend role = the platform admin group |
+| compose refuses to start: `error setting rlimit type 8` / `type 7` | unprivileged LXC: memlock not allowed / `nofile` above the guest hard limit | no memlock in the compose template; `wazuh_manager_nofile` ≤ `ulimit -Hn` |
+| indexer answers 503 `OpenSearch Security not initialized` | the vendor one-shot bootstrap aborted (bad security file) | the role runs securityadmin whenever the index is not initialised; fix the file, re-run the play |
+| securityadmin: `which: command not found` | the image has no `which` and no JAVA_HOME | the role sets `JAVA_HOME=/usr/share/wazuh-indexer/jdk` |
+| a fixed file is on disk but the container still misbehaves | single-file bind mount keeps the old inode after an atomic write | the role compares container vs host checksums and recreates the stack (task "Stale mounts found") |
+| authd `Invalid group: docker` | the agent asks for a group the manager has not created | `wazuh_agent_groups` (server role creates them before agents enrol) |
+| agent `syscheckd ... fopen error` on `/etc/vconsole.conf` | FIM follows a dangling symlink of the vendor default set | harmless; ignore list is a review-pass item |
 
 ## 14. Identity and access
 
