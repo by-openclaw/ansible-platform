@@ -55,10 +55,10 @@
         # falling back to the registry's own systeminfo (anonymous access hides it on 2.15+).
         # Normalised for comparison ("v2.12.2" / "v2.12.2-9f31cc5d" -> "2.12.2").
         upgrade_path_current_cmd: >-
-          { cat {{ harbor_install_dir }}/.installed-version 2>/dev/null
-            || curl -fsS http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/systeminfo
-               | sed -E 's/.*"harbor_version":"([^"]+)".*/\1/'; }
-          | sed -E 's/^v//; s/-.*$//'
+          ( cat {{ harbor_install_dir }}/.installed-version 2>/dev/null ||
+          curl -fsS http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/systeminfo |
+          sed -E 's/.*"harbor_version":"([^"]+)".*/\1/' ) |
+          sed -E 's/^v//; s/-.*$//'
 
         # Re-run the harbor role with this rung's pin: it stops the stack, swaps the
         # install tree, re-renders harbor.yml, runs ./prepare and brings it back up.
