@@ -88,5 +88,7 @@
         proto: tcp
         from_ip: "{{ item }}"
         comment: "Portainer agent (console on lxc-portainer-01)"
-      loop: "{{ groups['portainer'] | map('extract', hostvars, 'ansible_host') | list }}"
+      loop: >-
+        {{ (groups['portainer'] | map('extract', hostvars, 'ansible_host') | list)
+           + ([portainer_console_bridge_cidr] if inventory_hostname in groups['portainer'] else []) }}
       failed_when: false
