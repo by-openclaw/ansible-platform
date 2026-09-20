@@ -1,14 +1,18 @@
 ---
-- name: "platform_ca | Escrowed root fingerprint (Vault, written by roles/step_ca)"
+# The fingerprint is one value for the whole fleet: read it ONCE. A read per host
+# opens one SSH session to the Vault host per target at the same moment; with 27
+# targets that made the Vault host refuse connections (2026-09-20).
+- name: "platform_ca | Escrowed root fingerprint (Vault, written by roles/step_ca) — read once"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
     vault_secret_path: "{{ platform_ca_vault_path }}"
     vault_secret_init: {}
+  run_once: true
 
-- name: "platform_ca | Bind the fingerprint"
+- name: "platform_ca | Bind the fingerprint on every host"
   ansible.builtin.set_fact:
-    platform_ca_fingerprint: "{{ vault_secret_result.fingerprint | lower | replace(':', '') }}"
+    platform_ca_fingerprint: "{{ hostvars[ansible_play_hosts_all[0]].vault_secret_result.fingerprint | lower | replace(':', '') }}"
   no_log: true
 
 - name: "platform_ca | Fetch roots.pem from the CA (TLS not yet trusted — the fingerprint check below is the trust anchor)"
