@@ -57,6 +57,12 @@
     volumes:
       - "step-ca-data:/home/step"
       - "{{ step_ca_build_dir }}/init/password:/run/init-pw:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsk https://127.0.0.1:9000/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     env:
       DOCKER_STEPCA_INIT_NAME: "{{ step_ca_name }}"
       DOCKER_STEPCA_INIT_DNS_NAMES: "{{ step_ca_dns_names }}"
@@ -82,7 +88,7 @@
   register: step_ca_fp
   changed_when: false
 
-- name: "Step-ca | Persist the root fingerprint in Vault"
+- name: "Step-ca | Persist the root fingerprint in Vault (get-or-create)"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
@@ -91,6 +97,21 @@
       fingerprint: "{{ step_ca_fp.stdout | trim }}"
       url: "https://{{ step_ca_fqdn }}"
       ca_dns: "{{ step_ca_dns_names }}"
+
+# The CA is the source of truth and the escrow is its record: a CA re-initialised after
+# the first escrow left a stale fingerprint behind (2026-09-20: roles/platform_ca refused
+# the live root on every host, correctly). Rewrite the record when the live root differs.
+- name: "Step-ca | The escrow follows the live root (rewrite on drift)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ step_ca_env }}/step-ca/root"
+    vault_secret_init: {}
+    vault_secret_force_fields:
+      fingerprint: "{{ step_ca_fp.stdout | trim }}"
+      url: "https://{{ step_ca_fqdn }}"
+      ca_dns: "{{ step_ca_dns_names }}"
+  when: (vault_secret_result.fingerprint | default('')) != (step_ca_fp.stdout | trim)
 
 # --- compose the platform concerns via the golden-path scaffold --------------
 - name: "Step-ca | Scaffold the platform concerns"
@@ -101,5 +122,6 @@
       name: step-ca
       fqdn: "{{ step_ca_fqdn }}"
       backend_url: "https://{{ step_ca_listen_ip }}:{{ step_ca_port }}"
+      backend_root_ca_file: "{{ step_ca_root_ca_file }}"    # Traefik verifies the CA's own certificate with the internal root (#383)
       exposure: internal
       mailbox: true

@@ -60,7 +60,7 @@ http:
       loadBalancer:
         servers:
           - url: "{{ traefik_route_backend_url }}"
-{% if traefik_route_backend_insecure_skip_verify | bool %}
+{% if traefik_route_backend_insecure_skip_verify | bool or traefik_route_backend_root_ca_file | length > 0 %}
         serversTransport: {{ traefik_route_name }}-transport
 {% endif %}
 {% if traefik_route_backend_insecure_skip_verify | bool %}
@@ -68,6 +68,12 @@ http:
   serversTransports:
     {{ traefik_route_name }}-transport:
       insecureSkipVerify: true
+{% elif traefik_route_backend_root_ca_file | length > 0 %}
+
+  serversTransports:
+    {{ traefik_route_name }}-transport:
+      rootCAs:
+        - "{{ traefik_route_backend_root_ca_file }}"
 {% endif %}
 {% if _net_mw or (traefik_route_path_prefix | length > 0 and traefik_route_strip_prefix | bool) %}
 

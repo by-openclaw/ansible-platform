@@ -1,4 +1,17 @@
 ---
+- name: "Route | The internal root the transport trusts must be installed on the proxy host first (roles/platform_ca)"
+  ansible.builtin.stat:
+    path: "{{ traefik_route_backend_root_ca_file }}"
+  register: traefik_route_root_ca
+  when: traefik_route_backend_root_ca_file | default('') | length > 0
+
+- name: "Route | Fail loudly instead of rendering a transport Traefik cannot load"
+  ansible.builtin.assert:
+    that: traefik_route_root_ca.stat.exists
+    fail_msg: "{{ traefik_route_backend_root_ca_file }} is missing on {{ inventory_hostname }} — run playbooks/platform-ca.yml before this route"
+    quiet: true
+  when: traefik_route_backend_root_ca_file | default('') | length > 0
+
 - name: "Route | Register Traefik router for {{ traefik_route_name }}"
   ansible.builtin.template:
     src: route.yml.j2

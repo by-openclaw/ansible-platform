@@ -1,0 +1,102 @@
+---
+# The fingerprint is one value for the whole fleet: read it ONCE. A read per host
+# opens one SSH session to the Vault host per target at the same moment; with 27
+# targets that made the Vault host refuse connections (2026-09-20).
+- name: "platform_ca | Escrowed root fingerprint (Vault, written by roles/step_ca) — read once"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ platform_ca_vault_path }}"
+    vault_secret_init: {}
+  run_once: true
+
+- name: "platform_ca | Bind the fingerprint on every host"
+  ansible.builtin.set_fact:
+    platform_ca_fingerprint: "{{ hostvars[ansible_play_hosts_all[0]].vault_secret_result.fingerprint | lower | replace(':', '') }}"
+  no_log: true
+
+- name: "platform_ca | Fetch roots.pem from the CA (TLS not yet trusted — the fingerprint check below is the trust anchor)"
+  ansible.builtin.uri:
+    url: "{{ platform_ca_url }}"
+    validate_certs: false
+    return_content: true
+  register: platform_ca_roots
+  check_mode: false
+
+- name: "platform_ca | Fingerprint of the fetched root (sha256 of the DER)"
+  ansible.builtin.shell:
+    cmd: printf '%s' "$PEM" | openssl x509 -outform DER | sha256sum | cut -d' ' -f1
+  environment:
+    PEM: "{{ platform_ca_roots.content }}"
+  register: platform_ca_fetched_fp
+  changed_when: false
+  check_mode: false
+
+- name: "platform_ca | Refuse a root that does not match the escrowed fingerprint"
+  ansible.builtin.assert:
+    that: platform_ca_fetched_fp.stdout | trim == platform_ca_fingerprint
+    fail_msg: "roots.pem from {{ platform_ca_url }} does not match Vault {{ platform_ca_vault_path }} — CA replaced or MITM; not installing"
+    quiet: true
+
+- name: "platform_ca | Root certificate in the trust store"
+  ansible.builtin.copy:
+    dest: "{{ platform_ca_file }}"
+    content: "{{ platform_ca_roots.content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: platform_ca_installed
+
+- name: "platform_ca | update-ca-certificates"
+  ansible.builtin.command:
+    cmd: update-ca-certificates
+  when: platform_ca_installed.changed and not ansible_check_mode
+  changed_when: true
+
+# Traefik builds a transport's TLS pool from rootCAs when the transport is created and
+# keeps it while its configuration is unchanged — a root that lands afterwards is not
+# seen even after a file reload. On a proxy host the declared state is "the proxy
+# reaches the CA through its route": verify it, restart the proxy only if it does not,
+# verify again. No restart when it already holds.
+- name: "platform_ca | Proxy hosts: does the proxy reach the CA through its route?"
+  ansible.builtin.uri:
+    url: "https://ca.{{ platform_domain }}/health"
+    status_code: [200, 500, 502, 503]
+    validate_certs: true
+  register: platform_ca_route
+  when:
+    - inventory_hostname in groups['traefik'] | default([])
+    - not ansible_check_mode
+  check_mode: false
+
+- name: "platform_ca | Proxy hosts: restart the proxy so its transports pick up the root (only when the route fails)"
+  ansible.builtin.systemd_service:
+    name: traefik
+    state: restarted
+  when:
+    - inventory_hostname in groups['traefik'] | default([])
+    - not ansible_check_mode
+    - platform_ca_route.status != 200
+
+- name: "platform_ca | Proxy hosts: the route answers with the root in place"
+  ansible.builtin.uri:
+    url: "https://ca.{{ platform_domain }}/health"
+    status_code: [200]
+    validate_certs: true
+  register: platform_ca_route_after
+  retries: 10
+  delay: 3
+  until: platform_ca_route_after.status == 200
+  when:
+    - inventory_hostname in groups['traefik'] | default([])
+    - not ansible_check_mode
+    - platform_ca_route.status != 200
+  check_mode: false
+
+- name: "platform_ca | The CA answers with a certificate the host now trusts (read-only)"
+  ansible.builtin.uri:
+    url: "{{ platform_ca_url | regex_replace('/roots.pem$', '/health') }}"
+    validate_certs: true
+    status_code: [200]
+  check_mode: false
+  when: not ansible_check_mode
