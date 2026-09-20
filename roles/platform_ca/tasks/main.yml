@@ -53,6 +53,30 @@
   when: platform_ca_installed.changed and not ansible_check_mode
   changed_when: true
 
+# Traefik reads a transport's rootCAs when it loads the dynamic configuration; a root
+# that appears afterwards is not picked up until a file in the dynamic directory changes.
+- name: "platform_ca | Dynamic route files that reference the root (proxy hosts only)"
+  ansible.builtin.find:
+    paths: /etc/traefik/dynamic
+    patterns: "*.yml"
+    contains: "{{ platform_ca_file | regex_escape }}"
+  register: platform_ca_routes
+  when:
+    - platform_ca_installed.changed
+    - inventory_hostname in groups['traefik'] | default([])
+    - not ansible_check_mode
+
+- name: "platform_ca | Let the proxy re-read those transports (touch = file-provider reload)"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: touch
+    modification_time: now
+    access_time: now
+  loop: "{{ platform_ca_routes.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: platform_ca_routes is not skipped
+
 - name: "platform_ca | The CA answers with a certificate the host now trusts (read-only)"
   ansible.builtin.uri:
     url: "{{ platform_ca_url | regex_replace('/roots.pem$', '/health') }}"
