@@ -32,6 +32,31 @@
     mode: "0644"
   notify: Restart docker
 
+- name: "Docker | Compose v2 (Debian package, v2 since trixie)"
+  ansible.builtin.apt:
+    name: docker-compose
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: docker_compose_from_debian | bool
+
+- name: "Docker | CLI plugin directory"
+  ansible.builtin.file:
+    path: /usr/libexec/docker/cli-plugins
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: docker_compose_from_debian | bool
+
+- name: "Docker | `docker compose` = the Compose v2 binary (CLI plugin link)"
+  ansible.builtin.file:
+    src: /usr/bin/docker-compose
+    dest: /usr/libexec/docker/cli-plugins/docker-compose
+    state: link
+    force: true
+  when: docker_compose_from_debian | bool
+
 - name: "Docker | Ensure docker is enabled + running"
   ansible.builtin.systemd_service:
     name: docker
