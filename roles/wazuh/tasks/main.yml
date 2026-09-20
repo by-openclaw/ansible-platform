@@ -101,26 +101,24 @@
       register: wazuh_up
       when: not ansible_check_mode
 
-    - name: "Wazuh | Indexer answers (TLS, admin)"
+    # 401 = security initialised (anonymous refused); 503 = the security index is empty
+    # (first boot not done, or a bad file aborted the vendor's one-shot bootstrap).
+    - name: "Wazuh | Indexer is listening (TLS)"
       ansible.builtin.uri:
-        url: "https://127.0.0.1:9200/_cluster/health"
-        url_username: admin
-        url_password: "{{ wazuh_admin_password }}"
-        force_basic_auth: true
+        url: "https://127.0.0.1:9200/"
         validate_certs: false
-        status_code: [200]
-        return_content: true
-      register: wazuh_idx
+        status_code: [200, 401, 503]
+      register: wazuh_idx_listen
       retries: 40
       delay: 6
-      until: wazuh_idx.status == 200 and (wazuh_idx.json.status in ['green', 'yellow'])
+      until: wazuh_idx_listen.status in [200, 401, 503]
       when: not ansible_check_mode
-      no_log: true
 
     # The indexer initialises the security index from the mounted files at FIRST start
     # only; later changes (a group mapping, the OpenID domain) must be pushed with the
-    # vendor's securityadmin. Drift-gated on the rendered files.
-    - name: "Wazuh | Push the security configuration when it changed after the first start"
+    # vendor's securityadmin. Runs on drift of the rendered files, or whenever the index
+    # is not initialised (503) — the same tool repairs an aborted first boot.
+    - name: "Wazuh | Push the security configuration (drift, or index not initialised)"
       ansible.builtin.command:
         argv:
           - docker
@@ -141,12 +139,31 @@
       when:
         - not ansible_check_mode
         - >-
-          wazuh_cfg.results
-          | selectattr('item.dest', 'search', 'wazuh_indexer/(config|roles_mapping|internal_users)')
-          | selectattr('changed') | list | length > 0
-        - wazuh_pki.stat.exists      # not on the very first run: the first start already applied them
+          (wazuh_idx_listen.status | default(0)) == 503
+          or (wazuh_cfg.results
+              | selectattr('item.dest', 'search', 'wazuh_indexer/(config|roles_mapping|internal_users)')
+              | selectattr('changed') | list | length > 0)
       changed_when: true
       register: wazuh_secadmin
+      retries: 10                    # the tool needs a yellow cluster; right after start it may refuse
+      delay: 6
+      until: wazuh_secadmin.rc == 0
+
+    - name: "Wazuh | Indexer answers (admin, cluster yellow/green)"
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/_cluster/health"
+        url_username: admin
+        url_password: "{{ wazuh_admin_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: [200]
+        return_content: true
+      register: wazuh_idx
+      retries: 40
+      delay: 6
+      until: wazuh_idx.status == 200 and (wazuh_idx.json.status in ['green', 'yellow'])
+      when: not ansible_check_mode
+      no_log: true
 
     - name: "Wazuh | Dashboard answers"
       ansible.builtin.uri:
@@ -168,6 +185,24 @@
       delay: 6
       until: wazuh_api.status in [200, 401]
       when: not ansible_check_mode
+
+    # authd only accepts enrolments into groups that exist; the agent role asks for
+    # "docker" on docker_hosts. Created once, read back on every run.
+    - name: "Wazuh | Agent groups on the manager (today)"
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-wazuh.manager-1, /var/ossec/bin/agent_groups, -l]
+      register: wazuh_groups_now
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: "Wazuh | Create the declared agent groups"
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-wazuh.manager-1, /var/ossec/bin/agent_groups, -a, -g, "{{ item }}", -q]
+      loop: "{{ wazuh_agent_groups }}"
+      when:
+        - not ansible_check_mode
+        - (wazuh_groups_now.stdout | default('')) is not search('(?m)^\\s*' ~ item ~ ' \\(')
+      changed_when: true
 
     - name: "Wazuh | Host firewall: agents from the platform supernet, dashboard from Traefik / VPN"
       community.general.ufw:
