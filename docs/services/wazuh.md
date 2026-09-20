@@ -29,7 +29,7 @@ Internal PKI between the components generated once by the pinned vendor generato
 
 ## 6. Configuration source
 
-`roles/wazuh/defaults/main.yml` and the templates under `roles/wazuh/templates` (compose, indexer, security plugin, dashboard, manager `ossec.conf`); agent settings in `roles/wazuh_agent`.
+`roles/wazuh/defaults/main.yml` and the templates under `roles/wazuh/templates` (compose, indexer, security plugin, dashboard, manager `ossec.conf`); agent settings in `roles/wazuh_agent`. The security-plugin templates are derived from the files shipped **inside the pinned image** (`docker run --rm --entrypoint cat <image> /usr/share/wazuh-indexer/config/opensearch-security/<file>`), not from the GitHub copy — role names differ between them (4.14: `manage_wazuh_index`). Re-derive on every version bump.
 
 ## 7. Provisioning
 
@@ -74,6 +74,7 @@ Indexer `_cluster/health`, dashboard `/api/status`, manager API `/`; contract-au
 | indexer answers 503 `OpenSearch Security not initialized` | the vendor one-shot bootstrap aborted (bad security file) | the role runs securityadmin whenever the index is not initialised; fix the file, re-run the play |
 | securityadmin: `which: command not found` | the image has no `which` and no JAVA_HOME | the role sets `JAVA_HOME=/usr/share/wazuh-indexer/jdk` |
 | a fixed file is on disk but the container still misbehaves | single-file bind mount keeps the old inode after an atomic write | the role compares container vs host checksums and recreates the stack (task "Stale mounts found") |
+| dashboard logs every minute `Could not check if the index wazuh-monitoring-… exists due to no permissions` | the dashboard user is not mapped to `manage_wazuh_index` (mapping taken from an older upstream file) | `roles_mapping.yml.j2` = the image's mapping + the admin group |
 | authd `Invalid group: docker` | the agent asks for a group the manager has not created | `wazuh_agent_groups` (server role creates them before agents enrol) |
 | agent `syscheckd ... fopen error` on `/etc/vconsole.conf` | FIM follows a dangling symlink of the vendor default set | harmless; ignore list is a review-pass item |
 
