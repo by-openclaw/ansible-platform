@@ -7,7 +7,7 @@
   changed_when: false
   check_mode: false
 
-- name: "PVE host | Local admin user present: {{ pve_host_local_admin }}@pam"
+- name: "PVE host | Local admin user present: {{ pve_host_local_admin ~ '@pam' }}"
   ansible.builtin.command:
     argv: [pveum, user, add, "{{ pve_host_local_admin }}@pam", --comment, "OOB / local admin (identity/0004)"]
   when: (pve_host_users.stdout | from_json | map(attribute='userid') | list) is not contains(pve_host_local_admin ~ '@pam')
