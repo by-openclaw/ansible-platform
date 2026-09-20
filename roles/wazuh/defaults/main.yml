@@ -14,6 +14,15 @@ wazuh_cert_tool_version: "4.14"
 wazuh_env: "{{ platform_env | default('prod') }}"
 wazuh_fqdn: "wazuh.{{ platform_domain }}"
 wazuh_dir: "/opt/wazuh"
+# Endpoints, container names and image paths the tasks talk to — no literals in tasks.
+wazuh_compose_project: "{{ wazuh_dir | basename }}"            # compose names containers <project>-<service>-1
+wazuh_manager_container: "{{ wazuh_compose_project }}-wazuh.manager-1"
+wazuh_indexer_container: "{{ wazuh_compose_project }}-wazuh.indexer-1"
+wazuh_api_port: 55000                                           # manager API, published on loopback only
+wazuh_indexer_port: 9200                                        # indexer, published on loopback only
+wazuh_api_url: "https://127.0.0.1:{{ wazuh_api_port }}"
+wazuh_indexer_url: "https://127.0.0.1:{{ wazuh_indexer_port }}"
+wazuh_indexer_home: /usr/share/wazuh-indexer                    # inside the indexer image
 wazuh_listen_ip: "{{ ansible_host }}"
 wazuh_dashboard_port: 5601          # HTTP on the SVC address; TLS is the platform Traefik's (SEC-28)
 wazuh_agent_port: 1514              # agents → manager (TLS)

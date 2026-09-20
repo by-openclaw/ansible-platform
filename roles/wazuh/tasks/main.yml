@@ -179,7 +179,7 @@
     # (first boot not done, or a bad file aborted the vendor's one-shot bootstrap).
     - name: "Wazuh | Indexer is listening (TLS)"
       ansible.builtin.uri:
-        url: "https://127.0.0.1:9200/"
+        url: "{{ wazuh_indexer_url }}/"
         validate_certs: false
         status_code: [200, 401, 503]
       register: wazuh_idx_listen
@@ -198,19 +198,19 @@
           - docker
           - exec
           - -e
-          - "CACERT=/usr/share/wazuh-indexer/config/certs/root-ca.pem"
+          - "CACERT={{ wazuh_indexer_home }}/config/certs/root-ca.pem"
           - -e
-          - "CERT=/usr/share/wazuh-indexer/config/certs/admin.pem"
+          - "CERT={{ wazuh_indexer_home }}/config/certs/admin.pem"
           - -e
-          - "KEY=/usr/share/wazuh-indexer/config/certs/admin-key.pem"
+          - "KEY={{ wazuh_indexer_home }}/config/certs/admin-key.pem"
           - -e
-          - JAVA_HOME=/usr/share/wazuh-indexer/jdk    # the tool runs `which java` otherwise; the image has neither
-          - wazuh-wazuh.indexer-1
+          - JAVA_HOME={{ wazuh_indexer_home }}/jdk    # the tool runs `which java` otherwise; the image has neither
+          - "{{ wazuh_indexer_container }}"
           - bash
           - -c
           - >-
-            bash /usr/share/wazuh-indexer/plugins/opensearch-security/tools/securityadmin.sh
-            -cd /usr/share/wazuh-indexer/config/opensearch-security/ -nhnv
+            bash {{ wazuh_indexer_home }}/plugins/opensearch-security/tools/securityadmin.sh
+            -cd {{ wazuh_indexer_home }}/config/opensearch-security/ -nhnv
             -cacert $CACERT -cert $CERT -key $KEY -p 9200 -icl -h 127.0.0.1
       when:
         - not ansible_check_mode
@@ -227,7 +227,7 @@
 
     - name: "Wazuh | Indexer answers (admin, cluster yellow/green)"
       ansible.builtin.uri:
-        url: "https://127.0.0.1:9200/_cluster/health"
+        url: "{{ wazuh_indexer_url }}/_cluster/health"
         url_username: admin
         url_password: "{{ wazuh_admin_password }}"
         force_basic_auth: true
@@ -253,7 +253,7 @@
 
     - name: "Wazuh | Manager API answers"
       ansible.builtin.uri:
-        url: "https://127.0.0.1:55000/"
+        url: "{{ wazuh_api_url }}/"
         validate_certs: false
         status_code: [200, 401]
       register: wazuh_api
@@ -265,7 +265,7 @@
     # --- manager-API RBAC for the signed-in person (run_as) ---------------------------------
     - name: "Wazuh | Manager-API token"
       ansible.builtin.uri:
-        url: "https://127.0.0.1:55000/security/user/authenticate?raw=true"
+        url: "{{ wazuh_api_url }}/security/user/authenticate?raw=true"
         method: POST
         url_username: "{{ wazuh_api_user }}"
         url_password: "{{ wazuh_api_password }}"
@@ -278,7 +278,7 @@
 
     - name: "Wazuh | Manager-API security rules (today)"
       ansible.builtin.uri:
-        url: "https://127.0.0.1:55000/security/rules"
+        url: "{{ wazuh_api_url }}/security/rules"
         headers:
           Authorization: "Bearer {{ wazuh_api_token.content }}"
         validate_certs: false
@@ -296,7 +296,7 @@
 
     - name: "Wazuh | Create the rule: IdP group -> administrator (once)"
       ansible.builtin.uri:
-        url: "https://127.0.0.1:55000/security/rules"
+        url: "{{ wazuh_api_url }}/security/rules"
         method: POST
         headers:
           Authorization: "Bearer {{ wazuh_api_token.content }}"
@@ -323,7 +323,7 @@
 
     - name: "Wazuh | Rules linked to the administrator role (today)"
       ansible.builtin.uri:
-        url: "https://127.0.0.1:55000/security/roles?role_ids={{ wazuh_api_admin_role_id }}"
+        url: "{{ wazuh_api_url }}/security/roles?role_ids={{ wazuh_api_admin_role_id }}"
         headers:
           Authorization: "Bearer {{ wazuh_api_token.content }}"
         validate_certs: false
@@ -334,7 +334,7 @@
 
     - name: "Wazuh | Link the rule to the administrator role (once)"
       ansible.builtin.uri:
-        url: "https://127.0.0.1:55000/security/roles/{{ wazuh_api_admin_role_id }}/rules?rule_ids={{ wazuh_api_rule_id }}"
+        url: "{{ wazuh_api_url }}/security/roles/{{ wazuh_api_admin_role_id }}/rules?rule_ids={{ wazuh_api_rule_id }}"
         method: POST
         headers:
           Authorization: "Bearer {{ wazuh_api_token.content }}"
@@ -350,7 +350,7 @@
     # and require a non-empty policy set (an unmapped person gets an empty one).
     - name: "Wazuh | run_as as a member of the IdP group"
       ansible.builtin.uri:
-        url: "https://127.0.0.1:55000/security/user/authenticate/run_as?raw=true"
+        url: "{{ wazuh_api_url }}/security/user/authenticate/run_as?raw=true"
         method: POST
         url_username: "{{ wazuh_api_user }}"
         url_password: "{{ wazuh_api_password }}"
@@ -367,7 +367,7 @@
 
     - name: "Wazuh | The impersonated member holds policies"
       ansible.builtin.uri:
-        url: "https://127.0.0.1:55000/security/users/me/policies"
+        url: "{{ wazuh_api_url }}/security/users/me/policies"
         headers:
           Authorization: "Bearer {{ wazuh_api_runas.content }}"
         validate_certs: false
@@ -381,14 +381,14 @@
     # "docker" on docker_hosts. Created once, read back on every run.
     - name: "Wazuh | Agent groups on the manager (today)"
       ansible.builtin.command:
-        argv: [docker, exec, wazuh-wazuh.manager-1, /var/ossec/bin/agent_groups, -l]
+        argv: [docker, exec, "{{ wazuh_manager_container }}", /var/ossec/bin/agent_groups, -l]
       register: wazuh_groups_now
       changed_when: false
       when: not ansible_check_mode
 
     - name: "Wazuh | Create the declared agent groups"
       ansible.builtin.command:
-        argv: [docker, exec, wazuh-wazuh.manager-1, /var/ossec/bin/agent_groups, -a, -g, "{{ item }}", -q]
+        argv: [docker, exec, "{{ wazuh_manager_container }}", /var/ossec/bin/agent_groups, -a, -g, "{{ item }}", -q]
       loop: "{{ wazuh_agent_groups }}"
       when:
         - not ansible_check_mode
