@@ -120,3 +120,9 @@ gitlab_sidekiq_concurrency: 10
 gitlab_backup_enabled: true
 gitlab_backup_keep_seconds: 604800     # 7 days on S3 (GitLab prunes)
 gitlab_backup_cron: "30 2 * * *"       # nightly 02:30
+
+# Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
+gitlab_firewall_rules:
+  - { port: "{{ gitlab_http_backend_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "GitLab HTTP backend (Traefik)" }
+  - { port: "{{ gitlab_registry_backend_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "GitLab registry backend (Traefik)" }
+  - { port: "{{ gitlab_pages_backend_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "GitLab Pages backend (Traefik)" }

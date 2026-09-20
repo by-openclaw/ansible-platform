@@ -319,3 +319,10 @@
     job: "/opt/gitlab/bin/gitlab-backup create CRON=1 >> /var/log/gitlab/backup.log 2>&1"
     user: root
   when: gitlab_backup_enabled
+
+- name: "GitLab | Host firewall rules for the native listeners (when ufw is active)"
+  ansible.builtin.include_role:
+    name: host_firewall
+  vars:
+    host_firewall_rules: "{{ gitlab_firewall_rules }}"
+  tags: [gitlab, firewall]

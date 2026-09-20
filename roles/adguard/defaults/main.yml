@@ -95,3 +95,12 @@ adguard_safesearch_zones:
 adguard_filters:
   - {enabled: true, id: 1, name: "AdGuard DNS filter", url: "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt"}
   - {enabled: true, id: 2, name: "AdAway Default Blocklist", url: "https://adguardteam.github.io/HostlistsRegistry/assets/filter_2.txt"}
+
+# Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
+adguard_tls_port: 853                      # DoT (tcp) + DoQ (udp) listener
+adguard_firewall_rules:
+  - { port: "{{ adguard_dns_port }}", proto: udp, from: "{{ platform_trusted_cidrs }}", comment: "DNS (AdGuard)" }
+  - { port: "{{ adguard_dns_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "DNS (AdGuard)" }
+  - { port: "{{ adguard_tls_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "DNS over TLS" }
+  - { port: "{{ adguard_tls_port }}", proto: udp, from: "{{ platform_trusted_cidrs }}", comment: "DNS over QUIC" }
+  - { port: "{{ adguard_http_address.split(':') | last }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "AdGuard UI via Traefik" }

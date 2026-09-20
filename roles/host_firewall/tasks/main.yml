@@ -1,0 +1,35 @@
+---
+# ufw is installed here (not only by hardening) so a service can DECLARE its rules before
+# the firewall is ever enabled: the rules are stored while ufw is inactive and take effect
+# the moment the hardening baseline enables it — no window in which the service is blocked.
+- name: "Host firewall | ufw package present"
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Host firewall | Expand the rules over their source networks"
+  ansible.builtin.set_fact:
+    host_firewall_expanded: >-
+      {%- set out = [] -%}
+      {%- for r in host_firewall_rules -%}
+        {%- for src in (r.from | default(['any'])) -%}
+          {%- set _ = out.append({'port': (r.port | string) if r.port is defined else '',
+                                  'proto': (r.proto | default('tcp')) if r.port is defined else 'any',
+                                  'from': src, 'comment': r.comment | default('')}) -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: "Host firewall | Declare the allow rules (enforced once the baseline enables ufw)"
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port | default(omit, true) }}"     # port-less rule = everything from that network
+    proto: "{{ item.proto }}"
+    from_ip: "{{ item.from }}"
+    comment: "{{ item.comment }}"
+  loop: "{{ host_firewall_expanded }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.proto }} from {{ item.from }} — {{ item.comment }}"
+  when: not ansible_check_mode

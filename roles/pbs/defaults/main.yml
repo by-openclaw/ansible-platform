@@ -53,7 +53,8 @@ pbs_traefik_enabled: true
 # PBS serves its own TLS on 8007 with a self-signed cert -> Traefik must skip
 # backend verification (internal SVC hop, still TLS-encrypted). Needs the
 # traefik_route insecure-skip-verify option.
-pbs_traefik_backend_url: "https://10.1.3.222:8007"
+pbs_port: 8007                                   # PBS API/UI (own TLS)
+pbs_traefik_backend_url: "https://{{ ansible_host }}:{{ pbs_port }}"
 
 # --- PVE storage wiring + 2nd backup job (delegated to the node) --------------
 pbs_pve_node: "srv-proxmox-poc-01"
@@ -86,3 +87,7 @@ pbs_keep_daily: 14
 pbs_keep_weekly: 8
 pbs_keep_monthly: 6
 pbs_reverify_days: 30
+
+# Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
+pbs_firewall_rules:
+  - { port: "{{ pbs_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "PBS API/UI (PVE node, Traefik)" }

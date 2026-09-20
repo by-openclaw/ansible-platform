@@ -65,3 +65,10 @@
     # VPN overlay is canonical for every internal service (was a per-role override).
   when: grafana_traefik_enabled | default(true) | bool
   tags: [route]
+
+- name: "Grafana | Host firewall rules for the native listeners (when ufw is active)"
+  ansible.builtin.include_role:
+    name: host_firewall
+  vars:
+    host_firewall_rules: "{{ grafana_firewall_rules }}"
+  tags: [grafana, firewall]

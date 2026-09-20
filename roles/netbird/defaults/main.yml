@@ -167,3 +167,12 @@ netbird_peer_login_expiration: 86400             # seconds (24h baseline; tune f
 # "user pending approval cannot add peers". Authentik's netbird-users group is already
 # the access gate, so disable NetBird's redundant user approval → members auto-join.
 netbird_user_approval_required: false
+
+# Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
+netbird_host_peer_wg_port: 51820          # the host is itself a NetBird peer (routing); kernel WireGuard listener
+netbird_firewall_rules:
+  - { port: "{{ netbird_stun_port }}", proto: udp, comment: "coturn STUN/TURN (host network, public)" }
+  - { port: "{{ netbird_stun_port }}", proto: tcp, comment: "coturn STUN/TURN (host network, public)" }
+  - { port: "{{ netbird_turn_min_port }}:{{ netbird_turn_max_port }}", proto: udp, comment: "TURN relay range (public)" }
+  - { port: "{{ netbird_host_peer_wg_port }}", proto: udp, comment: "NetBird peer WireGuard (public)" }
+  - { port: "{{ netbird_dns_nameserver_port }}", proto: udp, from: "{{ platform_trusted_cidrs }}", comment: "NetBird DNS for peers" }

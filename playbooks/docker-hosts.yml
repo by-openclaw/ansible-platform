@@ -1,0 +1,13 @@
+---
+# ==============================================================================
+# Docker baseline on every Docker host: engine (pinned), daemon.json (journald + v6),
+# compose v2 (Debian package), and the host-firewall rule that lets container networks
+# reach the host. Service roles depend on roles/docker; this play applies it standalone.
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/docker-hosts.yml [--limit host]
+# ==============================================================================
+- name: "Docker baseline on every Docker host"
+  hosts: docker_hosts
+  become: true
+  gather_facts: true
+  roles:
+    - role: docker
