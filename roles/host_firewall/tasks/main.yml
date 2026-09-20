@@ -15,7 +15,8 @@
       {%- set out = [] -%}
       {%- for r in host_firewall_rules -%}
         {%- for src in (r.from | default(['any'])) -%}
-          {%- set _ = out.append({'port': r.port | string, 'proto': r.proto | default('tcp'),
+          {%- set _ = out.append({'port': (r.port | string) if r.port is defined else '',
+                                  'proto': (r.proto | default('tcp')) if r.port is defined else 'any',
                                   'from': src, 'comment': r.comment | default('')}) -%}
         {%- endfor -%}
       {%- endfor -%}
@@ -24,7 +25,7 @@
 - name: "Host firewall | Declare the allow rules (enforced once the baseline enables ufw)"
   community.general.ufw:
     rule: allow
-    port: "{{ item.port }}"
+    port: "{{ item.port | default(omit, true) }}"     # port-less rule = everything from that network
     proto: "{{ item.proto }}"
     from_ip: "{{ item.from }}"
     comment: "{{ item.comment }}"
