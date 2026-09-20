@@ -6,8 +6,7 @@ services:
     image: {{ wazuh_manager_image }}
     hostname: wazuh.manager
     restart: always
-    ulimits:
-      memlock: { soft: -1, hard: -1 }
+    ulimits:   # no memlock: an unprivileged LXC refuses RLIMIT_MEMLOCK=unlimited (runc "rlimit type 8"); the indexer has no bootstrap.memory_lock
       nofile: { soft: 655360, hard: 655360 }
     ports:
       - "{{ wazuh_listen_ip }}:{{ wazuh_agent_port }}:1514"
@@ -50,8 +49,7 @@ services:
     environment:
       - "OPENSEARCH_JAVA_OPTS=-Xms{{ wazuh_indexer_heap }} -Xmx{{ wazuh_indexer_heap }}"
       - INDEXER_PASSWORD={{ wazuh_admin_password }}
-    ulimits:
-      memlock: { soft: -1, hard: -1 }
+    ulimits:   # no memlock: an unprivileged LXC refuses RLIMIT_MEMLOCK=unlimited (runc "rlimit type 8"); the indexer has no bootstrap.memory_lock
       nofile: { soft: 65536, hard: 65536 }
     volumes:
       - wazuh-indexer-data:/var/lib/wazuh-indexer
