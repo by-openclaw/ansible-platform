@@ -144,7 +144,9 @@ contract_audit_service_checks:
 
   - id: SVC-WAZUH
     desc: "Wazuh manager API + dashboard answering on the security-monitoring guest"
-    probe: "curl -sk -o /dev/null -w '%{http_code}' -m5 https://127.0.0.1:55000/ ; curl -s -o /dev/null -w ' %{http_code}' -m5 http://{{ ansible_host }}:5601/api/status"
+    probe: >-
+      curl -sk -o /dev/null -w '%{http_code}' -m5 https://127.0.0.1:55000/ ; curl -s -o /dev/null -w ' %{http_code}' -m5
+      http://{{ ansible_host }}:5601/api/status
     expect: "^(200|401) (200|302|401)$"
     groups: ["wazuh"]
 
