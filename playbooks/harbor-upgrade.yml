@@ -24,6 +24,13 @@
   gather_facts: true
   any_errors_fatal: true
 
+  # The probes below use the harbor role's addresses and paths; the role itself is only
+  # included per rung, so its defaults are loaded first.
+  pre_tasks:
+    - name: "Harbor | Load the role defaults (listen address, port, install dir)"
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../roles/harbor/defaults/main.yml"
+
   roles:
     - role: upgrade_path
       vars:
