@@ -1,0 +1,19 @@
+---
+- name: "PVE host | Datacenter options today"
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/options, --output-format, json]
+  register: pve_host_opts
+  changed_when: false
+  check_mode: false
+
+- name: "PVE host | Bind the current options"
+  ansible.builtin.set_fact:
+    pve_host_opts_now: "{{ pve_host_opts.stdout | from_json }}"
+
+- name: "PVE host | Set the datacenter options (only on drift): email_from, keyboard"
+  ansible.builtin.command:
+    argv: [pvesh, set, /cluster/options, --email_from, "{{ pve_host_email_from }}", --keyboard, "{{ pve_host_keyboard }}"]
+  when: >-
+    (pve_host_opts_now.email_from | default('')) != pve_host_email_from
+    or (pve_host_opts_now.keyboard | default('')) != pve_host_keyboard
+  changed_when: true

@@ -1,0 +1,31 @@
+# Managed by Ansible (role: pve_host) — datacenter firewall: IP sets + default policy.
+# The hypervisor's host firewall is this one; ufw is not used on nodes.
+[OPTIONS]
+enable: {{ 1 if pve_host_firewall_enabled | bool else 0 }}
+policy_in: DROP
+policy_out: ACCEPT
+log_ratelimit: enable=1,rate=10/second,burst=5
+
+[IPSET pve_ui]
+# Proxmox UI / API: management networks, admin desks, the Traefik hosts (proxmox.<domain> route)
+{% for s in pve_host_ui_sources | unique %}
+{{ s }}
+{% endfor %}
+
+[IPSET pve_ssh]
+# SSH: management networks + the bastion
+{% for s in pve_host_ssh_sources | unique %}
+{{ s }}
+{% endfor %}
+
+[IPSET pve_metrics]
+# exporters: the monitoring hosts
+{% for s in pve_host_metrics_sources | unique %}
+{{ s }}
+{% endfor %}
+
+[IPSET pve_icmp]
+# ping from the platform's trusted networks
+{% for s in pve_host_icmp_sources | unique %}
+{{ s }}
+{% endfor %}

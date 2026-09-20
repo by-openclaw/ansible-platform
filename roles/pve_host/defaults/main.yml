@@ -1,0 +1,64 @@
+---
+# ==============================================================================
+# Role: pve_host — the Proxmox VE hypervisor built from the repo (bare install → platform node).
+# Apt sources as code, datacenter options, the Proxmox firewall (the node's host firewall —
+# ufw stays off on nodes), the OIDC realm from Vault, local admin + ACLs, the UI route through
+# Traefik. Every value is a variable; nothing is done by hand on the node. Idempotent.
+# ==============================================================================
+pve_host_domain: "{{ platform_domain }}"
+pve_host_env: "{{ platform_env | default('prod') }}"
+pve_host_node: "{{ inventory_hostname }}"
+
+# --- apt sources (deb822) -----------------------------------------------------
+pve_host_debian_suite: "{{ ansible_distribution_release }}"
+pve_host_repo_keyring: /usr/share/keyrings/proxmox-archive-keyring.gpg
+pve_host_repo_pve_uri: "http://download.proxmox.com/debian/pve"
+pve_host_repo_pve_component: pve-no-subscription
+pve_host_repo_ceph_enabled: true
+pve_host_repo_ceph_uri: "http://download.proxmox.com/debian/ceph-squid"
+pve_host_repo_ceph_component: no-subscription
+pve_host_repo_files_absent:            # install-time leftovers
+  - pve-enterprise.list
+  - pve-enterprise.sources
+  - ceph.list
+pve_host_legacy_sources_regex: 'download\.proxmox\.com/debian/(pve|ceph)'   # legacy one-line entries replaced by the deb822 files
+
+# --- datacenter options -------------------------------------------------------
+pve_host_email_from: "alerts@{{ pve_host_domain }}"
+pve_host_keyboard: fr-be
+
+# --- Proxmox firewall (datacenter + host) ------------------------------------
+pve_host_firewall_enabled: true
+pve_host_firewall_log_level_in: info
+pve_host_mgmt_cidrs: "{{ platform_mgmt_cidrs }}"                         # OOB + fabric (group_vars)
+pve_host_ui_port: 8006
+pve_host_spice_port: 3128
+pve_host_ssh_port: "{{ platform_ssh_port | default(22222) }}"
+pve_host_metrics_ports: [9100]
+pve_host_ui_sources: >-
+  {{ pve_host_mgmt_cidrs
+     + (traefik_admin_cidrs | default([]))
+     + (groups['traefik'] | default([]) | map('extract', hostvars, 'ansible_host') | list) }}
+pve_host_ssh_sources: >-
+  {{ pve_host_mgmt_cidrs
+     + (groups['jumpserver'] | default([]) | map('extract', hostvars, 'ansible_host') | list) }}
+pve_host_metrics_sources: "{{ groups['monitoring'] | default([]) | map('extract', hostvars, 'ansible_host') | list }}"
+pve_host_icmp_sources: "{{ platform_trusted_cidrs }}"
+pve_host_guard_from_controller: true      # after enabling: SSH + UI must still answer from the controller, else roll back
+
+# --- identity: local admin, OIDC realm (client minted by roles/authentik → Vault), ACLs ------
+pve_host_local_admin: "{{ platform_org | default('by-research') }}"     # <org>@pam = the OOB/local admin (identity/0004)
+pve_host_oidc_realm: authentik
+pve_host_oidc_slug: proxmox
+pve_host_oidc_vault_path: "{{ pve_host_env }}/pve/oidc"
+pve_host_oidc_issuer: "https://authentik.{{ pve_host_domain }}/application/o/{{ pve_host_oidc_slug }}/"
+pve_host_oidc_scopes: "openid profile email groups"
+pve_host_oidc_admin_group: "proxmox-admins"      # Authentik group; PVE stores it as <group>-<realm>
+pve_host_acls:
+  - { path: "/", role: Administrator, kind: user, ugid: "{{ pve_host_local_admin }}@pam" }
+  - { path: "/", role: Administrator, kind: group, ugid: "{{ pve_host_oidc_admin_group }}-{{ pve_host_oidc_realm }}" }
+
+# --- UI through Traefik (internal / admin-only) ------------------------------
+pve_host_route_enabled: true
+pve_host_fqdn: "{{ pve_host_oidc_slug }}.{{ pve_host_domain }}"
+pve_host_backend_url: "https://{{ ansible_host }}:{{ pve_host_ui_port }}"

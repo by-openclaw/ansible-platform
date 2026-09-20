@@ -1,0 +1,70 @@
+---
+# /etc/pve is pmxcfs: writes work, atomic rename does not always — unsafe_writes falls back to in-place.
+- name: "PVE host | Datacenter firewall config (IP sets + policy)"
+  ansible.builtin.template:
+    src: cluster.fw.j2
+    dest: /etc/pve/firewall/cluster.fw
+    mode: "0640"
+    unsafe_writes: true
+  register: pve_host_fw_dc
+
+- name: "PVE host | Host firewall rules"
+  ansible.builtin.template:
+    src: host.fw.j2
+    dest: "/etc/pve/nodes/{{ pve_host_node }}/host.fw"
+    mode: "0640"
+    unsafe_writes: true
+  register: pve_host_fw_host
+
+- name: "PVE host | The rule set compiles"
+  ansible.builtin.command:
+    argv: [pve-firewall, compile]
+  register: pve_host_fw_compile
+  changed_when: false
+  failed_when: pve_host_fw_compile.rc != 0 or ('error' in pve_host_fw_compile.stderr | lower)
+  when: not ansible_check_mode
+
+- name: "PVE host | pve-firewall service enabled + running"
+  ansible.builtin.systemd_service:
+    name: pve-firewall
+    enabled: true
+    state: started
+
+- name: "PVE host | Guard — the controller must still reach SSH and the UI after a firewall change"
+  when: (pve_host_fw_dc is changed or pve_host_fw_host is changed) and pve_host_guard_from_controller and not ansible_check_mode
+  block:
+    - name: "PVE host | Wait for the firewall to apply the new rules"
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: "PVE host | SSH still answers from the controller"
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ pve_host_ssh_port | int }}"
+        timeout: 30
+      delegate_to: localhost
+      become: false
+
+    - name: "PVE host | UI still answers from the controller"
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:{{ pve_host_ui_port }}/"
+        validate_certs: false
+        status_code: [200, 401]
+      delegate_to: localhost
+      become: false
+  rescue:
+    - name: "PVE host | ROLLBACK — disable the datacenter firewall (rules stay on disk for review)"
+      ansible.builtin.lineinfile:
+        path: /etc/pve/firewall/cluster.fw
+        regexp: '^enable:'
+        line: "enable: 0"
+        unsafe_writes: true
+
+    - name: "PVE host | Reload pve-firewall without the rules"
+      ansible.builtin.command:
+        argv: [pve-firewall, restart]
+      changed_when: true
+
+    - name: "PVE host | Fail loudly"
+      ansible.builtin.fail:
+        msg: "Firewall enabled but the controller lost SSH or the UI — rolled back (enable: 0). Check the IP sets in cluster.fw."

@@ -178,3 +178,25 @@ contract_audit_service_checks:
     expect: "svc-netbird-"
     groups: ["netbird"]
     delegate_localhost: true
+
+  # --- hypervisor (roles/pve_host) -----------------------------------------------
+  - id: NODE-01
+    desc: "Proxmox firewall enabled and running (the node's host firewall; ufw stays off on nodes)"
+    probe: "pve-firewall status 2>/dev/null | head -1"
+    expect: "^Status: enabled/running$"
+    groups: ["proxmox_nodes"]
+  - id: NODE-02
+    desc: "Apt sources as code: deb822 Proxmox file present, no enterprise leftovers"
+    probe: "[ -f /etc/apt/sources.list.d/proxmox.sources ] && ! ls /etc/apt/sources.list.d/ | grep -qE '^pve-enterprise' && echo PASS || echo FAIL"
+    expect: "^PASS$"
+    groups: ["proxmox_nodes"]
+  - id: NODE-03
+    desc: "node_exporter active on the hypervisor (Prometheus scrapes it)"
+    probe: "systemctl is-active prometheus-node-exporter node_exporter 2>/dev/null | grep -m1 active || echo inactive"
+    expect: "^active$"
+    groups: ["proxmox_nodes"]
+  - id: NODE-04
+    desc: "Datacenter notification sender is the platform alerts address"
+    probe: "pvesh get /cluster/options --output-format json 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get(\"email_from\",\"\"))'"
+    expect: "^alerts@{{ platform_domain | regex_escape }}$"
+    groups: ["proxmox_nodes"]

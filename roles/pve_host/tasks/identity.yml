@@ -1,0 +1,99 @@
+---
+# --- local admin (<org>@pam) -----------------------------------------------------------
+- name: "PVE host | Users today"
+  ansible.builtin.command:
+    argv: [pveum, user, list, --output-format, json]
+  register: pve_host_users
+  changed_when: false
+  check_mode: false
+
+- name: "PVE host | Local admin user present: {{ pve_host_local_admin }}@pam"
+  ansible.builtin.command:
+    argv: [pveum, user, add, "{{ pve_host_local_admin }}@pam", --comment, "OOB / local admin (identity/0004)"]
+  when: (pve_host_users.stdout | from_json | map(attribute='userid') | list) is not contains(pve_host_local_admin ~ '@pam')
+  changed_when: true
+
+# --- OIDC realm: the client is minted by roles/authentik into Vault ----------------------
+- name: "PVE host | Read the OIDC client (Vault, minted by roles/authentik)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ pve_host_oidc_vault_path }}"
+    vault_secret_init: {}
+
+- name: "PVE host | Bind the OIDC client"
+  ansible.builtin.set_fact:
+    pve_host_oidc: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "PVE host | OIDC realm today"
+  ansible.builtin.command:
+    argv: [pvesh, get, "/access/domains/{{ pve_host_oidc_realm }}", --output-format, json]
+  register: pve_host_realm
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "PVE host | Desired realm settings"
+  ansible.builtin.set_fact:
+    pve_host_realm_desired:
+      client-id: "{{ pve_host_oidc.client_id }}"
+      client-key: "{{ pve_host_oidc.client_secret }}"
+      issuer-url: "{{ pve_host_oidc_issuer }}"
+      username-claim: email
+      groups-claim: groups
+      groups-overwrite: 1
+      autocreate: 1
+      scopes: "{{ pve_host_oidc_scopes }}"
+      comment: "Authentik SSO"
+  no_log: true
+
+- name: "PVE host | Realm drift (missing realm, missing keys or different values) + the pveum arguments"
+  ansible.builtin.set_fact:
+    pve_host_realm_drift: >-
+      {%- set now = (pve_host_realm.stdout | from_json) if pve_host_realm.rc == 0 else {} -%}
+      {%- set ns = namespace(d=(pve_host_realm.rc != 0)) -%}
+      {%- for k, v in pve_host_realm_desired.items() -%}
+        {%- if (now.get(k) | string) != (v | string) -%}{%- set ns.d = true -%}{%- endif -%}
+      {%- endfor -%}
+      {{ ns.d }}
+    pve_host_realm_args: >-
+      {%- set out = [] -%}
+      {%- for k, v in pve_host_realm_desired.items() -%}{%- set _ = out.append('--' ~ k ~ '=' ~ v) -%}{%- endfor -%}
+      {{ out }}
+  no_log: true
+
+- name: "PVE host | Create the OIDC realm (once): {{ pve_host_oidc_realm }}"
+  ansible.builtin.command:
+    argv: "{{ ['pveum', 'realm', 'add', pve_host_oidc_realm, '--type', 'openid'] + pve_host_realm_args }}"
+  when: pve_host_realm.rc != 0 and not ansible_check_mode
+  changed_when: true
+  no_log: true
+
+- name: "PVE host | Update the OIDC realm (only on drift): {{ pve_host_oidc_realm }}"
+  ansible.builtin.command:
+    argv: "{{ ['pveum', 'realm', 'modify', pve_host_oidc_realm] + pve_host_realm_args }}"
+  when: pve_host_realm.rc == 0 and (pve_host_realm_drift | bool) and not ansible_check_mode
+  changed_when: true
+  no_log: true
+
+# --- ACLs (presence only; undeclared ACLs are reported by the audit, never deleted here) ---
+- name: "PVE host | ACLs today"
+  ansible.builtin.command:
+    argv: [pveum, acl, list, --output-format, json]
+  register: pve_host_acl
+  changed_when: false
+  check_mode: false
+
+- name: "PVE host | Declared ACLs present"
+  ansible.builtin.command:
+    argv: "{{ ['pveum', 'acl', 'modify', item.path, '--roles', item.role] + (['--users', item.ugid] if item.kind == 'user' else ['--groups', item.ugid]) }}"
+  loop: "{{ pve_host_acls }}"
+  loop_control:
+    label: "{{ item.path }} {{ item.role }} {{ item.ugid }}"
+  when: >-
+    (pve_host_acl.stdout | from_json)
+    | selectattr('path', 'equalto', item.path) | selectattr('roleid', 'equalto', item.role)
+    | selectattr('ugid', 'equalto', item.ugid) | list | length == 0
+  changed_when: true
