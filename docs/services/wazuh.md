@@ -46,6 +46,8 @@ ansible-playbook -i inventories/prod/hosts.yml playbooks/authentik.yml
 ansible-playbook -i inventories/prod/hosts.yml playbooks/opnsense.yml --check -e '{"opn_fw_only": [...the five wazuh objects...]}'   # then without --check
 ansible-playbook -i inventories/prod/hosts.yml playbooks/opnsense-unbound-overrides.yml
 ansible-playbook -i inventories/prod/hosts.yml playbooks/wazuh.yml          # twice; the second must be changed=0
+# first fleet roll-out: every agent runs its FIM/rootcheck/syscollector baseline at start → node load spikes for ~15 min
+# (LXCs show the host load; sudo prompts can time out). The agents play is serial: 5; do not stack other plays on it.
 ansible-playbook -i inventories/prod/hosts.yml playbooks/contract-audit.yml
 ```
 
