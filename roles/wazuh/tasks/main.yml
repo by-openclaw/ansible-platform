@@ -72,6 +72,7 @@
         owner: root
         group: root
         mode: "0644"
+      register: wazuh_authd_pass
       no_log: true
 
     # --- internal PKI (one-shot) + images ---------------------------------------------------
@@ -93,11 +94,15 @@
         source: pull
       loop: ["{{ wazuh_manager_image }}", "{{ wazuh_indexer_image }}", "{{ wazuh_dashboard_image }}"]
 
+    # The vendor mounts single FILES into the containers. Ansible replaces a file
+    # atomically (new inode), so a running container keeps reading the old one and
+    # compose sees no definition change: recreate the stack whenever a mounted file changed.
     - name: "Wazuh | Stack up (compose v2, present = create/start, recreate on config change)"
       community.docker.docker_compose_v2:
         project_src: "{{ wazuh_dir }}"
         state: present
         pull: never
+        recreate: "{{ 'always' if (wazuh_cfg is changed or wazuh_authd_pass is changed) else 'auto' }}"
       register: wazuh_up
       when: not ansible_check_mode
 
