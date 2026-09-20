@@ -51,3 +51,29 @@
     or (portainer_settings.json.OAuthSettings.AuthorizationURI | default('')) != portainer_oauth.AuthorizationURI
   changed_when: true
   no_log: true
+
+# Portainer CE creates OAuth users as *standard* users with no environment rights, and
+# has no group→role mapping. The IdP already restricts sign-in to platform-admins, so
+# everyone who reaches the console is an administrator here too. Idempotent.
+- name: "Portainer | Users today"
+  ansible.builtin.uri:
+    url: "{{ portainer_api }}/api/users"
+    headers: { Authorization: "Bearer {{ portainer_auth.json.jwt }}" }
+    return_content: true
+  register: portainer_users
+  no_log: true
+  changed_when: false
+  check_mode: false
+
+- name: "Portainer | Signed-in people are administrators (the IdP is the access gate)"
+  ansible.builtin.uri:
+    url: "{{ portainer_api }}/api/users/{{ item.Id }}"
+    method: PUT
+    headers: { Authorization: "Bearer {{ portainer_auth.json.jwt }}" }
+    body_format: json
+    body: { role: 1 }
+    status_code: [200]
+  loop: "{{ portainer_users.json | rejectattr('Role', 'equalto', 1) | list }}"
+  loop_control:
+    label: "{{ item.Username }}"
+  changed_when: true
