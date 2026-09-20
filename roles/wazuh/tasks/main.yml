@@ -262,6 +262,121 @@
       until: wazuh_api.status in [200, 401]
       when: not ansible_check_mode
 
+    # --- manager-API RBAC for the signed-in person (run_as) ---------------------------------
+    - name: "Wazuh | Manager-API token"
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:55000/security/user/authenticate?raw=true"
+        method: POST
+        url_username: "{{ wazuh_api_user }}"
+        url_password: "{{ wazuh_api_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+      register: wazuh_api_token
+      when: not ansible_check_mode
+      no_log: true
+
+    - name: "Wazuh | Manager-API security rules (today)"
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:55000/security/rules"
+        headers:
+          Authorization: "Bearer {{ wazuh_api_token.content }}"
+        validate_certs: false
+        return_content: true
+      register: wazuh_api_rules
+      when: not ansible_check_mode
+      no_log: true
+
+    - name: "Wazuh | Ids of the rule that maps the IdP group"
+      ansible.builtin.set_fact:
+        wazuh_api_rule_ids: >-
+          {{ (wazuh_api_rules.json.data.affected_items | default([]))
+             | selectattr('name', 'equalto', wazuh_api_rbac_rule_name) | map(attribute='id') | list }}
+      when: not ansible_check_mode
+
+    - name: "Wazuh | Create the rule: IdP group -> administrator (once)"
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:55000/security/rules"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ wazuh_api_token.content }}"
+        body_format: json
+        body:
+          name: "{{ wazuh_api_rbac_rule_name }}"
+          rule:
+            FIND:
+              backend_roles: ["{{ wazuh_admin_group }}"]
+        validate_certs: false
+        status_code: [200]
+        return_content: true
+      register: wazuh_api_rule_new
+      when: not ansible_check_mode and (wazuh_api_rule_ids | length == 0)
+      changed_when: true
+      no_log: true
+
+    - name: "Wazuh | Bind the rule id"
+      ansible.builtin.set_fact:
+        wazuh_api_rule_id: >-
+          {{ (wazuh_api_rule_ids | first) if (wazuh_api_rule_ids | length > 0)
+             else wazuh_api_rule_new.json.data.affected_items[0].id }}
+      when: not ansible_check_mode
+
+    - name: "Wazuh | Rules linked to the administrator role (today)"
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:55000/security/roles?role_ids={{ wazuh_api_admin_role_id }}"
+        headers:
+          Authorization: "Bearer {{ wazuh_api_token.content }}"
+        validate_certs: false
+        return_content: true
+      register: wazuh_api_admin_role
+      when: not ansible_check_mode
+      no_log: true
+
+    - name: "Wazuh | Link the rule to the administrator role (once)"
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:55000/security/roles/{{ wazuh_api_admin_role_id }}/rules?rule_ids={{ wazuh_api_rule_id }}"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ wazuh_api_token.content }}"
+        validate_certs: false
+        status_code: [200]
+      when:
+        - not ansible_check_mode
+        - (wazuh_api_rule_id | int) not in (wazuh_api_admin_role.json.data.affected_items[0].rules | default([]))
+      changed_when: true
+      no_log: true
+
+    # Integration check: impersonate a member of the group exactly as the dashboard does
+    # and require a non-empty policy set (an unmapped person gets an empty one).
+    - name: "Wazuh | run_as as a member of the IdP group"
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:55000/security/user/authenticate/run_as?raw=true"
+        method: POST
+        url_username: "{{ wazuh_api_user }}"
+        url_password: "{{ wazuh_api_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          user_name: ansible-rbac-probe
+          backend_roles: ["{{ wazuh_admin_group }}"]
+        validate_certs: false
+        return_content: true
+      register: wazuh_api_runas
+      when: not ansible_check_mode
+      no_log: true
+
+    - name: "Wazuh | The impersonated member holds policies"
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:55000/security/users/me/policies"
+        headers:
+          Authorization: "Bearer {{ wazuh_api_runas.content }}"
+        validate_certs: false
+        return_content: true
+      register: wazuh_api_runas_pol
+      failed_when: (wazuh_api_runas_pol.json.data | default({})) | length == 0
+      when: not ansible_check_mode
+      no_log: true
+
     # authd only accepts enrolments into groups that exist; the agent role asks for
     # "docker" on docker_hosts. Created once, read back on every run.
     - name: "Wazuh | Agent groups on the manager (today)"

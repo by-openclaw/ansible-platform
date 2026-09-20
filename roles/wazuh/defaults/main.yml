@@ -29,6 +29,7 @@ wazuh_indexer_nofile: 65536
 wazuh_vault_admin: "{{ wazuh_env }}/wazuh/admin"            # indexer admin       (password)
 wazuh_vault_dashboard: "{{ wazuh_env }}/wazuh/dashboard"    # kibanaserver        (password)
 wazuh_vault_api: "{{ wazuh_env }}/wazuh/api"                # wazuh-wui API user  (password)
+wazuh_api_user: wazuh-wui                                     # manager-API user the dashboard (and the role) use
 wazuh_vault_agent_enrol: "{{ wazuh_env }}/wazuh/agent-enrol"  # authd password    (password)
 wazuh_vault_oidc: "{{ wazuh_env }}/wazuh/oidc"              # client_id, client_secret (roles/authentik)
 # SSO: native OpenID on the dashboard + the indexer's security plugin; the Authentik
@@ -42,3 +43,9 @@ wazuh_state: present
 # ("default" is built in). roles/wazuh_agent asks for "docker" on docker_hosts.
 wazuh_agent_groups:
   - docker
+
+# Manager-API RBAC: the dashboard runs every request as the signed-in person (run_as), so
+# the manager must map the IdP group to its administrator role (id 1) — otherwise the UI
+# shows "no agents registered" while alerts still flow.
+wazuh_api_rbac_rule_name: platform_admins_run_as
+wazuh_api_admin_role_id: 1

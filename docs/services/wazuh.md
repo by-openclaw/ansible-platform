@@ -75,12 +75,13 @@ Indexer `_cluster/health`, dashboard `/api/status`, manager API `/`; contract-au
 | securityadmin: `which: command not found` | the image has no `which` and no JAVA_HOME | the role sets `JAVA_HOME=/usr/share/wazuh-indexer/jdk` |
 | a fixed file is on disk but the container still misbehaves | single-file bind mount keeps the old inode after an atomic write | the role compares container vs host checksums and recreates the stack (task "Stale mounts found") |
 | dashboard logs every minute `Could not check if the index wazuh-monitoring-… exists due to no permissions` | the dashboard user is not mapped to `manage_wazuh_index` (mapping taken from an older upstream file) | `roles_mapping.yml.j2` = the image's mapping + the admin group |
+| dashboard: "This instance has no agents registered" while alerts flow | the signed-in person is not mapped in the **manager API** RBAC (`run_as`) | the role creates the rule IdP group → administrator and links it to role 1 |
 | authd `Invalid group: docker` | the agent asks for a group the manager has not created | `wazuh_agent_groups` (server role creates them before agents enrol) |
 | agent `syscheckd ... fopen error` on `/etc/vconsole.conf` | FIM follows a dangling symlink of the vendor default set | harmless; ignore list is a review-pass item |
 
 ## 14. Identity and access
 
-Authentik OpenID (`platform-admins`). Internal service users only for the components. The local `admin` of the indexer is break-glass (Vault).
+Authentik OpenID (`platform-admins`). Internal service users only for the components. The local `admin` of the indexer is break-glass (Vault). Two RBAC layers are mapped by the role: the indexer security plugin (`roles_mapping.yml`, group → `all_access`) and the manager API (`run_as`: rule `platform_admins_run_as` → administrator role), because the dashboard runs every API call as the signed-in person.
 
 ## 15. Notifications
 
