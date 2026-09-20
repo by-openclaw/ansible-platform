@@ -62,6 +62,10 @@
       {%- set out = [] -%}
       {%- for k, v in pve_host_realm_desired.items() -%}{%- set _ = out.append('--' ~ k ~ '=' ~ v) -%}{%- endfor -%}
       {{ out }}
+    pve_host_realm_modify_args: >-
+      {%- set out = [] -%}
+      {%- for k, v in pve_host_realm_desired.items() if k not in pve_host_oidc_add_only_options -%}{%- set _ = out.append('--' ~ k ~ '=' ~ v) -%}{%- endfor -%}
+      {{ out }}
   no_log: true
 
 - name: "PVE host | Create the OIDC realm (once): {{ pve_host_oidc_realm }}"
@@ -73,7 +77,7 @@
 
 - name: "PVE host | Update the OIDC realm (only on drift): {{ pve_host_oidc_realm }}"
   ansible.builtin.command:
-    argv: "{{ ['pveum', 'realm', 'modify', pve_host_oidc_realm] + pve_host_realm_args }}"
+    argv: "{{ ['pveum', 'realm', 'modify', pve_host_oidc_realm] + pve_host_realm_modify_args }}"
   when: pve_host_realm.rc == 0 and (pve_host_realm_drift | bool) and not ansible_check_mode
   changed_when: true
   no_log: true
