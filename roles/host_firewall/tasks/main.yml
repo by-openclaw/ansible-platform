@@ -1,8 +1,13 @@
 ---
-- name: "Host firewall | ufw present? (installed + enabled by the hardening baseline)"
-  ansible.builtin.stat:
-    path: "{{ host_firewall_ufw_binary }}"
-  register: host_firewall_ufw
+# ufw is installed here (not only by hardening) so a service can DECLARE its rules before
+# the firewall is ever enabled: the rules are stored while ufw is inactive and take effect
+# the moment the hardening baseline enables it — no window in which the service is blocked.
+- name: "Host firewall | ufw package present"
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
 
 - name: "Host firewall | Expand the rules over their source networks"
   ansible.builtin.set_fact:
@@ -16,7 +21,7 @@
       {%- endfor -%}
       {{ out }}
 
-- name: "Host firewall | Allow the declared ports when ufw is active"
+- name: "Host firewall | Declare the allow rules (enforced once the baseline enables ufw)"
   community.general.ufw:
     rule: allow
     port: "{{ item.port }}"
@@ -26,4 +31,4 @@
   loop: "{{ host_firewall_expanded }}"
   loop_control:
     label: "{{ item.port }}/{{ item.proto }} from {{ item.from }} — {{ item.comment }}"
-  when: host_firewall_ufw.stat.exists
+  when: not ansible_check_mode

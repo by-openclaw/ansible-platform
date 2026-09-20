@@ -1,12 +1,11 @@
 ---
 # ==============================================================================
 # Role: host_firewall — one place for "open my ports on the host firewall (ufw)".
-# A service role includes it with its own rule list; nothing happens when ufw is
-# not installed (the hardening baseline installs and enables it).
+# A service role includes it with its own rule list. The package is installed here so
+# the rules can be declared BEFORE the hardening baseline enables ufw (no blocked window).
 #   host_firewall_rules:
 #     - { port: 443, proto: tcp, comment: "public entry" }                       # from anywhere
 #     - { port: 3100, proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "Loki push" }
 #     - { port: "49152:65535", proto: udp, comment: "TURN relay range" }         # ranges as "a:b"
 # ==============================================================================
 host_firewall_rules: []
-host_firewall_ufw_binary: /usr/sbin/ufw
