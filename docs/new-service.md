@@ -82,3 +82,13 @@ before it counts as production.
 audit are not per-service inventions — they are platform contracts. The scaffold
 makes them the default so a new service inherits the baseline instead of being
 hand-assembled and drifting.
+
+## Host firewall (ufw) — every guest, every role
+
+The hardening baseline installs and enables ufw with SSH only (`hardening_ufw_allowed_ports`). A role
+that has **native listeners** declares its ports with `roles/host_firewall` (rule list in the role's
+defaults, sources = `platform_trusted_cidrs`, public entries without `from`); Docker-published ports
+need no rule (Docker's DNAT precedes ufw INPUT) and `roles/docker` already lets the container networks
+reach the host (hairpin to published ports). Order on a new guest: service play first (rules are stored
+while ufw is inactive) → hardening (enables) → baseline roles → rerun changed=0 → contract-audit
+(SEC-21 checks `ufw status` = active). Never enable ufw before the service's rules exist.
