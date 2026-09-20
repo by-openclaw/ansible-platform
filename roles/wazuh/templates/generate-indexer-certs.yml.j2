@@ -1,0 +1,11 @@
+# Managed by Ansible (role: wazuh). One-shot: the stack's internal PKI (indexer, manager,
+# dashboard, admin). Runs only while config/wazuh_indexer_ssl_certs is empty.
+services:
+  generator:
+    image: {{ wazuh_certs_generator_image }}
+    hostname: wazuh-certs-generator
+    environment:
+      - CERT_TOOL_VERSION={{ wazuh_cert_tool_version }}
+    volumes:
+      - ./config/wazuh_indexer_ssl_certs/:/certificates/
+      - ./config/certs.yml:/config/certs.yml

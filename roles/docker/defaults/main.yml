@@ -8,6 +8,10 @@
 docker_packages:
   - docker.io
   - python3-docker   # SDK for community.docker modules
+# Compose v2: Debian 13's `docker-compose` package IS Compose v2 (2.26); exposing the
+# binary as the CLI plugin makes `docker compose` and community.docker.docker_compose_v2
+# work. Only where this role owns the engine (docker.io) — never next to docker-ce (#454).
+docker_compose_from_debian: "{{ ansible_distribution_release | default('') in ['trixie', 'forky'] }}"
 
 # json-file log rotation (containers default to unbounded logs otherwise).
 # journald is the log driver now (caps live in hardening journald.conf.d)

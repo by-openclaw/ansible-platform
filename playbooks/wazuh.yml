@@ -1,0 +1,21 @@
+---
+# ==============================================================================
+# Wazuh — security monitoring: manager + indexer + dashboard on lxc-wazuh-01, an agent
+# on every guest. Two plays; rerun = changed=0. Decommission: -e wazuh_state=absent.
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/wazuh.yml
+# Bring-up of the guest first: identity-baseline → hardening → this.
+# ==============================================================================
+- name: "Wazuh — server (manager, indexer, dashboard; scaffold: route, mailbox, Vault, SSO)"
+  hosts: wazuh
+  become: true
+  gather_facts: true
+  roles:
+    - role: wazuh
+
+- name: "Wazuh — agent on every guest"
+  hosts: cluster:adguard:mailcow:pbs:monitoring:k3s:gitlab_runner
+  become: true
+  gather_facts: true
+  serial: 5          # the first start runs a FIM/rootcheck/syscollector baseline: staggered so 29 scans do not hit the node at once
+  roles:
+    - role: wazuh_agent

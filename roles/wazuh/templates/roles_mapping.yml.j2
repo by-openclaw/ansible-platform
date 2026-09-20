@@ -1,0 +1,86 @@
+{# Managed by Ansible (role: wazuh) — the mapping shipped INSIDE the wazuh-indexer image #}
+{# (docker run --rm --entrypoint cat <image> /usr/share/wazuh-indexer/config/opensearch-security/roles_mapping.yml) #}
+{# plus the platform admin group. The upstream GitHub copy names roles this image does not ship #}
+{# (wazuh_ui_admin, wazuh_ui_user, manage_ism) — the dashboard user needs manage_wazuh_index. #}
+---
+_meta:
+  type: "rolesmapping"
+  config_version: 2
+
+all_access:
+  reserved: true
+  hidden: false
+  backend_roles:
+  - "admin"
+  # Authentik group (groups claim) -> full access; the IdP restricts sign-in to this group
+  - "{{ wazuh_admin_group }}"
+  hosts: []
+  users: []
+  and_backend_roles: []
+  description: "Maps admin to all_access"
+
+own_index:
+  reserved: false
+  hidden: false
+  backend_roles: []
+  hosts: []
+  users:
+  - "*"
+  and_backend_roles: []
+  description: "Allow full access to an index named like the username"
+
+logstash:
+  reserved: false
+  hidden: false
+  backend_roles:
+  - "logstash"
+  hosts: []
+  users: []
+  and_backend_roles: []
+
+readall:
+  reserved: true
+  hidden: false
+  backend_roles:
+  - "readall"
+  hosts: []
+  users: []
+  and_backend_roles: []
+
+manage_snapshots:
+  reserved: true
+  hidden: false
+  backend_roles:
+  - "snapshotrestore"
+  hosts: []
+  users: []
+  and_backend_roles: []
+
+kibana_server:
+  reserved: true
+  hidden: false
+  backend_roles: []
+  hosts: []
+  users:
+  - "kibanaserver"
+  and_backend_roles: []
+
+kibana_user:
+  reserved: false
+  hidden: false
+  backend_roles:
+  - "kibanauser"
+  hosts: []
+  users: []
+  and_backend_roles: []
+  description: "Maps kibanauser to kibana_user"
+
+# The dashboard's service user manages the wazuh-* indices (monitoring, statistics)
+manage_wazuh_index:
+  reserved: true
+  hidden: false
+  backend_roles: []
+  hosts: []
+  users:
+  - "kibanaserver"
+  and_backend_roles: []

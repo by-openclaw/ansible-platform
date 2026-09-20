@@ -1,0 +1,319 @@
+---
+- name: "Wazuh | Decommission"
+  ansible.builtin.include_tasks: absent.yml
+  when: wazuh_state == 'absent'
+
+- name: "Wazuh | Server"
+  when: wazuh_state == 'present'
+  block:
+    # --- secrets (get-or-create; the OIDC client is minted by roles/authentik) -------------
+    - name: "Wazuh | Service passwords (Vault, get-or-create)"
+      ansible.builtin.include_tasks: secrets.yml
+      loop:
+        - { path: "{{ wazuh_vault_admin }}", fact: wazuh_admin_password, note: "indexer admin" }
+        - { path: "{{ wazuh_vault_dashboard }}", fact: wazuh_dashboard_password, note: "dashboard → indexer (kibanaserver)" }
+        - { path: "{{ wazuh_vault_api }}", fact: wazuh_api_password, note: "dashboard → manager API (wazuh-wui)" }
+        - { path: "{{ wazuh_vault_agent_enrol }}", fact: wazuh_agent_enrol_password, note: "agent enrolment (authd.pass)" }
+      loop_control:
+        loop_var: secret
+        label: "{{ secret.path }}"
+
+    - name: "Wazuh | OIDC client (Vault, minted by roles/authentik)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ wazuh_vault_oidc }}"
+        vault_secret_init: {}
+
+    - name: "Wazuh | Bind the OIDC client + stable bcrypt salts (hashes must not change on every run)"
+      ansible.builtin.set_fact:
+        wazuh_oidc: "{{ vault_secret_result }}"
+        wazuh_admin_salt: "{{ (wazuh_admin_password ~ 'salt') | hash('sha256') | truncate(22, true, '') }}"
+        wazuh_dashboard_salt: "{{ (wazuh_dashboard_password ~ 'salt') | hash('sha256') | truncate(22, true, '') }}"
+      no_log: true
+
+    # --- layout + configuration ------------------------------------------------------------
+    - name: "Wazuh | Directories"
+      ansible.builtin.file:
+        path: "{{ wazuh_dir }}/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      loop: ["", config, config/wazuh_indexer, config/wazuh_dashboard, config/wazuh_cluster, config/wazuh_indexer_ssl_certs]
+
+    - name: "Wazuh | Configuration files"
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ wazuh_dir }}/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode | default('0640') }}"
+      loop:
+        - { src: docker-compose.yml.j2, dest: docker-compose.yml, mode: "0600" }
+        - { src: generate-indexer-certs.yml.j2, dest: generate-indexer-certs.yml }
+        - { src: certs.yml, dest: config/certs.yml }
+        - { src: wazuh.indexer.yml, dest: config/wazuh_indexer/wazuh.indexer.yml, mode: "0644" }
+        - { src: internal_users.yml.j2, dest: config/wazuh_indexer/internal_users.yml, mode: "0644" }
+        - { src: security-config.yml.j2, dest: config/wazuh_indexer/config.yml, mode: "0644" }
+        - { src: roles_mapping.yml.j2, dest: config/wazuh_indexer/roles_mapping.yml, mode: "0644" }
+        - { src: opensearch_dashboards.yml.j2, dest: config/wazuh_dashboard/opensearch_dashboards.yml, mode: "0644" }
+        - { src: wazuh.yml.j2, dest: config/wazuh_dashboard/wazuh.yml, mode: "0644" }
+        - { src: wazuh_manager.conf.j2, dest: config/wazuh_cluster/wazuh_manager.conf, mode: "0644" }
+      loop_control:
+        label: "{{ item.dest }}"
+      register: wazuh_cfg
+      no_log: true
+
+    - name: "Wazuh | Agent enrolment password (authd.pass, mounted into the manager)"
+      ansible.builtin.copy:
+        dest: "{{ wazuh_dir }}/config/wazuh_cluster/authd.pass"
+        content: "{{ wazuh_agent_enrol_password }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+      register: wazuh_authd_pass
+      no_log: true
+
+    # --- internal PKI (one-shot) + images ---------------------------------------------------
+    - name: "Wazuh | Internal PKI present?"
+      ansible.builtin.stat:
+        path: "{{ wazuh_dir }}/config/wazuh_indexer_ssl_certs/root-ca.pem"
+      register: wazuh_pki
+
+    - name: "Wazuh | Generate the internal PKI (pinned generator, runs once)"
+      ansible.builtin.command:
+        cmd: docker compose -f generate-indexer-certs.yml run --rm generator
+        chdir: "{{ wazuh_dir }}"
+      when: not wazuh_pki.stat.exists and not ansible_check_mode
+      changed_when: true
+
+    - name: "Wazuh | Pull the pinned images"
+      community.docker.docker_image:
+        name: "{{ item }}"
+        source: pull
+      loop: ["{{ wazuh_manager_image }}", "{{ wazuh_indexer_image }}", "{{ wazuh_dashboard_image }}"]
+
+    # --- stale-inode detection ------------------------------------------------------------
+    # The vendor mounts single FILES into the containers. Ansible replaces a file atomically
+    # (new inode), so a running container keeps reading the OLD content while compose sees
+    # no definition change. Compare what each container sees with the host file and
+    # recreate the stack when they differ (or when a mounted file changed on this run).
+    - name: "Wazuh | Running containers of the stack"
+      ansible.builtin.command:
+        cmd: docker compose ps -q
+        chdir: "{{ wazuh_dir }}"
+      register: wazuh_ps
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: "Wazuh | Bind mounts of the running containers"
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'inspect'] + wazuh_ps.stdout_lines }}"
+      register: wazuh_inspect
+      changed_when: false
+      check_mode: false
+      when: (wazuh_ps.stdout_lines | default([])) | length > 0
+
+    - name: "Wazuh | Files mounted from the service directory"
+      ansible.builtin.set_fact:
+        wazuh_bind_files: >-
+          {%- set out = [] -%}
+          {%- for c in (wazuh_inspect.stdout | default('[]', true) | from_json) -%}
+            {%- for m in c.Mounts if m.Type == 'bind' and m.Source.startswith(wazuh_dir ~ '/') -%}
+              {%- set _ = out.append({'c': c.Name | regex_replace('^/', ''), 'src': m.Source, 'dst': m.Destination}) -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: "Wazuh | Checksum of the mounted files as the containers see them"
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ item.c }}", sha256sum, "{{ item.dst }}"]
+      loop: "{{ wazuh_bind_files }}"
+      loop_control:
+        label: "{{ item.c }}:{{ item.dst }}"
+      register: wazuh_mount_in
+      changed_when: false
+      failed_when: false            # a directory mount fails here and is skipped below
+      check_mode: false
+
+    - name: "Wazuh | Checksum of the same files on the host"
+      ansible.builtin.stat:
+        path: "{{ item.src }}"
+        checksum_algorithm: sha256
+      loop: "{{ wazuh_bind_files }}"
+      loop_control:
+        label: "{{ item.src }}"
+      register: wazuh_mount_host
+
+    - name: "Wazuh | Containers still reading a replaced file (stale inode)"
+      ansible.builtin.set_fact:
+        wazuh_mounts_stale: >-
+          {%- set stale = [] -%}
+          {%- for r in wazuh_mount_in.results | default([]) -%}
+            {%- set h = wazuh_mount_host.results[loop.index0].stat -%}
+            {%- if r.rc | default(1) == 0 and h.exists and h.isreg and (r.stdout.split(' ')[0] != h.checksum) -%}
+              {%- set _ = stale.append(r.item.c ~ ':' ~ r.item.dst) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ stale }}
+
+    - name: "Wazuh | Stale mounts found → the stack will be recreated"
+      ansible.builtin.debug:
+        msg: "{{ wazuh_mounts_stale }}"
+      when: wazuh_mounts_stale | length > 0
+
+    - name: "Wazuh | Stack up (compose v2, present = create/start, recreate on config change)"
+      community.docker.docker_compose_v2:
+        project_src: "{{ wazuh_dir }}"
+        state: present
+        pull: never
+        recreate: >-
+          {{ 'always' if (wazuh_cfg is changed or wazuh_authd_pass is changed or wazuh_mounts_stale | length > 0)
+             else 'auto' }}
+      register: wazuh_up
+      when: not ansible_check_mode
+
+    # 401 = security initialised (anonymous refused); 503 = the security index is empty
+    # (first boot not done, or a bad file aborted the vendor's one-shot bootstrap).
+    - name: "Wazuh | Indexer is listening (TLS)"
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/"
+        validate_certs: false
+        status_code: [200, 401, 503]
+      register: wazuh_idx_listen
+      retries: 40
+      delay: 6
+      until: wazuh_idx_listen.status in [200, 401, 503]
+      when: not ansible_check_mode
+
+    # The indexer initialises the security index from the mounted files at FIRST start
+    # only; later changes (a group mapping, the OpenID domain) must be pushed with the
+    # vendor's securityadmin. Runs on drift of the rendered files, or whenever the index
+    # is not initialised (503) — the same tool repairs an aborted first boot.
+    - name: "Wazuh | Push the security configuration (drift, or index not initialised)"
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - -e
+          - "CACERT=/usr/share/wazuh-indexer/config/certs/root-ca.pem"
+          - -e
+          - "CERT=/usr/share/wazuh-indexer/config/certs/admin.pem"
+          - -e
+          - "KEY=/usr/share/wazuh-indexer/config/certs/admin-key.pem"
+          - -e
+          - JAVA_HOME=/usr/share/wazuh-indexer/jdk    # the tool runs `which java` otherwise; the image has neither
+          - wazuh-wazuh.indexer-1
+          - bash
+          - -c
+          - >-
+            bash /usr/share/wazuh-indexer/plugins/opensearch-security/tools/securityadmin.sh
+            -cd /usr/share/wazuh-indexer/config/opensearch-security/ -nhnv
+            -cacert $CACERT -cert $CERT -key $KEY -p 9200 -icl -h 127.0.0.1
+      when:
+        - not ansible_check_mode
+        - >-
+          (wazuh_idx_listen.status | default(0)) == 503
+          or (wazuh_cfg.results
+              | selectattr('item.dest', 'search', 'wazuh_indexer/(config|roles_mapping|internal_users)')
+              | selectattr('changed') | list | length > 0)
+      changed_when: true
+      register: wazuh_secadmin
+      retries: 10                    # the tool needs a yellow cluster; right after start it may refuse
+      delay: 6
+      until: wazuh_secadmin.rc == 0
+
+    - name: "Wazuh | Indexer answers (admin, cluster yellow/green)"
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/_cluster/health"
+        url_username: admin
+        url_password: "{{ wazuh_admin_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: [200]
+        return_content: true
+      register: wazuh_idx
+      retries: 40
+      delay: 6
+      until: wazuh_idx.status == 200 and (wazuh_idx.json.status in ['green', 'yellow'])
+      when: not ansible_check_mode
+      no_log: true
+
+    - name: "Wazuh | Dashboard answers"
+      ansible.builtin.uri:
+        url: "http://{{ wazuh_listen_ip }}:{{ wazuh_dashboard_port }}/api/status"
+        status_code: [200, 302, 401]
+      register: wazuh_dash
+      retries: 40
+      delay: 6
+      until: wazuh_dash.status in [200, 302, 401]
+      when: not ansible_check_mode
+
+    - name: "Wazuh | Manager API answers"
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:55000/"
+        validate_certs: false
+        status_code: [200, 401]
+      register: wazuh_api
+      retries: 20
+      delay: 6
+      until: wazuh_api.status in [200, 401]
+      when: not ansible_check_mode
+
+    # authd only accepts enrolments into groups that exist; the agent role asks for
+    # "docker" on docker_hosts. Created once, read back on every run.
+    - name: "Wazuh | Agent groups on the manager (today)"
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-wazuh.manager-1, /var/ossec/bin/agent_groups, -l]
+      register: wazuh_groups_now
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: "Wazuh | Create the declared agent groups"
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-wazuh.manager-1, /var/ossec/bin/agent_groups, -a, -g, "{{ item }}", -q]
+      loop: "{{ wazuh_agent_groups }}"
+      when:
+        - not ansible_check_mode
+        - (wazuh_groups_now.stdout | default('')) is not search('(?m)^\\s*' ~ item ~ ' \\(')
+      changed_when: true
+
+    - name: "Wazuh | Host firewall: agents from the platform supernet, dashboard from Traefik / VPN"
+      community.general.ufw:
+        rule: allow
+        port: "{{ item.port | string }}"
+        proto: tcp
+        from_ip: "{{ item.from }}"
+        comment: "Wazuh {{ item.what }}"
+      loop:
+        - { port: "{{ wazuh_agent_port }}", from: "10.1.0.0/16", what: agents }
+        - { port: "{{ wazuh_agent_port }}", from: "fd01::/16", what: agents v6 }
+        - { port: "{{ wazuh_enrol_port }}", from: "10.1.0.0/16", what: enrolment }
+        - { port: "{{ wazuh_enrol_port }}", from: "fd01::/16", what: enrolment v6 }
+        - { port: "{{ wazuh_dashboard_port }}", from: "10.1.0.0/16", what: dashboard }
+        - { port: "{{ wazuh_dashboard_port }}", from: "fd01::/16", what: dashboard v6 }
+        - { port: "{{ wazuh_dashboard_port }}", from: "100.64.0.0/10", what: dashboard VPN }
+      loop_control:
+        label: "{{ item.what }} {{ item.port }}"
+      failed_when: false
+
+    # --- platform concerns: route (HTTP backend, TLS at Traefik), mailbox, Vault, SSO assertion
+    - name: "Wazuh | Scaffold the platform concerns"
+      ansible.builtin.include_role:
+        name: service_scaffold
+      vars:
+        service_scaffold_def:
+          name: wazuh
+          fqdn: "{{ wazuh_fqdn }}"
+          backend_url: "http://{{ wazuh_listen_ip }}:{{ wazuh_dashboard_port }}"
+          exposure: internal
+          forward_auth: false             # the dashboard authenticates people itself (OpenID)
+          mailbox: true
+          sso_slug: "{{ wazuh_oidc_slug }}"
+          vault_secrets:
+            - path: "{{ wazuh_vault_admin }}"
+            - path: "{{ wazuh_vault_dashboard }}"
+            - path: "{{ wazuh_vault_api }}"
+            - path: "{{ wazuh_vault_agent_enrol }}"

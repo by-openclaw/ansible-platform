@@ -32,6 +32,16 @@
     mode: "0644"
   notify: Restart docker
 
+# Debian installs the binary AS the CLI plugin (/usr/libexec/docker/cli-plugins/docker-compose)
+# and symlinks /usr/bin/docker-compose to it: nothing else to wire.
+- name: "Docker | Compose v2 (Debian package, v2 since trixie)"
+  ansible.builtin.apt:
+    name: docker-compose
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: docker_compose_from_debian | bool
+
 - name: "Docker | Ensure docker is enabled + running"
   ansible.builtin.systemd_service:
     name: docker

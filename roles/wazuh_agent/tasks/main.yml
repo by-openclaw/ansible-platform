@@ -1,0 +1,94 @@
+---
+# Every guest. The enrolment password is one value for the fleet: read ONCE.
+- name: "Wazuh agent | Enrolment password (Vault, read once for the fleet)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ wazuh_agent_vault_enrol }}"
+    vault_secret_init: {}
+  run_once: true
+
+- name: "Wazuh agent | Bind it on every host"
+  ansible.builtin.set_fact:
+    wazuh_agent_enrol_password: "{{ hostvars[ansible_play_hosts_all[0]].vault_secret_result.password }}"
+  no_log: true
+
+- name: "Wazuh agent | Prerequisites (a minimal image has neither curl nor gpg)"
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, gnupg, apt-transport-https]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Wazuh agent | Signing key"
+  ansible.builtin.shell:
+    cmd: "set -o pipefail; curl -fsSL {{ wazuh_agent_apt_key_url }} | gpg --dearmor -o /usr/share/keyrings/wazuh.gpg"
+    creates: /usr/share/keyrings/wazuh.gpg
+  args:
+    executable: /bin/bash
+
+- name: "Wazuh agent | Keyring world-readable (apt's sandboxed verifier)"
+  ansible.builtin.file:
+    path: /usr/share/keyrings/wazuh.gpg
+    mode: "0644"
+
+- name: "Wazuh agent | APT repository"
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/wazuh.list
+    content: "{{ wazuh_agent_apt_repo }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  register: wazuh_agent_repo
+
+- name: "Wazuh agent | Install the pinned agent"
+  ansible.builtin.apt:
+    name: "wazuh-agent={{ wazuh_agent_version }}"
+    state: present
+    update_cache: true     # always: the repository may have been added seconds ago
+  environment:
+    WAZUH_MANAGER: "{{ wazuh_agent_manager }}"
+
+- name: "Wazuh agent | Hold the package (the ladder moves it, not unattended upgrades)"
+  ansible.builtin.dpkg_selections:
+    name: wazuh-agent
+    selection: hold
+
+- name: "Wazuh agent | Enrolment password file"
+  ansible.builtin.copy:
+    dest: /var/ossec/etc/authd.pass
+    content: "{{ wazuh_agent_enrol_password }}\n"
+    owner: root
+    group: wazuh
+    mode: "0640"
+  no_log: true
+  notify: Restart wazuh-agent
+
+- name: "Wazuh agent | Configuration"
+  ansible.builtin.template:
+    src: ossec.conf.j2
+    dest: /var/ossec/etc/ossec.conf
+    owner: root
+    group: wazuh
+    mode: "0640"
+  notify: Restart wazuh-agent
+
+- name: "Wazuh agent | Enabled + running"
+  ansible.builtin.systemd_service:
+    name: wazuh-agent
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: "Wazuh agent | Flush handlers"
+  ansible.builtin.meta: flush_handlers
+
+- name: "Wazuh agent | Connected to the manager (read-only)"
+  ansible.builtin.command:
+    cmd: /var/ossec/bin/wazuh-control status
+  register: wazuh_agent_status
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+  failed_when: "'wazuh-agentd is running' not in wazuh_agent_status.stdout"

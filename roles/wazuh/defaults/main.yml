@@ -1,0 +1,44 @@
+---
+# ==============================================================================
+# Role: wazuh — security monitoring (SIEM/XDR): manager + indexer + dashboard on
+# lxc-wazuh-01, the vendor's single-node deployment (wazuh-docker v<version>) with the
+# platform's contracts on top: pins, Vault secrets, TLS at Traefik, native OIDC against
+# Authentik, agents enrolled with a Vault-held password (roles/wazuh_agent).
+# ==============================================================================
+wazuh_version: "4.14.7"
+wazuh_manager_image: "wazuh/wazuh-manager:{{ wazuh_version }}"
+wazuh_indexer_image: "wazuh/wazuh-indexer:{{ wazuh_version }}"
+wazuh_dashboard_image: "wazuh/wazuh-dashboard:{{ wazuh_version }}"
+wazuh_certs_generator_image: "wazuh/wazuh-certs-generator:0.0.4"   # one-shot: the stack's internal PKI
+wazuh_cert_tool_version: "4.14"
+wazuh_env: "{{ platform_env | default('prod') }}"
+wazuh_fqdn: "wazuh.{{ platform_domain }}"
+wazuh_dir: "/opt/wazuh"
+wazuh_listen_ip: "{{ ansible_host }}"
+wazuh_dashboard_port: 5601          # HTTP on the SVC address; TLS is the platform Traefik's (SEC-28)
+wazuh_agent_port: 1514              # agents → manager (TLS)
+wazuh_enrol_port: 1515              # agents → manager enrolment (password from Vault)
+wazuh_indexer_heap: "2g"
+# Open-file limits handed to runc. The vendor compose asks 655360 for the manager,
+# but an unprivileged LXC refuses any value above the guest's hard limit
+# (Proxmox default 524288 -> "error setting rlimit type 7"). memlock is not set at
+# all: RLIMIT_MEMLOCK=unlimited is refused too and the indexer does not lock memory.
+wazuh_manager_nofile: 524288
+wazuh_indexer_nofile: 65536
+# Vault (get-or-create by this role unless noted)
+wazuh_vault_admin: "{{ wazuh_env }}/wazuh/admin"            # indexer admin       (password)
+wazuh_vault_dashboard: "{{ wazuh_env }}/wazuh/dashboard"    # kibanaserver        (password)
+wazuh_vault_api: "{{ wazuh_env }}/wazuh/api"                # wazuh-wui API user  (password)
+wazuh_vault_agent_enrol: "{{ wazuh_env }}/wazuh/agent-enrol"  # authd password    (password)
+wazuh_vault_oidc: "{{ wazuh_env }}/wazuh/oidc"              # client_id, client_secret (roles/authentik)
+# SSO: native OpenID on the dashboard + the indexer's security plugin; the Authentik
+# group in the `groups` claim is mapped to the indexer role all_access.
+wazuh_oidc_slug: "wazuh"
+wazuh_authentik_base: "https://authentik.{{ platform_domain }}"
+wazuh_admin_group: "platform-admins"
+wazuh_state: present
+
+# Agent groups that must exist on the manager before agents enrol into them
+# ("default" is built in). roles/wazuh_agent asks for "docker" on docker_hosts.
+wazuh_agent_groups:
+  - docker
