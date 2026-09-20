@@ -5,7 +5,7 @@ This guide covers installing and configuring Ansible on the **Rune VM** for plat
 ## Prerequisites
 
 - Rune VM running Ubuntu 24.04
-- `by-systems` user in `sudo` group
+- `by-research` user in `sudo` group
 - SSH key `~/.ssh/id_ed25519_rune` available (automation key)
 - Python 3.10+ installed
 
@@ -50,7 +50,7 @@ Host opnsense-poc
 ```ini
 [defaults]
 inventory           = inventories/poc/hosts.yml   ; per-env: -i inventories/prod | -i inventories/test
-remote_user         = by-systems
+remote_user         = by-research
 private_key_file    = ~/.ssh/id_ed25519_rune
 host_key_checking   = False
 retry_files_enabled = False
@@ -67,7 +67,7 @@ become_user   = root
 
 ## 4. Sudo Configuration
 
-On Rune VM (`by-systems` user):
+On Rune VM (`by-research` user):
 
 ```bash
 # Verify sudo access
@@ -75,7 +75,7 @@ sudo -l
 
 # Should include: (ALL) ALL
 # If not: sudo visudo → add:
-# by-systems ALL=(ALL) NOPASSWD: ALL
+# by-research ALL=(ALL) NOPASSWD: ALL
 ```
 
 For OPNsense: no sudo needed — API token auth only.
