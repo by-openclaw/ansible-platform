@@ -1,0 +1,14 @@
+---
+# ==============================================================================
+# Platform internal root CA (step-ca) into every host's trust store — the
+# prerequisite for internal TLS/mTLS (Traefik → backends signed by step-ca,
+# LibreSign certificates, device certificates). Verified against the fingerprint
+# escrowed in Vault. Rerun = changed=0.
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/platform-ca.yml
+# ==============================================================================
+- name: "Platform internal root CA → host trust stores"
+  hosts: cluster:adguard:mailcow:pbs:monitoring:k3s
+  become: true
+  gather_facts: false
+  roles:
+    - role: platform_ca
