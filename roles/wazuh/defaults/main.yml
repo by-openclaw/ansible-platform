@@ -19,6 +19,12 @@ wazuh_dashboard_port: 5601          # HTTP on the SVC address; TLS is the platfo
 wazuh_agent_port: 1514              # agents → manager (TLS)
 wazuh_enrol_port: 1515              # agents → manager enrolment (password from Vault)
 wazuh_indexer_heap: "2g"
+# Open-file limits handed to runc. The vendor compose asks 655360 for the manager,
+# but an unprivileged LXC refuses any value above the guest's hard limit
+# (Proxmox default 524288 -> "error setting rlimit type 7"). memlock is not set at
+# all: RLIMIT_MEMLOCK=unlimited is refused too and the indexer does not lock memory.
+wazuh_manager_nofile: 524288
+wazuh_indexer_nofile: 65536
 # Vault (get-or-create by this role unless noted)
 wazuh_vault_admin: "{{ wazuh_env }}/wazuh/admin"            # indexer admin       (password)
 wazuh_vault_dashboard: "{{ wazuh_env }}/wazuh/dashboard"    # kibanaserver        (password)

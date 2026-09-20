@@ -6,8 +6,8 @@ services:
     image: {{ wazuh_manager_image }}
     hostname: wazuh.manager
     restart: always
-    ulimits:   # no memlock: an unprivileged LXC refuses RLIMIT_MEMLOCK=unlimited (runc "rlimit type 8"); the indexer has no bootstrap.memory_lock
-      nofile: { soft: 655360, hard: 655360 }
+    ulimits:   # no memlock (unprivileged LXC refuses RLIMIT_MEMLOCK=unlimited, runc "rlimit type 8"); nofile must stay <= the guest hard limit (rlimit type 7)
+      nofile: { soft: {{ wazuh_manager_nofile }}, hard: {{ wazuh_manager_nofile }} }
     ports:
       - "{{ wazuh_listen_ip }}:{{ wazuh_agent_port }}:1514"
       - "{{ wazuh_listen_ip }}:{{ wazuh_enrol_port }}:1515"
@@ -49,8 +49,8 @@ services:
     environment:
       - "OPENSEARCH_JAVA_OPTS=-Xms{{ wazuh_indexer_heap }} -Xmx{{ wazuh_indexer_heap }}"
       - INDEXER_PASSWORD={{ wazuh_admin_password }}
-    ulimits:   # no memlock: an unprivileged LXC refuses RLIMIT_MEMLOCK=unlimited (runc "rlimit type 8"); the indexer has no bootstrap.memory_lock
-      nofile: { soft: 65536, hard: 65536 }
+    ulimits:   # no memlock (unprivileged LXC refuses RLIMIT_MEMLOCK=unlimited, runc "rlimit type 8"); nofile must stay <= the guest hard limit (rlimit type 7)
+      nofile: { soft: {{ wazuh_indexer_nofile }}, hard: {{ wazuh_indexer_nofile }} }
     volumes:
       - wazuh-indexer-data:/var/lib/wazuh-indexer
       - ./config/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/certs/root-ca.pem
