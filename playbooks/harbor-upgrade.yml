@@ -64,9 +64,10 @@
 
         # The core runs the schema migration itself at start; this proves it finished
         # and that no component stayed down.
+        # compose SERVICE names (core, registry, jobservice…), not container names.
         upgrade_path_migrate_cmd: >-
           cd {{ harbor_install_dir }} &&
-          docker-compose ps --services --filter status=running | grep -q harbor-core
+          docker-compose ps --services --filter status=running | grep -qx core
 
         upgrade_path_verify_cmd: >-
           curl -fsS -o /dev/null http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/health &&
