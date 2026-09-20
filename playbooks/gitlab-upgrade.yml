@@ -54,8 +54,12 @@
           gitlab-rake db:migrate:status 2>/dev/null | grep -c '^\s*down' | grep -qx 0
 
         # Health gate: every runit service up, the app answers, no failed migration.
+        # The banner in the UI comes from a CACHED version check: after an upgrade the
+        # cache still holds the pre-upgrade verdict (severity danger, critical flag),
+        # so the console warns about a version that is no longer running. Drop it here.
         upgrade_path_verify_cmd: >-
           gitlab-ctl status | grep -qv '^down:' &&
-          curl -fsS -o /dev/null http://127.0.0.1:8080/-/readiness
+          curl -fsS -o /dev/null http://127.0.0.1:8080/-/readiness &&
+          gitlab-rails runner 'Rails.cache.delete("version_check")'
 
         upgrade_path_settle_seconds: 90

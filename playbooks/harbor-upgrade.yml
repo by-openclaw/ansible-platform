@@ -1,0 +1,80 @@
+---
+# ==============================================================================
+# Playbook: harbor-upgrade.yml — sequential upgrade for Harbor (#384).
+#
+# Harbor migrates its database when the core starts, and its own documentation
+# says to move one minor at a time. The stack is stopped before the install tree
+# is swapped (roles/harbor does that when the pin changed), so the registry is
+# briefly unavailable on every rung — CI pushes and pulls fail while it climbs.
+#
+#   DRY RUN (prints the ladder, changes nothing):
+#     ansible-playbook -i inventories/prod/hosts.yml playbooks/harbor-upgrade.yml
+#
+#   APPLY:
+#     ansible-playbook -i inventories/prod/hosts.yml playbooks/harbor-upgrade.yml \
+#       -e upgrade_path_apply=true
+#
+# Harbor's database lives on the cluster Postgres and its blobs on S3, both in the
+# nightly backup; take a fresh database dump first if the jump is more than a minor.
+# ==============================================================================
+
+- name: "Harbor — sequential upgrade"
+  hosts: harbor
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+
+  # The probes below use the harbor role's addresses and paths; the role itself is only
+  # included per rung, so its defaults are loaded first.
+  pre_tasks:
+    - name: "Harbor | Load the role defaults (listen address, port, install dir)"
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../roles/harbor/defaults/main.yml"
+
+  roles:
+    - role: upgrade_path
+      vars:
+        upgrade_path_service: harbor
+
+        # Latest patch of the current minor first, then one minor at a time.
+        upgrade_path_steps:
+          - version: "2.12.4"
+            image: "v2.12.4"
+            note: "latest 2.12.x before leaving the minor"
+          - version: "2.13.5"
+            image: "v2.13.5"
+            note: "minor 2.12 -> 2.13"
+          - version: "2.14.4"
+            image: "v2.14.4"
+            note: "minor 2.13 -> 2.14"
+          - version: "2.15.2"
+            image: "v2.15.2"
+            note: "minor 2.14 -> 2.15 (current upstream)"
+
+        # The version the role recorded when it installed the tree (`.installed-version`),
+        # falling back to the registry's own systeminfo (anonymous access hides it on 2.15+).
+        # Normalised for comparison ("v2.12.2" / "v2.12.2-9f31cc5d" -> "2.12.2").
+        upgrade_path_current_cmd: >-
+          ( cat {{ harbor_install_dir }}/.installed-version 2>/dev/null ||
+          curl -fsS http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/systeminfo |
+          sed -E 's/.*"harbor_version":"([^"]+)".*/\1/' ) |
+          sed -E 's/^v//; s/-.*$//'
+
+        # Re-run the harbor role with this rung's pin: it stops the stack, swaps the
+        # install tree, re-renders harbor.yml, runs ./prepare and brings it back up.
+        upgrade_path_role: harbor
+        upgrade_path_image_var: harbor_version
+
+        # The core runs the schema migration itself at start; this proves it finished
+        # and that no component stayed down.
+        # compose SERVICE names (core, registry, jobservice…), not container names.
+        upgrade_path_migrate_cmd: >-
+          cd {{ harbor_install_dir }} &&
+          docker-compose ps --services --filter status=running | grep -qx core
+
+        upgrade_path_verify_cmd: >-
+          curl -fsS -o /dev/null http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/health &&
+          curl -fsS http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/health
+          | grep -q '"status":"healthy"'
+
+        upgrade_path_settle_seconds: 60
