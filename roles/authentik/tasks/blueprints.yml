@@ -35,6 +35,42 @@
   when: authentik_proxy_apps | default([]) | length > 0
   notify: Restart authentik
 
+- name: "blueprints | Retire proxy providers that are declared retired (the OIDC provider of the same name can then exist)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - authentik-server
+      - ak
+      - shell
+      - -c
+      - |
+        from authentik.providers.proxy.models import ProxyProvider
+        names = {{ authentik_proxy_apps_retired | default([]) | to_json }}
+        qs = ProxyProvider.objects.filter(name__in=names)
+        n = qs.count()
+        for p in qs:
+            for o in p.outpost_set.all():
+                o.providers.remove(p)
+        qs.delete()
+        print("retired=%d" % n)
+  register: authentik_proxy_retired
+  changed_when: "'retired=0' not in authentik_proxy_retired.stdout"
+  when: authentik_proxy_apps_retired | default([]) | length > 0
+  notify: Restart authentik
+
+# Blueprints are applied on file change or on the discovery schedule: after a retirement
+# the OIDC blueprint of the same slug is unchanged, so its provider would only appear on
+# the next cycle — apply it now (idempotent; no restart involved).
+- name: "blueprints | Apply the OIDC blueprint of each retired proxy app now (the provider it was blocking)"
+  ansible.builtin.command:
+    argv: [docker, exec, authentik-server, ak, apply_blueprint, "/blueprints/custom/oidc-{{ item }}.yaml"]
+  loop: "{{ authentik_proxy_apps_retired | default([]) }}"
+  register: authentik_retired_apply
+  changed_when: "'applied' in ((authentik_retired_apply.stdout ~ authentik_retired_apply.stderr) | lower)"
+  failed_when: authentik_retired_apply.rc != 0 and 'No such file' not in (authentik_retired_apply.stderr | default(''))
+  when: authentik_proxy_apps_retired | default([]) | length > 0
+
 - name: "blueprints | Render the identity blueprint (groups + users)"
   ansible.builtin.template:
     src: identity.yaml.j2

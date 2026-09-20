@@ -1,0 +1,70 @@
+---
+# On the console host, after every agent answers: register one environment per Docker
+# host and one for the cluster (idempotent: present names are skipped), then point the
+# console at Authentik (native OIDC, drift-gated).
+- name: "Portainer | Admin password (Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ portainer_admin_vault_path }}"
+    vault_secret_init: {}
+
+- name: "Portainer | Bind it"
+  ansible.builtin.set_fact:
+    portainer_admin_password: "{{ vault_secret_result.password }}"
+    portainer_api: "http://{{ portainer_listen_ip }}:{{ portainer_http_port }}"
+  no_log: true
+
+- name: "Portainer | API session"
+  ansible.builtin.uri:
+    url: "{{ portainer_api }}/api/auth"
+    method: POST
+    body_format: json
+    body: { username: "{{ portainer_admin_user }}", password: "{{ portainer_admin_password }}" }
+    status_code: [200]
+  register: portainer_auth
+  no_log: true
+  check_mode: false
+
+- name: "Portainer | Native SSO (first: people must be able to sign in even if an agent is unreachable)"
+  ansible.builtin.include_tasks: sso.yml
+
+- name: "Portainer | Environments registered today"
+  ansible.builtin.uri:
+    url: "{{ portainer_api }}/api/endpoints"
+    headers: { Authorization: "Bearer {{ portainer_auth.json.jwt }}" }
+    return_content: true
+  register: portainer_endpoints
+  no_log: true
+  changed_when: false
+  check_mode: false
+
+- name: "Portainer | Desired environments (every Docker host with an agent + the cluster)"
+  ansible.builtin.set_fact:
+    portainer_wanted: >-
+      {%- set out = [] -%}
+      {%- for h in groups['docker_hosts'] | default([]) | sort -%}
+        {%- if hostvars[h].portainer_agent | default(true) -%}
+          {%- set _ = out.append([h, hostvars[h].ansible_host ~ ':' ~ portainer_agent_port]) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out + [[portainer_k8s_host ~ ' (k3s)', hostvars[portainer_k8s_host].ansible_host ~ ':' ~ portainer_k8s_agent_nodeport]] }}
+
+- name: "Portainer | Register the missing environments"
+  ansible.builtin.uri:
+    url: "{{ portainer_api }}/api/endpoints"
+    method: POST
+    headers: { Authorization: "Bearer {{ portainer_auth.json.jwt }}" }
+    body_format: form-multipart
+    body:
+      Name: "{{ item.0 }}"
+      EndpointCreationType: "2"          # agent (Docker or Kubernetes — the agent reports which)
+      URL: "tcp://{{ item.1 }}"
+      TLS: "true"                        # agents speak TLS with their own certificate
+      TLSSkipVerify: "true"              # self-signed agent cert; trust = the shared AGENT_SECRET
+      TLSSkipClientVerify: "true"        # no client certificate either — without this the API demands a cert file (400 "Invalid certificate file")
+    status_code: [200]
+  loop: "{{ portainer_wanted | rejectattr('0', 'in', portainer_endpoints.json | map(attribute='Name') | list) | list }}"
+  loop_control:
+    label: "{{ item.0 }} ({{ item.1 }})"
+  changed_when: true

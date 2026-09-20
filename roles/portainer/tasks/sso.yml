@@ -1,0 +1,79 @@
+---
+- name: "Portainer | OIDC client credentials (Vault, minted by roles/authentik)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ portainer_oidc_vault_path }}"
+    vault_secret_init: {}
+
+- name: "Portainer | Bind the OIDC client"
+  ansible.builtin.set_fact:
+    portainer_oidc: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "Portainer | Settings today"
+  ansible.builtin.uri:
+    url: "{{ portainer_api }}/api/settings"
+    headers: { Authorization: "Bearer {{ portainer_auth.json.jwt }}" }
+    return_content: true
+  register: portainer_settings
+  no_log: true
+  changed_when: false
+  check_mode: false
+
+- name: "Portainer | Desired OAuth settings"
+  ansible.builtin.set_fact:
+    portainer_oauth:
+      ClientID: "{{ portainer_oidc.client_id }}"
+      ClientSecret: "{{ portainer_oidc.client_secret }}"
+      AuthorizationURI: "{{ portainer_authentik_base }}/application/o/authorize/"
+      AccessTokenURI: "{{ portainer_authentik_base }}/application/o/token/"
+      ResourceURI: "{{ portainer_authentik_base }}/application/o/userinfo/"
+      LogoutURI: "{{ portainer_authentik_base }}/application/o/{{ portainer_oidc_slug }}/end-session/"
+      RedirectURI: "https://{{ portainer_fqdn }}/"
+      UserIdentifier: "preferred_username"
+      Scopes: "openid profile email"
+      OAuthAutoCreateUsers: true
+      SSO: true
+  no_log: true
+
+- name: "Portainer | Authenticate people against Authentik (only on drift)"
+  ansible.builtin.uri:
+    url: "{{ portainer_api }}/api/settings"
+    method: PUT
+    headers: { Authorization: "Bearer {{ portainer_auth.json.jwt }}" }
+    body_format: json
+    body: { AuthenticationMethod: 3, OAuthSettings: "{{ portainer_oauth }}" }
+    status_code: [200]
+  when: >-
+    (portainer_settings.json.AuthenticationMethod | default(1)) != 3
+    or (portainer_settings.json.OAuthSettings.ClientID | default('')) != portainer_oidc.client_id
+    or (portainer_settings.json.OAuthSettings.AuthorizationURI | default('')) != portainer_oauth.AuthorizationURI
+  changed_when: true
+  no_log: true
+
+# Portainer CE creates OAuth users as *standard* users with no environment rights, and
+# has no group→role mapping. The IdP already restricts sign-in to platform-admins, so
+# everyone who reaches the console is an administrator here too. Idempotent.
+- name: "Portainer | Users today"
+  ansible.builtin.uri:
+    url: "{{ portainer_api }}/api/users"
+    headers: { Authorization: "Bearer {{ portainer_auth.json.jwt }}" }
+    return_content: true
+  register: portainer_users
+  no_log: true
+  changed_when: false
+  check_mode: false
+
+- name: "Portainer | Signed-in people are administrators (the IdP is the access gate)"
+  ansible.builtin.uri:
+    url: "{{ portainer_api }}/api/users/{{ item.Id }}"
+    method: PUT
+    headers: { Authorization: "Bearer {{ portainer_auth.json.jwt }}" }
+    body_format: json
+    body: { role: 1 }
+    status_code: [200]
+  loop: "{{ portainer_users.json | rejectattr('Role', 'equalto', 1) | list }}"
+  loop_control:
+    label: "{{ item.Username }}"
+  changed_when: true

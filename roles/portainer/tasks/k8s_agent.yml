@@ -1,0 +1,63 @@
+---
+# On the k3s host: the cluster runs ONLY the Portainer agent. The console that was
+# briefly deployed inside the cluster (2026-09-19) is removed here — state absent.
+- name: "Portainer k8s | Retire the in-cluster console (namespace portainer) — it lives on its own guest now"
+  ansible.builtin.command:
+    cmd: kubectl delete namespace portainer --ignore-not-found --wait=true --timeout=120s
+  register: portainer_old_ns
+  changed_when: "'deleted' in portainer_old_ns.stdout"
+
+- name: "Portainer k8s | Retire the in-cluster console's cluster binding"
+  ansible.builtin.command:
+    cmd: kubectl delete clusterrolebinding portainer-cluster-admin --ignore-not-found
+  register: portainer_old_crb
+  changed_when: "'deleted' in portainer_old_crb.stdout"
+
+- name: "Portainer k8s | Retire the in-cluster manifest file"
+  ansible.builtin.file:
+    path: /etc/rancher/k3s/portainer.yaml
+    state: absent
+
+- name: "Portainer k8s | Agent key (Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ portainer_agent_vault_path }}"
+    vault_secret_init: {}
+
+- name: "Portainer k8s | Bind the key"
+  ansible.builtin.set_fact:
+    portainer_agent_secret: "{{ vault_secret_result.secret }}"
+  no_log: true
+
+- name: "Portainer k8s | Agent manifests"
+  ansible.builtin.template:
+    src: k8s-agent.yaml.j2
+    dest: /etc/rancher/k3s/portainer-agent.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: "Portainer k8s | Apply the agent (kubectl, server-side idempotent)"
+  ansible.builtin.command:
+    cmd: kubectl apply -f /etc/rancher/k3s/portainer-agent.yaml
+  register: portainer_k8s_apply
+  changed_when: "' created' in portainer_k8s_apply.stdout or ' configured' in portainer_k8s_apply.stdout"
+
+- name: "Portainer k8s | Agent rolled out"
+  ansible.builtin.command:
+    cmd: kubectl -n {{ portainer_k8s_namespace }} rollout status deployment/portainer-agent --timeout=180s
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: "Portainer k8s | NodePort reachable from the console host only (ufw)"
+  community.general.ufw:
+    rule: allow
+    port: "{{ portainer_k8s_agent_nodeport | string }}"
+    proto: tcp
+    from_ip: "{{ item }}"
+    comment: "Portainer k8s agent (console on lxc-portainer-01)"
+  loop: "{{ groups['portainer'] | map('extract', hostvars, 'ansible_host') | list }}"
+  failed_when: false

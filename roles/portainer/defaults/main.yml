@@ -1,0 +1,40 @@
+---
+# ==============================================================================
+# Role: portainer — the container console, on its OWN guest (lxc-portainer-01).
+# One web UI for every Docker host (agent per host, inventory group docker_hosts)
+# and the k3s cluster (agent inside the cluster). Born through service_scaffold:
+# route, mailbox, Vault, SSO assertion. Native OIDC against Authentik.
+# ==============================================================================
+portainer_version: "2.45.1"
+portainer_server_image: "portainer/portainer-ce:{{ portainer_version }}-alpine"
+portainer_agent_image: "portainer/agent:{{ portainer_version }}"
+portainer_env: "{{ platform_env | default('prod') }}"
+portainer_fqdn: "portainer.{{ platform_domain }}"
+portainer_dir: "/opt/portainer"
+portainer_listen_ip: "{{ ansible_host }}"
+portainer_http_port: 9000                # server UI/API (HTTP; TLS is the platform Traefik's)
+portainer_agent_port: 9001               # Docker agent on each docker_hosts member
+portainer_console_bridge_cidr: "172.17.0.0/16"   # the console container reaches the agent on ITS OWN host from the Docker bridge, not from the SVC address
+portainer_k8s_agent_nodeport: 30778      # Kubernetes agent, exposed by the cluster
+portainer_k8s_namespace: "portainer-agent"
+portainer_k8s_host: "vm-k3s-01"
+# Secrets
+portainer_admin_vault_path: "{{ portainer_env }}/portainer/admin"   # password — break-glass local admin
+portainer_agent_vault_path: "{{ portainer_env }}/portainer/agent"   # secret   — shared agent key
+portainer_oidc_vault_path: "{{ portainer_env }}/portainer/oidc"     # client_id, client_secret (roles/authentik)
+portainer_admin_user: "admin"
+# SSO
+portainer_oidc_slug: "portainer"
+portainer_authentik_base: "https://authentik.{{ platform_domain }}"
+# Per-host switch (inventory host_vars): portainer_agent: false removes the agent from a
+# host and skips it. Default true everywhere — one console for every Docker host and the
+# cluster. The agent is one container reading the Docker socket; what hurt the mail
+# server on 2026-09-19 was a package install, not the agent (#454).
+portainer_agent: true
+# One-off: an agent pairs with the FIRST console instance that contacts it and keeps that
+# pairing in memory ("Agent already paired with another Portainer instance"). After a console
+# rebuild, recreate the agents once: -e portainer_agent_reset=true (never on by default).
+portainer_agent_reset: false
+portainer_agent_log_level: "INFO"     # DEBUG to read the pairing/signature checks in the agent log
+# Lifecycle: present | absent (decommission — archives nothing: the console holds no data)
+portainer_state: present

@@ -1,0 +1,119 @@
+---
+# ==============================================================================
+# Server on lxc-portainer-01. Agents and registration are separate task files the
+# playbook calls on their own hosts (tasks/agent.yml, tasks/k8s_agent.yml,
+# tasks/register.yml). Decommission: -e portainer_state=absent.
+# ==============================================================================
+- name: "Portainer | Decommission"
+  ansible.builtin.include_tasks: absent.yml
+  when: portainer_state == 'absent'
+
+- name: "Portainer | Server"
+  when: portainer_state == 'present'
+  block:
+    - name: "Portainer | Break-glass admin password (get-or-create in Vault)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ portainer_admin_vault_path }}"
+        vault_secret_init:
+          username: "{{ portainer_admin_user }}"
+          password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+          _note: "Portainer local admin (roles/portainer) — break-glass only; people sign in through Authentik"
+
+    - name: "Portainer | Bind the admin password"
+      ansible.builtin.set_fact:
+        portainer_admin_password: "{{ vault_secret_result.password }}"
+      no_log: true
+
+    - name: "Portainer | Agent key (get-or-create in Vault — the server and every agent share it)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ portainer_agent_vault_path }}"
+        vault_secret_init:
+          secret: "{{ lookup('community.general.random_string', length=48, special=false) }}"
+          _note: "Portainer agent shared key (roles/portainer)"
+
+    - name: "Portainer | Bind the agent key (the console signs its requests with it — same value as every agent)"
+      ansible.builtin.set_fact:
+        portainer_agent_secret: "{{ vault_secret_result.secret }}"
+      no_log: true
+
+    - name: "Portainer | Layout directory"
+      ansible.builtin.file:
+        path: "{{ portainer_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: "Portainer | Admin password file (read by the server at first start)"
+      ansible.builtin.copy:
+        dest: "{{ portainer_dir }}/admin-password"
+        content: "{{ portainer_admin_password }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: "Portainer | Pull the pinned server image"
+      community.docker.docker_image:
+        name: "{{ portainer_server_image }}"
+        source: pull
+
+    - name: "Portainer | Run the server (one container, managed directly)"
+      no_log: true   # env carries the agent key
+      community.docker.docker_container:
+        name: portainer
+        image: "{{ portainer_server_image }}"
+        state: started
+        restart_policy: unless-stopped
+        pull: false
+        command: ["--http-enabled", "--admin-password-file=/run/secrets/admin"]
+        env:
+          AGENT_SECRET: "{{ portainer_agent_secret }}"   # without it the agents answer 403 "Invalid request signature" (shown as "already paired")
+        published_ports:
+          - "{{ portainer_listen_ip }}:{{ portainer_http_port }}:9000"
+        volumes:
+          - "portainer-data:/data"
+          - "{{ portainer_dir }}/admin-password:/run/secrets/admin:ro"
+        security_opts: ["no-new-privileges:true"]
+        log_driver: journald
+
+    - name: "Portainer | API answers"
+      ansible.builtin.uri:
+        url: "http://{{ portainer_listen_ip }}:{{ portainer_http_port }}/api/status"
+        status_code: [200]
+      register: portainer_status
+      retries: 20
+      delay: 3
+      until: portainer_status.status == 200
+      when: not ansible_check_mode
+
+    - name: "Portainer | Open the UI port to Traefik / VPN when ufw is active"
+      community.general.ufw:
+        rule: allow
+        port: "{{ portainer_http_port | string }}"
+        proto: tcp
+        from_ip: "{{ item }}"
+        comment: "Portainer via Traefik"
+      loop: ["10.1.0.0/16", "fd01::/16", "100.64.0.0/10"]
+      failed_when: false
+
+    # --- platform concerns: route, mailbox, Vault inventory, SSO assertion ----------
+    - name: "Portainer | Scaffold the platform concerns"
+      ansible.builtin.include_role:
+        name: service_scaffold
+      vars:
+        service_scaffold_def:
+          name: portainer
+          fqdn: "{{ portainer_fqdn }}"
+          backend_url: "http://{{ portainer_listen_ip }}:{{ portainer_http_port }}"
+          exposure: internal              # VPN / LAN only
+          forward_auth: false             # native OIDC below; Portainer authenticates people itself
+          mailbox: true                   # portainer@<domain> for notifications
+          sso_slug: "{{ portainer_oidc_slug }}"
+          vault_secrets:
+            - path: "{{ portainer_admin_vault_path }}"
+            - path: "{{ portainer_agent_vault_path }}"

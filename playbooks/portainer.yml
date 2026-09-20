@@ -1,0 +1,50 @@
+---
+# ==============================================================================
+# Portainer — the container console on its OWN guest (lxc-portainer-01): one UI for
+# every Docker host (inventory group docker_hosts) and the k3s cluster. Four plays,
+# in dependency order. Rerun = changed=0.
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/portainer.yml
+#   decommission:   ... -e portainer_state=absent
+# Bring-up of the guest first: identity-baseline → hardening → this.
+# ==============================================================================
+- name: "Portainer — console (server, scaffold: route, mailbox, Vault, SSO assertion)"
+  hosts: portainer
+  become: true
+  gather_facts: true
+  roles:
+    - role: portainer
+
+- name: "Portainer — Docker agent on every Docker host"
+  hosts: docker_hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Portainer | Docker agent"
+      ansible.builtin.import_role:
+        name: portainer
+        tasks_from: agent.yml
+      when: portainer_state | default('present') == 'present'
+
+- name: "Portainer — Kubernetes agent in the k3s cluster (the console does not run there)"
+  hosts: k3s
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Portainer | Kubernetes agent"
+      ansible.builtin.import_role:
+        name: portainer
+        tasks_from: k8s_agent.yml
+      when: portainer_state | default('present') == 'present'
+
+- name: "Portainer — register every environment, then native SSO"
+  hosts: portainer
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Portainer | Environments + Authentik"
+      ansible.builtin.import_role:
+        name: portainer
+        tasks_from: register.yml
+      when:
+        - portainer_state | default('present') == 'present'
+        - not ansible_check_mode
