@@ -53,29 +53,45 @@
   when: platform_ca_installed.changed and not ansible_check_mode
   changed_when: true
 
-# Traefik reads a transport's rootCAs when it loads the dynamic configuration; a root
-# that appears afterwards is not picked up until a file in the dynamic directory changes.
-- name: "platform_ca | Dynamic route files that reference the root (proxy hosts only)"
-  ansible.builtin.find:
-    paths: /etc/traefik/dynamic
-    patterns: "*.yml"
-    contains: "{{ platform_ca_file | regex_escape }}"
-  register: platform_ca_routes
+# Traefik builds a transport's TLS pool from rootCAs when the transport is created and
+# keeps it while its configuration is unchanged — a root that lands afterwards is not
+# seen even after a file reload. On a proxy host the declared state is "the proxy
+# reaches the CA through its route": verify it, restart the proxy only if it does not,
+# verify again. No restart when it already holds.
+- name: "platform_ca | Proxy hosts: does the proxy reach the CA through its route?"
+  ansible.builtin.uri:
+    url: "https://ca.{{ platform_domain }}/health"
+    status_code: [200, 500, 502, 503]
+    validate_certs: true
+  register: platform_ca_route
   when:
-    - platform_ca_installed.changed
     - inventory_hostname in groups['traefik'] | default([])
     - not ansible_check_mode
+  check_mode: false
 
-- name: "platform_ca | Let the proxy re-read those transports (touch = file-provider reload)"
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: touch
-    modification_time: now
-    access_time: now
-  loop: "{{ platform_ca_routes.files | default([]) }}"
-  loop_control:
-    label: "{{ item.path }}"
-  when: platform_ca_routes is not skipped
+- name: "platform_ca | Proxy hosts: restart the proxy so its transports pick up the root (only when the route fails)"
+  ansible.builtin.systemd_service:
+    name: traefik
+    state: restarted
+  when:
+    - inventory_hostname in groups['traefik'] | default([])
+    - not ansible_check_mode
+    - platform_ca_route.status != 200
+
+- name: "platform_ca | Proxy hosts: the route answers with the root in place"
+  ansible.builtin.uri:
+    url: "https://ca.{{ platform_domain }}/health"
+    status_code: [200]
+    validate_certs: true
+  register: platform_ca_route_after
+  retries: 10
+  delay: 3
+  until: platform_ca_route_after.status == 200
+  when:
+    - inventory_hostname in groups['traefik'] | default([])
+    - not ansible_check_mode
+    - platform_ca_route.status != 200
+  check_mode: false
 
 - name: "platform_ca | The CA answers with a certificate the host now trusts (read-only)"
   ansible.builtin.uri:
