@@ -11,7 +11,7 @@ services:
     ports:
       - "{{ wazuh_listen_ip }}:{{ wazuh_agent_port }}:1514"
       - "{{ wazuh_listen_ip }}:{{ wazuh_enrol_port }}:1515"
-      - "127.0.0.1:55000:55000"
+      - "127.0.0.1:{{ wazuh_api_port }}:55000"
     environment:
       - INDEXER_URL=https://wazuh.indexer:9200
       - INDEXER_USERNAME=admin
@@ -45,7 +45,7 @@ services:
     hostname: wazuh.indexer
     restart: always
     ports:
-      - "127.0.0.1:9200:9200"
+      - "127.0.0.1:{{ wazuh_indexer_port }}:9200"
     environment:
       - "OPENSEARCH_JAVA_OPTS=-Xms{{ wazuh_indexer_heap }} -Xmx{{ wazuh_indexer_heap }}"
       - INDEXER_PASSWORD={{ wazuh_admin_password }}
