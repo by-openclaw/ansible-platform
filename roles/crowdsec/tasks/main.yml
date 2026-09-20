@@ -21,3 +21,10 @@
 - name: Generate bouncer API keys + agent registration token
   ansible.builtin.import_tasks: secrets.yml
   tags: [crowdsec, secrets]
+
+- name: "CrowdSec | Host firewall rules for the native listeners (when ufw is active)"
+  ansible.builtin.include_role:
+    name: host_firewall
+  vars:
+    host_firewall_rules: "{{ crowdsec_firewall_rules }}"
+  tags: [crowdsec, firewall]

@@ -114,3 +114,8 @@ crowdsec_auto_registration_block: |
 # Parser whitelist for the platform's own address space (the LAPI host parses its own logs
 # too). ONE source: platform_trusted_cidrs in group_vars/all/deployment.yml.
 crowdsec_whitelist_cidrs: "{{ platform_trusted_cidrs | default([]) }}"
+
+# Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
+crowdsec_firewall_rules:
+  - { port: "{{ crowdsec_lapi_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "CrowdSec LAPI (agents, bouncers)" }
+  - { port: "{{ crowdsec_appsec_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "CrowdSec AppSec (Traefik)" }

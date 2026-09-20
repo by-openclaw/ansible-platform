@@ -1,0 +1,29 @@
+---
+- name: "Host firewall | ufw present? (installed + enabled by the hardening baseline)"
+  ansible.builtin.stat:
+    path: "{{ host_firewall_ufw_binary }}"
+  register: host_firewall_ufw
+
+- name: "Host firewall | Expand the rules over their source networks"
+  ansible.builtin.set_fact:
+    host_firewall_expanded: >-
+      {%- set out = [] -%}
+      {%- for r in host_firewall_rules -%}
+        {%- for src in (r.from | default(['any'])) -%}
+          {%- set _ = out.append({'port': r.port | string, 'proto': r.proto | default('tcp'),
+                                  'from': src, 'comment': r.comment | default('')}) -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: "Host firewall | Allow the declared ports when ufw is active"
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    from_ip: "{{ item.from }}"
+    comment: "{{ item.comment }}"
+  loop: "{{ host_firewall_expanded }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.proto }} from {{ item.from }} — {{ item.comment }}"
+  when: host_firewall_ufw.stat.exists

@@ -66,3 +66,17 @@ seaweedfs_offsite_is_incremental: false
 # (envelope encryption). Required for multipart uploads when clients request SSE
 # (amazon.aws.s3_object sends encrypt=true by default). KEK from the secret store.
 seaweedfs_sse_enabled: true
+
+# Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
+seaweedfs_grpc_offset: 10000               # SeaweedFS gRPC = port + 10000
+seaweedfs_firewall_rules:
+  - { port: "{{ seaweedfs_master_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "SeaweedFS master" }
+  - { port: "{{ seaweedfs_master_port + seaweedfs_grpc_offset }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "SeaweedFS master gRPC" }
+  - { port: "{{ seaweedfs_volume_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "SeaweedFS volume" }
+  - { port: "{{ seaweedfs_volume_port + seaweedfs_grpc_offset }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "SeaweedFS volume gRPC" }
+  - { port: "{{ seaweedfs_filer_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "SeaweedFS filer" }
+  - { port: "{{ seaweedfs_filer_port + seaweedfs_grpc_offset }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "SeaweedFS filer gRPC" }
+  - { port: "{{ seaweedfs_s3_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "SeaweedFS S3 (Traefik, PBS, Harbor, Nextcloud)" }
+  - { port: "{{ seaweedfs_s3_port + seaweedfs_grpc_offset }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "SeaweedFS S3 gRPC" }
+  - { port: "{{ seaweedfs_admin_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "SeaweedFS admin UI (Traefik)" }
+  - { port: "{{ seaweedfs_metrics_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "SeaweedFS metrics" }
