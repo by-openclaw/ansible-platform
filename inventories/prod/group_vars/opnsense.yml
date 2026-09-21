@@ -6,7 +6,7 @@ opn_wan_pppoe:
   interface: opt12              # OPNsense slot: `configctl interface reconfigure opt12` re-dials
   ports: vtnet2                 # PPP device parent NIC — identifies the <ppp> entry in config.xml
   gateway_v4: WAN_PROXIMUS_PPPOE
-opn_ssh_port: 22                # appliance sshd; the #379 re-seed moves it to platform_ssh_port (22222)
+opn_ssh_port: "{{ platform_ssh_port }}"   # appliance sshd joins the hardening baseline at the #379 re-seed (seed ssh_port)
 # --- Dynamic DNS (os-ddclient -> Cloudflare) — per env; see roles/opnsense/tasks/dyndns.yml ---
 opnsense_dyndns_accounts:
   # Proximus DYNAMIC anchor = `dyn.{{ platform_domain }}` (neutral name, no ISP identity).
@@ -966,7 +966,7 @@ opn_filter_rules:
   protocol: tcp
   source_net: net4_mgmt
   destination_net: (self)
-  destination_port: port_ssh
+  destination_port: port_ssh_hardened
   state: present
   ref:
     adr: naming/0003#§4-rule-mgmt-fw-ssh
@@ -1673,7 +1673,7 @@ opn_filter_rules:
   protocol: tcp
   source_net: net6_mgmt
   destination_net: (self)
-  destination_port: port_ssh
+  destination_port: port_ssh_hardened
   state: present
   ref:
     adr: naming/0003#§4-rule-mgmt-fw-ssh-v6
