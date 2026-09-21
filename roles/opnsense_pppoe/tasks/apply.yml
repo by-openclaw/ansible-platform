@@ -1,0 +1,88 @@
+---
+# ==============================================================================
+# Role: opnsense_pppoe — apply.yml: the firewall side (SSH + wheel sudo). PPP devices live on a
+# legacy page with no API; OPNsense keeps the password base64-encoded in <ppps><ppp><password>
+# and base64_decode()s it into mpd's "set auth password". One surgical edit inside <ppps>, file
+# attributes kept, a dated copy left beside it, then a re-dial of the interface. Idempotent: an
+# element already holding the value changes nothing and no re-dial is issued.
+# ==============================================================================
+- name: "PPPoE apply | Require the Vault-sourced facts"
+  ansible.builtin.assert:
+    that:
+      - opnsense_pppoe_raw | default('') | length > 0
+      - opnsense_pppoe_device.ports | default('') | length > 0
+      - opnsense_pppoe_device.interface | default('') | length > 0
+    fail_msg: >-
+      opnsense_pppoe_raw / opn_wan_pppoe missing — run playbooks/opnsense-pppoe-rotate.yml (its Vault
+      play hands the credential over) with the catalog key opn_wan_pppoe declared.
+    quiet: true
+  no_log: true
+
+- name: "PPPoE apply | Can the automation user become root? (system/sudo_allow_wheel — seed-owned)"
+  ansible.builtin.command:
+    cmd: /usr/bin/true
+  register: opnsense_pppoe_sudo
+  changed_when: false
+  failed_when: false   # a become failure lands here with module_stderr, never as a crash
+  check_mode: false
+
+- name: "PPPoE apply | No sudo — Vault holds the value, the seed renders it at the re-seed (#379)"
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} grants no sudo to {{ ansible_user }} (system/sudo_allow_wheel absent —
+      legacy page, no API, seed-owned). Vault already holds the password; it reaches this firewall at
+      its next re-seed (playbooks/opnsense-provision.yml, window #379). Nothing was changed here.
+  when: "'not in the sudoers' in ((opnsense_pppoe_sudo.module_stderr | default('')) ~ (opnsense_pppoe_sudo.msg | default('')))"
+
+- name: "PPPoE apply | Any other become failure is visible"
+  ansible.builtin.assert:
+    that: (opnsense_pppoe_sudo.rc | default(1)) == 0
+    fail_msg: >-
+      become failed on {{ inventory_hostname }}: {{ (opnsense_pppoe_sudo.msg | default('')) | trim | truncate(120) }}
+      — is the automation user's password in Vault ({{ opnsense_pppoe_vault_become }})?
+    quiet: true
+
+- name: "PPPoE apply | The PPP device must exist in config.xml"
+  ansible.builtin.command:
+    cmd: "grep -c '<ports>{{ opnsense_pppoe_device.ports }}</ports>' {{ opnsense_pppoe_config_path }}"
+  register: opnsense_pppoe_device_count
+  changed_when: false
+  failed_when: opnsense_pppoe_device_count.stdout | trim != '1'
+  check_mode: false
+
+- name: "PPPoE apply | <password> of the device = base64(raw) — surgical edit inside <ppps>"
+  ansible.builtin.replace:
+    path: "{{ opnsense_pppoe_config_path }}"
+    after: '<ppps>'
+    before: '</ppps>'
+    regexp: >-
+      (?s)(<ppp>(?:(?!</ppp>).)*?<ports>{{ opnsense_pppoe_device.ports }}</ports>(?:(?!</ppp>).)*?<password>)[^<]*(</password>)
+    replace: '\g<1>{{ opnsense_pppoe_raw | b64encode }}\g<2>'
+    owner: "{{ opnsense_pppoe_config_owner }}"
+    group: "{{ opnsense_pppoe_config_group }}"
+    mode: "{{ opnsense_pppoe_config_mode }}"
+    backup: true
+  register: opnsense_pppoe_edit
+  no_log: true
+
+- name: "PPPoE apply | Re-dial with the credential on disk (configctl interface reconfigure)"
+  ansible.builtin.command:
+    cmd: "configctl interface reconfigure {{ opnsense_pppoe_device.interface }}"
+  when:
+    - opnsense_pppoe_edit is changed
+    - not ansible_check_mode
+  register: opnsense_pppoe_reconf
+  changed_when: true
+
+- name: "PPPoE apply | Remember whether a re-dial was issued (the API play waits for the gateway)"
+  ansible.builtin.set_fact:
+    opnsense_pppoe_redialed: "{{ opnsense_pppoe_reconf is not skipped }}"
+
+- name: "PPPoE apply | Report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ opnsense_pppoe_config_path }}
+      {{ 'updated' if opnsense_pppoe_edit is changed else 'already current' }}
+      ({{ opnsense_pppoe_device.ports }} → {{ opnsense_pppoe_device.interface }}){{
+      '; re-dial issued: ' ~ (opnsense_pppoe_reconf.stdout | default('') | trim) if (opnsense_pppoe_redialed | bool) else '' }}{{
+      ' [check mode — not written]' if (ansible_check_mode and opnsense_pppoe_edit is changed) else '' }}

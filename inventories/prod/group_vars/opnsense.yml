@@ -1,5 +1,12 @@
 opn_host: 10.6.239.196
 opn_port: 443
+# --- Proximus PPPoE uplink as the appliance names it. The seed owns the interface; the credential's
+#     life cycle is playbooks/opnsense-pppoe-rotate.yml → roles/opnsense_pppoe (no literal there). ---
+opn_wan_pppoe:
+  interface: opt12              # OPNsense slot: `configctl interface reconfigure opt12` re-dials
+  ports: vtnet2                 # PPP device parent NIC — identifies the <ppp> entry in config.xml
+  gateway_v4: WAN_PROXIMUS_PPPOE
+opn_ssh_port: 22                # appliance sshd; the #379 re-seed moves it to platform_ssh_port (22222)
 # --- Dynamic DNS (os-ddclient -> Cloudflare) — per env; see roles/opnsense/tasks/dyndns.yml ---
 opnsense_dyndns_accounts:
   # Proximus DYNAMIC anchor = `dyn.{{ platform_domain }}` (neutral name, no ISP identity).

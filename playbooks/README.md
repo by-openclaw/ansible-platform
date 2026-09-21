@@ -69,6 +69,7 @@ All 71 playbooks in this repo, grouped by scope. Each runs against `inventories/
 | `crowdsec.yml` | Playbook: crowdsec.yml — PROD CrowdSec central LAPI/engine (lxc-crowdsec-01, SVC). Native crowdsec daemon: LAPI listens on the LAN for agents + bouncers, base + |
 | `opnsense-bootstrap.yml` | OPNsense Bootstrap Playbook One-shot. Run once after fresh OPNsense install. Sets hostname + WAN static IP via OPNsense REST API (uri module). After this, all further config is han |
 | `opnsense-config-backup.yml` | OPNsense config export → NFS (issue #13). Runs on the PVE host (has the Synology share mounted at /mnt/pve/poc-backup and reaches the FW over OOB). ansible-playbook -i inventories/ |
+| `opnsense-pppoe-rotate.yml` | ISP PPPoE credential: rotate, normalise, or (re)apply — Vault-first (hidden prompt, new KV version + metadata), firewall over SSH + wheel sudo (`<ppps>` edit, `configctl` re-dial), API waits for the gateway, fallback file refreshed from Vault. No sudo on the appliance → stops; the seed applies at the re-seed. Role `opnsense_pppoe`, catalog `opn_wan_pppoe`. |
 | `opnsense-unbound-overrides.yml` | Apply opn_unbound.host_overrides (split-DNS: service name -> Traefik / mailcow) to the FW's Unbound through the collection module (lib-opnsense UbHostOverrideManager underneath — l |
 | `opnsense.yml` | OPNsense Configuration Playbook Idempotent. Safe to run repeatedly. Configures: system, interfaces (VLANs), DNS, DHCP, NTP, firewall aliases+rules, WireGuard. |
 
