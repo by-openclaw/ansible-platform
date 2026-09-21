@@ -23,6 +23,8 @@
 # REBUILDING an existing firewall DESTROYS it — that needs -e opnsense_provision_recreate=true
 # (and, for a prod profile, -e opnsense_provision_confirm_prod=true on top).
 #
+# Resume: -e opnsense_build_from_stage=N skips the stages before N (stage 0, the provisioning, always
+# runs — it is idempotent on an existing VM and publishes the genesis credential the later stages use).
 # Stages 1–8 only run for a firewall this run actually created: pointing this playbook at a
 # firewall that is already live would otherwise open a firmware window and a full catalog converge
 # on it by accident. Use playbooks/opnsense.yml for an existing firewall; -e opnsense_build_force=true
@@ -81,6 +83,7 @@
     opnsense_api_creds_secret: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_secret }}"
     opn_only_families: [firmware]
     opnsense_firmware_upgrade: true
+  when: (opnsense_build_from_stage | default(1) | int) <= 1
 
 - name: Build | 2 — the catalog families that need no secret from Vault (genesis credential)
   ansible.builtin.import_playbook: opnsense.yml
@@ -89,30 +92,36 @@
     opnsense_api_creds_secret: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_secret }}"
     opn_skip_families: [firmware, auth, monit, acme, dyndns]
     opn_fw_confirm_full: true
+  when: (opnsense_build_from_stage | default(1) | int) <= 2
 
 - name: Build | 3 — Unbound host overrides (genesis credential)
   ansible.builtin.import_playbook: opnsense-unbound-overrides.yml
   vars:
     opnsense_api_creds_key: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_key }}"
     opnsense_api_creds_secret: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_secret }}"
+  when: (opnsense_build_from_stage | default(1) | int) <= 3
 
 - name: Build | 4 — the API token, minted from the genesis credential into Vault
   ansible.builtin.import_playbook: opnsense-api-bootstrap.yml
   vars:
     opnsense_api_bootstrap_genesis_key: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_key }}"
     opnsense_api_bootstrap_genesis_secret: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_secret }}"
+  when: (opnsense_build_from_stage | default(1) | int) <= 4
 
 - name: Build | 5 — the full catalog through Vault
   ansible.builtin.import_playbook: opnsense.yml
   vars:
     opn_fw_confirm_full: true
     opnsense_firmware_upgrade: false
+  when: (opnsense_build_from_stage | default(1) | int) <= 5
 
 - name: Build | 6 — CrowdSec agent on the central LAPI + firewall bouncer
   ansible.builtin.import_playbook: crowdsec-fw-bouncer.yml
+  when: (opnsense_build_from_stage | default(1) | int) <= 6
 
 - name: Build | 7 — configuration export
   ansible.builtin.import_playbook: opnsense-config-backup.yml
+  when: (opnsense_build_from_stage | default(1) | int) <= 7
 
 - name: "Build | 8 — proof: both uplink families online"
   hosts: opnsense
