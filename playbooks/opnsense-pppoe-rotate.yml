@@ -14,11 +14,13 @@
 #   Plays, one connection mode each (no task-level switching):
 #     0. localhost   — the prompt (never a file, never argv)
 #     1. Vault host  — store of record: new KV version + custom metadata format=raw / rotated_at / reason
-#     2. firewall    — SSH + wheel sudo: <ppps><ppp><password> = base64(raw), configctl re-dial
+#     2. localhost   — refresh the break-glass fallback file FROM Vault (rebuild path). Before the
+#                      firewall on purpose: a play whose every host fails ends the playbook, and the
+#                      fallback must mirror Vault even when the appliance grants no sudo.
+#     3. firewall    — SSH + wheel sudo: <ppps><ppp><password> = base64(raw), configctl re-dial
 #                      (no sudo on the appliance → stops with the message; the seed renders Vault's
 #                      value at the next re-seed, window #379)
-#     3. firewall    — API: wait for the PPPoE gateway, report the interface
-#     4. localhost   — refresh the break-glass fallback file FROM Vault (rebuild path)
+#     4. firewall    — API: wait for the PPPoE gateway, report the interface
 #
 #   Role: roles/opnsense_pppoe. Catalog: opn_wan_pppoe (interface slot, PPP parent NIC, gateway),
 #   opn_ssh_port. Issue #481 (incident #472 follow-up).
@@ -50,6 +52,16 @@
       ansible.builtin.import_role:
         name: opnsense_pppoe
         tasks_from: vault
+
+- name: "PPPoE — break-glass fallback file refreshed FROM Vault (rebuild path)"
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: "Fallback | refresh when the store moved"
+      ansible.builtin.import_role:
+        name: opnsense_pppoe
+        tasks_from: fallback
 
 - name: "PPPoE — apply on the firewall (SSH + wheel sudo; PPP has no API)"
   hosts: opnsense
@@ -85,13 +97,3 @@
       ansible.builtin.import_role:
         name: opnsense_pppoe
         tasks_from: verify
-
-- name: "PPPoE — break-glass fallback file refreshed FROM Vault (rebuild path)"
-  hosts: localhost
-  gather_facts: false
-  become: false
-  tasks:
-    - name: "Fallback | refresh when the store moved"
-      ansible.builtin.import_role:
-        name: opnsense_pppoe
-        tasks_from: fallback
