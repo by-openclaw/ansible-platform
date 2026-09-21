@@ -105,15 +105,18 @@
 # A rebuild usually runs with Vault behind the firewall being rebuilt: an UNREACHABLE Vault host is
 # expected there and must fall through to the file fallback, not end the play. Probe first; the
 # vault_secret role itself cannot be made tolerant (its conditionals need the command results).
-- name: "Provision | Is the Vault host reachable from here?"
-  ansible.builtin.wait_for:
-    host: "{{ hostvars[opnsense_provision_vault_host].ansible_host | default(opnsense_provision_vault_host) }}"
-    port: "{{ hostvars[opnsense_provision_vault_host].ansible_port | default(22) }}"
-    timeout: 8
+# Probed the way Ansible reaches the host (its connection plugin — the SSH hop through the
+# firewall), not with a TCP connect from the controller: the controller has no route to the
+# service network, so a raw port probe always says "unreachable" and the reads would be skipped
+# even while Vault answers perfectly through the hop.
+- name: "Provision | Is the Vault host reachable from here? (through its own connection)"
+  ansible.builtin.wait_for_connection:
+    timeout: 20
+    sleep: 5
   register: opnsense_provision_vault_probe
   failed_when: false
   check_mode: false
-  delegate_to: localhost
+  delegate_to: "{{ opnsense_provision_vault_host }}"
   become: false
   when: opnsense_provision_vault_secrets | bool
 
@@ -124,7 +127,7 @@
     label: "{{ item.key }}"
   when:
     - opnsense_provision_vault_secrets | bool
-    - (opnsense_provision_vault_probe.msg | default('')) is not search('Timeout')
+    - not (opnsense_provision_vault_probe.failed | default(false) | bool)
 
 - name: "Provision | Where each credential came from"
   ansible.builtin.debug:
@@ -136,7 +139,7 @@
          | difference((opnsense_provision_secrets | default({})).keys() | list)
          | join(', ') or 'none' }}
   vars:
-    _unreachable: "{{ (opnsense_provision_vault_probe.msg | default('')) is search('Timeout') }}"
+    _unreachable: "{{ opnsense_provision_vault_probe.failed | default(false) | bool }}"
 
 # The build chain drives the API through this credential until svc-ansible's token exists:
 # Vault's copy when it was reachable, the break-glass file otherwise (the same fallback the renderer
@@ -306,7 +309,9 @@
       {{ 'match the profile' if (opnsense_provision_nic_drift | default({})) | length == 0
          else ('DRIFT on ' ~ (opnsense_provision_nic_drift.keys() | list | join(', '))
                ~ (' — would stop, set, start' if ansible_check_mode else ' — stop, set, start')) }}
-  when: (opnsense_provision_vm.nic_macs | default({})) | length > 0
+  when:
+    - (opnsense_provision_vm.nic_macs | default({})) | length > 0
+    - opnsense_provision_created is not changed
 
 # Loop keys avoid dict method names (`update`): a missing key falls back to getattr and yields the
 # method instead of Undefined, so `| default(omit)` never fires. NIC edits are "unsafe" options
