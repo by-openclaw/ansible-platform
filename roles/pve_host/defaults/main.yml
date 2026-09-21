@@ -104,3 +104,10 @@ pve_host_guest_netfilter_modules:
 pve_host_oob_bridge: vmbrOOB
 pve_host_static_routes:
   - { dest: "10.1.0.0/16", via: "{{ hostvars[groups['opnsense'][0]].ansible_host }}", comment: "guest zones via the prod firewall (OOB leg)" }
+
+# --- WAN bridges: the host must not take an address from the ISPs' router advertisements ------
+# Found 2026-09-21: the node held a public Telenet v6 (SLAAC on vmbrWAN2) and a v6 default route
+# through it. The bridges only carry the firewall VM's WAN legs; the host stays v4/OOB only.
+pve_host_wan_bridges:
+  - vmbrWAN1
+  - vmbrWAN2

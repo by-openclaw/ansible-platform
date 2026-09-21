@@ -1,0 +1,38 @@
+---
+- name: "PVE host | No router advertisements / autoconf on the WAN bridges (persistent sysctl)"
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/70-pve-wan-bridges-no-ra.conf
+    content: |
+      # Managed by Ansible (role: pve_host) — the host takes no address from the ISPs' RAs
+      {% for b in pve_host_wan_bridges %}
+      net.ipv6.conf.{{ b }}.accept_ra = 0
+      net.ipv6.conf.{{ b }}.autoconf = 0
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "0644"
+  register: pve_host_wan_sysctl
+
+- name: "PVE host | Apply the sysctl now"
+  ansible.builtin.command:
+    argv: [sysctl, -q, -p, /etc/sysctl.d/70-pve-wan-bridges-no-ra.conf]
+  when: pve_host_wan_sysctl is changed
+  changed_when: true
+
+- name: "PVE host | Global v6 addresses learned on the WAN bridges (today)"
+  ansible.builtin.command:
+    argv: [ip, -6, -o, addr, show, dev, "{{ item }}", scope, global]
+  loop: "{{ pve_host_wan_bridges }}"
+  register: pve_host_wan_v6
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "PVE host | Flush the learned global v6 addresses from the WAN bridges"
+  ansible.builtin.command:
+    argv: [ip, -6, addr, flush, dev, "{{ item.item }}", scope, global]
+  loop: "{{ pve_host_wan_v6.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.rc == 0 and (item.stdout | trim | length > 0)
+  changed_when: true
