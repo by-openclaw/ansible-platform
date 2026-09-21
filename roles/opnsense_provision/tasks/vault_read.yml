@@ -1,0 +1,19 @@
+---
+# One credential, read from Vault and merged into the mapping handed to the renderer.
+# Separate file because include_role cannot accumulate inside a loop — the role publishes
+# vault_secret_result as a fact, so each iteration overwrites the last and only the final
+# credential would survive.
+
+- name: "Provision | Read this credential from Vault: {{ item.value }}"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ item.value }}"   # pragma: allowlist secret (a KV path, not a value)
+    vault_secret_action: read   # pragma: allowlist secret
+
+- name: "Provision | Keep it when Vault returned one: {{ item.key }}"
+  ansible.builtin.set_fact:
+    opnsense_provision_secrets: >-
+      {{ opnsense_provision_secrets | default({}) | combine({item.key: vault_secret_result}) }}
+  when: (vault_secret_result | default({})) | length > 0
+  no_log: true

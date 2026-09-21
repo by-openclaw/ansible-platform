@@ -55,7 +55,8 @@
   ansible.builtin.set_fact:
     opnsense_provision_nics: >-
       {{ opnsense_provision_nics | default({}) | combine({
-           item.key: 'virtio,bridge=' ~ item.value ~ ',firewall=0'
+           item.key: ('virtio=' ~ opnsense_provision_vm.nic_macs[item.key] if (item.key in (opnsense_provision_vm.nic_macs | default({}))) else 'virtio')
+                     ~ ',bridge=' ~ item.value ~ ',firewall=0'
                      ~ (',link_down=1'
                         if (item.key in opnsense_provision_uplink_nic
                             and not ((opnsense_provision_vm.uplinks | default({}))
@@ -101,21 +102,41 @@
 # Vault first, file second. A rebuild frequently runs with Vault unreachable — it lives behind
 # the firewall being rebuilt — so each read is best-effort and the renderer falls back to the
 # file the seed names for anything that did not come back.
+# A rebuild usually runs with Vault behind the firewall being rebuilt: an UNREACHABLE Vault host is
+# expected there and must fall through to the file fallback, not end the play. Probe first; the
+# vault_secret role itself cannot be made tolerant (its conditionals need the command results).
+- name: "Provision | Is the Vault host reachable from here?"
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[opnsense_provision_vault_host].ansible_host | default(opnsense_provision_vault_host) }}"
+    port: "{{ hostvars[opnsense_provision_vault_host].ansible_port | default(22) }}"
+    timeout: 8
+  register: opnsense_provision_vault_probe
+  failed_when: false
+  check_mode: false
+  delegate_to: localhost
+  become: false
+  when: opnsense_provision_vault_secrets | bool
+
 - name: "Provision | Read the seed credentials from Vault"
-  ansible.builtin.include_tasks: vault_secret_read.yml
+  ansible.builtin.include_tasks: vault_read.yml   # not *secret*: that name is gitignored and never reached the repo
   loop: "{{ opnsense_provision_vault_paths | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
-  when: opnsense_provision_vault_secrets | bool
+  when:
+    - opnsense_provision_vault_secrets | bool
+    - (opnsense_provision_vault_probe.msg | default('')) is not search('Timeout')
 
 - name: "Provision | Where each credential came from"
   ansible.builtin.debug:
     msg: >-
-      Vault: {{ (opnsense_provision_secrets | default({})).keys() | list | join(', ') or 'none' }}
+      {{ 'Vault host unreachable (expected during a rebuild) — ' if (_unreachable | bool) else '' }}Vault:
+      {{ (opnsense_provision_secrets | default({})).keys() | list | join(', ') or 'none' }}
       | files (fallback):
       {{ opnsense_provision_vault_paths.keys()
          | difference((opnsense_provision_secrets | default({})).keys() | list)
          | join(', ') or 'none' }}
+  vars:
+    _unreachable: "{{ (opnsense_provision_vault_probe.msg | default('')) is search('Timeout') }}"
 
 - name: "Provision | Render this firewall's configuration from its seed profile"
   by_systems.opnsense.opnsense_seed_config:
@@ -227,6 +248,76 @@
   become: false
   register: opnsense_provision_created
 
+# ── Hardware addresses ───────────────────────────────────────────────────────────────────────────
+# A firewall's MACs are part of its identity: the OOB router's ARP/DHCP mapping and the ISP modem
+# key on them (2026-09-21: a rebuild with fresh MACs cut the controller off from every internal
+# network while the node, routing straight to the firewall, kept its path). A profile that pins
+# nic_macs is converged on an EXISTING VM too: stop, set, start — never a hot-unplug under pf.
+- name: "Provision | Live NIC configuration (existing VM, pinned hardware addresses)"
+  ansible.builtin.command:
+    cmd: "qm config {{ opnsense_provision_vmid }}"
+  register: opnsense_provision_live_cfg
+  changed_when: false
+  check_mode: false
+  delegate_to: "{{ opnsense_provision_pve_node_host }}"
+  become: true
+  vars:
+    ansible_become_password: "{{ hostvars[opnsense_provision_pve_node_host].ansible_become_password | default(omit) }}"
+  when:
+    - (opnsense_provision_vm.nic_macs | default({})) | length > 0
+    - opnsense_provision_created is not changed
+
+- name: "Provision | NICs whose hardware address differs from the profile"
+  ansible.builtin.set_fact:
+    opnsense_provision_nic_drift: >-
+      {{ opnsense_provision_nic_drift | default({})
+         | combine({item.key: opnsense_provision_nics[item.key]} if (_live != (item.value | upper)) else {}) }}
+  vars:
+    _line: "{{ (opnsense_provision_live_cfg.stdout | default('')) | regex_search('(?m)^' ~ item.key ~ ': virtio=[0-9A-Fa-f:]+') | default('', true) }}"
+    _live: "{{ (_line | regex_replace('^.*virtio=', '') | upper) if _line else '<absent>' }}"
+  loop: "{{ opnsense_provision_vm.nic_macs | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - (opnsense_provision_vm.nic_macs | default({})) | length > 0
+    - opnsense_provision_created is not changed
+
+- name: "Provision | Report the hardware-address drift"
+  ansible.builtin.debug:
+    msg: >-
+      {{ opnsense_provision_fw }}: hardware addresses
+      {{ 'match the profile' if (opnsense_provision_nic_drift | default({})) | length == 0
+         else ('DRIFT on ' ~ (opnsense_provision_nic_drift.keys() | list | join(', '))
+               ~ (' — would stop, set, start' if ansible_check_mode else ' — stop, set, start')) }}
+  when: (opnsense_provision_vm.nic_macs | default({})) | length > 0
+
+- name: "Provision | Converge the hardware addresses (stop → set → start; the wait below covers the return)"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ opnsense_provision_pve.host }}"
+    api_user: "{{ opnsense_provision_pve.admin_token_id | regex_replace('!.*$', '') }}"
+    api_token_id: "{{ opnsense_provision_pve.admin_token_id | regex_replace('^.*!', '') }}"
+    api_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
+    validate_certs: "{{ opnsense_provision_validate_certs }}"
+    node: "{{ opnsense_provision_node }}"
+    vmid: "{{ opnsense_provision_vmid }}"
+    state: "{{ item.state }}"
+    update: "{{ item.update | default(omit) }}"
+    net: "{{ opnsense_provision_nic_drift if item.state == 'present' else omit }}"
+    timeout: 180
+  loop:
+    - {state: stopped}
+    - {state: present, update: true}
+    - {state: started}
+  loop_control:
+    label: "{{ item.state }}"
+  when:
+    - (opnsense_provision_nic_drift | default({})) | length > 0
+    - not ansible_check_mode
+  register: opnsense_provision_nic_converged
+  delegate_to: localhost
+  become: false
+  no_log: true
+
 - name: "Provision | Grow the appliance disk to the profile's size"
   community.proxmox.proxmox_disk:
     api_host: "{{ opnsense_provision_pve.host }}"
@@ -319,6 +410,9 @@
     msg: >-
       {{ opnsense_provision_fw }} is up on {{ opnsense_provision_seed.lan.ipv4 }} —
       {{ ('seeded in ' ~ opnsense_provision_seeded.elapsed ~ 's')
-         if (opnsense_provision_created is changed) else 'already existed, left untouched' }}.
+         if (opnsense_provision_created is changed)
+         else ('already existed; hardware addresses converged (stop → set → start)'
+               if (opnsense_provision_nic_converged is defined and opnsense_provision_nic_converged is changed)
+               else 'already existed, left untouched') }}.
       Next: the API token (playbooks/opnsense-api-bootstrap.yml), then the catalog
       (playbooks/opnsense.yml).
