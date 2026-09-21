@@ -4,7 +4,7 @@
 # gateway status until the PPPoE gateway the catalog names is back, then reports the interface.
 # Read-only; runs under --check too.
 # ==============================================================================
-- name: "PPPoE verify | Gateway status, polled until the PPPoE gateway is back: {{ opnsense_pppoe_device.gateway_v4 }}"
+- name: "PPPoE verify | Gateway status, polled until both address families are back on {{ opnsense_pppoe_device.interface }}"
   ansible.builtin.uri:
     url: "https://{{ opn_host }}:{{ opn_port | default(443) }}/api/routes/gateway/status"
     method: GET
@@ -19,9 +19,12 @@
   delay: "{{ opnsense_pppoe_gateway_wait_delay }}"
   until: >-
     (opnsense_pppoe_gw.json['items'] | default([])
-     | selectattr('name', 'equalto', opnsense_pppoe_device.gateway_v4)
+     | selectattr('name', 'in', opnsense_pppoe_gateways)
      | rejectattr('status', 'in', ['down', 'force_down'])
-     | list | length) == 1
+     | list | length) == (opnsense_pppoe_gateways | length)
+  vars:
+    _v6_list: "{{ [opnsense_pppoe_device.gateway_v6] if (opnsense_pppoe_device.gateway_v6 | default('')) else [] }}"
+    opnsense_pppoe_gateways: "{{ [opnsense_pppoe_device.gateway_v4] + _v6_list }}"
 
 - name: "PPPoE verify | Interface overview (address present)"
   ansible.builtin.uri:
@@ -38,13 +41,16 @@
 - name: "PPPoE verify | Report"
   ansible.builtin.debug:
     msg: >-
-      {{ inventory_hostname }}: gateway {{ opnsense_pppoe_device.gateway_v4 }} =
-      {{ (opnsense_pppoe_gw.json['items'] | selectattr('name', 'equalto', opnsense_pppoe_device.gateway_v4)
-          | map(attribute='status_translated') | first | default('?')) }};
+      {{ inventory_hostname }}: {{ opnsense_pppoe_device.gateway_v4 }} = {{ _v4 }},
+      {{ opnsense_pppoe_device.gateway_v6 | default('(no v6 gateway declared)') }} = {{ _v6 }};
       {{ opnsense_pppoe_device.interface }} {{ (_if.status | default('absent')) }},
       IPv4 {{ 'present' if (_if.addr4 | default('') | length > 0) else 'NONE' }},
-      IPv6 {{ 'present' if (_if.addr6 | default([]) | length > 0) else 'none' }}
+      IPv6 global {{ 'present' if (_if.addr6 | default([]) | map(attribute='ipaddr') | reject('match', '^fe80') | list | length > 0) else 'NONE' }}
   vars:
+    _items: "{{ opnsense_pppoe_gw.json['items'] | default([]) }}"
+    _v4: "{{ _items | selectattr('name', 'equalto', opnsense_pppoe_device.gateway_v4) | map(attribute='status_translated') | first | default('ABSENT') }}"
+    _v6_name: "{{ opnsense_pppoe_device.gateway_v6 | default('') }}"
+    _v6: "{{ _items | selectattr('name', 'equalto', _v6_name) | map(attribute='status_translated') | first | default('ABSENT') }}"
     _if: >-
       {{ opnsense_pppoe_ifinfo.json.rows | default([])
          | selectattr('identifier', 'equalto', opnsense_pppoe_device.interface) | first | default({}) }}
