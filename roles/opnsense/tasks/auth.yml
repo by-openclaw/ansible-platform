@@ -80,6 +80,9 @@
          | selectattr('name', 'in', item.groups | default([]))
          | map(attribute='gid') | join(',') }}
     password: "{{ (opnsense_auth_user_passwords | default({}))[item.name] | default(omit) }}"
+    # Rotation path: the API never returns a password, so an existing user's password is only
+    # rewritten when asked (-e opnsense_auth_force_update=true — a deliberate, non-idempotent run).
+    force_update: "{{ opnsense_auth_force_update | default(false) | bool }}"
     state: "{{ item.state | default('present') }}"
   loop: "{{ opn_auth_users | default([]) }}"
   loop_control:
