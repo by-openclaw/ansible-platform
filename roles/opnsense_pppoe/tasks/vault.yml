@@ -32,14 +32,14 @@
 - name: "PPPoE vault | Bind what Vault holds"
   ansible.builtin.set_fact:
     opnsense_pppoe_fields: "{{ (opnsense_pppoe_get.stdout | from_json).data.data }}"
-    opnsense_pppoe_format: "{{ _custom['format'] | default('') }}"
-    opnsense_pppoe_version: "{{ _meta.current_version }}"
+    opnsense_pppoe_format: >-
+      {{ ((opnsense_pppoe_meta.stdout | from_json).data.custom_metadata | default({}, true)).format | default('') }}
+    opnsense_pppoe_version: "{{ (opnsense_pppoe_meta.stdout | from_json).data.current_version }}"
     # A version written outside this role (the Vault UI on rotation day) carries no trail: the
     # stamped version lags the current one, and the trail is completed below as 'rotation-external'.
-    opnsense_pppoe_unstamped: "{{ (_custom['version_stamped'] | default('0')) | string != (_meta.current_version | string) }}"
-  vars:
-    _meta: "{{ (opnsense_pppoe_meta.stdout | from_json).data }}"
-    _custom: "{{ _meta.custom_metadata | default({}, true) }}"
+    opnsense_pppoe_unstamped: >-
+      {{ (((opnsense_pppoe_meta.stdout | from_json).data.custom_metadata | default({}, true)).version_stamped | default('0')) | string
+         != ((opnsense_pppoe_meta.stdout | from_json).data.current_version | string) }}
   no_log: true
 
 # The value stored until 2026-09-21 was copied from a live config, i.e. the base64 form OPNsense
