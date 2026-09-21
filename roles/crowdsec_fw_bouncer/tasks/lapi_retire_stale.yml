@@ -1,0 +1,29 @@
+---
+# On the central LAPI: a registration of our machine name that the firewall itself does not hold
+# (rebuilt appliance, 2026-09-21) blocks `cscli lapi register` ("user already exists"). Retire it
+# so the enrol can proceed. Only when the firewall reports it is NOT enrolled — a live agent is
+# never touched.
+- name: "LAPI | Registrations on the central LAPI"
+  ansible.builtin.command: "/usr/bin/cscli machines list -o json"
+  register: crowdsec_fw_bouncer_lapi_machines
+  changed_when: false
+  check_mode: false
+
+- name: "LAPI | Retire the stale registration of the firewall machine"
+  ansible.builtin.command: "/usr/bin/cscli machines delete {{ crowdsec_fw_bouncer_machine_name }}"
+  when:
+    - not (hostvars[crowdsec_fw_bouncer_fw_host].crowdsec_fw_bouncer_enrolled | default(true) | bool)
+    - (crowdsec_fw_bouncer_lapi_machines.stdout | from_json)
+      | selectattr('machineId', 'equalto', crowdsec_fw_bouncer_machine_name) | list | length > 0
+  changed_when: true
+
+- name: "LAPI | Report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ crowdsec_fw_bouncer_machine_name }}:
+      {{ 'firewall enrolled — registration kept'
+         if (hostvars[crowdsec_fw_bouncer_fw_host].crowdsec_fw_bouncer_enrolled | default(true) | bool)
+         else ('stale registration retired (firewall not enrolled)'
+               if ((crowdsec_fw_bouncer_lapi_machines.stdout | from_json)
+                   | selectattr('machineId', 'equalto', crowdsec_fw_bouncer_machine_name) | list | length > 0)
+               else 'no registration — enrol will create it') }}

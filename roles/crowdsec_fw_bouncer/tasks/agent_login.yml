@@ -1,0 +1,13 @@
+---
+# Which machine the firewall's agent currently logs in as (SSH + become; the file is root-only).
+# A rebuilt appliance carries the plugin default, not our machine name — that is the signal the
+# central LAPI's registration of that name is stale (the old firewall's) and must be retired.
+- name: "Agent | Read the current LAPI login on the firewall"
+  ansible.builtin.command: awk '/^login:/{print $2}' /usr/local/etc/crowdsec/local_api_credentials.yaml
+  register: crowdsec_fw_bouncer_login
+  changed_when: false
+  check_mode: false
+
+- name: "Agent | Publish whether the firewall is enrolled under our machine name"
+  ansible.builtin.set_fact:
+    crowdsec_fw_bouncer_enrolled: "{{ (crowdsec_fw_bouncer_login.stdout | trim) == crowdsec_fw_bouncer_machine_name }}"
