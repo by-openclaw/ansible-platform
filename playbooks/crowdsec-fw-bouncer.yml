@@ -2,8 +2,9 @@
 # Four plays, one connection mode each, so no task-level connection switching:
 #   0. vault  — read every secret on the Vault host and hand them to the firewall host
 #   1. local  — plugin settings (API via by_systems.opnsense)
-#   2. ssh    — enrol the agent + write the bouncer api_key (the one thing with no API), become root
-#   3. local  — reconfigure; then verify on the central LAPI
+#   2. ssh    — read the agent's login; then on the LAPI retire a stale registration of our name
+#   3. ssh    — enrol the agent + write the bouncer api_key (the one thing with no API), become root
+#   4. local  — reconfigure; then verify on the central LAPI
 # Prerequisites on the firewall (seed-owned): sudo_allow_wheel=1 and the automation user's
 # password in Vault ({env}/opnsense/svc-ansible-{env}, key webgui_password) — see catalog opn_auth_users.
 - name: "CrowdSec FW bouncer — secrets from Vault (read outside the connection:local plays)"
@@ -76,6 +77,38 @@
       ansible.builtin.import_role:
         name: crowdsec_fw_bouncer
         tasks_from: api_settings
+
+- name: "CrowdSec FW bouncer — is the firewall enrolled under our machine name? (SSH + become)"
+  hosts: vm-opns-01
+  gather_facts: false
+  vars:
+    crowdsec_fw_bouncer_ssh_user: "{{ hostvars[inventory_hostname].crowdsec_fw_bouncer_ssh_user | default('svc-ansible-' ~ (platform_env | default('prod'))) }}"
+    crowdsec_fw_bouncer_ssh_key: "{{ hostvars[inventory_hostname].crowdsec_fw_bouncer_ssh_key | default(lookup('env', 'HOME') ~ '/.ssh/id_ed25519_opnsense') }}"
+    ansible_connection: ssh
+    ansible_user: "{{ crowdsec_fw_bouncer_ssh_user }}"
+    ansible_port: "{{ opn_ssh_port | default(22) }}"
+    ansible_ssh_private_key_file: "{{ crowdsec_fw_bouncer_ssh_key }}"
+    ansible_become: true
+    ansible_become_method: sudo
+    ansible_become_password: "{{ crowdsec_fw_bouncer_become_password }}"
+    ansible_python_interpreter: /usr/local/bin/python3
+  tasks:
+    - name: Read the agent's login
+      ansible.builtin.import_role:
+        name: crowdsec_fw_bouncer
+        tasks_from: agent_login
+
+# A rebuilt firewall cannot register under a name the LAPI still holds for its predecessor.
+- name: "CrowdSec FW bouncer — retire a stale registration on the central LAPI"
+  hosts: lxc-crowdsec-01
+  gather_facts: false
+  vars:
+    crowdsec_fw_bouncer_fw_host: vm-opns-01
+  tasks:
+    - name: Retire when stale
+      ansible.builtin.import_role:
+        name: crowdsec_fw_bouncer
+        tasks_from: lapi_retire_stale
 
 - name: "CrowdSec FW bouncer — write api_key (SSH + become)"
   hosts: vm-opns-01
