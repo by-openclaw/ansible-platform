@@ -63,3 +63,36 @@ pve_host_acls:
 pve_host_route_enabled: true
 pve_host_fqdn: "{{ pve_host_oidc_slug }}.{{ pve_host_domain }}"
 pve_host_backend_url: "https://{{ ansible_host }}:{{ pve_host_ui_port }}"
+
+# --- netfilter modules for the GUESTS ---------------------------------------------------
+# Unprivileged containers cannot load kernel modules; their ufw/iptables rules need the
+# matches loaded on the HOST. At boot, guests starting before the host had loaded them failed
+# ufw-init ("No chain/target/match by that name") and locked themselves out (2026-09-21).
+# Preload once at host boot, before any guest starts.
+pve_host_guest_netfilter_modules:
+  - nf_conntrack
+  - nf_nat
+  - nf_log_syslog
+  - nft_compat
+  - nft_ct
+  - nft_limit
+  - nft_masq
+  - xt_addrtype
+  - xt_comment
+  - xt_conntrack
+  - xt_hl
+  - xt_limit
+  - xt_LOG
+  - xt_mark
+  - xt_MASQUERADE
+  - xt_multiport
+  - xt_nat
+  - xt_NFLOG
+  - xt_physdev
+  - xt_recent
+  - xt_set
+  - xt_state
+  - xt_tcpudp
+  - ipt_REJECT
+  - ip6t_REJECT
+  - ip6t_rt

@@ -1,0 +1,21 @@
+---
+- name: "PVE host | Netfilter modules the guests' firewalls need, loaded at host boot"
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/pve-guest-netfilter.conf
+    content: |
+      # Managed by Ansible (role: pve_host) — matches/targets used by ufw/iptables inside the guests;
+      # unprivileged containers cannot autoload them (2026-09-21 boot-race lockout).
+      {% for m in pve_host_guest_netfilter_modules %}
+      {{ m }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: "PVE host | Load them now (idempotent)"
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ pve_host_guest_netfilter_modules }}"
+  loop_control:
+    label: "{{ item }}"

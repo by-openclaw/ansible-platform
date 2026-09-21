@@ -185,6 +185,11 @@ contract_audit_service_checks:
     probe: "pve-firewall status 2>/dev/null | head -1"
     expect: "^Status: enabled/running$"
     groups: ["proxmox_nodes"]
+  - id: NODE-06
+    desc: "Netfilter modules for the guests preloaded on the host (xt_recent, xt_limit, ip6t_rt … — ufw in unprivileged LXCs)"
+    probe: "for m in xt_recent xt_limit xt_LOG xt_conntrack xt_hl ip6t_rt nft_compat; do lsmod | grep -q \"^$m \" || echo missing:$m; done; echo done"
+    expect: "^done$"
+    groups: ["proxmox_nodes"]
   - id: NODE-05
     desc: "No ufw on the node (the Proxmox firewall is the only host firewall)"
     probe: "command -v ufw >/dev/null && echo present || echo absent"
