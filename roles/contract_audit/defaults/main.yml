@@ -185,6 +185,11 @@ contract_audit_service_checks:
     probe: "pve-firewall status 2>/dev/null | head -1"
     expect: "^Status: enabled/running$"
     groups: ["proxmox_nodes"]
+  - id: NODE-05
+    desc: "No ufw on the node (the Proxmox firewall is the only host firewall)"
+    probe: "command -v ufw >/dev/null && echo present || echo absent"
+    expect: "^absent$"
+    groups: ["proxmox_nodes"]
   - id: NODE-02
     desc: "Apt sources as code: deb822 Proxmox file present, no enterprise leftovers"
     probe: "[ -f /etc/apt/sources.list.d/proxmox.sources ] && ! ls /etc/apt/sources.list.d/ | grep -qE '^pve-enterprise' && echo PASS || echo FAIL"

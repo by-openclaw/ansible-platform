@@ -1,0 +1,18 @@
+---
+# The Proxmox firewall is the host firewall of a node. ufw must not coexist with it
+# (two rule sets on the same host = one of them silently wins). Disable, then remove.
+- name: "PVE host | ufw present on the node?"
+  ansible.builtin.stat:
+    path: /usr/sbin/ufw
+  register: pve_host_ufw_bin
+
+- name: "PVE host | ufw disabled before removal (nodes use the Proxmox firewall)"
+  community.general.ufw:
+    state: disabled
+  when: pve_host_ufw_bin.stat.exists
+
+- name: "PVE host | ufw package absent on the node"
+  ansible.builtin.apt:
+    name: ufw
+    state: absent
+    purge: true
