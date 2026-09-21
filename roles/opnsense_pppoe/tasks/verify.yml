@@ -45,9 +45,11 @@
       {{ opnsense_pppoe_device.gateway_v6 | default('(no v6 gateway declared)') }} = {{ _v6 }};
       {{ opnsense_pppoe_device.interface }} {{ (_if.status | default('absent')) }},
       IPv4 {{ 'present' if (_if.addr4 | default('') | length > 0) else 'NONE' }},
-      IPv6 global {{ 'present' if (_if.addr6 | default([]) | map(attribute='ipaddr') | reject('match', '^fe80') | list | length > 0) else 'NONE' }}
+      IPv6 global {{ 'present' if (_v6_global | length > 0) else 'NONE' }}
   vars:
     _items: "{{ opnsense_pppoe_gw.json['items'] | default([]) }}"
+    # interfacesInfo lists addr6 as strings ("2001:db8::1/64"); link-local ones are not the proof
+    _v6_global: "{{ _if.addr6 | default([]) | map('string') | reject('match', '^fe80') | list }}"
     _v4: "{{ _items | selectattr('name', 'equalto', opnsense_pppoe_device.gateway_v4) | map(attribute='status_translated') | first | default('ABSENT') }}"
     _v6_name: "{{ opnsense_pppoe_device.gateway_v6 | default('') }}"
     _v6: "{{ _items | selectattr('name', 'equalto', _v6_name) | map(attribute='status_translated') | first | default('ABSENT') }}"
