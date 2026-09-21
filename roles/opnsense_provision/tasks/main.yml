@@ -120,26 +120,39 @@
   become: false
   when: opnsense_provision_vault_secrets | bool
 
-- name: "Provision | Read the seed credentials from Vault"
-  ansible.builtin.include_tasks: vault_read.yml   # not *secret*: that name is gitignored and never reached the repo
-  loop: "{{ opnsense_provision_vault_paths | dict2items }}"
-  loop_control:
-    label: "{{ item.key }}"
+# Reachable is not the same as usable: Vault's own CLI resolves the Vault address through the
+# platform resolver, which may hold stale negative answers mid-rebuild. Any failure of the reads
+# (login, lookup, absent path) falls through to the break-glass files — the documented fallback —
+# instead of ending the play (drill 2026-09-21).
+- name: "Provision | Read the seed credentials from Vault (best effort)"
   when:
     - opnsense_provision_vault_secrets | bool
     - not (opnsense_provision_vault_probe.failed | default(false) | bool)
+  block:
+    - name: "Provision | Read the seed credentials from Vault"
+      ansible.builtin.include_tasks: vault_read.yml   # not *secret*: that name is gitignored and never reached the repo
+      loop: "{{ opnsense_provision_vault_paths | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+  rescue:
+    - name: "Provision | Vault read failed — the break-glass files carry the rebuild"
+      ansible.builtin.set_fact:
+        opnsense_provision_vault_failed: true
+        opnsense_provision_secrets: {}
 
 - name: "Provision | Where each credential came from"
   ansible.builtin.debug:
     msg: >-
-      {{ 'Vault host unreachable (expected during a rebuild) — ' if (_unreachable | bool) else '' }}Vault:
+      {{ 'Vault unreachable or its read failed (expected mid-rebuild) — ' if (_unreachable | bool) else '' }}Vault:
       {{ (opnsense_provision_secrets | default({})).keys() | list | join(', ') or 'none' }}
       | files (fallback):
       {{ opnsense_provision_vault_paths.keys()
          | difference((opnsense_provision_secrets | default({})).keys() | list)
          | join(', ') or 'none' }}
   vars:
-    _unreachable: "{{ opnsense_provision_vault_probe.failed | default(false) | bool }}"
+    _unreachable: >-
+      {{ (opnsense_provision_vault_probe.failed | default(false) | bool)
+         or (opnsense_provision_vault_failed | default(false) | bool) }}
 
 # The build chain drives the API through this credential until svc-ansible's token exists:
 # Vault's copy when it was reachable, the break-glass file otherwise (the same fallback the renderer
