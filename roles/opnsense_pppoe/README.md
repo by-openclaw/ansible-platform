@@ -7,7 +7,7 @@ refreshed *from* Vault — never the other way round.
 
 | Task file | Runs on | Does |
 |---|---|---|
-| `vault.yml` | Vault host | reads the secret + custom metadata; rotation (new value), one-time normalisation (`opnsense_pppoe_normalize`) or converge; one new KV version at most; metadata `format=raw`, `rotated_at`, `rotated_by`, `reason`; hands the raw value over |
+| `vault.yml` | Vault host | reads the secret + custom metadata; rotation (new value), one-time normalisation (`opnsense_pppoe_normalize`) or converge; one new KV version at most; metadata `format=raw`, `rotated_at`, `rotated_by`, `reason`, `version_stamped` (a version written through the Vault UI gets its trail completed as `rotation-external`); hands the raw value over |
 | `apply.yml` | firewall (SSH + wheel sudo) | refuses cleanly when the appliance grants no sudo (seed-owned `sudo_allow_wheel`, window #379); surgical `<password>` edit inside `<ppps>` (attributes kept, dated copy beside it); `configctl interface reconfigure <slot>` only on change |
 | `verify.yml` | firewall (API) | polls `routes/gateway/status` until the catalog's gateway is back; interface overview |
 | `fallback.yml` | controller | refreshes the file `roles/opnsense_provision` reads when Vault is unreachable |

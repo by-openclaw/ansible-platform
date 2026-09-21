@@ -32,8 +32,14 @@
 - name: "PPPoE vault | Bind what Vault holds"
   ansible.builtin.set_fact:
     opnsense_pppoe_fields: "{{ (opnsense_pppoe_get.stdout | from_json).data.data }}"
-    opnsense_pppoe_format: >-
-      {{ ((opnsense_pppoe_meta.stdout | from_json).data.custom_metadata | default({}, true)).format | default('') }}
+    opnsense_pppoe_format: "{{ _custom['format'] | default('') }}"
+    opnsense_pppoe_version: "{{ _meta.current_version }}"
+    # A version written outside this role (the Vault UI on rotation day) carries no trail: the
+    # stamped version lags the current one, and the trail is completed below as 'rotation-external'.
+    opnsense_pppoe_unstamped: "{{ (_custom['version_stamped'] | default('0')) | string != (_meta.current_version | string) }}"
+  vars:
+    _meta: "{{ (opnsense_pppoe_meta.stdout | from_json).data }}"
+    _custom: "{{ _meta.custom_metadata | default({}, true) }}"
   no_log: true
 
 # The value stored until 2026-09-21 was copied from a live config, i.e. the base64 form OPNsense
@@ -95,6 +101,7 @@
   changed_when: true
   no_log: true
 
+# The version this run leaves current: the one it writes (current + 1) or the one it found.
 - name: "PPPoE vault | Record the format marker and the rotation trail (custom metadata)"
   ansible.builtin.command:
     cmd: >-
@@ -102,11 +109,12 @@
       vault kv metadata put -mount={{ opnsense_pppoe_vault_mount }}
       -custom-metadata=format=raw
       -custom-metadata=rotated_at={{ '%Y-%m-%dT%H:%M:%SZ' | strftime(utc=true) }}
-      -custom-metadata=rotated_by=ansible-deploy
-      -custom-metadata=reason={{ opnsense_pppoe_reason_effective | trim }}
+      -custom-metadata=rotated_by={{ 'ansible-deploy' if (opnsense_pppoe_write | bool) else 'external-write' }}
+      -custom-metadata=reason={{ (opnsense_pppoe_reason_effective | trim) if (opnsense_pppoe_write | bool) else 'rotation-external' }}
+      -custom-metadata=version_stamped={{ (opnsense_pppoe_version | int + 1) if (opnsense_pppoe_write | bool) else opnsense_pppoe_version }}
       {{ opnsense_pppoe_vault_path }}
   when:
-    - opnsense_pppoe_write | bool
+    - (opnsense_pppoe_write | bool) or (opnsense_pppoe_unstamped | bool)
     - not ansible_check_mode
   changed_when: true
   no_log: true   # the command line carries the deploy token
@@ -115,8 +123,10 @@
   ansible.builtin.debug:
     msg: >-
       {{ opnsense_pppoe_vault_path }}: store {{ 'marked raw' if (opnsense_pppoe_format | trim == 'raw') else 'UNMARKED' }},
-      {{ ('new version: ' ~ (opnsense_pppoe_reason_effective | trim)) if (opnsense_pppoe_write | bool) else 'unchanged' }}{{
-      ' [check mode — not written]' if (ansible_check_mode and (opnsense_pppoe_write | bool)) else '' }}
+      {{ ('new version: ' ~ (opnsense_pppoe_reason_effective | trim)) if (opnsense_pppoe_write | bool)
+         else ('version ' ~ opnsense_pppoe_version ~ ' written outside the role — trail completed (rotation-external)'
+               if (opnsense_pppoe_unstamped | bool) else 'unchanged') }}{{
+      ' [check mode — not written]' if (ansible_check_mode and ((opnsense_pppoe_write | bool) or (opnsense_pppoe_unstamped | bool))) else '' }}
 
 - name: "PPPoE vault | Hand the raw password to the firewall host(s) and the controller"
   ansible.builtin.set_fact:
