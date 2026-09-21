@@ -1,0 +1,32 @@
+---
+# Persistent: "post-up" lines in the OOB bridge stanza (ifupdown2); immediate: ip route replace.
+- name: "PVE host | Static routes persisted in the OOB bridge stanza"
+  ansible.builtin.lineinfile:
+    path: /etc/network/interfaces
+    insertafter: "^iface {{ pve_host_oob_bridge }} inet static"
+    regexp: "^\\s+post-up ip route replace {{ item.dest | regex_escape }} "
+    line: >-
+      \tpost-up ip route replace {{ item.dest }} via {{ item.via }} dev {{ pve_host_oob_bridge }}
+      # {{ item.comment }} (managed by Ansible, roles/pve_host)
+  loop: "{{ pve_host_static_routes }}"
+  loop_control:
+    label: "{{ item.dest }} via {{ item.via }}"
+
+- name: "PVE host | Routes present now (idempotent replace)"
+  ansible.builtin.command:
+    argv: [ip, route, replace, "{{ item.dest }}", via, "{{ item.via }}", dev, "{{ pve_host_oob_bridge }}"]
+  loop: "{{ pve_host_static_routes }}"
+  loop_control:
+    label: "{{ item.dest }}"
+  register: pve_host_route_now
+  changed_when: false     # replace is idempotent; drift is what the next task reports
+
+- name: "PVE host | Routing table has every declared route"
+  ansible.builtin.command:
+    argv: [ip, route, show, "{{ item.dest }}"]
+  loop: "{{ pve_host_static_routes }}"
+  loop_control:
+    label: "{{ item.dest }}"
+  register: pve_host_route_check
+  changed_when: false
+  failed_when: item.via not in pve_host_route_check.stdout

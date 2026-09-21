@@ -187,6 +187,11 @@ contract_audit_service_checks:
     probe: "pve-firewall status 2>/dev/null | head -1"
     expect: "^Status: enabled/running$"
     groups: ["proxmox_nodes"]
+  - id: NODE-07
+    desc: "Node routes the guest zones via the prod firewall's OOB leg (replies must not leave by the OOB default gateway)"
+    probe: "ip route show 10.1.0.0/16 | grep -q via && echo PASS || echo FAIL"
+    expect: "^PASS$"
+    groups: ["proxmox_nodes"]
   - id: NODE-06
     desc: "Netfilter modules for the guests preloaded on the host (xt_recent, xt_limit, ip6t_rt … — ufw in unprivileged LXCs)"
     probe: "for m in xt_recent xt_limit xt_LOG xt_conntrack xt_hl ip6t_rt nft_compat; do lsmod | grep -q \"^$m \" || echo missing:$m; done; echo done"
