@@ -64,9 +64,11 @@ contract_audit_checks:
       /var/log/lynis-report.dat 2>/dev/null | head -1 || echo NOREPORT
     expect: "^PASS$"
   - id: SEC-21
-    desc: "Host firewall (ufw) installed and active — the hardening baseline (security/0003)"
-    probe: "ufw status 2>/dev/null | head -1 || echo NOUFW"
-    expect: "^Status: active$"
+    desc: "Host firewall (ufw) installed, active AND its chains loaded (policy DROP without chains = self-lockout)"
+    probe: >-
+      ufw status 2>/dev/null | head -1 | grep -q '^Status: active$'
+      && iptables -S INPUT 2>/dev/null | grep -q -- '-j ufw-before-input' && echo PASS || echo FAIL
+    expect: "^PASS$"
     groups: ["cluster", "adguard", "mailcow", "gitlab_runner", "pbs", "k3s"]
 
 

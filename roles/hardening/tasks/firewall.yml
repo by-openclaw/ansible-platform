@@ -10,6 +10,30 @@
     name: ufw
     state: present
 
+
+- name: "UFW | Service facts (Docker ordering for the unit drop-in)"
+  ansible.builtin.service_facts:
+
+- name: "UFW | Drop-in directory"
+  ansible.builtin.file:
+    path: /etc/systemd/system/ufw.service.d
+    state: directory
+    mode: "0755"
+
+- name: "UFW | Unit drop-in: start after the network (and Docker), retry on failure, fail OPEN when the chains did not load"
+  ansible.builtin.template:
+    src: ufw-override.conf.j2
+    dest: /etc/systemd/system/ufw.service.d/override.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: hardening_ufw_dropin
+
+- name: "UFW | Reload systemd when the drop-in changed"
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: hardening_ufw_dropin is changed
+
 - name: "UFW | Set default incoming policy to deny"
   community.general.ufw:
     direction: incoming
