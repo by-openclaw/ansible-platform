@@ -23,8 +23,11 @@ platform_jump_user: "svc-ansible-prod"
 # svc-ansible agent key takes over)
 platform_jump_identity: ""
 platform_jump_host: "10.6.239.196"
+# The appliance's sshd follows the hardening baseline since the #379 re-seed (seed ssh_port =
+# platform_ssh_port): the hop must name the port, or every SVC/DMZ host is UNREACHABLE.
+platform_jump_port: "{{ platform_ssh_port }}"
 platform_jump_args: >-
-  -o ProxyCommand="ssh -W %h:%p {{ platform_jump_identity }}
+  -o ProxyCommand="ssh -W %h:%p -p {{ platform_jump_port }} {{ platform_jump_identity }}
   -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
   {{ platform_jump_user }}@{{ platform_jump_host }}"
   -o StrictHostKeyChecking=no
