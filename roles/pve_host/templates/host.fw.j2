@@ -1,0 +1,14 @@
+# Managed by Ansible (role: pve_host) — host rules for {{ pve_host_node }}
+[OPTIONS]
+enable: 1
+log_level_in: {{ pve_host_firewall_log_level_in }}
+log_level_out: nolog
+
+[RULES]
+IN ACCEPT -source +pve_ui -p tcp -dport {{ pve_host_ui_port }} -log nolog # Proxmox UI / API
+IN ACCEPT -source +pve_ui -p tcp -dport {{ pve_host_spice_port }} -log nolog # SPICE proxy
+IN ACCEPT -source +pve_ssh -p tcp -dport {{ pve_host_ssh_port }} -log nolog # SSH (Ansible, bastion)
+{% for p in pve_host_metrics_ports %}
+IN ACCEPT -source +pve_metrics -p tcp -dport {{ p }} -log nolog # exporter scrape
+{% endfor %}
+IN ACCEPT -source +pve_icmp -p icmp -log nolog # ping

@@ -133,6 +133,7 @@ All 71 playbooks in this repo, grouped by scope. Each runs against `inventories/
 |---|---|
 | `decommission-service.yml` | Force a retired service ABSENT — clean, data-driven decommission. ansible-playbook -i inventories/prod/hosts.yml playbooks/decommission-service.yml \ -e decommission_target=defguar |
 | `pbs-pve-storage.yml` | Wire PBS into Proxmox VE: add it as a `pbs` storage + a SECOND backup job. The existing vzdump -> NFS (Synology, storage `poc-backup`) job is left ENABLED |
+| `pve-host.yml` | The Proxmox VE hypervisor as code (`roles/pve_host`): apt sources, datacenter options, local admin + OIDC realm from Vault + ACLs, Proxmox firewall with roll-back guard, UI route. Exporters/agents via their own plays (node in the targets). |
 | `pbs.yml` | Proxmox Backup Server 4 — vm-pbs-01 (SVC 10.1.3.222) SECOND, independent backup copy (SeaweedFS S3 datastore) alongside the existing PVE vzdump -> NFS (Synology) job, which stays e |
 
 ## Other

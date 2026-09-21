@@ -1,0 +1,13 @@
+---
+# ==============================================================================
+# Hypervisor as code: the Proxmox VE node built from the repo (roles/pve_host).
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/pve-host.yml [--check --diff]
+# Then the baseline plays with the node in their targets: hardening (ufw off on nodes),
+# node-exporter, promtail, crowdsec-agents, wazuh, platform-ca, monitoring (scrape).
+# ==============================================================================
+- name: "Proxmox VE hypervisor — sources, options, identity, firewall, UI route"
+  hosts: proxmox_nodes
+  become: true
+  gather_facts: true
+  roles:
+    - role: pve_host

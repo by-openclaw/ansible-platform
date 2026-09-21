@@ -1,0 +1,34 @@
+---
+- name: "PVE host | Apt sources as code"
+  ansible.builtin.import_tasks: apt.yml
+  tags: [pve_host, apt]
+
+- name: "PVE host | Datacenter options"
+  ansible.builtin.import_tasks: options.yml
+  tags: [pve_host, options]
+
+- name: "PVE host | Identity: local admin, OIDC realm, ACLs"
+  ansible.builtin.import_tasks: identity.yml
+  tags: [pve_host, identity]
+
+- name: "PVE host | No ufw on a node (the Proxmox firewall is the host firewall)"
+  ansible.builtin.import_tasks: ufw.yml
+  tags: [pve_host, firewall]
+
+- name: "PVE host | Proxmox firewall (datacenter + host)"
+  ansible.builtin.import_tasks: firewall.yml
+  tags: [pve_host, firewall]
+
+- name: "PVE host | UI route through Traefik"
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: "{{ pve_host_oidc_slug }}"
+    traefik_route_fqdn: "{{ pve_host_fqdn }}"
+    traefik_route_backend_url: "{{ pve_host_backend_url }}"
+    traefik_route_backend_insecure_skip_verify: true   # pveproxy serves its own certificate
+    traefik_route_internal_only: true
+  when: pve_host_route_enabled | bool
+  tags: [pve_host, route]

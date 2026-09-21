@@ -36,6 +36,11 @@
          | select('string') | select('!=', '') | list }}
   tags: [resolver, dns]
 
+- name: "Resolver | Drop v6 nameservers on a host without a v6 default route (they only time out)"
+  ansible.builtin.set_fact:
+    resolver_nameservers: "{{ resolver_nameservers | reject('search', ':') | list }}"
+  when: (ansible_default_ipv6 | default({})).address is not defined
+
 - name: "Resolver | Report what this host will use"
   ansible.builtin.debug:
     msg: >-
