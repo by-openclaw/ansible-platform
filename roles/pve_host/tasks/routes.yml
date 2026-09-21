@@ -5,7 +5,9 @@
     path: /etc/network/interfaces
     insertafter: "^iface {{ pve_host_oob_bridge }} inet static"
     regexp: "^\\s+post-up ip route replace {{ item.dest | regex_escape }} "
-    line: "\tpost-up ip route replace {{ item.dest }} via {{ item.via }} dev {{ pve_host_oob_bridge }}  # {{ item.comment }} (managed by Ansible, roles/pve_host)"
+    line: >-
+      \tpost-up ip route replace {{ item.dest }} via {{ item.via }} dev {{ pve_host_oob_bridge }}
+      # {{ item.comment }} (managed by Ansible, roles/pve_host)
   loop: "{{ pve_host_static_routes }}"
   loop_control:
     label: "{{ item.dest }} via {{ item.via }}"
