@@ -12,7 +12,8 @@
 #      — after this the SSH hop through the firewall works and Vault is reachable again
 #   3. Unbound host overrides (split-DNS); then the platform resolver's cache is flushed
 #   4. svc-ansible's API token, minted from the genesis credential into Vault
-#   5. the full catalog through Vault (local users, Monit, ACME, DynDNS + everything again)
+#   5. the full catalog through Vault (local users with their Vault passwords, Monit, ACME, DynDNS
+#      + everything again)
 #   6. the CrowdSec agent enrolled to the central LAPI + the firewall bouncer
 #   7. the configuration exported (age → NFS)
 #   8. proof: both uplink families online on the PPPoE interface
@@ -121,11 +122,16 @@
     opnsense_api_bootstrap_genesis_secret: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_secret }}"
   when: (opnsense_build_from_stage | default(1) | int) <= 4
 
+# The seed creates the automation user (SSH keys, no usable GUI password) and the bootstrap only
+# sets a password on a user it creates, so a freshly built appliance must receive the Vault
+# passwords of every catalog user here — the auth family's explicit rotation mode. Its sudo
+# depends on it (CrowdSec stage, PPPoE rotation playbook).
 - name: Build | 5 — the full catalog through Vault
   ansible.builtin.import_playbook: opnsense.yml
   vars:
     opn_fw_confirm_full: true
     opnsense_firmware_upgrade: false
+    opnsense_auth_force_update: true
   when: (opnsense_build_from_stage | default(1) | int) <= 5
 
 - name: Build | 6 — CrowdSec agent on the central LAPI + firewall bouncer
