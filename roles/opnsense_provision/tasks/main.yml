@@ -291,7 +291,9 @@
                ~ (' — would stop, set, start' if ansible_check_mode else ' — stop, set, start')) }}
   when: (opnsense_provision_vm.nic_macs | default({})) | length > 0
 
-# Loop items are read with item['key']: on a dict, `.update` is the method, not the key.
+# Loop keys avoid dict method names (`update`): a missing key falls back to getattr and yields the
+# method instead of Undefined, so `| default(omit)` never fires. NIC edits are "unsafe" options
+# for proxmox_kvm and need update_unsafe — safe here because the VM is stopped first.
 - name: "Provision | Converge the hardware addresses (stop → set → start; the wait below covers the return)"
   when:
     - (opnsense_provision_nic_drift | default({})) | length > 0
@@ -307,12 +309,13 @@
         node: "{{ opnsense_provision_node }}"
         vmid: "{{ opnsense_provision_vmid }}"
         state: "{{ item['state'] }}"
-        update: "{{ item['update'] | default(omit) }}"
+        update: "{{ item['do_update'] | default(omit) }}"
+        update_unsafe: "{{ item['do_update'] | default(omit) }}"
         net: "{{ opnsense_provision_nic_drift if item['state'] == 'present' else omit }}"
         timeout: 180
       loop:
         - {state: stopped}
-        - {state: present, update: true}
+        - {state: present, do_update: true}
         - {state: started}
       loop_control:
         label: "{{ item['state'] }}"
