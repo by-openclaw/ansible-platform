@@ -21,7 +21,8 @@
 # Free :53 for AdGuard. debian-12-cloud runs systemd-resolved with a stub
 # listener on 127.0.0.53:53; AdGuard binds 0.0.0.0:53 and would fail EADDRINUSE.
 # Disable the stub, then pin a static resolv.conf to the FW Unbound (SVC gateway)
-# so the host keeps working DNS once the stub is gone.
+# so the host keeps working DNS once the stub is gone. The pin is declared state (idempotent
+# copy), not a one-off tied to the stub change.
 # ------------------------------------------------------------------------------
 - name: "install | Disable systemd-resolved stub listener (frees :53)"
   ansible.builtin.copy:
@@ -33,12 +34,11 @@
     group: root
     mode: "0644"
   register: adguard_resolved_stub
+  notify: Restart systemd-resolved
 
-- name: "install | Restart systemd-resolved to release :53"
-  ansible.builtin.systemd_service:
-    name: systemd-resolved
-    state: restarted
-  when: adguard_resolved_stub is changed
+# The stub must be gone before AdGuard binds :53 — flush the handler now, not at the play's end.
+- name: "install | Apply the resolver change before AdGuard binds :53"
+  ansible.builtin.meta: flush_handlers
 
 - name: "install | Pin static resolv.conf to the FW Unbound (SVC gateway)"
   ansible.builtin.copy:
@@ -51,7 +51,6 @@
     group: root
     mode: "0644"
     follow: false
-  when: adguard_resolved_stub is changed
 
 # ------------------------------------------------------------------------------
 # AdGuardHome — download tarball, unpack, register systemd service
@@ -130,12 +129,9 @@
     group: root
     mode: "0644"
   register: adguard_unit_file
-  notify: Restart AdGuardHome
-
-- name: "install | Reload systemd when the unit changed"
-  ansible.builtin.systemd:
-    daemon_reload: true
-  when: adguard_unit_file.changed
+  notify:
+    - Reload systemd
+    - Restart AdGuardHome
 
 - name: "install | AdGuardHome enabled + running"
   ansible.builtin.systemd:
