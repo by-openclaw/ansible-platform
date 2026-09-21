@@ -1,0 +1,18 @@
+---
+# ==============================================================================
+# Role: adguard — cache_flush.yml: drop AdGuard's resolver cache (a service restart is the only
+# flush the daemon offers without its API). A firewall rebuild answers NXDOMAIN for internal names
+# until the Unbound host overrides land; AdGuard caches that negative answer for the zone's
+# negative TTL (1800 s), which stalls every Vault-backed step that follows (2026-09-21 drill).
+# ==============================================================================
+- name: "cache_flush | Restart AdGuardHome so cached negative answers are gone"
+  ansible.builtin.systemd_service:
+    name: AdGuardHome
+    state: restarted
+  changed_when: true
+
+- name: "cache_flush | The resolver answers again"
+  ansible.builtin.wait_for:
+    port: 53
+    host: "{{ adguard_bind_host | default('127.0.0.1') }}"
+    timeout: 30

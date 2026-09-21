@@ -10,7 +10,7 @@
 #      the provisioning read (Vault sits behind the firewall being built: no token yet, no hop yet)
 #   2. every catalog family that needs no secret from Vault (rules, aliases, DNS, DHCP, IDS, …)
 #      — after this the SSH hop through the firewall works and Vault is reachable again
-#   3. Unbound host overrides (split-DNS)
+#   3. Unbound host overrides (split-DNS); then the platform resolver's cache is flushed
 #   4. svc-ansible's API token, minted from the genesis credential into Vault
 #   5. the full catalog through Vault (local users, Monit, ACME, DynDNS + everything again)
 #   6. the CrowdSec agent enrolled to the central LAPI + the firewall bouncer
@@ -100,6 +100,19 @@
     opnsense_api_creds_key: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_key }}"
     opnsense_api_creds_secret: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_secret }}"
   when: (opnsense_build_from_stage | default(1) | int) <= 3
+
+# The guests' resolver cached the negative answers it got for internal names while the firewall
+# had no host overrides (negative TTL 1800 s); the Vault-backed stages below would stall on them.
+- name: "Build | 3b — flush the platform resolver's cache (AdGuard)"
+  hosts: adguard
+  gather_facts: false
+  become: true
+  tasks:
+    - name: "Resolver cache | flush"
+      ansible.builtin.import_role:
+        name: adguard
+        tasks_from: cache_flush
+      when: (opnsense_build_from_stage | default(1) | int) <= 4
 
 - name: Build | 4 — the API token, minted from the genesis credential into Vault
   ansible.builtin.import_playbook: opnsense-api-bootstrap.yml
