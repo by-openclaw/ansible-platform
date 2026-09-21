@@ -48,11 +48,18 @@ accessLog:
   filePath: {{ traefik_log_dir }}/access.log
 
 {% if traefik_crowdsec_enabled | default(false) %}
-# CrowdSec bouncer plugin — downloaded from GitHub at startup (Yaegi). The
-# middleware itself is defined in the file provider (dynamic.yml).
+# CrowdSec bouncer plugin (Yaegi). The middleware itself is defined in the file provider
+# (dynamic.yml). Local = vendored under {{ traefik_plugins_dir }} by the role (no download at
+# start-up); remote = fetched from the plugin CDN at every cold start (fails → every router 404).
 experimental:
+{% if traefik_crowdsec_plugin_local | default(false) %}
+  localPlugins:
+    bouncer:
+      moduleName: {{ traefik_crowdsec_plugin_module }}
+{% else %}
   plugins:
     bouncer:
-      moduleName: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+      moduleName: {{ traefik_crowdsec_plugin_module }}
       version: {{ traefik_crowdsec_plugin_version }}
+{% endif %}
 {% endif %}

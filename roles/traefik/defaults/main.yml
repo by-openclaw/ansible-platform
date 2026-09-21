@@ -87,6 +87,14 @@ traefik_cert_key: "/etc/lego/cert/certificates/_.{{ traefik_domain }}.key"
 traefik_crowdsec_enabled: true
 # renovate: datasource=github-releases depName=maxlerebourg/crowdsec-bouncer-traefik-plugin
 traefik_crowdsec_plugin_version: "v1.7.1"
+# The plugin is VENDORED on the host (Traefik "localPlugins"): no download at start-up. Twice on
+# 2026-09-21 a cold start could not fetch it from the plugin CDN, Traefik came up with "Plugins are
+# disabled" and every router carrying the entrypoint bouncer middleware answered 404.
+traefik_crowdsec_plugin_local: true
+traefik_crowdsec_plugin_module: "github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
+traefik_crowdsec_plugin_url: "https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/archive/refs/tags/{{ traefik_crowdsec_plugin_version }}.tar.gz"
+traefik_crowdsec_plugin_sha256: "a50cdfe37d67c48be571417a26d8c5a2b28e4b91e5b1ed3b1ea2bcb0e6b4aa38"  # pragma: allowlist secret — release archive checksum, not a secret
+traefik_plugins_dir: "{{ traefik_conf_dir }}/plugins-local"
 traefik_crowdsec_lapi_scheme: "http"
 traefik_crowdsec_lapi_host: "10.1.3.190:8080"        # central LAPI (lxc-crowdsec-01)
 traefik_crowdsec_mode: "stream"                       # cache decisions locally; resilient

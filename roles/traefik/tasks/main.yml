@@ -9,6 +9,12 @@
   ansible.builtin.import_tasks: install.yml
   tags: [traefik, install]
 
+
+- name: "Vendor the CrowdSec bouncer plugin (local, pinned — no download at start-up)"
+  ansible.builtin.import_tasks: plugin.yml
+  when: traefik_crowdsec_enabled | default(false) and traefik_crowdsec_plugin_local | default(false)
+  tags: [traefik, install, plugin]
+
 - name: Resolve controller-side secrets
   ansible.builtin.import_tasks: secrets.yml
   tags: [traefik, cert]

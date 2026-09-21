@@ -1,0 +1,57 @@
+---
+# CrowdSec bouncer as a LOCAL plugin: pinned release archive (checksum), extracted where Traefik
+# expects local plugins (<WorkingDirectory>/plugins-local/src/<module>); re-extracted on a version bump.
+- name: "plugin | Version stamp of the vendored bouncer"
+  ansible.builtin.stat:
+    path: "{{ traefik_plugins_dir }}/src/{{ traefik_crowdsec_plugin_module }}/.ansible-version"
+  register: traefik_plugin_stamp
+
+- name: "plugin | Vendored version today"
+  ansible.builtin.slurp:
+    src: "{{ traefik_plugins_dir }}/src/{{ traefik_crowdsec_plugin_module }}/.ansible-version"
+  register: traefik_plugin_stamp_content
+  when: traefik_plugin_stamp.stat.exists
+
+- name: "plugin | Decide whether the pinned release must be (re)vendored"
+  ansible.builtin.set_fact:
+    traefik_plugin_needs_vendor: >-
+      {{ not traefik_plugin_stamp.stat.exists
+         or (traefik_plugin_stamp_content.content | b64decode | trim) != traefik_crowdsec_plugin_version }}
+
+- name: "plugin | Download the pinned release archive (checksum-verified)"
+  ansible.builtin.get_url:
+    url: "{{ traefik_crowdsec_plugin_url }}"
+    dest: "/tmp/crowdsec-bouncer-traefik-plugin-{{ traefik_crowdsec_plugin_version }}.tar.gz"
+    checksum: "sha256:{{ traefik_crowdsec_plugin_sha256 }}"
+    mode: "0644"
+  when: traefik_plugin_needs_vendor | bool
+
+- name: "plugin | Fresh module directory"
+  ansible.builtin.file:
+    path: "{{ traefik_plugins_dir }}/src/{{ traefik_crowdsec_plugin_module }}"
+    state: "{{ item }}"
+    mode: "0755"
+  loop: [absent, directory]
+  when: traefik_plugin_needs_vendor | bool
+
+- name: "plugin | Extract the plugin source (vendor/ included)"
+  ansible.builtin.unarchive:
+    src: "/tmp/crowdsec-bouncer-traefik-plugin-{{ traefik_crowdsec_plugin_version }}.tar.gz"
+    dest: "{{ traefik_plugins_dir }}/src/{{ traefik_crowdsec_plugin_module }}"
+    remote_src: true
+    extra_opts: ["--strip-components=1"]
+  when: traefik_plugin_needs_vendor | bool
+  notify: Restart traefik
+
+- name: "plugin | Version stamp"
+  ansible.builtin.copy:
+    dest: "{{ traefik_plugins_dir }}/src/{{ traefik_crowdsec_plugin_module }}/.ansible-version"
+    content: "{{ traefik_crowdsec_plugin_version }}\n"
+    mode: "0644"
+  when: traefik_plugin_needs_vendor | bool
+
+- name: "plugin | Manifest present (sanity)"
+  ansible.builtin.stat:
+    path: "{{ traefik_plugins_dir }}/src/{{ traefik_crowdsec_plugin_module }}/.traefik.yml"
+  register: traefik_plugin_manifest
+  failed_when: not traefik_plugin_manifest.stat.exists

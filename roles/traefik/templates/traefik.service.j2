@@ -7,9 +7,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# local plugins live under <WorkingDirectory>/plugins-local
+WorkingDirectory={{ traefik_conf_dir }}
 ExecStart={{ traefik_bin }} --configFile={{ traefik_conf_dir }}/traefik.yml
+# Guard: a start that ends in "Plugins are disabled" leaves every router 404 — fail it so Restart= retries
+ExecStartPost=/bin/sh -c 'sleep 8; if tail -n 40 {{ traefik_log_dir }}/traefik.log | grep -q "Plugins are disabled"; then echo "traefik: plugins failed to load — failing the start so systemd retries" >&2; exit 1; fi'
 Restart=on-failure
 RestartSec=5
+StartLimitIntervalSec=0
 # Runs as root: binds privileged :80/:443 and reads the root-owned lego cert.
 # Hardening to a dedicated non-root user + CAP_NET_BIND_SERVICE + cert group
 # read is a tracked follow-up (dedicated isolated LXC mitigates for now).
