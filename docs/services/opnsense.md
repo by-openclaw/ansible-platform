@@ -40,9 +40,13 @@ is the WAN sensor (feed to CrowdSec tracked on #326).
 | `secret/prod/mail/opnsense` | address, password, smtp_port | `roles/mailbox` | Monit pre-play (both envs — one Mailcow) |
 | `secret/prod/cloudflare/<zone>` | api_token, account_id, zone_id, acme_email | `roles/cloudflare` | ACME pre-play (DNS-01), DynDNS |
 | `secret/prod/opnsense/config-backup-age` | age key | `playbooks/opnsense-config-backup.yml` | config export encryption |
+| `secret/prod/net/isp-proximus-pppoe` | pppoe_username, pppoe_password (**raw**, as issued; metadata `format=raw`, `rotated_at`, `reason`) | `playbooks/opnsense-pppoe-rotate.yml` (hidden prompt) | seed render (`roles/opnsense_provision`), `roles/opnsense_pppoe` (live apply, base64 in config.xml) |
 
 Rotation: quarterly user timer per env on the controller (`playbooks/opnsense-token-rotation.yml`,
 `fw-token-rotation@<env>.timer`; force-rotate + `--tags dns --check` gate). No secret in the catalog.
+ISP PPPoE password: portal first, then `playbooks/opnsense-pppoe-rotate.yml` (Vault → firewall over SSH +
+wheel sudo, `configctl` re-dial, API waits for the gateway; without sudo the seed applies it at the re-seed).
+The fabric fallback file is refreshed *from* Vault by that playbook — never edited by hand.
 
 ## 5. Certificates
 

@@ -1,0 +1,97 @@
+---
+# ==============================================================================
+# OPNsense — ISP PPPoE credential: rotate, normalise, or (re)apply — Vault-first, no file, no GUI
+#
+#   Order on the day: change the password at the ISP portal FIRST (the running PPPoE session keeps
+#   its authentication until it re-dials), then immediately:
+#
+#     ansible-playbook playbooks/opnsense-pppoe-rotate.yml          # hidden prompt, typed twice
+#     ansible-playbook playbooks/opnsense-pppoe-rotate.yml --check  # dry-run: decisions, no write
+#
+#   Empty prompt = apply the value Vault already holds (converge). One-time, for a store written
+#   before the format marker existed: -e opnsense_pppoe_normalize=true (decodes the base64 form).
+#
+#   Plays, one connection mode each (no task-level switching):
+#     0. localhost   — the prompt (never a file, never argv)
+#     1. Vault host  — store of record: new KV version + custom metadata format=raw / rotated_at / reason
+#     2. firewall    — SSH + wheel sudo: <ppps><ppp><password> = base64(raw), configctl re-dial
+#                      (no sudo on the appliance → stops with the message; the seed renders Vault's
+#                      value at the next re-seed, window #379)
+#     3. firewall    — API: wait for the PPPoE gateway, report the interface
+#     4. localhost   — refresh the break-glass fallback file FROM Vault (rebuild path)
+#
+#   Role: roles/opnsense_pppoe. Catalog: opn_wan_pppoe (interface slot, PPP parent NIC, gateway),
+#   opn_ssh_port. Issue #481 (incident #472 follow-up).
+# ==============================================================================
+- name: "PPPoE — the new password (hidden prompt; empty = apply what Vault holds)"
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars_prompt:
+    - name: opnsense_pppoe_new_password
+      prompt: "New ISP PPPoE password as issued (empty = apply the value Vault holds)"
+      private: true
+      confirm: true
+      default: ""
+  tasks:
+    - name: "Prompt | Hand the input to the Vault play (no value printed)"
+      ansible.builtin.set_fact:
+        opnsense_pppoe_new_password: "{{ opnsense_pppoe_new_password | default('') }}"
+      delegate_to: "{{ opnsense_pppoe_vault_host | default('lxc-vault-01') }}"
+      delegate_facts: true
+      no_log: true
+
+- name: "PPPoE — Vault, the store of record"
+  hosts: lxc-vault-01
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Vault | rotate / normalise / read, then hand the credential over"
+      ansible.builtin.import_role:
+        name: opnsense_pppoe
+        tasks_from: vault
+
+- name: "PPPoE — apply on the firewall (SSH + wheel sudo; PPP has no API)"
+  hosts: opnsense
+  gather_facts: false
+  vars:
+    # Connection variables, not play keywords: the inventory declares ansible_become=false for the
+    # firewall hosts (API plays), and a connection variable outranks any keyword.
+    ansible_connection: ssh
+    ansible_user: "{{ opnsense_pppoe_ssh_user }}"
+    ansible_port: "{{ opnsense_pppoe_ssh_port }}"
+    ansible_ssh_private_key_file: "{{ opnsense_pppoe_ssh_key }}"
+    ansible_become: true
+    ansible_become_method: sudo
+    ansible_become_password: "{{ opnsense_pppoe_become_password | default('') }}"
+    ansible_python_interpreter: /usr/local/bin/python3
+  tasks:
+    - name: "Firewall | config.xml + re-dial"
+      ansible.builtin.import_role:
+        name: opnsense_pppoe
+        tasks_from: apply
+
+- name: "PPPoE — the uplink is back (API)"
+  hosts: opnsense
+  gather_facts: false
+  connection: local
+  become: false
+  pre_tasks:
+    - name: "FW API credentials from Vault"
+      ansible.builtin.import_role:
+        name: opnsense_api_creds
+  tasks:
+    - name: "Verify | gateway + interface"
+      ansible.builtin.import_role:
+        name: opnsense_pppoe
+        tasks_from: verify
+
+- name: "PPPoE — break-glass fallback file refreshed FROM Vault (rebuild path)"
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: "Fallback | refresh when the store moved"
+      ansible.builtin.import_role:
+        name: opnsense_pppoe
+        tasks_from: fallback

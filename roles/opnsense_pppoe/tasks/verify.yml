@@ -1,0 +1,50 @@
+---
+# ==============================================================================
+# Role: opnsense_pppoe — verify.yml: the uplink, through the API (connection: local). Polls the
+# gateway status until the PPPoE gateway the catalog names is back, then reports the interface.
+# Read-only; runs under --check too.
+# ==============================================================================
+- name: "PPPoE verify | Gateway status, polled until the PPPoE gateway is back: {{ opnsense_pppoe_device.gateway_v4 }}"
+  ansible.builtin.uri:
+    url: "https://{{ opn_host }}:{{ opn_port | default(443) }}/api/routes/gateway/status"
+    method: GET
+    url_username: "{{ opn_key }}"
+    url_password: "{{ opn_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ opn_verify_ssl | default(false) }}"
+    status_code: 200
+  register: opnsense_pppoe_gw
+  check_mode: false
+  retries: "{{ opnsense_pppoe_gateway_wait_retries if (opnsense_pppoe_redialed | default(false) | bool) else 1 }}"
+  delay: "{{ opnsense_pppoe_gateway_wait_delay }}"
+  until: >-
+    (opnsense_pppoe_gw.json['items'] | default([])
+     | selectattr('name', 'equalto', opnsense_pppoe_device.gateway_v4)
+     | rejectattr('status', 'in', ['down', 'force_down'])
+     | list | length) == 1
+
+- name: "PPPoE verify | Interface overview (address present)"
+  ansible.builtin.uri:
+    url: "https://{{ opn_host }}:{{ opn_port | default(443) }}/api/interfaces/overview/interfacesInfo"
+    method: GET
+    url_username: "{{ opn_key }}"
+    url_password: "{{ opn_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ opn_verify_ssl | default(false) }}"
+    status_code: 200
+  register: opnsense_pppoe_ifinfo
+  check_mode: false
+
+- name: "PPPoE verify | Report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: gateway {{ opnsense_pppoe_device.gateway_v4 }} =
+      {{ (opnsense_pppoe_gw.json['items'] | selectattr('name', 'equalto', opnsense_pppoe_device.gateway_v4)
+          | map(attribute='status_translated') | first | default('?')) }};
+      {{ opnsense_pppoe_device.interface }} {{ (_if.status | default('absent')) }},
+      IPv4 {{ 'present' if (_if.addr4 | default('') | length > 0) else 'NONE' }},
+      IPv6 {{ 'present' if (_if.addr6 | default([]) | length > 0) else 'none' }}
+  vars:
+    _if: >-
+      {{ opnsense_pppoe_ifinfo.json.rows | default([])
+         | selectattr('identifier', 'equalto', opnsense_pppoe_device.interface) | first | default({}) }}

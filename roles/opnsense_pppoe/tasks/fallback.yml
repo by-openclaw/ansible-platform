@@ -1,0 +1,53 @@
+---
+# ==============================================================================
+# Role: opnsense_pppoe — fallback.yml: the break-glass file the provisioning role reads when Vault
+# is unreachable (a rebuild runs with Vault behind the firewall being rebuilt). Refreshed FROM
+# Vault, never written by hand; a dated copy is kept beside it (archive, never delete).
+# ==============================================================================
+- name: "PPPoE fallback | Current break-glass file"
+  ansible.builtin.stat:
+    path: "{{ opnsense_pppoe_fallback_file }}"
+  register: opnsense_pppoe_fb_stat
+
+- name: "PPPoE fallback | Read it"
+  ansible.builtin.set_fact:
+    opnsense_pppoe_fb: "{{ lookup('file', opnsense_pppoe_fallback_file) | from_json }}"
+  when: opnsense_pppoe_fb_stat.stat.exists
+  no_log: true
+
+- name: "PPPoE fallback | Desired content (Vault's raw password; format and provenance noted)"
+  ansible.builtin.set_fact:
+    opnsense_pppoe_fb_desired: "{{ (opnsense_pppoe_fb | default({})) | combine(_patch, recursive=True) }}"
+  vars:
+    _note: "{{ opnsense_pppoe_store_note | trim }}"
+    _fields: "{{ (opnsense_pppoe_fb.fields | default({})) | combine({'pppoe_password': opnsense_pppoe_raw, '_note': _note}) }}"  # pragma: allowlist secret
+    _policy: >-
+      ISP portal → playbooks/opnsense-pppoe-rotate.yml (hidden prompt) → Vault → live apply (wheel sudo)
+      or re-seed; this file is refreshed FROM Vault by that playbook
+    _stamp: "{{ '%Y-%m-%d' | strftime(utc=true) }}"
+    _meta: "{{ (opnsense_pppoe_fb._meta | default({})) | combine({'format': 'raw', 'rotation_policy': _policy | trim, 'refreshed_from_vault': _stamp}) }}"
+    _vault_path: "{{ opnsense_pppoe_vault_mount ~ '/' ~ opnsense_pppoe_vault_path }}"
+    _patch: "{{ {'fields': _fields, '_meta': _meta, 'vault_path': _vault_path} }}"
+  no_log: true
+
+- name: "PPPoE fallback | Refresh from Vault when the password or the format marker differ"
+  ansible.builtin.copy:
+    dest: "{{ opnsense_pppoe_fallback_file }}"
+    content: "{{ opnsense_pppoe_fb_desired | to_nice_json }}\n"
+    mode: "0600"
+    backup: true
+  when:
+    - opnsense_pppoe_refresh_fallback | bool
+    - >-
+      (not opnsense_pppoe_fb_stat.stat.exists)
+      or ((opnsense_pppoe_fb.fields.pppoe_password | default('')) != opnsense_pppoe_raw)
+      or ((opnsense_pppoe_fb._meta.format | default('')) != 'raw')
+  register: opnsense_pppoe_fb_write
+  no_log: true
+
+- name: "PPPoE fallback | Report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ opnsense_pppoe_fallback_file | basename }}:
+      {{ 'refreshed from Vault' if opnsense_pppoe_fb_write is changed else ('current' if opnsense_pppoe_refresh_fallback | bool else 'refresh disabled') }}{{
+      ' [check mode — not written]' if (ansible_check_mode and opnsense_pppoe_fb_write is changed) else '' }}

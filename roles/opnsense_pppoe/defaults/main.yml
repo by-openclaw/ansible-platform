@@ -1,0 +1,46 @@
+---
+# ==============================================================================
+# Role: opnsense_pppoe — the ISP PPPoE credential, Vault-first, applied to the appliance by code.
+# Flow: playbooks/opnsense-pppoe-rotate.yml (hidden prompt) → Vault (store of record, RAW value,
+# custom metadata format=raw + rotation trail) → firewall config.xml (base64, as OPNsense reads it)
+# → configctl re-dial → API waits for the gateway → break-glass fallback file refreshed FROM Vault.
+# PPP has no API on 26.7 (legacy page): the write needs wheel sudo (system/sudo_allow_wheel, seed).
+# ==============================================================================
+
+# Store of record. One Proximus account serves every firewall of the platform, so the path is not
+# per environment (the test firewall carries the same account, link down).
+opnsense_pppoe_vault_path: "prod/net/isp-proximus-pppoe"
+opnsense_pppoe_vault_mount: "secret"
+opnsense_pppoe_vault_host: "lxc-vault-01"
+opnsense_pppoe_vault_container: "vault"
+# The automation user's GUI password = its sudo password on the appliance (catalog opn_auth_users).
+opnsense_pppoe_vault_become: "{{ platform_env | default('prod') }}/opnsense/svc-ansible-{{ platform_env | default('prod') }}"
+
+# Inputs of a run (the playbook prompts; never a file, never argv).
+opnsense_pppoe_new_password: ""   # empty = apply the value Vault holds
+opnsense_pppoe_normalize: false   # one-time: the stored value is the base64 form → decode it, mark the store raw
+opnsense_pppoe_store_note: >-
+  RAW password as issued by the ISP; the seed renderer and roles/opnsense_pppoe base64-encode it for
+  config.xml. Managed by playbooks/opnsense-pppoe-rotate.yml — never edit by hand.
+
+# The PPP device as the appliance names it — from the catalog (opn_wan_pppoe), the seed owns the
+# interface: {interface: opt12, ports: vtnet2, gateway_v4: WAN_PROXIMUS_PPPOE}.
+opnsense_pppoe_device: "{{ opn_wan_pppoe }}"
+opnsense_pppoe_config_path: /conf/config.xml
+opnsense_pppoe_config_owner: wwwonly
+opnsense_pppoe_config_group: wheel
+opnsense_pppoe_config_mode: "0640"
+
+# SSH + become on the appliance (same contract as roles/crowdsec_fw_bouncer).
+opnsense_pppoe_ssh_user: "svc-ansible-{{ platform_env | default('prod') }}"
+opnsense_pppoe_ssh_key: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_opnsense"
+opnsense_pppoe_ssh_port: "{{ opn_ssh_port | default(22) }}"
+
+# After a re-dial: how long the API is polled for the PPPoE gateway (retries × delay seconds).
+opnsense_pppoe_gateway_wait_retries: 18
+opnsense_pppoe_gateway_wait_delay: 5
+
+# Break-glass fallback the provisioning role reads when Vault is unreachable (a rebuild runs with
+# Vault behind the firewall being rebuilt). Refreshed FROM Vault here — the one direction allowed.
+opnsense_pppoe_fallback_file: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric/net-isp-proximus-pppoe.json"
+opnsense_pppoe_refresh_fallback: true
