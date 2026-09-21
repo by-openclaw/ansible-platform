@@ -1,0 +1,14 @@
+# Managed by Ansible (role: hardening) — ufw at boot in a container / VM:
+#  * start after the network (and Docker, whose chains ufw must coexist with) is up
+#  * if the chains did not load (boot race: "No chain/target/match by that name"), do NOT stay
+#    on "policy DROP without rules" — that locks the guest out of everything incl. its own
+#    loopback (2026-09-21, two LXCs after a hypervisor reboot); fail open and let systemd retry
+[Unit]
+After=network-online.target{% if hardening_ufw_after_docker | bool %} docker.service{% endif %}
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Restart=on-failure
+RestartSec=15
+ExecStartPost=/bin/sh -c 'if ! iptables -S INPUT | grep -q -- "-j ufw-before-input"; then iptables -P INPUT ACCEPT; iptables -P FORWARD ACCEPT; echo "ufw chains missing after start: policy set to ACCEPT (fail-open), retrying" >&2; exit 1; fi'
