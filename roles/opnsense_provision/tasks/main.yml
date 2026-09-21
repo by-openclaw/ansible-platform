@@ -291,32 +291,58 @@
                ~ (' — would stop, set, start' if ansible_check_mode else ' — stop, set, start')) }}
   when: (opnsense_provision_vm.nic_macs | default({})) | length > 0
 
+# Loop items are read with item['key']: on a dict, `.update` is the method, not the key.
 - name: "Provision | Converge the hardware addresses (stop → set → start; the wait below covers the return)"
-  community.proxmox.proxmox_kvm:
-    api_host: "{{ opnsense_provision_pve.host }}"
-    api_user: "{{ opnsense_provision_pve.admin_token_id | regex_replace('!.*$', '') }}"
-    api_token_id: "{{ opnsense_provision_pve.admin_token_id | regex_replace('^.*!', '') }}"
-    api_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
-    validate_certs: "{{ opnsense_provision_validate_certs }}"
-    node: "{{ opnsense_provision_node }}"
-    vmid: "{{ opnsense_provision_vmid }}"
-    state: "{{ item.state }}"
-    update: "{{ item.update | default(omit) }}"
-    net: "{{ opnsense_provision_nic_drift if item.state == 'present' else omit }}"
-    timeout: 180
-  loop:
-    - {state: stopped}
-    - {state: present, update: true}
-    - {state: started}
-  loop_control:
-    label: "{{ item.state }}"
   when:
     - (opnsense_provision_nic_drift | default({})) | length > 0
     - not ansible_check_mode
-  register: opnsense_provision_nic_converged
-  delegate_to: localhost
-  become: false
-  no_log: true
+  block:
+    - name: "Provision | Stop, set the NICs, start"
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ opnsense_provision_pve.host }}"
+        api_user: "{{ opnsense_provision_pve.admin_token_id | regex_replace('!.*$', '') }}"
+        api_token_id: "{{ opnsense_provision_pve.admin_token_id | regex_replace('^.*!', '') }}"
+        api_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
+        validate_certs: "{{ opnsense_provision_validate_certs }}"
+        node: "{{ opnsense_provision_node }}"
+        vmid: "{{ opnsense_provision_vmid }}"
+        state: "{{ item['state'] }}"
+        update: "{{ item['update'] | default(omit) }}"
+        net: "{{ opnsense_provision_nic_drift if item['state'] == 'present' else omit }}"
+        timeout: 180
+      loop:
+        - {state: stopped}
+        - {state: present, update: true}
+        - {state: started}
+      loop_control:
+        label: "{{ item['state'] }}"
+      register: opnsense_provision_nic_converged
+      delegate_to: localhost
+      become: false
+      no_log: true
+  rescue:
+    # Never leave the firewall stopped: bring it back, then surface the failure.
+    - name: "Provision | Converge failed — start the firewall again before failing"
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ opnsense_provision_pve.host }}"
+        api_user: "{{ opnsense_provision_pve.admin_token_id | regex_replace('!.*$', '') }}"
+        api_token_id: "{{ opnsense_provision_pve.admin_token_id | regex_replace('^.*!', '') }}"
+        api_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
+        validate_certs: "{{ opnsense_provision_validate_certs }}"
+        node: "{{ opnsense_provision_node }}"
+        vmid: "{{ opnsense_provision_vmid }}"
+        state: started
+        timeout: 180
+      delegate_to: localhost
+      become: false
+      no_log: true
+    - name: "Provision | Hardware-address converge failed (firewall started again)"
+      ansible.builtin.fail:
+        msg: >-
+          {{ opnsense_provision_fw }}: converging the hardware addresses failed at
+          '{{ (opnsense_provision_nic_converged.results | default([]) | selectattr('failed', 'defined')
+               | selectattr('failed') | map(attribute='item') | map(attribute='state') | first) | default('?') }}';
+          the VM was started again. Check `qm config {{ opnsense_provision_vmid }}` on the node.
 
 - name: "Provision | Grow the appliance disk to the profile's size"
   community.proxmox.proxmox_disk:
