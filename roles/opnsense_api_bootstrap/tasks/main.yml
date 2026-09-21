@@ -155,11 +155,39 @@
              | selectattr('name', 'equalto', opnsense_api_bootstrap_admin_group) | map(attribute='gid') | list | first }}
 
     # ---- ensure the user via the lib-backed module (create needs a password) ----
+    # The GUI password doubles as the sudo password for the SSH plays (catalog opn_auth_users):
+    # when Vault already holds one for the service user, create the user with it so a rebuilt
+    # firewall is usable over SSH + sudo right away (2026-09-21: a random one left sudo broken).
+    - name: "OPNsense bootstrap | The service user's GUI password in Vault (if any)"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_api_bootstrap_vault_container }}
+          vault kv get -mount={{ opnsense_api_bootstrap_vault_mount }} -format=json
+          {{ opnsense_api_bootstrap_env }}/opnsense/{{ opnsense_api_bootstrap_user }}
+      delegate_to: "{{ opnsense_api_bootstrap_vault_host }}"
+      become: true
+      register: opnsense_api_bootstrap_user_secret
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when: opnsense_api_bootstrap_user_row.name is not defined
+
+    - name: "OPNsense bootstrap | Use the Vault GUI password for the new user"
+      ansible.builtin.set_fact:
+        opnsense_api_bootstrap_gen_pw: "{{ (opnsense_api_bootstrap_user_secret.stdout | from_json).data.data.webgui_password }}"
+      no_log: true
+      when:
+        - opnsense_api_bootstrap_user_row.name is not defined
+        - opnsense_api_bootstrap_user_secret.rc | default(1) == 0
+        - ((opnsense_api_bootstrap_user_secret.stdout | default('{}') | from_json).data.data.webgui_password | default('')) | length > 0
+
     - name: "OPNsense bootstrap | Generate a random password (create-only; real auth = API key + SSH keys)"
       ansible.builtin.set_fact:
         opnsense_api_bootstrap_gen_pw: "{{ lookup('community.general.random_string', length=40, special=true, override_special='!@#%^*-_=+') }}"
       no_log: true
-      when: opnsense_api_bootstrap_user_row.name is not defined
+      when:
+        - opnsense_api_bootstrap_user_row.name is not defined
+        - opnsense_api_bootstrap_gen_pw is not defined
 
     - name: "OPNsense bootstrap | Ensure the service user in the admin group (by_systems.opnsense, lib-opnsense)"
       by_systems.opnsense.opnsense_auth_user:

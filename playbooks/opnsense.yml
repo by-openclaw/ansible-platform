@@ -82,6 +82,9 @@
       loop: "{{ hostvars[groups['opnsense'][0]].opn_auth_users | default([]) }}"
       loop_control:
         label: "{{ item.name }}"
+      when:
+        - "('auth' not in (opn_skip_families | default([])))"
+        - "(opn_only_families | default([]) | length == 0) or ('auth' in (opn_only_families | default([])))"
       tags: [auth]
 
     - name: "Auth | Hand the passwords to the firewall hosts"
@@ -91,6 +94,9 @@
       delegate_facts: true
       loop: "{{ groups['opnsense'] }}"
       no_log: true
+      when:
+        - "('auth' not in (opn_skip_families | default([])))"
+        - "(opn_only_families | default([]) | length == 0) or ('auth' in (opn_only_families | default([])))"
       tags: [auth]
 
 - name: "Monit mail creds — Vault read outside the connection:local play"
@@ -110,6 +116,9 @@
         # deployment's own env/domain and are pinned to prod on test. No test/mail/* secret exists.
         vault_secret_path: "{{ platform_mail_env | default(platform_env | default('prod')) }}/mail/opnsense"
         vault_secret_init: {}
+      when:
+        - "('monit' not in (opn_skip_families | default([])))"
+        - "(opn_only_families | default([]) | length == 0) or ('monit' in (opn_only_families | default([])))"
       tags: [services, monit]
 
     - name: "Monit | Hand the SMTP settings to the firewall hosts"
@@ -127,6 +136,9 @@
       delegate_facts: true
       loop: "{{ groups['opnsense'] }}"
       no_log: true
+      when:
+        - "('monit' not in (opn_skip_families | default([])))"
+        - "(opn_only_families | default([]) | length == 0) or ('monit' in (opn_only_families | default([])))"
       tags: [services, monit]
 
 - name: "Cloudflare zone creds — Vault read outside the connection:local play"
@@ -155,7 +167,10 @@
                        ~ (platform_mail_domain | default(platform_domain | default('by-research.be')) | replace('.', '-'))) }}
         vault_secret_init: {}
       tags: [acme, certs, dyndns, dns]
-      when: opnsense_cf_zone_needed | bool
+      when:
+        - opnsense_cf_zone_needed | bool
+        - "('acme' not in (opn_skip_families | default([]))) or ('dyndns' not in (opn_skip_families | default([])))"
+        - "(opn_only_families | default([]) | length == 0) or ('acme' in (opn_only_families | default([]))) or ('dyndns' in (opn_only_families | default([])))"
 
     - name: "Cloudflare | Hand the zone credentials to the firewall hosts"
       ansible.builtin.set_fact:
@@ -169,7 +184,10 @@
       loop: "{{ groups['opnsense'] }}"
       no_log: true
       tags: [acme, certs, dyndns, dns]
-      when: opnsense_cf_zone_needed | bool
+      when:
+        - opnsense_cf_zone_needed | bool
+        - "('acme' not in (opn_skip_families | default([]))) or ('dyndns' not in (opn_skip_families | default([])))"
+        - "(opn_only_families | default([]) | length == 0) or ('acme' in (opn_only_families | default([]))) or ('dyndns' in (opn_only_families | default([])))"
 
 - name: Configure OPNsense
   hosts: opnsense

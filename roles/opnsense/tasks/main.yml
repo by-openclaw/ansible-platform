@@ -11,63 +11,102 @@
 - name: Include firmware (upgrade + plugins) tasks
   ansible.builtin.include_tasks: firmware.yml
   tags: [firmware, plugins]
-  when: opnsense_manage_firmware | default(true) | bool
+  when:
+    - opnsense_manage_firmware | default(true) | bool
+    - "'firmware' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('firmware' in (opn_only_families | default([])))"
 
 - name: Include auth tasks (local users/groups — catalog opn_auth_groups / opn_auth_users)
   ansible.builtin.include_tasks: auth.yml
   tags: [auth]
+  when:
+    - "'auth' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('auth' in (opn_only_families | default([])))"
 
 - name: Include WAN gateway monitoring tasks
   ansible.builtin.include_tasks: gateways.yml
   tags: [gateway, network]
+  when:
+    - "'gateways' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('gateways' in (opn_only_families | default([])))"
 
 - name: Include static route tasks (catalog opn_routes — needs the gateways above)
   ansible.builtin.include_tasks: routes.yml
   tags: [routes, network]
-  when: opn_routes is defined
+  when:
+    - opn_routes is defined
+    - "'routes' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('routes' in (opn_only_families | default([])))"
 
 - name: Include dnscrypt-proxy tasks (encrypted upstream of the Unbound chain — catalog opn_dnscrypt_proxy)
   ansible.builtin.include_tasks: dnscrypt.yml
   tags: [dns, dnscrypt]
-  when: opn_dnscrypt_proxy is defined
+  when:
+    - opn_dnscrypt_proxy is defined
+    - "'dnscrypt' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('dnscrypt' in (opn_only_families | default([])))"
 
 - name: Include DNS (Unbound) tasks
   ansible.builtin.include_tasks: dns.yml
   tags: [dns, unbound]
+  when:
+    - "'dns' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('dns' in (opn_only_families | default([])))"
 
 - name: Include Dynamic DNS (os-ddclient) tasks
   ansible.builtin.include_tasks: dyndns.yml
   tags: [dyndns, dns]
-  when: opnsense_dyndns_accounts | default([]) | length > 0
+  when:
+    - opnsense_dyndns_accounts | default([]) | length > 0
+    - "'dyndns' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('dyndns' in (opn_only_families | default([])))"
 
 - name: Include chrony tasks (os-chrony is THE time sync; base ntpd is archived)
   ansible.builtin.include_tasks: chrony.yml
   tags: [ntp, chrony]
+  when:
+    - "'chrony' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('chrony' in (opn_only_families | default([])))"
 
 - name: Include DHCP tasks (Kea v4/v6 + radvd + Dnsmasq off — catalog opn_kea_dhcp4/6, opn_radvd, opn_dnsmasq)
   ansible.builtin.include_tasks: dhcp.yml
   tags: [dhcp, kea, radvd, dnsmasq]
-  when: opn_kea_dhcp4 is defined or opn_kea_dhcp6 is defined or opn_radvd is defined or opn_dnsmasq is defined
+  when:
+    - opn_kea_dhcp4 is defined or opn_kea_dhcp6 is defined or opn_radvd is defined or opn_dnsmasq is defined
+    - "'dhcp' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('dhcp' in (opn_only_families | default([])))"
 
 - name: Include IDS tasks (Suricata alert-only on the WAN edge — catalog opn_ids)
   ansible.builtin.include_tasks: ids.yml
   tags: [ids]
-  when: opn_ids is defined
+  when:
+    - opn_ids is defined
+    - "'ids' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('ids' in (opn_only_families | default([])))"
 
 - name: Include mDNS repeater tasks (catalog opn_mdns)
   ansible.builtin.include_tasks: mdns.yml
   tags: [mdns]
-  when: opn_mdns is defined
+  when:
+    - opn_mdns is defined
+    - "'mdns' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('mdns' in (opn_only_families | default([])))"
 
 - name: Include ACME tasks (catalog opn_acme — the firewall's own TLS certificate)
   ansible.builtin.include_tasks: acme.yml
   tags: [acme, certs]
-  when: opn_acme is defined
+  when:
+    - opn_acme is defined
+    - "'acme' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('acme' in (opn_only_families | default([])))"
 
 - name: Include LLDP tasks
   ansible.builtin.include_tasks: lldpd.yml
   tags: [services, lldpd]
-  when: opnsense_lldpd_enabled | default(true) | bool
+  when:
+    - opnsense_lldpd_enabled | default(true) | bool
+    - "'lldpd' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('lldpd' in (opn_only_families | default([])))"
 
 # An unscoped run converges the ENTIRE catalog (96 aliases / 119 rules), which
 # on a live firewall means creating everything the catalog declares and that the
@@ -84,6 +123,8 @@
     - (opnsense_manage_aliases | default(true) | bool) or (opnsense_manage_rules | default(true) | bool) or (opnsense_manage_nat | default(true) | bool)
     - not (opn_fw_only | default([]))
     - not (opn_fw_confirm_full | default(false) | bool)
+    - "'rules' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('rules' in (opn_only_families | default([])))"
   tags: [firewall, aliases, rules, nat]
 
 - name: Include firewall alias tasks
@@ -93,7 +134,10 @@
   # source of truth), not the stale 3-zone list that caused this to be gated OFF
   # under issue #51. Scope one concern with -e opn_fw_only=[...]; an unscoped run
   # converges the WHOLE catalog, so check --diff first.
-  when: opnsense_manage_aliases | default(true) | bool
+  when:
+    - opnsense_manage_aliases | default(true) | bool
+    - "'aliases' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('aliases' in (opn_only_families | default([])))"
 
 - name: Include firewall rule tasks
   ansible.builtin.include_tasks: rules.yml
@@ -102,32 +146,50 @@
   # by_systems.opnsense.opnsense_fw_filter (lib FwFilterRuleManager), replacing both
   # the stale 3-zone list and the raw uri calls. Scope with -e opn_fw_only=[...]; an unscoped run
   # converges the WHOLE catalog, so check --diff first.
-  when: opnsense_manage_rules | default(true) | bool
+  when:
+    - opnsense_manage_rules | default(true) | bool
+    - "'rules' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('rules' in (opn_only_families | default([])))"
 
 - name: Include NAT (DNAT / source NAT) tasks
   ansible.builtin.include_tasks: nat.yml
   tags: [firewall, nat, dnat, snat]
   # Catalog-driven (opn_dnat_rules / opn_snat_rules) through by_systems.opnsense
   # (lib-opnsense FwDnat/FwSourceNat managers). Same scoping + confirm gate as rules.
-  when: opnsense_manage_nat | default(true) | bool
+  when:
+    - opnsense_manage_nat | default(true) | bool
+    - "'nat' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('nat' in (opn_only_families | default([])))"
 
 - name: Include service activation tasks
   ansible.builtin.include_tasks: services.yml
   tags: [services]
+  when:
+    - "'services' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('services' in (opn_only_families | default([])))"
 
 - name: Include Monit monitoring tasks
   ansible.builtin.include_tasks: monit.yml
   tags: [services, monit]
-  when: opnsense_monit_enabled | default(true) | bool
+  when:
+    - opnsense_monit_enabled | default(true) | bool
+    - "'monit' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('monit' in (opn_only_families | default([])))"
 
 # --- remote syslog (Loki) ------------------------------------------------------
 - name: "Syslog | Remote destinations (Loki / promtail)"
   ansible.builtin.include_tasks: syslog.yml
   tags: [syslog, logging]
+  when:
+    - "'syslog' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('syslog' in (opn_only_families | default([])))"
 
 # Last: what the catalog no longer declares (firewall family). Reports always; deletes with
 # opn_prune=true; never on a scoped run (opn_fw_only) — see prune.yml.
 - name: Include prune tasks (SVC-47 — live == merged both ways)
   ansible.builtin.include_tasks: prune.yml
   tags: [firewall, prune]
-  when: not (opn_fw_only | default([]))
+  when:
+    - not (opn_fw_only | default([]))
+    - "'prune' not in (opn_skip_families | default([]))"
+    - "(opn_only_families | default([]) | length == 0) or ('prune' in (opn_only_families | default([])))"

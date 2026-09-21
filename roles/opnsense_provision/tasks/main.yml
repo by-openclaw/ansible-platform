@@ -138,6 +138,23 @@
   vars:
     _unreachable: "{{ (opnsense_provision_vault_probe.msg | default('')) is search('Timeout') }}"
 
+# The build chain drives the API through this credential until svc-ansible's token exists:
+# Vault's copy when it was reachable, the break-glass file otherwise (the same fallback the renderer
+# uses). Published as facts on the firewall host — never a file argument, never printed.
+- name: "Provision | Publish the genesis API credential for the build chain"
+  ansible.builtin.set_fact:
+    opnsense_provision_genesis_key: "{{ _g.key }}"
+    opnsense_provision_genesis_secret: "{{ _g.secret }}"
+  vars:
+    _from_vault: "{{ (opnsense_provision_secrets | default({})).genesis | default({}) }}"
+    _file: "{{ opnsense_provision_secret_dir }}/{{ opnsense_provision_seed.genesis_creds_file }}"
+    _g: "{{ _from_vault if (_from_vault.key | default('')) else (lookup('file', _file) | from_json).fields }}"
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  loop: "{{ groups['opnsense'] | default([]) }}"
+  no_log: true
+  when: opnsense_provision_seed.genesis_creds_file | default('') | length > 0
+
 - name: "Provision | Render this firewall's configuration from its seed profile"
   by_systems.opnsense.opnsense_seed_config:
     seed: "{{ opnsense_provision_seed }}"
