@@ -67,11 +67,17 @@ One command takes a free VMID to a firewall running the whole catalog — no scr
 ansible-playbook -i inventories/test playbooks/opnsense-build.yml -e opnsense_provision_fw=vm-opns-test-01
 ```
 
-It chains: the VM from the seed profile's hardware truth → `config.xml` rendered and handed to the
-boot importer → the svc-ansible API token minted from the seeded break-glass credential → firmware
-and the catalog's plugins → the full catalog. Rebuilding an existing firewall DESTROYS it and needs
-`-e opnsense_provision_recreate=true` (prod also `-e opnsense_provision_confirm_prod=true`); steps 4
-and 5 refuse to run against a firewall this run did not create.
+It chains, in the order the 2026-09-21 prod re-seed proved: the VM from the seed profile's hardware
+truth → `config.xml` rendered and handed to the boot importer → firmware + plugins with the genesis
+credential the provisioning read (Vault sits behind the firewall being built) → the catalog families
+that need no Vault secret (after which the SSH hop and Vault are reachable again) → Unbound overrides
+→ the svc-ansible token minted into Vault (the service user gets its Vault GUI password, so SSH + sudo
+work at once) → the full catalog through Vault → CrowdSec agent + bouncer (a stale LAPI registration
+is retired) → config export → proof of both uplink families. Family selection inside `opnsense.yml`
+is by variable (`opn_only_families` / `opn_skip_families`). Rebuilding an existing firewall DESTROYS it
+and needs `-e opnsense_provision_recreate=true` (prod also `-e opnsense_provision_confirm_prod=true`);
+the stages refuse to run against a firewall this run did not create. Parity afterwards:
+`playbooks/opnsense.yml --check -e opn_fw_confirm_full=true` → changed=0.
 
 Measured on a throwaway VMID (2026-09-09): **150 s** from nothing to a firewall answering its API
 with the seeded identity — 77 s of that is the boot importer. A second run is `changed=0`.

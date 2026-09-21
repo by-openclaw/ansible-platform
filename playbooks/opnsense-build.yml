@@ -1,15 +1,21 @@
 ---
 # ==============================================================================
-# OPNsense — build a firewall, one command
+# OPNsense — build a firewall, one command (the order the 2026-09-21 prod re-seed proved, #490)
 #
-# From a free VMID to a firewall running the whole catalog, with nothing run by
-# hand in between:
+# From a free VMID to a firewall running the whole catalog, with nothing run by hand in between:
 #
-#   1. the VM, from the seed profile's hardware truth
-#   2. its config.xml, rendered and handed to the boot importer
-#   3. the svc-ansible API token, minted from the seeded break-glass credential
-#   4. firmware to the release the catalog pins, then the catalog's plugins
-#   5. the full catalog — DNS, DHCP, rules, IDS, ACME, Monit, syslog
+#   0. the VM, from the seed profile's hardware truth, and its config.xml through the boot
+#      importer (roles/opnsense_provision — Vault first, break-glass files when Vault is unreachable)
+#   1. firmware to the pinned release + the catalog's plugins, driven with the GENESIS credential
+#      the provisioning read (Vault sits behind the firewall being built: no token yet, no hop yet)
+#   2. every catalog family that needs no secret from Vault (rules, aliases, DNS, DHCP, IDS, …)
+#      — after this the SSH hop through the firewall works and Vault is reachable again
+#   3. Unbound host overrides (split-DNS)
+#   4. svc-ansible's API token, minted from the genesis credential into Vault
+#   5. the full catalog through Vault (local users, Monit, ACME, DynDNS + everything again)
+#   6. the CrowdSec agent enrolled to the central LAPI + the firewall bouncer
+#   7. the configuration exported (age → NFS)
+#   8. proof: both uplink families online on the PPPoE interface
 #
 #   ansible-playbook -i inventories/test playbooks/opnsense-build.yml \
 #     -e opnsense_provision_fw=vm-opns-test-01
@@ -17,10 +23,11 @@
 # REBUILDING an existing firewall DESTROYS it — that needs -e opnsense_provision_recreate=true
 # (and, for a prod profile, -e opnsense_provision_confirm_prod=true on top).
 #
-# Steps 4 and 5 only run for a firewall this run actually created: pointing this
-# playbook at a firewall that is already live would otherwise open a firmware
-# window and a full catalog converge on it by accident. Use playbooks/opnsense.yml
-# for an existing firewall; -e opnsense_build_force=true is the deliberate override.
+# Stages 1–8 only run for a firewall this run actually created: pointing this playbook at a
+# firewall that is already live would otherwise open a firmware window and a full catalog converge
+# on it by accident. Use playbooks/opnsense.yml for an existing firewall; -e opnsense_build_force=true
+# is the deliberate override. Family selection inside opnsense.yml is by variable
+# (opn_only_families / opn_skip_families): an imported playbook cannot take --tags.
 # ==============================================================================
 
 - name: Build | Start the clock
@@ -34,7 +41,7 @@
       check_mode: false
       tags: always
 
-- name: Build | The VM, and its configuration through the boot importer
+- name: Build | 0 — the VM, and its configuration through the boot importer
   ansible.builtin.import_playbook: opnsense-provision.yml
 
 - name: Build | Only a firewall this run created goes on to firmware and the catalog
@@ -55,17 +62,72 @@
         quiet: true
       tags: always
 
-- name: Build | The API token, minted from the seeded break-glass credential
-  ansible.builtin.import_playbook: opnsense-api-bootstrap.yml
+    - name: "Build | The genesis credential must have been published by the provisioning"
+      ansible.builtin.assert:
+        that: hostvars[groups['opnsense'][0]].opnsense_provision_genesis_key | default('') | length > 0
+        fail_msg: >-
+          roles/opnsense_provision did not publish the genesis API credential (profile without
+          genesis_creds_file?) — stages 1–4 drive the API with it.
+        quiet: true
+      tags: always
 
 # A firewall this run created has nothing on it worth protecting from a reboot, so the firmware
-# window is open by default here — the point of a build is to end on the pinned release with the
-# catalog's plugins installed. The same play then converges the rest of the catalog.
-- name: Build | Firmware, plugins and the full catalog
+# window is open here — the point of a build is to end on the pinned release with the catalog's
+# plugins installed. The pin must be the head of the branch the image updates to.
+- name: Build | 1 — firmware and plugins (genesis credential)
   ansible.builtin.import_playbook: opnsense.yml
   vars:
+    opnsense_api_creds_key: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_key }}"
+    opnsense_api_creds_secret: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_secret }}"
+    opn_only_families: [firmware]
     opnsense_firmware_upgrade: true
+
+- name: Build | 2 — the catalog families that need no secret from Vault (genesis credential)
+  ansible.builtin.import_playbook: opnsense.yml
+  vars:
+    opnsense_api_creds_key: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_key }}"
+    opnsense_api_creds_secret: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_secret }}"
+    opn_skip_families: [firmware, auth, monit, acme, dyndns]
     opn_fw_confirm_full: true
+
+- name: Build | 3 — Unbound host overrides (genesis credential)
+  ansible.builtin.import_playbook: opnsense-unbound-overrides.yml
+  vars:
+    opnsense_api_creds_key: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_key }}"
+    opnsense_api_creds_secret: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_secret }}"
+
+- name: Build | 4 — the API token, minted from the genesis credential into Vault
+  ansible.builtin.import_playbook: opnsense-api-bootstrap.yml
+  vars:
+    opnsense_api_bootstrap_genesis_key: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_key }}"
+    opnsense_api_bootstrap_genesis_secret: "{{ hostvars[groups['opnsense'][0]].opnsense_provision_genesis_secret }}"
+
+- name: Build | 5 — the full catalog through Vault
+  ansible.builtin.import_playbook: opnsense.yml
+  vars:
+    opn_fw_confirm_full: true
+    opnsense_firmware_upgrade: false
+
+- name: Build | 6 — CrowdSec agent on the central LAPI + firewall bouncer
+  ansible.builtin.import_playbook: crowdsec-fw-bouncer.yml
+
+- name: Build | 7 — configuration export
+  ansible.builtin.import_playbook: opnsense-config-backup.yml
+
+- name: "Build | 8 — proof: both uplink families online"
+  hosts: opnsense
+  gather_facts: false
+  connection: local
+  become: false
+  pre_tasks:
+    - name: "FW API credentials from Vault"
+      ansible.builtin.import_role:
+        name: opnsense_api_creds
+  tasks:
+    - name: "Proof | PPPoE interface: v4 + v6 gateways online"
+      ansible.builtin.import_role:
+        name: opnsense_pppoe
+        tasks_from: verify
 
 - name: Build | Report
   hosts: localhost
@@ -77,6 +139,7 @@
         msg: >-
           {{ opnsense_provision_fw }} built in
           {{ (((lookup('pipe', 'date +%s') | int) - (opnsense_build_started | int)) / 60) | round(1) }}
-          minutes — VM, seed, API token, firmware and the full catalog.
+          minutes — VM, seed, firmware, catalog, token, Vault-backed families, CrowdSec, export,
+          uplink proof. Next: playbooks/opnsense.yml --check -e opn_fw_confirm_full=true (parity).
       check_mode: false
       tags: always
