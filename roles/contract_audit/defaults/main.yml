@@ -187,6 +187,11 @@ contract_audit_service_checks:
     probe: "pve-firewall status 2>/dev/null | head -1"
     expect: "^Status: enabled/running$"
     groups: ["proxmox_nodes"]
+  - id: NODE-08
+    desc: "No global IPv6 address on the WAN bridges of the node (no RA/autoconf from the ISPs)"
+    probe: "n=0; for b in vmbrWAN1 vmbrWAN2; do n=$((n + $(ip -6 -o addr show dev $b scope global 2>/dev/null | wc -l))); done; [ $n = 0 ] && echo PASS || echo FAIL:$n"
+    expect: "^PASS$"
+    groups: ["proxmox_nodes"]
   - id: NODE-07
     desc: "Node routes the guest zones via the prod firewall's OOB leg (replies must not leave by the OOB default gateway)"
     probe: "ip route show 10.1.0.0/16 | grep -q via && echo PASS || echo FAIL"
