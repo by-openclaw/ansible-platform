@@ -82,6 +82,24 @@ the stages refuse to run against a firewall this run did not create. Parity afte
 Measured on a throwaway VMID (2026-09-09): **150 s** from nothing to a firewall answering its API
 with the seeded identity — 77 s of that is the boot importer. A second run is `changed=0`.
 
+Proven end to end on prod (2026-09-22, VM 196 destroyed and rebuilt by the one command above, no
+resume, no hand step): **76 min** from `recreate` to the uplink proof (`WAN_PROXIMUS_PPPOE = Online,
+WAN_PROXIMUS_DHCP6 = Online`), then `opnsense.yml --check` = changed=0 and `contract-audit.yml` =
+30/30 hosts without a failing row. Where the time goes: the seed boot (80 s), the firmware update
+26.7 → 26.7.4 with its reboot, the plugin installs (153 s — the appliance re-installs its
+config-listed plugins itself after the update and the lib waits for `core/firmware/running` to be
+`ready` before firing; `upgradestatus` answers `error` while a fresh job's log is still empty, which
+is not a failure), the ~200 rules and NAT entries (≈ 25 min per catalog pass, and the catalog runs
+twice: once with the genesis credential, once through Vault), the IDS ruleset download and the ACME
+issuance. Internal services are unreachable from stage 0 until stage 2 lands the rules — announce the
+window. The stages resume with `-e opnsense_build_force=true -e opnsense_build_from_stage=N`.
+
+Run the parity check and the fleet audit one after the other, never together: both read Vault on
+`lxc-vault-01` with password sudo, and two plays hitting that host at once end in
+"Timeout (12s) waiting for privilege escalation prompt". A `recreate` gives the appliance new SSH
+host keys (the plays tolerate it; a manual `ssh` needs the known-hosts entry refreshed), and stage 0
+must not overlap the node's backup job while it holds VM 196 — check the node's active tasks first.
+
 Just the VM and its configuration, without the firmware and catalog phases:
 
 ```bash
