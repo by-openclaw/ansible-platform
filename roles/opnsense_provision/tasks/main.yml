@@ -51,6 +51,15 @@
     opnsense_provision_pve: "{{ (lookup('file', opnsense_provision_pve_secret) | from_json).fields }}"
   no_log: true
 
+# ── Decommission (state=absent) ──────────────────────────────────────────────────────────────────
+- name: "Provision | Decommission path — archive, destroy, stop here"
+  ansible.builtin.include_tasks: decommission.yml
+  when: opnsense_provision_state == 'absent'
+
+- name: "Provision | Nothing more to do for an absent firewall"
+  ansible.builtin.meta: end_host
+  when: opnsense_provision_state == 'absent'
+
 - name: "Provision | Network interfaces from the profile"
   ansible.builtin.set_fact:
     opnsense_provision_nics: >-

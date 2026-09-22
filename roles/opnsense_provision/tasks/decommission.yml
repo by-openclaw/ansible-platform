@@ -1,0 +1,89 @@
+---
+# Decommission a firewall VM the archived way (never delete, archive): a final vzdump to the NAS
+# backup store, then the VM is destroyed. Idempotent: an already-absent VM is reported, nothing
+# else happens. The seed profile / ISP allocation / test inventory / Vault paths are untouched.
+
+- name: "Decommission | A PROD firewall is never decommissioned from here"
+  ansible.builtin.assert:
+    that: opnsense_provision_vm.env | default('') != 'prod'
+    fail_msg: >-
+      {{ opnsense_provision_fw }} is env=prod — Layer 0 is replaced in a maintenance window, not
+      decommissioned (docs/services/opnsense.md §18).
+    quiet: true
+
+- name: "Decommission | Does the VM exist on the node?"
+  community.proxmox.proxmox_vm_info:
+    api_host: "{{ opnsense_provision_pve.host }}"
+    api_user: "{{ opnsense_provision_pve.admin_token_id | regex_replace('!.*$', '') }}"
+    api_token_id: "{{ opnsense_provision_pve.admin_token_id | regex_replace('^.*!', '') }}"
+    api_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
+    validate_certs: "{{ opnsense_provision_validate_certs }}"
+    node: "{{ opnsense_provision_node }}"
+    vmid: "{{ opnsense_provision_vmid }}"
+  register: opnsense_provision_vm_info
+  delegate_to: localhost
+  become: false
+  no_log: true
+  check_mode: false   # read-only: the dry-run must know what it would archive and destroy
+
+- name: "Decommission | State"
+  ansible.builtin.set_fact:
+    opnsense_provision_vm_present: "{{ (opnsense_provision_vm_info.proxmox_vms | default([])) | length > 0 }}"
+
+# umask 022: the CT/VM backup helpers must read vzdump's temp dir; a hardened root session
+# (umask 027) makes every container backup fail with "pct.conf - Permission denied" (2026-09-22).
+- name: "Decommission | Archive the VM first (vzdump) → {{ opnsense_provision_archive_storage }}"
+  ansible.builtin.shell:
+    cmd: >-
+      umask 022 && vzdump {{ opnsense_provision_vmid }}
+      --storage {{ opnsense_provision_archive_storage }} --mode snapshot --compress zstd --quiet 1
+      --notes-template 'ARCHIVE before decommission {{ lookup("pipe", "date -u +%F") }}
+      — {{ "{{" }}guestname{{ "}}" }} (VMID {{ "{{" }}vmid{{ "}}" }})'
+  register: opnsense_provision_archive
+  changed_when: true
+  delegate_to: "{{ opnsense_provision_pve_node_host }}"
+  become: true
+  vars:
+    ansible_become_password: "{{ hostvars[opnsense_provision_pve_node_host].ansible_become_password | default(omit) }}"
+  when: opnsense_provision_vm_present | bool
+
+- name: "Decommission | The archive that was written"
+  ansible.builtin.command:
+    cmd: "pvesm list {{ opnsense_provision_archive_storage }} --vmid {{ opnsense_provision_vmid }}"
+  register: opnsense_provision_archives
+  changed_when: false
+  check_mode: false
+  delegate_to: "{{ opnsense_provision_pve_node_host }}"
+  become: true
+  vars:
+    ansible_become_password: "{{ hostvars[opnsense_provision_pve_node_host].ansible_become_password | default(omit) }}"
+  when: opnsense_provision_vm_present | bool
+
+- name: "Decommission | Destroy the VM"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ opnsense_provision_pve.host }}"
+    api_user: "{{ opnsense_provision_pve.admin_token_id | regex_replace('!.*$', '') }}"
+    api_token_id: "{{ opnsense_provision_pve.admin_token_id | regex_replace('^.*!', '') }}"
+    api_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
+    validate_certs: "{{ opnsense_provision_validate_certs }}"
+    node: "{{ opnsense_provision_node }}"
+    vmid: "{{ opnsense_provision_vmid }}"
+    state: absent
+    force: true
+    timeout: 180
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: opnsense_provision_vm_present | bool
+
+- name: "Decommission | Report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ opnsense_provision_fw }} (vmid {{ opnsense_provision_vmid }}, env
+      {{ opnsense_provision_vm.env | default('?') }}):
+      {%- if not (opnsense_provision_vm_present | bool) %} already absent — nothing to do.
+      {%- elif ansible_check_mode %} present — WOULD be archived to {{ opnsense_provision_archive_storage }} and destroyed (check mode).
+      {%- else %} archived to {{ opnsense_provision_archive_storage }} as
+      {{ ((opnsense_provision_archives.stdout_lines | default(['?']) | last) | split | first) }} and DESTROYED.
+      {%- endif %}
+      Seed profile, ISP allocation and Vault paths kept for the next image validation.
