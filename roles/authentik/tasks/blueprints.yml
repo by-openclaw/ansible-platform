@@ -92,6 +92,7 @@
     url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/-/health/ready/"
     status_code: [200, 204]
   register: authentik_ready
+  check_mode: false   # read-only GET: must run under --check too (later tasks read its json)
   retries: 30
   delay: 5
   until: authentik_ready.status in [200, 204]
@@ -102,6 +103,7 @@
     headers:
       Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}"
   register: authentik_user_lookup
+  check_mode: false   # read-only GET: must run under --check too (later tasks read its json)
   retries: 24
   delay: 5
   until: (authentik_user_lookup.json.results | default([])) | length > 0
