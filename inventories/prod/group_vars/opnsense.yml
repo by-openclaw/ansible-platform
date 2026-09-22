@@ -776,7 +776,7 @@ opn_aliases:
 # alias, never a raw IP (ADR-0015 / naming/0003). Dual-stack.
 - {name: host4_mailcow, type: host, content: ['10.1.2.120'],  description: 'mailcow mail server (DMZ) v4', state: present, ref: {adr: 'naming/0003#§2-host-aliases',    lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host6_mailcow, type: host, content: ['fd01:2::120'], description: 'mailcow mail server (DMZ) v6', state: present, ref: {adr: 'naming/0003#§2-host-aliases-v6', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
-- {name: host_fw_test, type: host, content: ['10.6.239.195'], description: 'test FW (vm-opns-test-01) OOB address — reaches prod-only services (Monit SMTP, Loki, CrowdSec feed); single-family (OOB has no v6)', state: present, ref: {adr: 'naming/0003#§1-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
+- {name: host_fw_test, type: host, content: ['10.6.239.195'], description: 'RETIRED 2026-09-22 — test FW decommissioned; alias goes absent once its three rules are gone live. Was: test FW (vm-opns-test-01) OOB address — reaches prod-only services (Monit SMTP, Loki, CrowdSec feed); single-family (OOB has no v6)', state: present, ref: {adr: 'naming/0003#§1-host-aliases', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host_pve_node, type: host, content: ['10.6.224.105'], description: 'Proxmox VE node srv-proxmox-poc-01 (OOB) — single-family v4 (the OOB plane has no v6 on the node); PVE UI through Traefik (roles/pve_host route)', state: present, ref: {adr: 'naming/0003#§1a-single-family', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host4_pve_node, type: host, content: ['10.6.224.105'], description: 'superseded by host_pve_node (single-family scope → unsuffixed name)', state: absent, ref: {adr: 'naming/0003#§1a-single-family', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
 - {name: host4_fw_test, type: host, content: ['10.6.239.195'], description: 'RETIRED 2026-09-09 — misnamed (§1a: single-family → host_fw_test)', state: absent, ref: {adr: 'naming/0003#§1a-family-suffix', lib_manager: FwAliasManager, ansible_module: by_systems.opnsense.opnsense_fw_alias}}
@@ -913,7 +913,7 @@ opn_filter_rules:
   source_net: host_fw_test
   destination_net: host4_mailcow
   destination_port: port_submission
-  state: present
+  state: absent   # RETIRED 2026-09-22 — the test firewall was decommissioned (opnsense_provision state=absent)
   ref:
     adr: services/0006#§3-monitoring-alerts
 # Test FW → platform log sinks: Loki (all logs, INF-27) and the CrowdSec Suricata feed
@@ -927,7 +927,7 @@ opn_filter_rules:
   source_net: host_fw_test
   destination_net: host4_monitoring
   destination_port: port_syslog_loki
-  state: present
+  state: absent   # RETIRED 2026-09-22 — the test firewall was decommissioned (opnsense_provision state=absent)
   ref:
     adr: infra/0006#logging
 - description: PASS OOB test-FW→SVC CrowdSec Suricata feed
@@ -939,7 +939,7 @@ opn_filter_rules:
   source_net: host_fw_test
   destination_net: host4_crowdsec
   destination_port: port_crowdsec_syslog
-  state: present
+  state: absent   # RETIRED 2026-09-22 — the test firewall was decommissioned (opnsense_provision state=absent)
   ref:
     adr: services/0010#§1-engine
     lib_manager: FwFilterRuleManager
