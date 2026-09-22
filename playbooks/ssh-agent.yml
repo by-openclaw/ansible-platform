@@ -10,7 +10,62 @@
 #     uses the unlocked keys with no environment exporting.
 #
 #   Run at session start: ansible-playbook -i inventories/prod/hosts.yml playbooks/ssh-agent.yml
+#
+#   Bootstrap (the agent is gone and Vault sits behind the hop the agent unlocks — the
+#   2026-09-22 desktop restart): the same command with -e agent_bootstrap=true loads the
+#   break-glass key from the local print kit first, reaches the Vault host as the OOB local
+#   admin, loads the svc keys, then drops the break-glass key from the agent again.
 # ==============================================================================
+- name: "Bootstrap | Break-glass key into the agent when the platform is unreachable"
+  hosts: localhost
+  gather_facts: true
+  become: false
+  vars:
+    agent_sock: "{{ ansible_env.HOME }}/.ssh/rune-agent.sock"
+    agent_print_kit: "{{ ansible_env.HOME }}/.openclaw/workspace/infra/secrets/print-kit"
+  tasks:
+    - name: "Bootstrap | Only on request"
+      ansible.builtin.meta: end_play
+      when: not (agent_bootstrap | default(false) | bool)
+
+    - name: "Bootstrap | Read the break-glass passphrase and OS password (print kit, in memory)"
+      ansible.builtin.set_fact:
+        agent_bootstrap_key: "{{ (lookup('file', agent_print_kit ~ '/04-ssh-passphrase-' ~ platform_org ~ '.json') | from_json).key_file }}"
+        agent_bootstrap_passphrase: "{{ (lookup('file', agent_print_kit ~ '/04-ssh-passphrase-' ~ platform_org ~ '.json') | from_json).passphrase }}"
+        agent_bootstrap_os_password: "{{ (lookup('file', agent_print_kit ~ '/02-os-password-' ~ platform_org ~ '.json') | from_json).fields.password }}"
+      no_log: true
+
+    - name: "Bootstrap | Is an agent alive behind the fixed socket?"
+      ansible.builtin.command: "ssh-add -l"
+      environment:
+        SSH_AUTH_SOCK: "{{ agent_sock }}"
+      register: agent_alive
+      changed_when: false
+      failed_when: false
+
+    - name: "Bootstrap | Remove a stale socket (no agent behind it)"
+      ansible.builtin.file:
+        path: "{{ agent_sock }}"
+        state: absent
+      when: agent_alive.rc == 2
+
+    - name: "Bootstrap | Start the agent on the fixed socket"
+      ansible.builtin.command: "ssh-agent -a {{ agent_sock }}"
+      when: agent_alive.rc == 2
+      changed_when: true
+
+    - name: "Bootstrap | Add the break-glass key"
+      ansible.builtin.expect:
+        command: "ssh-add {{ ansible_env.HOME }}/.ssh/{{ agent_bootstrap_key }}"
+        responses:
+          "Enter passphrase.*": "{{ agent_bootstrap_passphrase }}"
+        timeout: 15
+      environment:
+        SSH_AUTH_SOCK: "{{ agent_sock }}"
+      register: agent_bootstrap_add
+      changed_when: "'Identity added' in (agent_bootstrap_add.stdout | default(''))"
+      no_log: true
+
 - name: "Fetch svc key passphrases (AppRole, on the Vault host)"
   hosts: vault
   become: true
@@ -19,6 +74,15 @@
     - ../roles/vault/defaults/main.yml
   vars:
     approle_secret_file: "{{ (vault_secret_dir | expanduser) }}/fabric/app-vault-ansible-controller.json"
+    # Bootstrap mode: the hop and the Vault host are reached as the OOB local admin with the
+    # break-glass key loaded by the play above; the sudo password comes from the print kit.
+    ansible_user: "{{ platform_org if (agent_bootstrap | default(false) | bool) else 'svc-ansible-' ~ (platform_env | default('prod')) }}"
+    platform_jump_user: "{{ platform_org if (agent_bootstrap | default(false) | bool) else 'svc-ansible-' ~ (platform_env | default('prod')) }}"
+    ansible_become_password: >-
+      {{ hostvars['localhost'].agent_bootstrap_os_password
+         if (agent_bootstrap | default(false) | bool)
+         else ((lookup('file', _os_svc_ansible_secret, errors='ignore') or '{"fields":{}}')
+               | from_json).fields.password | default(omit) }}
   tasks:
     - name: "Agent | Load the AppRole credentials (controller file)"
       ansible.builtin.set_fact:
@@ -59,14 +123,22 @@
     agent_sock: "{{ ansible_env.HOME }}/.ssh/rune-agent.sock"
     agent_keys: [svc-ansible-prod, svc-rune-prod]
   tasks:
-    - name: "Agent | Stat the fixed socket"
-      ansible.builtin.stat:
+    # A socket file outlives its agent (desktop restart, logout): test the agent, not the file.
+    - name: "Agent | Is an agent alive behind the fixed socket?"
+      ansible.builtin.command: "ssh-add -l"
+      environment:
+        SSH_AUTH_SOCK: "{{ agent_sock }}"
+      register: agent_alive
+      changed_when: false
+      failed_when: false
+    - name: "Agent | Remove a stale socket (no agent behind it)"
+      ansible.builtin.file:
         path: "{{ agent_sock }}"
-      register: agent_sock_stat
-
+        state: absent
+      when: agent_alive.rc == 2
     - name: "Agent | Start the agent on the fixed socket"
       ansible.builtin.command: "ssh-agent -a {{ agent_sock }}"
-      when: not agent_sock_stat.stat.exists
+      when: agent_alive.rc == 2
       changed_when: true
 
     - name: "Agent | Point ssh at the agent (IdentityAgent — no env export needed)"
@@ -102,6 +174,13 @@
       changed_when: false
       failed_when: agent_list.rc != 0 or (agent_list.stdout_lines | length) < (agent_keys | length)
 
+    - name: "Agent | Drop the break-glass key again (bootstrap only)"
+      ansible.builtin.command: "ssh-add -d {{ ansible_env.HOME }}/.ssh/{{ hostvars['localhost'].agent_bootstrap_key }}"
+      environment:
+        SSH_AUTH_SOCK: "{{ agent_sock }}"
+      when: agent_bootstrap | default(false) | bool
+      changed_when: true
+      failed_when: false
     - name: "Agent | Loaded identities (fingerprints only)"
       ansible.builtin.debug:
         msg: "{{ agent_list.stdout_lines }}"
