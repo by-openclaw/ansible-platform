@@ -25,6 +25,17 @@ pg_uid: 999                       # postgres uid inside the official image
 # load. GitLab's own bundled PG raises this; the shared cluster PG must too. Also
 # fine for every other consumer. Restart-required (postmaster) setting.
 pg_max_locks_per_transaction: 256
+# Connection ceiling. The image default (100) was hit twice on 2026-09-22 (09:22Z and
+# 13:27Z, "remaining connection slots are reserved for SUPERUSER"): Authentik lost its
+# pool → forwardAuth answered 500 on every route → one ProbeFailed per site. Seven
+# services share this cluster (Authentik server+outpost+worker, GitLab, Nextcloud,
+# Vaultwarden, Harbor, Grafana, NetBox), each with its own pool; 200 leaves headroom
+# (each backend costs a few MB, the host has 2 GiB). Restart-required setting.
+pg_max_connections: 200
+# Log every connection with role + database (Loki keeps them), so the next time the
+# ceiling is approached the client that opened the connections is named — without it,
+# only the victims' errors are visible. Restart-required setting.
+pg_log_connections: true
 
 # Host dirs bind-mounted into the container (same path inside).
 pg_conf_host_dir: "/etc/postgres/conf"     # pg_hba.conf

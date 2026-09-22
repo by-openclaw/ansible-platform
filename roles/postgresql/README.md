@@ -26,3 +26,6 @@ future k8s Deployment/PVC.
 
 Run: `ansible-playbook -i inventories/prod/hosts.yml playbooks/postgresql.yml`
 (reaches the SVC LXC via OPNsense ProxyJump, login `root`).
+
+## Limits
+- `pg_max_connections` (200) and `pg_log_connections` (on): the 100-connection image default was exhausted twice on 2026-09-22 and took every service behind Authentik's forwardAuth down with it; connections are logged with role + database so the next approach to the ceiling names the client (Loki).
