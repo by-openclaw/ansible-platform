@@ -191,8 +191,13 @@ catalog + Vault audit of the credentials.
 
 ## 18. Decommission
 
-Prod FW is Layer 0 — decommission = replacement window only. Test FW: `recreate-and-seed.py` recreates
-it at will; the catalog and Vault path stay. `roles/service_decommission` applies to guests, not FWs.
+Prod FW is Layer 0 — decommission = replacement window only. Any other firewall:
+`playbooks/opnsense-provision.yml -e opnsense_provision_fw=<seed> -e opnsense_provision_state=absent`
+archives the VM (final vzdump to the NAS store) and destroys it; the seed profile, the ISP allocation
+and the Vault paths stay so the same command with `state=present` brings it back for the next image
+validation. `roles/service_decommission` applies to guests, not FWs. The two lab firewalls
+(`vm-opns-lab-01`, `vm-opns-test-01`) were retired this way on 2026-09-22; the Telenet address
+`.220 / ::6` stays reserved for validation builds.
 
 ## 19. Licensing
 
