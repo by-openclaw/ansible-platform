@@ -29,6 +29,7 @@
         argv: [proxmox-backup-manager, acl, list, --output-format, json]
       register: r_acl_list
       changed_when: false
+      check_mode: false   # read-only probe: must run under --check too (its JSON feeds the next task)
 
     - name: "PVE-wire | Grant DatastoreBackup on the datastore"
       ansible.builtin.command:
@@ -251,6 +252,7 @@
         argv: [pvesh, get, /cluster/backup, "--output-format", json]
       register: r_jobs
       changed_when: false
+      check_mode: false   # read-only probe: must run under --check too (its JSON feeds the next task)
 
     - name: "PVE-wire | Create the 2nd backup job -> PBS (keeps the NFS job)"
       ansible.builtin.command:
