@@ -1,0 +1,27 @@
+{{/* Managed by Ansible (role: alertmanager). Discord embed: status + alert name + count in the
+     title; what it means, what to do first, then one line per instance (25 max) in the body. */}}
+{{ define "platform.discord.title" -}}
+{{ if eq .Status "firing" }}🔴 FIRING{{ else }}🟢 RESOLVED{{ end }} · {{ .CommonLabels.alertname }} · {{ len .Alerts }} {{ if eq (len .Alerts) 1 }}alert{{ else }}alerts{{ end }}
+{{- end }}
+
+{{ define "platform.discord.message" -}}
+{{- $first := index .Alerts 0 -}}
+{{- with $first.Annotations.description }}**What it means:** {{ . }}
+{{ end -}}
+{{- with $first.Annotations.runbook }}**What to do first:** {{ . }}
+{{ end -}}
+{{- if gt (len .Alerts.Firing) 0 }}
+**Firing ({{ len .Alerts.Firing }})**
+{{- range $i, $a := .Alerts.Firing }}{{ if lt $i 25 }}
+• {{ with $a.Annotations.summary }}{{ . }}{{ else }}{{ $a.Labels.instance }}{{ end }} — since {{ $a.StartsAt.UTC.Format "15:04 UTC" }}{{ end }}{{ end }}
+{{- if gt (len .Alerts.Firing) 25 }}
+• … and {{ len (slice .Alerts.Firing 25) }} more{{ end }}
+{{- end }}
+{{- if gt (len .Alerts.Resolved) 0 }}
+**Resolved ({{ len .Alerts.Resolved }})**
+{{- range $i, $a := .Alerts.Resolved }}{{ if lt $i 25 }}
+• {{ with $a.Annotations.summary }}{{ . }}{{ else }}{{ $a.Labels.instance }}{{ end }} — {{ $a.StartsAt.UTC.Format "15:04" }} → {{ $a.EndsAt.UTC.Format "15:04 UTC" }}{{ end }}{{ end }}
+{{- if gt (len .Alerts.Resolved) 25 }}
+• … and {{ len (slice .Alerts.Resolved 25) }} more{{ end }}
+{{- end }}
+{{- end }}

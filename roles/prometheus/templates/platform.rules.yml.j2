@@ -8,25 +8,32 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "Platform resolver {{ '{{' }} $labels.instance {{ '}}' }} does not answer"
-          description: "Every guest lists it first; lookups stall up to 5 s until it is back (#424)."
+          description: "The guests' first nameserver ({{ '{{' }} $labels.instance {{ '}}' }}) has not answered the {{ '{{' }} $labels.job {{ '}}' }} lookup for {{ prometheus_alert_resolver_for }}. Every lookup on every guest stalls up to 5 s until it is back, so most other probes fail with it (#424)."
+          runbook: "Check the resolver chain in order: AdGuard on vm-adguard-01 → the firewall's Unbound → dnscrypt. A firewall rebuild or reboot looks exactly like this. The probe alerts this one explains are held back until it clears."
       - alert: ProbeFailed
         expr: probe_success{job!~"blackbox_dns_v[46]"} == 0
         for: {{ prometheus_alert_probe_for }}
         labels: {severity: critical}
         annotations:
           summary: "{{ '{{' }} $labels.job {{ '}}' }} probe failed for {{ '{{' }} $labels.instance {{ '}}' }}"
+          description: "lxc-monitoring-01 could not complete the {{ '{{' }} $labels.job {{ '}}' }} check against this target for {{ prometheus_alert_probe_for }}: the service is down, unreachable from the monitoring host, or answering wrongly (bad status code, TLS or DNS)."
+          runbook: "Many targets at once = the path, not the services: check the firewall (rebuild, reboot, ISP) and the resolver first. One target = open it from inside (curl from lxc-vault-01) and read that service's log; a 403 on everything is the CrowdSec bouncer."
       - alert: TLSCertExpiringSoon
         expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < {{ prometheus_alert_cert_warn_days }}
         for: 1h
         labels: {severity: warning}
         annotations:
           summary: "Certificate on {{ '{{' }} $labels.instance {{ '}}' }} expires in {{ '{{' }} $value | printf \"%.0f\" {{ '}}' }} days"
+          description: "The certificate served by {{ '{{' }} $labels.instance {{ '}}' }} is inside the {{ prometheus_alert_cert_warn_days }}-day warning window. Renewals are automatic (Traefik ACME, lego, or the firewall's ACME client); this fires when a renewal has silently stopped."
+          runbook: "Find the issuer for this name (Traefik: check its ACME log; lego: run the renew play; firewall: the ACME family in opnsense.yml) and read the last renewal attempt's error before anything else."
       - alert: TLSCertExpiryCritical
         expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < {{ prometheus_alert_cert_crit_days }}
         for: 10m
         labels: {severity: critical}
         annotations:
           summary: "Certificate on {{ '{{' }} $labels.instance {{ '}}' }} expires in {{ '{{' }} $value | printf \"%.0f\" {{ '}}' }} days"
+          description: "The certificate served by {{ '{{' }} $labels.instance {{ '}}' }} expires within {{ prometheus_alert_cert_crit_days }} days: clients will start refusing the site. Renewal has been failing for a while (the warning fired first)."
+          runbook: "Renew now through the owner of that name (Traefik ACME log, lego renew play, or the firewall ACME family) and fix the cause the log shows (DNS challenge, rate limit, expired token)."
   - name: platform-hosts
     rules:
       - alert: TargetDown
@@ -35,24 +42,32 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "{{ '{{' }} $labels.job {{ '}}' }} target {{ '{{' }} $labels.instance {{ '}}' }} is not scrapeable"
+          description: "Prometheus has not been able to scrape {{ '{{' }} $labels.instance {{ '}}' }} ({{ '{{' }} $labels.job {{ '}}' }}) for 5 min: the host is down, its exporter stopped, or the host firewall no longer admits the monitoring host."
+          runbook: "Ping it, then check the exporter unit on the host (node_exporter / cadvisor) and its host firewall; if many hosts drop together, look at the hypervisor and the firewall first."
       - alert: HostDiskAlmostFull
         expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes) < {{ prometheus_alert_disk_free_ratio }}
         for: 15m
         labels: {severity: warning}
         annotations:
           summary: "{{ '{{' }} $labels.instance {{ '}}' }} {{ '{{' }} $labels.mountpoint {{ '}}' }} has {{ '{{' }} $value | humanizePercentage {{ '}}' }} free"
+          description: "The filesystem {{ '{{' }} $labels.mountpoint {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} has been below {{ (prometheus_alert_disk_free_ratio * 100) | int }} % free for 15 min. Services on it will fail to write once it is full (databases, logs, backups)."
+          runbook: "Find what grows (journal, docker images, backups, a runaway log) with du on that mount; prune or grow the disk through the infra repo, not by hand."
       - alert: HostOutOfMemory
         expr: (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < {{ prometheus_alert_mem_free_ratio }}
         for: 10m
         labels: {severity: warning}
         annotations:
           summary: "{{ '{{' }} $labels.instance {{ '}}' }} has {{ '{{' }} $value | humanizePercentage {{ '}}' }} memory available"
+          description: "{{ '{{' }} $labels.instance {{ '}}' }} has had less than {{ (prometheus_alert_mem_free_ratio * 100) | int }} % of its memory available for 10 min: the kernel is about to kill processes or the host is swapping."
+          runbook: "Look at the top consumers (docker stats / top); restart the leaking service or raise the guest's memory through the infra repo."
       - alert: AlertmanagerUnreachable
         expr: prometheus_notifications_alertmanagers_discovered < 1
         for: 5m
         labels: {severity: critical}
         annotations:
           summary: "Prometheus has no Alertmanager — alerts are not delivered"
+          description: "Prometheus cannot reach its Alertmanager: rules still evaluate but nothing is sent by mail or to Discord. This alert reaches you only through the Prometheus UI or Grafana."
+          runbook: "On lxc-monitoring-01: check the prometheus-alertmanager unit and its /-/ready endpoint, then the alertmanager role's last run."
   - name: platform-containers
     rules:
       - alert: ContainerRestarting
@@ -61,9 +76,13 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "Container {{ '{{' }} $labels.name {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} restarted {{ '{{' }} $value {{ '}}' }} times in 15 min"
+          description: "Container {{ '{{' }} $labels.name {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} is in a restart loop: it crashes right after starting (bad config, missing secret, dependency not up)."
+          runbook: "docker logs --tail 100 on the container; a config or secret change is the usual cause, so check the last deploy of that service."
       - alert: ContainerMemoryNearLimit
         expr: (container_memory_working_set_bytes{name!=""} / (container_spec_memory_limit_bytes{name!=""} > 0)) > 0.9
         for: 10m
         labels: {severity: warning}
         annotations:
           summary: "Container {{ '{{' }} $labels.name {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} uses {{ '{{' }} $value | humanizePercentage {{ '}}' }} of its memory limit"
+          description: "Container {{ '{{' }} $labels.name {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} sits above 90 % of its memory limit for 10 min: the runtime will OOM-kill it at 100 %."
+          runbook: "Check whether the load is legitimate (docker stats, the service's own metrics); raise the limit in the role's compose defaults or fix the leak."
