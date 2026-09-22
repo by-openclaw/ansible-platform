@@ -83,3 +83,5 @@ guest, split_dns) is added to the `service_decommission` catalog — then `terra
 destroy` the guest. GitLab-side leftovers to reverse too: the `robot$gitlab-ci`
 account + `gitlab` project (Harbor API) and the three `HARBOR_*` instance CI variables
 (`gitlab-rails runner`).
+
+- `harbor_pg_max_open_conns` (20) / `harbor_pg_max_idle_conns` (5): the metadata DB pool is bounded (Harbor default = unlimited) so a job burst cannot starve the other services on the shared cluster.

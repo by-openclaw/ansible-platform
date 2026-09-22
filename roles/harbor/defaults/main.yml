@@ -30,6 +30,11 @@ harbor_pg_user: "harbor"
 harbor_pg_host: "lxc-pgsql-01.{{ platform_domain }}"            # FQDN so verify-full matches the cert
 harbor_pg_port: 5432
 harbor_pg_sslmode: "verify-full"
+# Bound the metadata DB pool. Harbor's own default (max_open_conns 0) is UNLIMITED: on a shared
+# cluster one busy job burst (scans, GC, replication) could take every slot from every other
+# service. 20 open / 5 idle covers core + jobservice (10 job workers) with margin.
+harbor_pg_max_open_conns: 20
+harbor_pg_max_idle_conns: 5
 harbor_pg_secret_file: "fabric/db-pgsql-harbor.json"     # written by postgres_db  # pragma: allowlist secret
 
 # Redis: Harbor uses its own bundled instance (internal job-queue/cache), so no

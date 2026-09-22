@@ -21,3 +21,5 @@ Initial admin = `akadmin` / `authentik_bootstrap_email`; password in
 
 Run: `ansible-playbook -i inventories/prod/hosts.yml playbooks/authentik.yml`.
 Requires the FW DMZ→SVC `:9000` rule + Unbound override (opnsense catalog).
+
+- `authentik_pg_conn_max_age` (300 s) / `authentik_pg_conn_health_checks`: persistent DB connections — the upstream default closed one after every request (~2 new TLS connections/s here), which is how the shared PostgreSQL ceiling was reached on 2026-09-22.

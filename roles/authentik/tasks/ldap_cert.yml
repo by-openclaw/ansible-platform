@@ -14,6 +14,7 @@
   become: true
   register: authentik_ldap_cert_src_info
   changed_when: false
+  check_mode: false   # read-only probe: must run under --check too (Bind facts reads its stdout)
 
 - name: "LDAP cert | Read the wildcard certificate + key (Traefik host)"
   ansible.builtin.slurp:
@@ -41,6 +42,7 @@
     url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/crypto/certificatekeypairs/?name={{ authentik_ldap_cert_name | urlencode }}"
     headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}" }
   register: authentik_ldap_cert_get
+  check_mode: false   # read-only GET: must run under --check too (later tasks read its json)
   no_log: true
 
 - name: "LDAP cert | Create the keypair (absent)"
@@ -87,6 +89,7 @@
     url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/providers/ldap/?name={{ authentik_ldap_provider_name | urlencode }}"
     headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}" }
   register: authentik_ldap_provider_get
+  check_mode: false   # read-only GET: must run under --check too (later tasks read its json)
   no_log: true
 
 - name: "LDAP cert | Provider references the wildcard keypair"
