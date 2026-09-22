@@ -349,6 +349,15 @@ authentik_users:
 authentik_ldap_enabled: true
 # renovate: datasource=docker depName=ghcr.io/goauthentik/server
 authentik_version: "2026.5.6"
+# Database connection lifetime. The upstream default (0) closes the connection after EVERY
+# request: on this platform that was ~2 new TLS connections per second (12 363 in 70 min on
+# 2026-09-22), one per forwardAuth/API call, so any slowdown stacked fresh connections until the
+# shared cluster's ceiling (100) was hit and every route behind forwardAuth answered 500. With a
+# lifetime, each gunicorn thread keeps its connection: the footprint is bounded by
+# web workers × threads (2 × 4) + the worker (1 × 2) + the outposts, and the per-request TLS
+# handshake (CPU on both containers) disappears. Health checks drop a stale connection before reuse.
+authentik_pg_conn_max_age: 300
+authentik_pg_conn_health_checks: true
 authentik_ldap_image: "ghcr.io/goauthentik/ldap:{{ authentik_version }}"
 
 # LDAPS only — no cleartext 389. Dual-stack: Docker will not bind v6 on its own
