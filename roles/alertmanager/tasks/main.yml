@@ -32,6 +32,15 @@
     update_cache: true
     cache_valid_time: 3600
 
+- name: "Alertmanager | Notification templates → {{ alertmanager_templates_path }}"
+  ansible.builtin.copy:
+    src: alertmanager.tmpl
+    dest: "{{ alertmanager_templates_path }}"
+    owner: root
+    group: prometheus
+    mode: "0640"
+  notify: Restart alertmanager
+
 - name: "Alertmanager | Configuration ({{ alertmanager_config }}, secrets inside)"
   ansible.builtin.template:
     src: alertmanager.yml.j2

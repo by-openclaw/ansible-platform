@@ -7,9 +7,12 @@ global:
   smtp_auth_password: "{{ alertmanager_smtp.password }}"
   smtp_require_tls: true
 
+templates:
+  - "{{ alertmanager_templates_path }}"
+
 route:
   receiver: platform-ops
-  group_by: [alertname, instance]
+  group_by: {{ alertmanager_group_by | to_json }}
   group_wait: {{ alertmanager_group_wait }}
   group_interval: {{ alertmanager_group_interval }}
   repeat_interval: {{ alertmanager_repeat_interval }}
@@ -33,10 +36,11 @@ receivers:
       - to: "{{ alertmanager_to_address }}"
         send_resolved: true
         headers:
-          subject: '[{{ platform_domain }}] {{ "{{" }} .Status | toUpper {{ "}}" }} {{ "{{" }} .CommonLabels.alertname {{ "}}" }} {{ "{{" }} .CommonLabels.instance {{ "}}" }}'
+          subject: '[{{ platform_domain }}] {{ "{{" }} .Status | toUpper {{ "}}" }} {{ "{{" }} .CommonLabels.alertname {{ "}}" }} ({{ "{{" }} len .Alerts {{ "}}" }})'
 {% if alertmanager_discord_enabled | bool %}
     discord_configs:
       - webhook_url: "{{ alertmanager_discord.webhook }}"
         send_resolved: true
-        title: '{{ "{{" }} .Status | toUpper {{ "}}" }}: {{ "{{" }} .CommonLabels.alertname {{ "}}" }}'
+        title: '{{ "{{" }} template "platform.discord.title" . {{ "}}" }}'
+        message: '{{ "{{" }} template "platform.discord.message" . {{ "}}" }}'
 {% endif %}
