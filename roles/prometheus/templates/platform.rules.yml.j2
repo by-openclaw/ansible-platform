@@ -68,6 +68,33 @@ groups:
           summary: "Prometheus has no Alertmanager — alerts are not delivered"
           description: "Prometheus cannot reach its Alertmanager: rules still evaluate but nothing is sent by mail or to Discord. This alert reaches you only through the Prometheus UI or Grafana."
           runbook: "On lxc-monitoring-01: check the prometheus-alertmanager unit and its /-/ready endpoint, then the alertmanager role's last run."
+  - name: platform-database
+    rules:
+      - alert: PostgresConnectionsNearMax
+        expr: sum by (instance) (pg_stat_activity_count) / on (instance) pg_settings_max_connections > {{ prometheus_alert_pg_conn_warn_ratio }}
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "PostgreSQL on {{ '{{' }} $labels.instance {{ '}}' }} is at {{ '{{' }} $value | humanizePercentage {{ '}}' }} of its connection ceiling"
+          description: "The shared cluster is close to max_connections. When it is reached every service that needs a new connection fails at once — on 2026-09-22 that meant the identity provider losing its pool and every route behind it answering 500."
+          runbook: "Name the client before raising anything: the cluster logs connections, so count them per role in Loki (container postgres, lines 'connection authorized'). A role that opens a connection per request needs a lifetime or a bounded pool, not a higher ceiling."
+      - alert: PostgresConnectionsCritical
+        expr: sum by (instance) (pg_stat_activity_count) / on (instance) pg_settings_max_connections > {{ prometheus_alert_pg_conn_crit_ratio }}
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "PostgreSQL on {{ '{{' }} $labels.instance {{ '}}' }} is at {{ '{{' }} $value | humanizePercentage {{ '}}' }} of its connection ceiling"
+          description: "New connections are about to be refused ('remaining connection slots are reserved for roles with the SUPERUSER attribute'). Every service sharing this cluster is affected within seconds."
+          runbook: "Find the role holding the most backends (pg_stat_activity by usename) and stop its bleeding first — restart that service's pool, then fix its connection lifetime. Raising max_connections is the last resort, not the first."
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "PostgreSQL on {{ '{{' }} $labels.instance {{ '}}' }} does not answer its metrics scrape"
+          description: "The exporter cannot reach the cluster: either PostgreSQL is down, or the exporter's own credential stopped working. Every service with a database is affected."
+          runbook: "Check the container on the database host, then the exporter's credential in Vault ({{ platform_env | default('prod') }}/postgresql/exporter)."
+
   - name: platform-containers
     rules:
       - alert: ContainerRestarting

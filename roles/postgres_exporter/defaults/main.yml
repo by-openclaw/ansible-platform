@@ -1,0 +1,23 @@
+---
+# ==============================================================================
+# Role: postgres_exporter — Prometheus metrics for the shared PostgreSQL cluster.
+# On 2026-09-22 the cluster hit its connection ceiling twice and the first signal was every
+# service answering 500: nothing watched the database itself. The exporter runs as a container
+# beside PostgreSQL, reads through a least-privilege monitoring role (pg_monitor), and feeds
+# two alerts that fire on saturation, not on its consequences.
+# ==============================================================================
+postgres_exporter_image: "quay.io/prometheuscommunity/postgres-exporter:v0.19.0"   # exact pin, never :latest
+postgres_exporter_container_name: "postgres-exporter"
+postgres_exporter_port: 9187
+postgres_exporter_listen_ip: "{{ pg_listen_ip }}"          # same SVC address as the cluster
+postgres_exporter_db_user: "postgres_exporter"
+postgres_exporter_db_name: "postgres"
+postgres_exporter_vault_path: "{{ platform_env | default('prod') }}/postgresql/exporter"
+postgres_exporter_sslmode: "require"
+# The exporter runs with host networking and dials PostgreSQL on loopback: a container on the
+# docker bridge arrives as 172.x, which pg_hba does not admit — and widening pg_hba to the whole
+# bridge would let any container on this host reach any database. Least privilege wins.
+postgres_exporter_db_host: "127.0.0.1"
+# The exporter binds the host's SVC address (host networking), so the host firewall must admit
+# the scraper — exactly like node_exporter on :9100 (a missing rule showed up as TargetDown).
+postgres_exporter_scrapers: "{{ [hostvars[groups['monitoring'][0]].ansible_host] }}"

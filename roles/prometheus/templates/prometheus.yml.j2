@@ -41,6 +41,16 @@ scrape_configs:
           instance: "{{ h }}"
 {% endfor %}
 
+{% if prometheus_postgres_exporter_hosts | default([]) | length > 0 %}
+  - job_name: postgres
+    static_configs:
+{% for h in prometheus_postgres_exporter_hosts | sort %}
+      - targets: ['{{ hostvars[h].ansible_host }}:{{ prometheus_postgres_exporter_port }}']
+        labels:
+          instance: "{{ h }}"
+{% endfor %}
+{% endif %}
+
 {# --- synthetic probes through the local blackbox exporter ------------------------- #}
 {% macro blackbox_job(name, module, targets) %}
   - job_name: {{ name }}

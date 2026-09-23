@@ -8,3 +8,9 @@ host     all       all   ::1/128         scram-sha-256
 {% for cidr in pg_app_cidrs %}
 {{ pg_app_hba_type }}  all       all   {{ cidr }}      scram-sha-256
 {% endfor %}
+{% if pg_exporter_hba_user %}
+# Metrics only: PostgreSQL runs in a container, so a client on this host arrives as the docker
+# bridge gateway whatever address it dials. ONE user, ONE database, ONE address — the alternative
+# (opening the whole bridge) would let any container on this host reach any database.
+hostssl  {{ pg_exporter_hba_db }}  {{ pg_exporter_hba_user }}  {{ pg_exporter_hba_source }}  scram-sha-256
+{% endif %}
