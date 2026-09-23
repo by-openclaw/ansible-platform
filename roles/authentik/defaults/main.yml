@@ -123,7 +123,7 @@ authentik_oidc_apps:
       - "https://vpn.{{ platform_domain }}/auth"
       - "https://vpn.{{ platform_domain }}/silent-auth"
     redirect_uris_regex:
-      - "https://vpn\\.by-research\\.be/.*"
+      - "https://vpn\\.{{ platform_domain | replace('.', '\\.') }}/.*"
   - slug: mailcow
     launch_url: "https://mail.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/mailcow.svg"
@@ -140,7 +140,7 @@ authentik_oidc_apps:
       - "https://mail.{{ platform_domain }}/"
       - "https://mail.{{ platform_domain }}"
     redirect_uris_regex:
-      - "https://mail\\.by-research\\.be/.*"
+      - "https://mail\\.{{ platform_domain | replace('.', '\\.') }}/.*"
   - slug: pbs
     launch_url: "https://pbs.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/proxmox.svg"
@@ -152,7 +152,7 @@ authentik_oidc_apps:
     redirect_uris:
       - "https://pbs.{{ platform_domain }}"
     redirect_uris_regex:
-      - "https://pbs\\.by-research\\.be/.*"
+      - "https://pbs\\.{{ platform_domain | replace('.', '\\.') }}/.*"
   - slug: portainer
     launch_url: "https://portainer.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/portainer.svg"
@@ -239,7 +239,7 @@ authentik_oidc_apps:
       - "https://npm.{{ platform_domain }}/-/oauth/callback/authn"
       - "https://npm.{{ platform_domain }}/-/oauth/callback/cli"
   - slug: harbor
-    launch_url: "https://harbor.by-research.be"
+    launch_url: "https://harbor.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/harbor.svg"
     name: "Harbor"
     group: "harbor-users"           # ACCESS group — who may log in; harbor-admins (subset) become Harbor admins (oidc_admin_group)
@@ -247,7 +247,7 @@ authentik_oidc_apps:
     restrict_to_group: true         # IdP-enforced: only harbor-users can log in
     # Harbor's OIDC callback path.
     redirect_uris:
-      - "https://harbor.by-research.be/c/oidc/callback"
+      - "https://harbor.{{ platform_domain }}/c/oidc/callback"
 
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
@@ -369,9 +369,9 @@ authentik_ldap_container_port: 6636
 authentik_ldap_secret_file: "fabric/app-ldap-outpost.json"  # pragma: allowlist secret
 
 # --- LDAP outpost TLS = platform wildcard (synced from the Traefik host, tasks/ldap_cert.yml) ---
-authentik_ldap_cert_name: "wildcard-by-research"          # Authentik certificate-keypair name
+authentik_ldap_cert_name: "wildcard-{{ platform_org }}"          # Authentik certificate-keypair name
 authentik_ldap_provider_name: "ldap"                       # LDAP provider that must reference it
 authentik_ldap_cert_src_host: "lxc-traefik-01"
-authentik_ldap_cert_src_crt: "/etc/lego/cert/certificates/_.{{ platform_domain | default('by-research.be') }}.crt"
-authentik_ldap_cert_src_key: "/etc/lego/cert/certificates/_.{{ platform_domain | default('by-research.be') }}.key"
+authentik_ldap_cert_src_crt: "/etc/lego/cert/certificates/_.{{ platform_domain }}.crt"
+authentik_ldap_cert_src_key: "/etc/lego/cert/certificates/_.{{ platform_domain }}.key"
 authentik_ldap_container_name: "authentik-ldap"   # outpost container (tasks/ldap.yml)

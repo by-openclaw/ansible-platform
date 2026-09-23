@@ -14,7 +14,7 @@
   become: true
   gather_facts: false
   vars:
-    mailboxes_default_delegates: ["adm_yboujraf@{{ platform_domain | default('by-research.be') }}"]
+    mailboxes_default_delegates: ["adm_yboujraf@{{ platform_domain }}"]
     mailboxes_services:
       # Pre-existing boxes, CONVERGED 2026-09-01: Vault prod/mail/{svc} was
       # seeded with their EXISTING passwords first, so nothing is re-minted —
@@ -75,7 +75,7 @@
         body_format: json
         body:
           local_part: "adm_yboujraf"
-          domain: "{{ platform_domain | default('by-research.be') }}"
+          domain: "{{ platform_domain }}"
           name: "Yassine Boujraf (admin)"
           password: "{{ mailboxes_adm_pw }}"
           password2: "{{ mailboxes_adm_pw }}"
@@ -97,7 +97,7 @@
         C=$(docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -iE 'mysql|mariadb' | head -1)
         P=$(grep -oP 'DBROOT=\K.*' /opt/mailcow-dockerized/mailcow.conf)
         docker exec "$C" mysql -u root -p"$P" mailcow -N -e           "UPDATE mailbox SET authsource='generic-oidc'
-           WHERE username='adm_yboujraf@{{ platform_domain | default('by-research.be') }}'
+           WHERE username='adm_yboujraf@{{ platform_domain }}'
            AND authsource <> 'generic-oidc'; SELECT ROW_COUNT();" | tail -1
       args: { executable: /bin/bash }
       register: mailboxes_adm_sso
@@ -130,8 +130,8 @@
         headers: "{{ mailboxes_api_hdr }}"
         body_format: json
         body:
-          address: "@{{ platform_domain | default('by-research.be') }}"
-          goto: "postmaster@{{ platform_domain | default('by-research.be') }}"
+          address: "@{{ platform_domain }}"
+          goto: "postmaster@{{ platform_domain }}"
           active: "1"
         validate_certs: false
         status_code: [200]
