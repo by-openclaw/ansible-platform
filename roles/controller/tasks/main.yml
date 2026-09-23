@@ -1,0 +1,119 @@
+---
+# The controller is a workstation: root here belongs to the person, not to automation. Probe
+# first and skip the root-only work with a clear instruction rather than hanging on a prompt.
+- name: "Controller | Can this play become root without a prompt?"
+  ansible.builtin.command: "sudo -n true"
+  register: controller_sudo
+  changed_when: false
+  failed_when: false
+  check_mode: false  # read-only probe: must run under --check too (the tasks below read its result)
+
+- name: "Controller | Root-only: route + name pin"
+  when: controller_sudo.rc == 0
+  block:
+    - name: "Controller | Route the platform's service zones through the firewall (netplan drop-in)"
+      ansible.builtin.copy:
+        dest: "{{ controller_netplan_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # Managed by ansible (controller role) — the automation controller reaches the platform's
+          # service zones through the firewall's OOB address, so Vault's API needs no SSH hop.
+          network:
+            version: 2
+            ethernets:
+              {{ controller_netplan_interface }}:
+                routes:
+          {% for net in controller_route_networks %}
+                  - to: {{ net }}
+                    via: {{ controller_route_gateway }}
+          {% endfor %}
+      become: true
+      register: controller_route_file
+      when: controller_manage_route | bool
+
+    - name: "Controller | Apply the route (netplan)"
+      ansible.builtin.command: netplan apply
+      become: true
+      changed_when: true
+      when:
+        - controller_manage_route | bool
+        - controller_route_file.changed
+
+    - name: "Controller | Pin Vault's name to its address (no dependency on the platform resolver)"
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '\s{{ groups["vault"][0] }}(\.|\s|$)'
+        line: "{{ hostvars[groups['vault'][0]].ansible_host }} {{ groups['vault'][0] }}.{{ platform_domain }} {{ groups['vault'][0] }}"
+        state: present
+      become: true
+      when: controller_vault_hosts_entry | bool
+
+- name: "Controller | Is Vault's API reachable directly (no SSH hop)?"
+  ansible.builtin.uri:
+    url: "{{ controller_vault_addr }}/v1/sys/health"
+    status_code: [200, 429, 472, 473, 501, 503]
+    validate_certs: false
+    timeout: 5
+  register: controller_vault_health
+  failed_when: false
+  check_mode: false  # read-only probe: must run under --check too (the report reads its result)
+
+# --- The agent as a user service ---------------------------------------------------------------
+# Installed and enabled, never started on top of a running agent: they would fight over the same
+# socket and the keys currently loaded would vanish mid-play. The switch happens at the next boot,
+# or on demand with -e controller_agent_switch=true (reload the keys right after: ssh-agent.yml).
+- name: "Controller | Linger, so the user service runs without a desktop session"
+  ansible.builtin.command: "loginctl enable-linger {{ ansible_user_id }}"
+  register: controller_linger
+  changed_when: false
+  failed_when: false
+
+- name: "Controller | The agent's unit directory"
+  ansible.builtin.file:
+    path: "{{ controller_agent_unit_dir }}"
+    state: directory
+    mode: "0700"
+  when: controller_manage_agent_service | bool
+
+- name: "Controller | SSH agent user unit"
+  ansible.builtin.template:
+    src: ssh-agent.service.j2
+    dest: "{{ controller_agent_unit_dir }}/ssh-agent.service"
+    mode: "0644"
+  register: controller_agent_unit
+  when: controller_manage_agent_service | bool
+
+- name: "Controller | Enable the agent service (start at boot)"
+  ansible.builtin.systemd_service:
+    name: ssh-agent
+    scope: user
+    enabled: true
+    daemon_reload: true
+  when:
+    - controller_manage_agent_service | bool
+    - not ansible_check_mode
+
+- name: "Controller | Take the socket over now (explicit: the keys must be reloaded after)"
+  ansible.builtin.systemd_service:
+    name: ssh-agent
+    scope: user
+    state: restarted
+  when:
+    - controller_manage_agent_service | bool
+    - controller_agent_switch | default(false) | bool
+    - not ansible_check_mode
+
+- name: "Controller | Report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'route ' ~ (controller_route_networks | join(', ')) ~ ' via ' ~ controller_route_gateway ~ ' managed'
+         if controller_sudo.rc == 0
+         else 'ROUTE NOT APPLIED — root is required on this workstation. Run once:
+               ansible-playbook -i inventories/prod/hosts.yml playbooks/controller.yml -K' }};
+      Vault API {{ controller_vault_addr }} ->
+      {{ controller_vault_health.status | default('unreachable (still via the SSH hop)') }};
+      agent unit installed + enabled on {{ controller_agent_socket }}
+      {{ '(socket taken over now)' if controller_agent_switch | default(false) | bool
+         else '(takes over at the next boot; reload the keys with playbooks/ssh-agent.yml)' }}.
