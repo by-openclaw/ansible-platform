@@ -1,6 +1,7 @@
 # Managed by ansible (seaweedfs role) — do not edit by hand.
-# Local auth DISABLED (no -adminPassword): access is gated by Authentik forwardAuth
-# at Traefik (seaweedfs-admins group). The FW permits ONLY Traefik -> :{{ seaweedfs_admin_port }}.
+# Access is gated by Authentik forwardAuth at Traefik ({{ seaweedfs_admin_group }} group); the FW
+# permits ONLY Traefik -> :{{ seaweedfs_admin_port }}. Since SeaweedFS 4.47 the admin binds a
+# non-loopback address only with a local credential (from {{ seaweedfs_admin_env_file }}, Vault-minted).
 [Unit]
 Description=SeaweedFS web admin dashboard (Authentik-gated via Traefik)
 After=seaweedfs.service network-online.target
@@ -10,10 +11,14 @@ Wants=seaweedfs.service
 Type=simple
 User={{ seaweedfs_user }}
 Group={{ seaweedfs_group }}
+EnvironmentFile={{ seaweedfs_admin_env_file }}
 ExecStart={{ seaweedfs_bin }} admin \
+  -ip={{ seaweedfs_ip }} \
   -port={{ seaweedfs_admin_port }} \
   -master=localhost:{{ seaweedfs_master_port }} \
-  -dataDir={{ seaweedfs_admin_data_dir }}
+  -dataDir={{ seaweedfs_admin_data_dir }} \
+  -adminUser=${SEAWEEDFS_ADMIN_USER} \
+  -adminPassword=${SEAWEEDFS_ADMIN_PASSWORD}
 Restart=on-failure
 RestartSec=5
 
