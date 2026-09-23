@@ -51,3 +51,10 @@ Merge rules (ADR-0019):
 - @yboujraf is sole merge authority
 - No force-push to main — ever
 -->
+
+## Evidence
+
+<!-- A change to a shared role reaches every play that includes it. Do not validate a sample:
+     scripts/impacted_plays.py            # lists every play this diff can break
+     …then dry-run that whole set (--check) and paste the result here.
+     Skipping this is how #519 (93 files, 8 plays proven) broke the firewall play fixed in #520. -->

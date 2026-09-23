@@ -123,6 +123,7 @@ All 71 playbooks in this repo, grouped by scope. Each runs against `inventories/
 
 | Playbook | Flow |
 |---|---|
+| `scripts/impacted_plays.py` | Not a playbook — the pre-PR gate. Prints every play a diff can reach (roles transitively, through meta/dependencies and include_role/import_role, plus playbooks and inventories touched directly). Dry-run that whole set before opening a PR: validating a sample is how a 93-file sweep broke a play nobody re-ran. |
 | `register.yml` | Platform service register — renders docs/register.md from inventories/prod/group_vars/all/services.yml (one row per service: role/playbook, host, FQDN, exposure class, SSO, DB, pinned version = live, backup, monitoring, owner from people.yml `platform_owner`, vendor docs, docs page, tuning-pass parts, NIS2 placeholder). Controller only, changes nothing on any host. Run after every service change; the audit reads this table. |
 | `contract-audit.yml` | Playbook: contract-audit.yml — score every host against the ADR contract (docs/audits/adr-compliance-checklist.md) via the read-only, idempotent contract_audit role. Changes nothin |
 | `monitoring.yml` | Monitoring stack on lxc-monitoring-01 (SVC 10.1.3.230): - Prometheus (metrics TSDB + scraper; small local TSDB, 15d) - Loki       (logs; chunks + index in SeaweedFS S3) |
