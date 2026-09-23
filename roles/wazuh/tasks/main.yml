@@ -411,13 +411,13 @@
         from_ip: "{{ item.from }}"
         comment: "Wazuh {{ item.what }}"
       loop:
-        - { port: "{{ wazuh_agent_port }}", from: "10.1.0.0/16", what: agents }
-        - { port: "{{ wazuh_agent_port }}", from: "fd01::/16", what: agents v6 }
-        - { port: "{{ wazuh_enrol_port }}", from: "10.1.0.0/16", what: enrolment }
-        - { port: "{{ wazuh_enrol_port }}", from: "fd01::/16", what: enrolment v6 }
-        - { port: "{{ wazuh_dashboard_port }}", from: "10.1.0.0/16", what: dashboard }
-        - { port: "{{ wazuh_dashboard_port }}", from: "fd01::/16", what: dashboard v6 }
-        - { port: "{{ wazuh_dashboard_port }}", from: "100.64.0.0/10", what: dashboard VPN }
+        - { port: "{{ wazuh_agent_port }}", from: "{{ platform_internal_cidr4 }}", what: agents }
+        - { port: "{{ wazuh_agent_port }}", from: "{{ platform_internal_cidr6 }}", what: agents v6 }
+        - { port: "{{ wazuh_enrol_port }}", from: "{{ platform_internal_cidr4 }}", what: enrolment }
+        - { port: "{{ wazuh_enrol_port }}", from: "{{ platform_internal_cidr6 }}", what: enrolment v6 }
+        - { port: "{{ wazuh_dashboard_port }}", from: "{{ platform_internal_cidr4 }}", what: dashboard }
+        - { port: "{{ wazuh_dashboard_port }}", from: "{{ platform_internal_cidr6 }}", what: dashboard v6 }
+        - { port: "{{ wazuh_dashboard_port }}", from: "{{ platform_vpn_cidr }}", what: dashboard VPN }
       loop_control:
         label: "{{ item.what }} {{ item.port }}"
       failed_when: false
