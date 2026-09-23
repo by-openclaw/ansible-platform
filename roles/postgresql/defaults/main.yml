@@ -57,6 +57,12 @@ pg_ssl_min_version: "TLSv1.2"   # reject TLS < 1.2 at the server (every DB clien
 pg_ssl_cert: "{{ pg_cert_host_dir }}/wildcard.crt"
 pg_ssl_key: "{{ pg_cert_host_dir }}/wildcard.key"
 pg_app_hba_type: "hostssl"
+# The metrics exporter (roles/postgres_exporter) reaches the cluster from this host; because
+# PostgreSQL is containerised its client address is the docker bridge gateway. Scoped to the
+# exporter's own role and the postgres database, TLS enforced. Empty user = line not rendered.
+pg_exporter_hba_user: "postgres_exporter"
+pg_exporter_hba_db: "postgres"
+pg_exporter_hba_source: "172.17.0.1/32"
 
 # Controller-side secret store.
 pg_secret_dir: "~/.openclaw/workspace/infra/secrets"

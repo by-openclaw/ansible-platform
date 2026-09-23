@@ -20,6 +20,11 @@ prometheus_node_groups:
 # Per-container metrics (roles/cadvisor) on every Docker host
 prometheus_cadvisor_group: docker_hosts
 prometheus_cadvisor_port: 9180
+# Shared PostgreSQL metrics (roles/postgres_exporter on the database host): saturation of the
+# cluster every service depends on. 2026-09-22 showed the symptom (500s everywhere) long before
+# anyone could see the cause.
+prometheus_postgres_exporter_port: 9187
+prometheus_postgres_exporter_hosts: ["lxc-pgsql-01"]
 # Bind to localhost only — Grafana is co-located and Traefik/edge (if any) fronts it.
 prometheus_listen: "127.0.0.1"
 
@@ -70,3 +75,5 @@ prometheus_alert_cert_warn_days: 14
 prometheus_alert_cert_crit_days: 5
 prometheus_alert_disk_free_ratio: 0.10
 prometheus_alert_mem_free_ratio: 0.05
+prometheus_alert_pg_conn_warn_ratio: 0.80    # backends / max_connections
+prometheus_alert_pg_conn_crit_ratio: 0.95

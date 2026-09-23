@@ -1,0 +1,88 @@
+---
+- name: "PG exporter | Monitoring credential (get-or-create in Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ postgres_exporter_vault_path }}"
+    vault_secret_init:
+      username: "{{ postgres_exporter_db_user }}"
+      password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+      _note: "postgres_exporter login (roles/postgres_exporter) — pg_monitor only, no data access"
+
+- name: "PG exporter | Bind the credential"
+  ansible.builtin.set_fact:
+    postgres_exporter_password: "{{ vault_secret_result.password }}"
+  no_log: true
+  when: vault_secret_result.password is defined
+
+- name: "PG exporter | The monitoring role exists, with pg_monitor only"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ pg_container_name }} psql -tAU postgres -d postgres -c
+      "DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{{ postgres_exporter_db_user }}') THEN
+           CREATE ROLE {{ postgres_exporter_db_user }} LOGIN PASSWORD '{{ postgres_exporter_password }}';
+         ELSE
+           ALTER ROLE {{ postgres_exporter_db_user }} LOGIN PASSWORD '{{ postgres_exporter_password }}';
+         END IF;
+         GRANT pg_monitor TO {{ postgres_exporter_db_user }};
+       END $$;"
+  register: postgres_exporter_role
+  changed_when: false     # the statement is idempotent; the password is the one Vault holds
+  no_log: true
+  when: postgres_exporter_password is defined and not ansible_check_mode
+
+- name: "PG exporter | Run the exporter container (pinned)"
+  community.docker.docker_container:
+    name: "{{ postgres_exporter_container_name }}"
+    image: "{{ postgres_exporter_image }}"
+    state: started
+    restart_policy: unless-stopped
+    network_mode: host
+    command:
+      - "--web.listen-address={{ postgres_exporter_listen_ip }}:{{ postgres_exporter_port }}"
+    env:
+      DATA_SOURCE_NAME: >-
+        postgresql://{{ postgres_exporter_db_user }}:{{ postgres_exporter_password }}@{{ postgres_exporter_db_host }}:{{ pg_port
+        }}/{{ postgres_exporter_db_name }}?sslmode={{ postgres_exporter_sslmode }}
+  no_log: true
+  when: postgres_exporter_password is defined
+
+- name: "PG exporter | ufw present?"
+  ansible.builtin.stat:
+    path: /usr/sbin/ufw
+  register: postgres_exporter_ufw
+
+- name: "PG exporter | Admit the scraper when ufw is active (port {{ postgres_exporter_port }})"
+  community.general.ufw:
+    rule: allow
+    port: "{{ postgres_exporter_port }}"
+    proto: tcp
+    from_ip: "{{ item }}"
+    comment: "Prometheus postgres exporter scrape"
+  loop: "{{ postgres_exporter_scrapers }}"
+  become: true
+  when: postgres_exporter_ufw.stat.exists
+  failed_when: false
+
+- name: "PG exporter | It answers with DATABASE metrics (not just its own runtime)"
+  ansible.builtin.uri:
+    url: "http://{{ postgres_exporter_listen_ip }}:{{ postgres_exporter_port }}/metrics"
+    return_content: true
+    status_code: [200]
+  register: postgres_exporter_probe
+  retries: 10
+  delay: 3
+  until:
+    - postgres_exporter_probe.status | default(0) == 200
+    - "'pg_up 1' in (postgres_exporter_probe.content | default(''))"
+  check_mode: false  # read-only probe: must run under --check too (the report reads its result)
+  when: not ansible_check_mode
+
+- name: "PG exporter | Report"
+  ansible.builtin.debug:
+    msg: >-
+      postgres_exporter on {{ postgres_exporter_listen_ip }}:{{ postgres_exporter_port }}
+      ({{ postgres_exporter_image }}), role {{ postgres_exporter_db_user }} with pg_monitor;
+      metrics {{ postgres_exporter_probe.status | default('not probed (check mode)') }},
+      database connection {{ 'up' if "'pg_up 1'" and ('pg_up 1' in (postgres_exporter_probe.content | default(''))) else 'NOT established' }}.
