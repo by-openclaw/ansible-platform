@@ -27,6 +27,7 @@
   ansible.builtin.command:
     cmd: "docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }} vault auth list -format=json"
   register: vault_auth_list
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   no_log: true
 
@@ -41,6 +42,7 @@
   ansible.builtin.command:
     cmd: "docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }} vault auth list -format=json"
   register: vault_auth_list2
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   no_log: true
 
@@ -86,6 +88,7 @@
       docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
       vault read -format=json identity/group/name/{{ vault_oidc_admin_group }}
   register: vault_group_read
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   no_log: true
 

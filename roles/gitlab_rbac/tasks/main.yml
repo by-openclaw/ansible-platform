@@ -25,6 +25,7 @@
   delegate_to: lxc-vault-01
   become: true
   register: gitlab_rbac_webhook_get
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   no_log: true
   loop: "{{ gitlab_rbac_integrations }}"
@@ -73,6 +74,7 @@
   loop: "{{ gitlab_rbac_key_people }}"
   loop_control: { label: "{{ item.username }}" }
   register: gitlab_rbac_keyreads
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
   no_log: true

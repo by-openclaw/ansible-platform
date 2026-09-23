@@ -20,6 +20,7 @@
   ansible.builtin.command:
     argv: [pve-firewall, compile]
   register: pve_host_fw_compile
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: pve_host_fw_compile.rc != 0 or ('error' in pve_host_fw_compile.stderr | lower)
   when: not ansible_check_mode

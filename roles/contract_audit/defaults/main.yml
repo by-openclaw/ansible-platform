@@ -74,10 +74,10 @@ contract_audit_checks:
 
   # --- identity naming (naming/0002 §3) — no human/non-svc login accounts -----
   - id: NAM-15
-    desc: "No ad-hoc human login accounts (uid>=1000) beyond by-research + svc-*"
+    desc: "No ad-hoc human login accounts (uid>=1000) beyond {{ platform_org }} + svc-*"
     probe: >-
       awk -F: '$3>=1000 && $3<65534 && $1!="nobody" && $7!~/(nologin|false)$/{print $1}' /etc/passwd
-      | grep -vE '^(by-research|svc-[a-z0-9-]+)$' | tr '\n' ' ' || true
+      | grep -vE '^({{ platform_org }}|svc-[a-z0-9-]+)$' | tr '\n' ' ' || true
     expect: "^\\s*$"
 
   # SEC-30 (step-ca root CA in every trust store) is deferred to v2 — step-ca is

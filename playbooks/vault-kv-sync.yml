@@ -45,6 +45,7 @@
       ansible.builtin.command:
         cmd: "docker exec -e VAULT_TOKEN={{ vault_root_token }} {{ vault_container_name }} vault kv get -mount={{ vault_kv_path }} -format=json {{ item.path }}"
       register: vault_get
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
       failed_when: false
       no_log: true

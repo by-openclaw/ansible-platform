@@ -42,6 +42,7 @@
       docker exec -e VAULT_TOKEN="$(cat {{ vault_backup_token_file }})"
       {{ vault_container_name }} vault token lookup >/dev/null 2>&1 && echo valid || echo invalid
   register: _tok_valid
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   when: _tok_stat.stat.exists
   no_log: true

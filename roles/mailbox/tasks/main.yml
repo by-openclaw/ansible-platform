@@ -44,6 +44,8 @@
   delegate_to: "{{ mailbox_mailcow_host }}"
   become: true
   block:
+    # NO check_mode here: this POST CREATES the mailbox. Its changed_when: false is wrong
+    # (mailcow answers 200 either way) — tracked in #518; a dry-run must never create one.
     - name: "Mailbox | Create the mailbox — {{ mailbox_address }}"
       ansible.builtin.uri:
         url: "{{ mailbox_api }}/add/mailbox"

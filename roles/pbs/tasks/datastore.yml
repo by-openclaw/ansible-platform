@@ -19,6 +19,7 @@
 - name: "Datastore | List existing S3 endpoints"
   ansible.builtin.command: "proxmox-backup-manager s3 endpoint list --output-format json"
   register: pbs_s3_ep_list
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
 - name: "Datastore | Create the SeaweedFS S3 endpoint"
@@ -60,6 +61,7 @@
 - name: "Datastore | List existing datastores"
   ansible.builtin.command: "proxmox-backup-manager datastore list --output-format json"
   register: pbs_ds_list
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
 - name: "Datastore | Create the S3-backed datastore ({{ pbs_datastore_name }})"

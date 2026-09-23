@@ -20,6 +20,7 @@
     - name: "Docker-logs | Is docker present? (docker-ce or docker.io paths)"  # noqa: command-instead-of-module
       ansible.builtin.command: systemctl is-enabled docker
       register: dockerlog_dockerd_probe
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
       failed_when: false
 
@@ -89,6 +90,7 @@
             docker ps --format '{{ '{{' }}.Status{{ '}}' }}' | grep -cE '^Up' || true
           args: { executable: /bin/bash }
           register: dockerlog_up
+          check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
           changed_when: false
           when: dockerlog_changed | bool
 

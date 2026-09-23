@@ -46,6 +46,7 @@
     CA=$(kubectl -n {{ ns.name }} get secret gitlab-deployer-token -o jsonpath='{.data.ca\.crt}')
     printf '%s %s' "$T" "$CA"
   register: k3s_ns_token
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   no_log: true
 

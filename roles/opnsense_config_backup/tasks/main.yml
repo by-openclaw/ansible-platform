@@ -8,12 +8,14 @@
     name: age
     state: present
 
+# NO check_mode here: this creates key material, and it is only used when Vault holds none.
 - name: "FW backup | Generate a candidate age keypair (used only if Vault has none)"
   ansible.builtin.command: age-keygen
   register: opnsense_config_backup_keygen
   changed_when: false
   no_log: true
 
+# NO check_mode here: this creates key material, and it is only used when Vault holds none.
 - name: "FW backup | Get-or-create the age keypair in Vault (private key lives ONLY there)"
   ansible.builtin.include_role:
     name: vault_secret

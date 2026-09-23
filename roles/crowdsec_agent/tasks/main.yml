@@ -49,12 +49,14 @@
   ansible.builtin.command:
     cmd: awk '/^url:/{print $2}' /etc/crowdsec/local_api_credentials.yaml
   register: crowdsec_agent_current_url
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
 
 - name: "Crowdsec_agent | Check whether the agent can reach that LAPI"
   ansible.builtin.command: cscli lapi status
   register: crowdsec_agent_status
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
 
@@ -156,6 +158,7 @@
   ansible.builtin.command:
     cmd: crowdsec -t -c /etc/crowdsec/config.yaml
   register: crowdsec_agent_cfg_test
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
   when: not ansible_check_mode
@@ -236,6 +239,7 @@
   ansible.builtin.command:
     cmd: awk '/^url:/{print $2}' /etc/crowdsec/local_api_credentials.yaml
   register: crowdsec_agent_final_url
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
   when: not ansible_check_mode
@@ -244,6 +248,7 @@
   ansible.builtin.command:
     cmd: cscli lapi status
   register: crowdsec_agent_lapi_status
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
   retries: 6

@@ -23,6 +23,7 @@
   delegate_to: "{{ gitlab_runner_vault_host }}"
   become: true
   register: gitlab_runner_token_get
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
   no_log: true
@@ -144,5 +145,6 @@
 - name: "Runner | Verify the runner is registered/verified against GitLab"
   ansible.builtin.command: gitlab-runner verify
   register: gitlab_runner_verify
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: "'is alive' not in gitlab_runner_verify.stdout and 'Verifying' not in gitlab_runner_verify.stdout and gitlab_runner_verify.rc != 0"

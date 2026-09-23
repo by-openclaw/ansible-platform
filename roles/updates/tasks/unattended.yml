@@ -54,6 +54,7 @@
   ansible.builtin.command:
     cmd: unattended-upgrades --dry-run --debug
   register: updates_unattended_check
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: updates_unattended_check.rc != 0
   when: not ansible_check_mode

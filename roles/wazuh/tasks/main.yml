@@ -183,6 +183,7 @@
         validate_certs: false
         status_code: [200, 401, 503]
       register: wazuh_idx_listen
+      check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
       retries: 40
       delay: 6
       until: wazuh_idx_listen.status in [200, 401, 503]
@@ -235,6 +236,7 @@
         status_code: [200]
         return_content: true
       register: wazuh_idx
+      check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
       retries: 40
       delay: 6
       until: wazuh_idx.status == 200 and (wazuh_idx.json.status in ['green', 'yellow'])
@@ -246,6 +248,7 @@
         url: "http://{{ wazuh_listen_ip }}:{{ wazuh_dashboard_port }}/api/status"
         status_code: [200, 302, 401]
       register: wazuh_dash
+      check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
       retries: 40
       delay: 6
       until: wazuh_dash.status in [200, 302, 401]
@@ -257,6 +260,7 @@
         validate_certs: false
         status_code: [200, 401]
       register: wazuh_api
+      check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
       retries: 20
       delay: 6
       until: wazuh_api.status in [200, 401]
@@ -284,6 +288,7 @@
         validate_certs: false
         return_content: true
       register: wazuh_api_rules
+      check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
       when: not ansible_check_mode
       no_log: true
 
@@ -329,6 +334,7 @@
         validate_certs: false
         return_content: true
       register: wazuh_api_admin_role
+      check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
       when: not ansible_check_mode
       no_log: true
 
@@ -373,6 +379,7 @@
         validate_certs: false
         return_content: true
       register: wazuh_api_runas_pol
+      check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
       failed_when: (wazuh_api_runas_pol.json.data | default({})) | length == 0
       when: not ansible_check_mode
       no_log: true
@@ -383,6 +390,7 @@
       ansible.builtin.command:
         argv: [docker, exec, "{{ wazuh_manager_container }}", /var/ossec/bin/agent_groups, -l]
       register: wazuh_groups_now
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
       when: not ansible_check_mode
 

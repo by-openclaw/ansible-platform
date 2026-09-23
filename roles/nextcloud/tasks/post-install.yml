@@ -66,6 +66,7 @@
   ansible.builtin.command:
     cmd: docker exec -u www-data nextcloud php occ app:list --output=json
   register: nextcloud_app_list
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
 - name: "post-install | Parse enabled + disabled apps"
@@ -267,6 +268,7 @@
   ansible.builtin.command:
     cmd: docker exec -u www-data nextcloud php occ user:list --output=json
   register: nextcloud_user_list
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
 - name: "post-install | Apply the quota to existing users"
@@ -304,6 +306,7 @@
   ansible.builtin.command:
     cmd: docker exec -u www-data nextcloud php occ config:system:get objectstore class
   register: nextcloud_objectstore
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: "'S3' not in nextcloud_objectstore.stdout"
 
@@ -311,5 +314,6 @@
   ansible.builtin.command:
     cmd: docker exec -u www-data nextcloud php occ config:system:get memcache.locking
   register: nextcloud_locking
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: "'Redis' not in nextcloud_locking.stdout"

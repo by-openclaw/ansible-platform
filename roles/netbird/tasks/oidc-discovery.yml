@@ -10,7 +10,7 @@
 - name: "oidc-discovery | Pin authentik to Traefik in /etc/hosts (internal resolve)"
   ansible.builtin.lineinfile:
     path: /etc/hosts
-    regexp: '\s authentik\.by-research\.be$'
+    regexp: '\s authentik\.{{ platform_domain | replace(".", "\\.") }}$'
     line: "{{ netbird_traefik_ip }} authentik.{{ platform_domain }}"
     state: present
 
@@ -22,6 +22,7 @@
     status_code: [200]
     validate_certs: true
   register: netbird_oidc_disco
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   retries: 10
   delay: 3
   until: netbird_oidc_disco.status == 200

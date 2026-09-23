@@ -96,6 +96,7 @@
     argv: [docker, exec, -e, "MYSQL_PWD={{ mailcow_dbroot }}", "{{ mailcow_mysql_container }}",
            mysql, -uroot, mailcow, -N, -e, "SELECT password FROM admin WHERE username='admin';"]
   register: mailcow_admin_hash
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   no_log: true
 

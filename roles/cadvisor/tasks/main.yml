@@ -64,6 +64,7 @@
     url: "http://{{ cadvisor_listen_ip }}:{{ cadvisor_port }}/healthz"
     status_code: [200]
   register: cadvisor_health
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   retries: 10
   delay: 3
   until: cadvisor_health.status == 200

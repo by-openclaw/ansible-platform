@@ -76,6 +76,7 @@
     validate_certs: false
     status_code: [200]
   register: step_ca_health
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   retries: 30
   delay: 3
   until: step_ca_health.status == 200
@@ -86,6 +87,7 @@
     container: step-ca
     command: step certificate fingerprint /home/step/certs/root_ca.crt
   register: step_ca_fp
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
 - name: "Step-ca | Persist the root fingerprint in Vault (get-or-create)"

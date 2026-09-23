@@ -43,6 +43,7 @@
         url: "{{ gpa_api }}/projects/{{ gpa_src | replace('/', '%2F') }}"
         headers: { PRIVATE-TOKEN: "{{ gpa_token }}" }
       register: gpa_proj
+      check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
       no_log: true
 
     - name: "Archive | Trigger export"
@@ -58,6 +59,7 @@
         url: "{{ gpa_api }}/projects/{{ gpa_proj.json.id }}/export"
         headers: { PRIVATE-TOKEN: "{{ gpa_token }}" }
       register: gpa_exp
+      check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
       until: gpa_exp.json.export_status == 'finished'
       retries: 30
       delay: 5
@@ -140,6 +142,7 @@
         url: "{{ gpa_api }}/projects/{{ (gpa_namespace ~ '/' ~ gpa_restore_path) | replace('/', '%2F') }}"
         headers: { PRIVATE-TOKEN: "{{ gpa_token }}" }
       register: gpa_imp
+      check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
       until: gpa_imp.json.import_status == 'finished'
       retries: 60
       delay: 5
@@ -150,6 +153,7 @@
         url: "{{ gpa_api }}/projects/{{ gpa_imp.json.id }}/repository/tree"
         headers: { PRIVATE-TOKEN: "{{ gpa_token }}" }
       register: gpa_tree
+      check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
       no_log: true
 
     - name: "Restore | Result"

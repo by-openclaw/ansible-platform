@@ -3,6 +3,7 @@
   ansible.builtin.command:
     cmd: "zfs list -H -o name {{ item.dataset }}"
   register: pve_zfs_mount_exists
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
   loop: "{{ pve_zfs_mount_items }}"
@@ -31,6 +32,7 @@
   ansible.builtin.command:
     cmd: "zfs get -H -o value mountpoint {{ item.dataset }}"
   register: pve_zfs_mount_mp
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   loop: "{{ pve_zfs_mount_items }}"
   loop_control:
@@ -56,6 +58,7 @@
   ansible.builtin.command:
     cmd: "pct config {{ item.vmid }}"
   register: pve_zfs_mount_cfg
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   loop: "{{ pve_zfs_mount_items }}"
   loop_control:

@@ -126,12 +126,12 @@
         opnsense_monitchk_smtp:
           # Asset FQDN, not mail. (which split-DNS maps to Traefik / public IP;
           # SMTP is NOT proxied). Wildcard cert *.{domain} covers it -> TLS verify stays ON.
-          smtp_host: "vm-mailcow-01.{{ platform_mail_domain | default(platform_domain | default('by-research.be')) }}"
+          smtp_host: "vm-mailcow-01.{{ platform_mail_domain | default(platform_domain) }}"
           smtp_port: "{{ vault_secret_result.smtp_port }}"
           smtp_username: "{{ vault_secret_result.address }}"
           smtp_password: "{{ vault_secret_result.password }}"
           from_address: "{{ vault_secret_result.address }}"
-          to_address: "alerts@{{ platform_mail_domain | default(platform_domain | default('by-research.be')) }}"
+          to_address: "alerts@{{ platform_mail_domain | default(platform_domain) }}"
       delegate_to: "{{ item }}"
       delegate_facts: true
       loop: "{{ groups['opnsense'] }}"
@@ -164,7 +164,7 @@
         vault_secret_path: >-
           {{ (hostvars[groups['opnsense'][0]].opn_acme | default({})).zone_secret
              | default((platform_env | default('prod')) ~ '/cloudflare/'
-                       ~ (platform_mail_domain | default(platform_domain | default('by-research.be')) | replace('.', '-'))) }}
+                       ~ (platform_mail_domain | default(platform_domain) | replace('.', '-'))) }}
         vault_secret_init: {}
       tags: [acme, certs, dyndns, dns]
       when:

@@ -86,6 +86,7 @@
   delegate_to: lxc-vault-01
   become: true
   register: verdaccio_oidc_get
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: verdaccio_oidc_get.rc != 0
   no_log: true
@@ -156,6 +157,7 @@
     url: "http://{{ verdaccio_listen_ip }}:{{ verdaccio_port }}/-/ping"
     status_code: [200]
   register: verdaccio_ping
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   retries: 20
   delay: 3
   until: verdaccio_ping.status == 200

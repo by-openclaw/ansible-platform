@@ -88,6 +88,7 @@
     url: "http://127.0.0.1:{{ crowdsec_lapi_port }}/health"
     status_code: [200, 401, 403]
   register: crowdsec_lapi_health
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   retries: 12
   delay: 5
   until: crowdsec_lapi_health.status in [200, 401, 403]

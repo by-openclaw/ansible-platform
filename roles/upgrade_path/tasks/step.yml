@@ -52,6 +52,7 @@
   ansible.builtin.shell:
     cmd: "{{ upgrade_path_verify_cmd }}"
   register: upgrade_path_verify_result
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: upgrade_path_verify_result.rc != 0
   when: upgrade_path_verify_cmd | length > 0
@@ -61,6 +62,7 @@
   ansible.builtin.shell:
     cmd: "{{ upgrade_path_current_cmd }}"
   register: upgrade_path_after
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
 - name: "Upgrade_path | Stop the climb if it did not land — {{ upgrade_path_step.version }}"

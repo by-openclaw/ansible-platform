@@ -15,9 +15,20 @@
 - name: "SecAudit | OS CVE / update posture"
   ansible.builtin.import_tasks: os.yml
 
+# Not every host runs containers (the resolver, the reverse proxy and the appliances are native):
+# probe first, so the container layer is skipped instead of failing on `docker ps`.
+- name: "SecAudit | Does this host run containers?"
+  ansible.builtin.command: "command -v docker"
+  register: security_audit_docker
+  changed_when: false
+  failed_when: false
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+
 - name: "SecAudit | Container image CVEs (Trivy)"
   ansible.builtin.import_tasks: containers.yml
-  when: security_audit_scan_containers | bool
+  when:
+    - security_audit_scan_containers | bool
+    - security_audit_docker.rc == 0
 
 - name: "SecAudit | Per-host record"
   ansible.builtin.set_fact:
