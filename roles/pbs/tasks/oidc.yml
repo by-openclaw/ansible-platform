@@ -11,6 +11,7 @@
 - name: "OIDC | List existing OpenID realms"
   ansible.builtin.command: "proxmox-backup-manager openid list --output-format json"
   register: pbs_oidc_list
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
 - name: "OIDC | Create the Authentik OpenID realm"
@@ -51,6 +52,7 @@
   ansible.builtin.command:
     argv: [proxmox-backup-manager, acl, list, --output-format, json]
   register: pbs_acl_list
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
 - name: "OIDC | Grant Admin ACL to the privileged account"

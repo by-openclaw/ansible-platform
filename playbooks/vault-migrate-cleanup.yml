@@ -68,6 +68,7 @@
         argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
                "sh", "-c", "{{ _walk_script }}"]
       register: _legacy_leaves
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
 
     - name: "Cleanup | Compute the keep-list (valid new-convention targets)"

@@ -6,6 +6,7 @@
 - name: "Agent | Read the current LAPI login on the firewall"
   ansible.builtin.command: awk '/^login:/{print $2}' /usr/local/etc/crowdsec/local_api_credentials.yaml
   register: crowdsec_fw_bouncer_login
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
 - name: "Agent | Enrol the firewall agent to the central LAPI"

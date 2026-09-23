@@ -28,8 +28,14 @@
     SEC="$SEC" TOT="$TOT" CVE="$CVE" RB="$RB" CVELIST="$CVELIST" python3 /usr/local/bin/os_posture.py
   args: { executable: /bin/bash }
   register: security_audit_os_raw
+  failed_when: false   # the helper is staged by a task --check skips; an empty posture is reported instead
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
 - name: "SecAudit | Parse OS posture"
   ansible.builtin.set_fact:
-    security_audit_os: "{{ security_audit_os_raw.stdout | from_json }}"
+    security_audit_os: >-
+      {{ (security_audit_os_raw.stdout | default('') | trim | from_json)
+         if (security_audit_os_raw.rc | default(1)) == 0 and (security_audit_os_raw.stdout | default('') | trim)
+         else {'security_updates': 0, 'total_updates': 0, 'fixable_cve_pkgs': 0,
+               'reboot_required': false, 'cves': [], 'not_collected': true} }}

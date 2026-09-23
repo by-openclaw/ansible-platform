@@ -40,6 +40,7 @@
       environment:
         SSH_AUTH_SOCK: "{{ agent_sock }}"
       register: agent_alive
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
       failed_when: false
 
@@ -95,6 +96,7 @@
                "vault", "write", "-field=token", "auth/approle/login",
                "role_id={{ _approle.role_id }}", "secret_id={{ _approle.secret_id }}"]
       register: _approle_token
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
       no_log: true
 
@@ -105,6 +107,7 @@
                "prod/{{ item }}/ssh-passphrase"]
       loop: [svc-ansible, svc-rune]
       register: _pass_reads
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
       no_log: true
 
@@ -129,6 +132,7 @@
       environment:
         SSH_AUTH_SOCK: "{{ agent_sock }}"
       register: agent_alive
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
       failed_when: false
     - name: "Agent | Remove a stale socket (no agent behind it)"
@@ -171,6 +175,7 @@
       environment:
         SSH_AUTH_SOCK: "{{ agent_sock }}"
       register: agent_list
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
       failed_when: agent_list.rc != 0 or (agent_list.stdout_lines | length) < (agent_keys | length)
 

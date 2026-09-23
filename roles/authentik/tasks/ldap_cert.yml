@@ -120,6 +120,7 @@
     timeout 10 openssl s_client -connect 127.0.0.1:636 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 -enddate
   args: { executable: /bin/bash }
   register: authentik_ldap_cert_served
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: >-
     ((authentik_ldap_cert_served.stdout | regex_search('Fingerprint=([0-9A-Fa-f:]+)', '\\1'))[0] | lower | replace(':', ''))

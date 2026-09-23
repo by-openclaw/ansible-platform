@@ -13,6 +13,7 @@
     cmd: "set -o pipefail; docker ps --format '{{ '{{' }}.Image{{ '}}' }}' | sort -u"
     executable: /bin/bash
   register: security_audit_images
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
 - name: "SecAudit | Trivy scan each running image (HIGH/CRITICAL counts)"
@@ -28,6 +29,7 @@
   loop: "{{ security_audit_images.stdout_lines }}"
   loop_control: { label: "{{ item }}" }
   register: security_audit_trivy
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
 

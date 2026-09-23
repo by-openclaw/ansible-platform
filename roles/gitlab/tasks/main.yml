@@ -93,6 +93,7 @@
   delegate_to: lxc-vault-01
   become: true
   register: gitlab_smtp_get
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
   no_log: true
@@ -112,6 +113,7 @@
   delegate_to: lxc-vault-01
   become: true
   register: gitlab_mail_get
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
   no_log: true
@@ -129,6 +131,7 @@
 - name: "GitLab | Verify git-data is a mountpoint (ZFS bind-mount)"
   ansible.builtin.command: "mountpoint -q {{ gitlab_git_data_dir }}"
   register: gitlab_gitdata_mp
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
 
@@ -209,6 +212,7 @@
   delegate_to: lxc-vault-01
   become: true
   register: gitlab_secrets_restore
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
   no_log: true
@@ -244,6 +248,7 @@
 - name: "GitLab | gitlab-ctl status"
   ansible.builtin.command: gitlab-ctl status
   register: gitlab_status
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
 - name: "GitLab | Assert no service is down"
@@ -258,6 +263,7 @@
     status_code: [200, 401]
     validate_certs: false
   register: gitlab_ready
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   retries: 20
   delay: 15
   until: gitlab_ready.status in [200, 401]
@@ -287,6 +293,7 @@
   delegate_to: lxc-vault-01
   become: true
   register: gitlab_vault_stored
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
   no_log: true

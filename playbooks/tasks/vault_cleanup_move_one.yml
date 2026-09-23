@@ -7,6 +7,7 @@
     argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
            "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-format=json", "{{ _mv_from }}"]
   register: _mv_src
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   no_log: true
 
@@ -25,6 +26,7 @@
     argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
            "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-format=json", "{{ _mv_to }}"]
   register: _mv_dst
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: (_mv_dst.stdout | from_json).data.data != (_mv_src.stdout | from_json).data.data
   no_log: true

@@ -71,6 +71,7 @@
   ansible.builtin.command:
     cmd: "docker exec {{ pg_container_name }} pg_isready -U postgres"
   register: pg_ready
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   retries: 20
   delay: 3
   until: pg_ready.rc == 0

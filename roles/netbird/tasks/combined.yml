@@ -88,6 +88,7 @@
     url: "http://{{ netbird_listen_ip }}:{{ netbird_health_port }}/healthz"
     status_code: [200]
   register: netbird_combined_health
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   retries: 30
   delay: 5
   until: netbird_combined_health is succeeded
@@ -98,6 +99,7 @@
     url: "http://{{ netbird_listen_ip }}:{{ netbird_server_port }}/oauth2/.well-known/openid-configuration"
     status_code: [200]
   register: netbird_combined_oidc
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   retries: 12
   delay: 5
   until: netbird_combined_oidc is succeeded

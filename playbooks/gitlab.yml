@@ -61,6 +61,7 @@
         cmd: docker exec postgres psql -tAU postgres -d gitlabhq_production -c "SELECT extname FROM pg_extension"
       delegate_to: lxc-pgsql-01
       register: gitlab_pg_ext
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
 
     - name: "Enable required Postgres extensions for GitLab (superuser)"

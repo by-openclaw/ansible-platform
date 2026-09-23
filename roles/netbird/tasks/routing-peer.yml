@@ -32,6 +32,7 @@
     headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_rp_groups
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   no_log: true
 
 - name: "routing-peer | Create the routers group (idempotent)"
@@ -62,6 +63,7 @@
     headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_rp_keys
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   no_log: true
 
 - name: "routing-peer | Create the reusable router setup key (idempotent)"
@@ -123,6 +125,7 @@
 - name: "routing-peer | Current client status"
   ansible.builtin.command: netbird status
   register: netbird_rp_status
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
 
@@ -151,6 +154,7 @@
     headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_rp_peers
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   no_log: true
   until: (netbird_rp_peers.json | selectattr('hostname', 'search', netbird_rp_peer_match) | list | length) > 0
   retries: 12
@@ -167,6 +171,7 @@
     headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_rp_routes
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   no_log: true
 
 - name: "routing-peer | Create the internal-LAN route (idempotent)"
@@ -195,6 +200,7 @@
     headers: { Authorization: "{{ netbird_auth_header }}" }
     status_code: [200]
   register: netbird_rp_ns
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   no_log: true
 
 - name: "routing-peer | Create the AdGuard DNS nameserver group (idempotent)"

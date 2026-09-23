@@ -86,6 +86,7 @@
         url: "http://{{ portainer_listen_ip }}:{{ portainer_http_port }}/api/status"
         status_code: [200]
       register: portainer_status
+      check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
       retries: 20
       delay: 3
       until: portainer_status.status == 200

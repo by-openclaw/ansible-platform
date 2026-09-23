@@ -35,6 +35,7 @@
       -h lxc-redis-01.{{ platform_domain }} -p {{ redis_tls_port }}
       -a {{ redis_requirepass }} ping
   register: redis_ping
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   retries: 15
   delay: 2
   until: redis_ping.rc == 0 and 'PONG' in redis_ping.stdout

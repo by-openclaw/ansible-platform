@@ -110,6 +110,7 @@
     url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/health"
     status_code: [200]
   register: harbor_health
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   retries: 40
   delay: 6
   until: harbor_health.status == 200

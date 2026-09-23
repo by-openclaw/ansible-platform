@@ -36,6 +36,7 @@
         argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
                "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-format=json", "prod/break-glass/ssh-passphrase"]
       register: kit_bg_pass
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
       failed_when: false
       no_log: true

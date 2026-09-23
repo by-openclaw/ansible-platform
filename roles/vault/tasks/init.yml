@@ -6,6 +6,7 @@
   ansible.builtin.command:
     cmd: "docker exec {{ vault_container_name }} vault status -format=json"
   register: vault_status_raw
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   retries: 10
   delay: 3
   until: (vault_status_raw.stdout | trim | length) > 0
@@ -56,5 +57,6 @@
   ansible.builtin.command:
     cmd: "docker exec {{ vault_container_name }} vault status -format=json"
   register: vault_final
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: (vault_final.stdout | from_json).sealed

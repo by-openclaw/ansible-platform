@@ -105,6 +105,7 @@
       ansible.builtin.command:
         argv: [proxmox-backup-manager, cert, info]
       register: r_cert
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
 
     - name: "PVE-wire | Extract the sha256 fingerprint"
@@ -156,6 +157,7 @@
       ansible.builtin.command:
         argv: [pvesm, status]
       register: r_pvesm
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
 
     - name: "PVE-wire | Add the PBS storage (content=backup)"
@@ -193,6 +195,7 @@
         awk '/^pbs: {{ pbs_pve_storage_id }}$/{f=1} f&&/username/{print $2; exit}' /etc/pve/storage.cfg
       args: { executable: /bin/bash }
       register: r_user
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
 
     - name: "PVE-wire | Converge storage credentials (username/token drift)"

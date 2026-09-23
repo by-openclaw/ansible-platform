@@ -8,6 +8,7 @@
     url: "http://{{ pgadmin_listen_ip }}:{{ pgadmin_host_port }}/login"
     status_code: 200
   register: pgadmin_ready
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   retries: 20
   delay: 3
   until: pgadmin_ready.status == 200
@@ -72,6 +73,7 @@
       /venv/bin/python3 -c "import hashlib,os,sys; p='{{ pgadmin_pg_passfile_container }}';
       sys.stdout.write(hashlib.sha256(open(p,'rb').read()).hexdigest() if os.path.exists(p) else 'absent')"
   register: pgadmin_passfile_now
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   when: pgadmin_pg_superuser_password is defined
 

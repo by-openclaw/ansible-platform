@@ -22,6 +22,7 @@
                "select 1 from pg_database where datname='{{ _svc.db.database }}'"]
       delegate_to: "{{ decommission_pg_host }}"
       register: _dbchk
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
 
     - name: "decommission | Dump the DB before dropping (custom format)"
