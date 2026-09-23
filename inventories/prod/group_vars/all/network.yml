@@ -1,0 +1,23 @@
+---
+# ==============================================================================
+# Platform network catalog — the zones of infra/0004 as DATA. Every role that needs a zone
+# network, the internal aggregate or the VPN overlay reads it from here; no CIDR literal lives
+# in a role (pre-commit: scripts/check_platform_literals.py). The firewall catalog's net4_*/net6_*
+# aliases and the resolver's per-zone ACLs are rendered from the same entries.
+# ==============================================================================
+platform_zones:
+  mgmt:    {cidr4: "10.1.1.0/24",  cidr6: "fd01:1::/64",  description: "platform management"}
+  dmz:     {cidr4: "10.1.2.0/24",  cidr6: "fd01:2::/64",  description: "public-facing edge (Traefik, mail, TURN)"}
+  svc:     {cidr4: "10.1.3.0/24",  cidr6: "fd01:3::/64",  description: "internal services"}
+  vpn:     {cidr4: "10.1.4.0/24",  cidr6: "fd01:4::/64",  description: "VPN concentrator side"}
+  iot:     {cidr4: "10.1.10.0/24", cidr6: "fd01:10::/64", description: "IoT"}
+  voip:    {cidr4: "10.1.11.0/24", cidr6: "fd01:11::/64", description: "VoIP"}
+  storage: {cidr4: "10.1.20.0/24", cidr6: "fd01:20::/64", description: "storage plane"}
+  media:   {cidr4: "10.1.30.0/24", cidr6: "fd01:30::/64", description: "media"}
+  gaming:  {cidr4: "10.1.32.0/24", cidr6: "fd01:32::/64", description: "gaming"}
+  cctv:    {cidr4: "10.1.40.0/24", cidr6: "fd01:40::/64", description: "CCTV"}
+# Aggregates (derived meaning, single definition)
+platform_internal_cidr4: "10.1.0.0/16"     # every guest zone above (the platform LAN)
+platform_internal_cidr6: "fd01::/16"
+platform_core_cidr4: "10.1.0.0/20"         # the core zones (mgmt, dmz, svc, vpn) — WireGuard client AllowedIPs
+platform_vpn_cidr: "100.64.0.0/10"         # NetBird overlay (CGNAT range): VPN peers

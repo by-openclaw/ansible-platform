@@ -11,6 +11,7 @@ PATTERNS = {
     "domain literal": re.compile(r"by-research\.be"),
     "org literal": re.compile(r"(?<![a-z0-9_-])by-research(?![a-z0-9.-])"),
     "identity fallback": re.compile(r"default\((['\"])(by-research(\.be)?)\1\)"),
+    "zone or aggregate CIDR": re.compile(r"\b10\.1\.\d{1,3}\.0/\d{1,2}\b|\bfd01:[0-9a-f]*::/\d{1,3}\b|\b100\.64\.0\.0/10\b"),
 }
 ROOTS = ("roles", "playbooks")
 SUFFIXES = (".yml", ".yaml", ".j2")
