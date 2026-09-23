@@ -1,0 +1,24 @@
+---
+# ==============================================================================
+# Role: controller — the automation controller itself (this workstation), so the machine that
+# runs every play is managed by a play like any other host. Two concerns today:
+#   1. a route to the platform's service zones through the firewall's OOB address, so the
+#      controller reads Vault's API DIRECTLY instead of through the SSH hop whose keys the
+#      agent is unlocking (the circular bootstrap that broke automation on 2026-09-22);
+#   2. the SSH agent as a lingering user service, so it survives a desktop logout or restart.
+# ==============================================================================
+controller_manage_route: true
+controller_route_gateway: "{{ hostvars[groups['opnsense'][0]].ansible_host }}"   # the firewall's OOB address
+controller_route_networks:
+  - "{{ platform_internal_cidr4 }}"        # every guest zone (network.yml)
+controller_netplan_file: "/etc/netplan/60-platform-routes.yaml"
+controller_netplan_interface: "{{ ansible_default_ipv4.interface }}"
+
+# Vault, reached directly over its API (no hop, no docker exec)
+controller_vault_addr: "https://{{ hostvars[groups['vault'][0]].ansible_host }}:{{ vault_port | default(8200) }}"
+controller_vault_hosts_entry: true        # /etc/hosts pin so the API's TLS name resolves without the platform resolver
+
+# SSH agent as a user service (survives a desktop restart; `loginctl enable-linger`)
+controller_manage_agent_service: true
+controller_agent_socket: "{{ ansible_env.HOME }}/.ssh/rune-agent.sock"
+controller_agent_unit_dir: "{{ ansible_env.HOME }}/.config/systemd/user"

@@ -1,0 +1,17 @@
+# Managed by ansible (controller role) — do not edit by hand.
+# The agent the plays use lives here, not in the desktop session: a logout or a restart of the
+# session must not take the platform's automation with it (2026-09-22).
+[Unit]
+Description=SSH agent for platform automation (fixed socket)
+After=default.target
+
+[Service]
+Type=simple
+Environment=SSH_AUTH_SOCK={{ controller_agent_socket }}
+ExecStartPre=-/bin/rm -f {{ controller_agent_socket }}
+ExecStart=/usr/bin/ssh-agent -D -a {{ controller_agent_socket }}
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
