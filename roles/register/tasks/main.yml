@@ -1,0 +1,32 @@
+---
+- name: "Register | Exactly one person carries platform_owner"
+  ansible.builtin.assert:
+    that: (platform_people | selectattr('platform_owner', 'defined') | selectattr('platform_owner') | list | length) == 1
+    fail_msg: "people.yml must carry platform_owner: true on exactly one person"
+    quiet: true
+
+- name: "Register | The platform owner"
+  ansible.builtin.set_fact:
+    register_owner: "{{ platform_people | selectattr('platform_owner', 'defined') | selectattr('platform_owner') | first }}"
+
+- name: "Register | Load each role's defaults (pinned versions)"
+  ansible.builtin.include_vars:
+    file: "{{ register_roles_dir }}/{{ item.role }}/defaults/main.yml"
+    name: "register_role_{{ item.role }}"
+  loop: "{{ platform_services | selectattr('role') | list }}"
+  loop_control:
+    label: "{{ item.role }}"
+
+- name: "Register | Which services have a documentation page"
+  ansible.builtin.stat:
+    path: "{{ register_docs_dir }}/{{ item.name }}.md"
+  loop: "{{ platform_services }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: register_docs
+
+- name: "Register | Render docs/register.md"
+  ansible.builtin.template:
+    src: register.md.j2
+    dest: "{{ register_output }}"
+    mode: "0644"
