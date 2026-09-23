@@ -41,6 +41,7 @@
   register: seaweedfs_version_check
   changed_when: false
   failed_when: false
+  check_mode: false   # read-only probe: must run under --check too (the install block reads its rc/stdout)
 
 - name: "SeaweedFS | Download + install weed (pinned) when absent/mismatched"
   when: seaweedfs_version_check.rc != 0 or seaweedfs_version not in seaweedfs_version_check.stdout
@@ -148,6 +149,30 @@
         group: "{{ seaweedfs_group }}"
         mode: "0750"
 
+    - name: "SeaweedFS | Admin console credential (get-or-create in Vault)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ seaweedfs_console_vault_path }}"
+        vault_secret_init:
+          username: "{{ seaweedfs_admin_user }}"
+          password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+          _note: "SeaweedFS admin console local login (roles/seaweedfs) — behind Authentik forwardAuth; required since 4.47 to bind the SVC address"
+
+    - name: "SeaweedFS | Admin console environment (root-only; the unit reads it)"
+      ansible.builtin.copy:
+        dest: "{{ seaweedfs_admin_env_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          SEAWEEDFS_ADMIN_USER={{ vault_secret_result.username }}
+          SEAWEEDFS_ADMIN_PASSWORD={{ vault_secret_result.password }}
+      no_log: true
+      notify: Restart seaweedfs-admin
+      # --check on a fresh deployment: the secret is not minted yet, so there is nothing to render
+      when: vault_secret_result.username is defined and vault_secret_result.password is defined
+
     - name: "SeaweedFS | Render admin systemd unit"
       ansible.builtin.template:
         src: seaweedfs-admin.service.j2
@@ -169,10 +194,10 @@
 
     - name: "SeaweedFS | Wait for the admin dashboard to answer"
       ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ seaweedfs_admin_port }}/"
-        status_code: [200, 302, 401, 403]
+        url: "http://{{ seaweedfs_ip }}:{{ seaweedfs_admin_port }}/"   # bound to the SVC address since 4.47 (login redirect = 307)
+        status_code: [200, 302, 307, 401, 403]
       register: seaweedfs_admin_ready
-      until: seaweedfs_admin_ready.status in [200, 302, 401, 403]
+      until: seaweedfs_admin_ready.status in [200, 302, 307, 401, 403]
       retries: 15
       delay: 3
 

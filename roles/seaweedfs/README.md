@@ -17,3 +17,5 @@ Class **C ⚠**: `/data` is a bind-mount and is **NOT in vzdump** — the Contab
 - Health: `systemctl is-active seaweedfs seaweedfs-backup`; S3 `GET /` on :8333 answers (403 unauth = up).
 - Logs are noisy (`filer_pb_tail`) — filter `grep -v filer_pb_tail` before reading journal.
 - Common: OOM under ingest → check `MemoryMax`/LXC memory; offsite lag → `journalctl -u seaweedfs-backup`.
+
+- Admin console (`weed admin`): since 4.47 it binds loopback unless a local credential is set, so the role mints `{env}/seaweedfs/console` in Vault (`{env}/seaweedfs/admin` stays the S3 admin identity) and hands it to the unit through a root-only environment file; the console binds the SVC address, Authentik forwardAuth stays in front, and the local login is the second door (2026-09-23: the console answered 502 after the 4.47 bump).
