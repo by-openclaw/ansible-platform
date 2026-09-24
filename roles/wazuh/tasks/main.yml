@@ -435,6 +435,13 @@
           forward_auth: false             # the dashboard authenticates people itself (OpenID)
           mailbox: true
           sso_slug: "{{ wazuh_oidc_slug }}"
+          teardown:
+            # Naming the volume is the service-specific part: a person retiring Wazuh should
+            # know THIS is where the alerts, file-integrity history and vulnerability
+            # inventory live. That such a record outlives the tool is the platform rule, and
+            # applies to Loki's logs and GitLab's repositories exactly the same way.
+            keep_volumes: ["wazuh-indexer-data"]
+            note: "the indexer volume is the security record — alerts, FIM history, vulnerabilities"
           vault_secrets:
             - path: "{{ wazuh_vault_admin }}"
             - path: "{{ wazuh_vault_dashboard }}"

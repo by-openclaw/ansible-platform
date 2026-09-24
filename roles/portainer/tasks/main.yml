@@ -115,6 +115,12 @@
           forward_auth: false             # native OIDC below; Portainer authenticates people itself
           mailbox: true                   # portainer@<domain> for notifications
           sso_slug: "{{ portainer_oidc_slug }}"
+          teardown:
+            # Keeping the Vault paths is the platform rule, not a Portainer exception, so it
+            # is not declared here. What is worth recording is that nothing else survives:
+            # this holds console state only — environments, users, settings — and the
+            # platform can rebuild all of it from the role.
+            note: "console state only (environments, users, settings); the role rebuilds it"
           vault_secrets:
             - path: "{{ portainer_admin_vault_path }}"
             - path: "{{ portainer_agent_vault_path }}"

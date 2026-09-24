@@ -12,6 +12,11 @@
   community.docker.docker_container:
     name: "{{ scaffold_ctr.name }}"
     state: absent
+    # Platform policy, applied to EVERY service whether or not it declares a teardown block:
+    # removing a container never destroys its named volumes. Releasing storage is a
+    # deliberate act in the retirement path, never a side effect of taking a service off a
+    # host. Stated here rather than left to a module default nobody reads.
+    keep_volumes: "{{ service_scaffold_teardown_policy.keep_volumes }}"
   loop: "{{ service_scaffold_def.containers | default([]) | reverse | list }}"
   loop_control:
     loop_var: scaffold_ctr
@@ -40,6 +45,13 @@
   ansible.builtin.debug:
     msg: >-
       {{ service_scaffold_def.name }} removed from the host: containers, network, route.
+      Named volumes and Vault paths are intact — platform policy, every service.
+      {% if (service_scaffold_def.teardown | default({})).note is defined %}
+      What this service holds: {{ service_scaffold_def.teardown.note }}
+      {% endif %}
+      {% if (service_scaffold_def.teardown | default({})).keep_volumes | default([]) %}
+      Specifically: {{ service_scaffold_def.teardown.keep_volumes | join(', ') }}.
+      {% endif %}
       Its database, S3 bucket, Vault secrets and mailbox are intact by design —
       archive-before-destroy lives in roles/service_decommission
       (playbooks/decommission-service.yml -e decommission_target={{ service_scaffold_def.name }}).
