@@ -1,0 +1,282 @@
+---
+# The platform concerns (database, S3, Vault secrets, mailbox, Traefik route) are not per-service
+# inventions — docs/new-service.md makes service_scaffold the golden path, so this role composes it
+# and then installs the product on top.
+- name: "CISO Assistant | Scaffold the platform concerns (db · S3 · secrets · mailbox · route)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+  vars:
+    service_scaffold_def:
+      name: "{{ ciso_assistant_service }}"
+      fqdn: "{{ ciso_assistant_fqdn }}"
+      backend_url: "http://{{ ciso_assistant_listen_ip }}:{{ ciso_assistant_frontend_port }}"
+      exposure: internal                 # private class: VPN + split-DNS, never a public record
+      mailbox: true                      # grc@<domain> — the superuser invitation is sent from it
+      db: postgres
+      s3_bucket: "{{ ciso_assistant_s3_bucket }}"
+      sso_slug: "{{ ciso_assistant_oidc_slug }}"
+      vault_secrets:
+        - path: "{{ ciso_assistant_vault_path }}"
+          init:
+            django_secret_key: "{{ lookup('community.general.random_string', length=64, special=false) }}"
+            _note: "CISO Assistant DJANGO_SECRET_KEY (roles/ciso_assistant) — rotating it invalidates every session"
+
+# --- credentials -------------------------------------------------------------------------------
+# Each credential is read back explicitly. A fact another role happens to leave behind is a side
+# effect, not an interface: the scaffold runs several secret reads in a row, so only the documented
+# outputs (postgres_db_password, seaweedfs_bucket_key) are relied on and the rest are re-read.
+- name: "CISO Assistant | Bind the database credential"
+  ansible.builtin.set_fact:
+    ciso_assistant_db_password: "{{ postgres_db_password }}"
+  no_log: true
+
+- name: "CISO Assistant | S3 identity present (from the scaffold's bucket step)"
+  ansible.builtin.assert:
+    that: seaweedfs_bucket_key.access_key is defined
+    fail_msg: "service_scaffold did not yield an S3 identity — check s3_bucket in the contract"
+    quiet: true
+
+- name: "CISO Assistant | Read the application secret"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ ciso_assistant_vault_path }}"
+    vault_secret_init: {}
+
+- name: "CISO Assistant | Bind the application secret"
+  ansible.builtin.set_fact:
+    ciso_assistant_secret_key: "{{ vault_secret_result.django_secret_key }}"
+  no_log: true
+
+- name: "CISO Assistant | Read the mailbox credential"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ ciso_assistant_mail_vault_path }}"
+    vault_secret_init: {}
+
+- name: "CISO Assistant | Bind the mail credential"
+  ansible.builtin.set_fact:
+    ciso_assistant_mail: "{{ vault_secret_result }}"
+  no_log: true
+
+# --- the product ---------------------------------------------------------------------------------
+- name: "CISO Assistant | Data directory (database of record is PostgreSQL; this is scratch)"
+  ansible.builtin.file:
+    path: "{{ ciso_assistant_data_dir }}"
+    state: directory
+    owner: "1001"
+    group: "1001"
+    mode: "0750"
+  become: true
+
+- name: "CISO Assistant | Private network for the containers (IPv4-only by design)"
+  community.docker.docker_network:
+    name: "{{ ciso_assistant_network }}"
+    state: present
+
+# The backend serves the API and the Huey worker runs the same image with another entrypoint;
+# both need the identical environment, so it is built once.
+- name: "CISO Assistant | Compose the backend environment"
+  ansible.builtin.set_fact:
+    ciso_assistant_backend_env:
+      ALLOWED_HOSTS: "{{ ciso_assistant_backend_container }},localhost,{{ ciso_assistant_fqdn }},{{ ciso_assistant_listen_ip }}"
+      CISO_ASSISTANT_URL: "https://{{ ciso_assistant_fqdn }}"
+      CISO_ASSISTANT_SUPERUSER_EMAIL: "{{ ciso_assistant_superuser_email }}"
+      DJANGO_DEBUG: "False"
+      DJANGO_SECRET_KEY: "{{ ciso_assistant_secret_key }}"
+      POSTGRES_NAME: "{{ ciso_assistant_db_name }}"
+      POSTGRES_USER: "{{ ciso_assistant_db_user }}"
+      POSTGRES_PASSWORD: "{{ ciso_assistant_db_password }}"
+      DB_HOST: "{{ ciso_assistant_db_host }}"
+      DB_PORT: "{{ ciso_assistant_db_port | string }}"
+      POSTGRES_SSL_MODE: "{{ ciso_assistant_db_sslmode }}"
+      USE_S3: "True"
+      AWS_STORAGE_BUCKET_NAME: "{{ ciso_assistant_s3_bucket }}"
+      AWS_S3_ENDPOINT_URL: "{{ seaweedfs_bucket_key.endpoint | default(ciso_assistant_s3_endpoint) }}"
+      AWS_ACCESS_KEY_ID: "{{ seaweedfs_bucket_key.access_key }}"
+      AWS_SECRET_ACCESS_KEY: "{{ seaweedfs_bucket_key.secret_key }}"
+      EMAIL_HOST: "vm-mailcow-01.{{ platform_domain }}"
+      EMAIL_PORT: "{{ ciso_assistant_mail.smtp_port | default('587') | string }}"
+      EMAIL_HOST_USER: "{{ ciso_assistant_mail.address }}"
+      EMAIL_HOST_PASSWORD: "{{ ciso_assistant_mail.password }}"
+      EMAIL_USE_TLS: "True"
+      DEFAULT_FROM_EMAIL: "{{ ciso_assistant_mail.address }}"
+      LOG_FORMAT: "{{ ciso_assistant_log_format }}"
+      EXPOSE_METRICS: "{{ 'True' if ciso_assistant_expose_metrics | bool else 'False' }}"
+      AUDITLOG_RETENTION_DAYS: "{{ ciso_assistant_auditlog_retention_days | string }}"
+  no_log: true
+
+- name: "CISO Assistant | Backend (API + migrations on start)"
+  community.docker.docker_container:
+    name: "{{ ciso_assistant_backend_container }}"
+    image: "{{ ciso_assistant_backend_image }}"
+    state: started
+    restart_policy: unless-stopped
+    networks: [{name: "{{ ciso_assistant_network }}"}]
+    network_mode: "{{ ciso_assistant_network }}"
+    user: "1001:1001"
+    published_ports:
+      # the browser talks to the API directly (upstream's design), so Traefik must reach it
+      - "{{ ciso_assistant_listen_ip }}:{{ ciso_assistant_backend_port }}:{{ ciso_assistant_backend_container_port }}"
+    volumes:
+      - "{{ ciso_assistant_data_dir }}:/code/db"
+      - "{{ ciso_assistant_ca_bundle }}:{{ ciso_assistant_container_ca_path }}:ro"
+    env: "{{ ciso_assistant_backend_env }}"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:{{ ciso_assistant_backend_container_port }}/api/health/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+  no_log: true
+
+- name: "CISO Assistant | Task worker (same image, Huey)"
+  community.docker.docker_container:
+    name: "{{ ciso_assistant_worker_container }}"
+    image: "{{ ciso_assistant_backend_image }}"
+    state: started
+    restart_policy: unless-stopped
+    networks: [{name: "{{ ciso_assistant_network }}"}]
+    network_mode: "{{ ciso_assistant_network }}"
+    user: "1001:1001"
+    volumes:
+      - "{{ ciso_assistant_data_dir }}:/code/db"
+      - "{{ ciso_assistant_ca_bundle }}:{{ ciso_assistant_container_ca_path }}:ro"
+    env: "{{ ciso_assistant_backend_env }}"
+    entrypoint: ["python", "manage.py", "run_huey", "-w", "2", "--scheduler-interval", "60"]
+  no_log: true
+
+- name: "CISO Assistant | Frontend"
+  community.docker.docker_container:
+    name: "{{ ciso_assistant_frontend_container }}"
+    image: "{{ ciso_assistant_frontend_image }}"
+    state: started
+    restart_policy: unless-stopped
+    networks: [{name: "{{ ciso_assistant_network }}"}]
+    network_mode: "{{ ciso_assistant_network }}"
+    published_ports:
+      - "{{ ciso_assistant_listen_ip }}:{{ ciso_assistant_frontend_port }}:{{ ciso_assistant_frontend_container_port }}"
+    env:
+      PUBLIC_BACKEND_API_URL: "http://{{ ciso_assistant_backend_container }}:{{ ciso_assistant_backend_container_port }}/api"
+      PUBLIC_BACKEND_API_EXPOSED_URL: "https://{{ ciso_assistant_fqdn }}/api"
+      ORIGIN: "https://{{ ciso_assistant_fqdn }}"
+
+- name: "CISO Assistant | Host firewall: only Traefik reaches the frontend"
+  ansible.builtin.include_role:
+    name: host_firewall
+  vars:
+    host_firewall_rules:
+      - port: "{{ ciso_assistant_frontend_port }}"
+        proto: tcp
+        from: ["{{ hostvars['lxc-traefik-01'].ansible_host }}"]   # a list: the role iterates it
+        comment: "Traefik -> CISO Assistant (app)"
+      - port: "{{ ciso_assistant_backend_port }}"
+        proto: tcp
+        from: ["{{ hostvars['lxc-traefik-01'].ansible_host }}"]
+        comment: "Traefik -> CISO Assistant (API)"
+
+# The frontend renders every page through the backend, so testing it while the backend is still
+# starting reports a broken application that is merely busy. On a FIRST boot the backend runs ~170
+# migrations and then imports the whole framework catalog (ISO, NIST, SOC 2, DORA, the mappings
+# between them) before it serves anything — minutes, not seconds. Wait for the API, then the page.
+- name: "CISO Assistant | The API answers (first boot migrates and imports the framework catalog)"
+  ansible.builtin.uri:
+    url: "http://{{ ciso_assistant_listen_ip }}:{{ ciso_assistant_backend_port }}/api/health/"
+    status_code: [200]
+  register: ciso_assistant_api_probe
+  retries: "{{ ciso_assistant_api_probe_retries }}"
+  delay: "{{ ciso_assistant_api_probe_delay }}"
+  until: ciso_assistant_api_probe.status | default(0) == 200
+  # A dry-run never started these containers, so it cannot test them. It skips instead of
+  # reporting a failure it caused itself.
+  when: not ansible_check_mode
+
+# --- the API path ---------------------------------------------------------------------------------
+# The scaffold publishes the app's own route. The browser additionally calls /api on the same public
+# name (PUBLIC_BACKEND_API_EXPOSED_URL), and the frontend container does not serve it, so that prefix
+# is routed to the backend port.
+- name: "CISO Assistant | Publish the API path (the browser calls it directly)"
+  ansible.builtin.include_role:
+    name: traefik_route
+  vars:
+    traefik_route_name: "{{ ciso_assistant_service }}-api"
+    traefik_route_fqdn: "{{ ciso_assistant_fqdn }}"
+    traefik_route_backend_url: "http://{{ ciso_assistant_listen_ip }}:{{ ciso_assistant_backend_port }}"
+    traefik_route_path_prefix: "/api"
+    traefik_route_internal_only: true
+
+# --- SSO (mandatory) --------------------------------------------------------------------------------
+- name: "CISO Assistant | Read the OIDC client credentials from Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ ciso_assistant_oidc_vault_path }}"
+    vault_secret_init: {}
+
+- name: "CISO Assistant | Bind the OIDC client credentials"
+  ansible.builtin.set_fact:
+    ciso_assistant_oidc: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "CISO Assistant | The IdP minted this app's credentials"
+  ansible.builtin.assert:
+    that:
+      - ciso_assistant_oidc.client_id | default('') | length > 0
+      - ciso_assistant_oidc.client_secret | default('') | length > 0
+    fail_msg: >-
+      No OIDC client at {{ ciso_assistant_oidc_vault_path }} — run playbooks/authentik.yml first
+      (the app is declared in authentik_oidc_apps with slug {{ ciso_assistant_oidc_slug }}).
+    quiet: true
+
+# manage.py shell reads the program from STDIN, which keeps the client secret out of the guest's
+# process list. The program itself decides whether anything changed.
+- name: "CISO Assistant | Bind Authentik as the identity provider"
+  ansible.builtin.command:
+    cmd: "docker exec -i {{ ciso_assistant_backend_container }} python manage.py shell"
+    stdin: "{{ lookup('template', 'sso_bind.py.j2') }}"
+  register: ciso_assistant_sso
+  # The app prints its whole settings banner on startup, so only the LAST line is the verdict —
+  # and "UNCHANGED" contains "CHANGED", which a substring test would silently accept either way.
+  changed_when: ciso_assistant_sso.stdout_lines | default(['']) | last == 'CHANGED'
+  failed_when: >-
+    ciso_assistant_sso.rc != 0
+    or (ciso_assistant_sso.stdout_lines | default(['']) | last) not in ['CHANGED', 'UNCHANGED']
+  no_log: true
+  when: not ansible_check_mode
+
+# The login page is rendered server-side from the SSO settings, so it can only be tested once the
+# identity provider is bound. Probing it earlier reports the page broken when it is merely unbound.
+- name: "CISO Assistant | The application answers"
+  ansible.builtin.uri:
+    url: "http://{{ ciso_assistant_listen_ip }}:{{ ciso_assistant_frontend_port }}/login"
+    status_code: [200]
+  register: ciso_assistant_probe
+  retries: 20
+  delay: 6
+  until: ciso_assistant_probe.status | default(0) == 200
+  when: not ansible_check_mode
+
+# Binding the provider is not enough on its own: without the feature flag below a person the
+# identity provider authorised is still refused with "user not found", and without the group
+# mapping the account that is created carries no rights at all.
+- name: "CISO Assistant | Group-driven access (JIT provisioning + IdP group → tool group)"
+  ansible.builtin.command:
+    cmd: "docker exec -i {{ ciso_assistant_backend_container }} python manage.py shell"
+    stdin: "{{ lookup('template', 'sso_access.py.j2') }}"
+  register: ciso_assistant_access
+  changed_when: ciso_assistant_access.stdout_lines | default(['']) | last == 'CHANGED'
+  failed_when: >-
+    ciso_assistant_access.rc != 0
+    or (ciso_assistant_access.stdout_lines | default(['']) | last) not in ['CHANGED', 'UNCHANGED']
+  when: not ansible_check_mode
+
+- name: "CISO Assistant | Report"
+  ansible.builtin.debug:
+    msg: >-
+      CISO Assistant {{ ciso_assistant_version }} serving {{ ciso_assistant_fqdn }} as service
+      '{{ ciso_assistant_service }}' — database {{ ciso_assistant_db_name }} on the shared cluster,
+      evidence in s3://{{ ciso_assistant_s3_bucket }}, mail from {{ ciso_assistant_service }}@{{ platform_domain }};
+      login page answered {{ ciso_assistant_probe.status | default('not probed (check mode)') }};
+      SSO bound to Authentik ({{ ciso_assistant_oidc_issuer }}), access group
+      {{ ciso_assistant_access_group }}, local login {{ 'disabled' if ciso_assistant_oidc_force | bool else 'still available' }}.
