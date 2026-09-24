@@ -4,9 +4,12 @@
   ansible.builtin.assert:
     that:
       - service_scaffold_def.name | default('') | length > 0
-      - service_scaffold_def.fqdn | default('') | length > 0
-      - service_scaffold_def.backend_url | default('') | length > 0
+      - (service_scaffold_def.fqdn | default('') | length > 0)
+        or (service_scaffold_def.routes | default([]) | length > 0)
+      - (service_scaffold_def.backend_url | default('') | length > 0)
+        or (service_scaffold_def.routes | default([]) | length > 0)
       - (service_scaffold_def.exposure | default('internal')) in ['internal', 'public']
+      - (service_scaffold_def.state | default('present')) in ['present', 'absent']
     fail_msg: "service_scaffold needs at least name, fqdn, backend_url; exposure internal|public"
     quiet: true
 
@@ -15,6 +18,17 @@
     that: service_scaffold_def.name is match('^[a-z0-9-]+$')
     fail_msg: "service name must be lowercase-hyphen ({{ service_scaffold_def.name }})"
     quiet: true
+
+# ============================ absent ==========================================
+# Both directions are the contract, so absent is answered here and the present
+# path below is skipped wholesale rather than each task carrying its own when.
+- name: "Scaffold | Tear the service down (state=absent)"
+  ansible.builtin.include_tasks: absent.yml
+  when: (service_scaffold_def.state | default('present')) == 'absent'
+
+- name: "Scaffold | Stop here when the service is meant to be absent"
+  ansible.builtin.meta: end_host
+  when: (service_scaffold_def.state | default('present')) == 'absent'
 
 # ============================ data plane ======================================
 - name: "Scaffold | Provision the service database (cluster Postgres)"
@@ -61,19 +75,33 @@
          | default(['adm_yboujraf@' + service_scaffold_domain]) }}
   when: service_scaffold_def.mailbox | default(true) | bool
 
+# ============================ the app itself ==================================
+- name: "Scaffold | Network and containers"
+  ansible.builtin.include_tasks: containers.yml
+  when: (service_scaffold_def.containers | default([]) | length > 0)
+        or ((service_scaffold_def.network | default('')) | length > 0)
+
 # ============================ edge ============================================
 - name: "Scaffold | Publish via Traefik ({{ service_scaffold_def.exposure | default('internal') }})"
   ansible.builtin.include_role:
     name: traefik_route
   vars:
-    traefik_route_name: "{{ service_scaffold_def.name }}"
-    traefik_route_fqdn: "{{ service_scaffold_def.fqdn }}"
-    traefik_route_backend_url: "{{ service_scaffold_def.backend_url }}"
-    traefik_route_internal_only: "{{ (service_scaffold_def.exposure | default('internal')) == 'internal' }}"
+    traefik_route_name: "{{ scaffold_route.name }}"
+    traefik_route_fqdn: "{{ scaffold_route.fqdn }}"
+    traefik_route_backend_url: "{{ scaffold_route.backend_url }}"
+    traefik_route_path_prefix: "{{ scaffold_route.path_prefix | default('') }}"
+    traefik_route_internal_only: "{{ scaffold_route.internal_only | default((service_scaffold_def.exposure | default('internal')) == 'internal') }}"
     # forwardAuth (Authentik proxy provider) — for services without native OIDC.
-    # Pair with an authentik_proxy_apps entry whose slug == service name.
-    traefik_route_forward_auth: "{{ service_scaffold_def.forward_auth | default(false) | bool }}"
-    traefik_route_backend_root_ca_file: "{{ service_scaffold_def.backend_root_ca_file | default('') }}"
+    # Pair with an authentik_proxy_apps entry whose slug == the route name.
+    traefik_route_forward_auth: "{{ scaffold_route.forward_auth | default(service_scaffold_def.forward_auth | default(false)) | bool }}"
+    traefik_route_backend_root_ca_file: "{{ scaffold_route.backend_root_ca_file | default(service_scaffold_def.backend_root_ca_file | default('')) }}"
+  # A service may publish more than one name (diagrams serves kroki, plantuml and drawio).
+  # `routes` is the general form; a contract that names a single fqdn/backend_url is treated
+  # as one route so the common case stays a single line.
+  loop: "{{ service_scaffold_routes }}"
+  loop_control:
+    loop_var: scaffold_route
+    label: "{{ scaffold_route.name }} -> {{ scaffold_route.fqdn }}"
 
 # ============================ logs ============================================
 - name: "Scaffold | Log rotation for the service's own files"
@@ -105,9 +133,11 @@
 - name: "Scaffold | Summary"
   ansible.builtin.debug:
     msg: >-
-      {{ service_scaffold_def.name }} scaffolded — route {{ service_scaffold_def.fqdn }}
+      {{ service_scaffold_def.name }} scaffolded —
+      routes {{ service_scaffold_routes | map(attribute='fqdn') | join(', ') | default('none', true) }}
       ({{ service_scaffold_def.exposure | default('internal') }}),
       mailbox={{ service_scaffold_def.mailbox | default(true) }},
       db={{ service_scaffold_def.db | default('none') }},
       s3={{ (service_scaffold_def.s3_bucket | default('')) | length > 0 }},
-      secrets={{ service_scaffold_def.vault_secrets | default([]) | length }}
+      secrets={{ service_scaffold_def.vault_secrets | default([]) | length }},
+      containers={{ service_scaffold_def.containers | default([]) | length }}

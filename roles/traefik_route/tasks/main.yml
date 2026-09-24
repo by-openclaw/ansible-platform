@@ -21,3 +21,11 @@
     mode: "0644"
   delegate_to: "{{ traefik_route_host }}"
   # Traefik's file provider watches the directory — no reload needed.
+  when: traefik_route_state == 'present'
+
+- name: "Route | Withdraw the Traefik router for {{ traefik_route_name }}"
+  ansible.builtin.file:
+    path: "{{ traefik_route_dynamic_dir }}/{{ traefik_route_name }}.yml"
+    state: absent
+  delegate_to: "{{ traefik_route_host }}"
+  when: traefik_route_state == 'absent'

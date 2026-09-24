@@ -1,0 +1,55 @@
+---
+# The container half of the contract. A container service used to be N hand-written
+# copies of "pull the pinned image / run it / wait for health" — diagrams was 79%
+# that, step-ca 75%. It is data now, so adding a container is a list entry rather
+# than three more tasks that can drift from their neighbours.
+- name: "Scaffold | Private network for {{ service_scaffold_def.name }}"
+  community.docker.docker_network:
+    name: "{{ service_scaffold_def.network }}"
+    state: present
+  when: (service_scaffold_def.network | default('')) | length > 0
+
+- name: "Scaffold | Pull the pinned images"
+  community.docker.docker_image:
+    name: "{{ scaffold_ctr.image }}"
+    source: pull
+    force_source: false
+  loop: "{{ service_scaffold_def.containers | default([]) }}"
+  loop_control:
+    loop_var: scaffold_ctr
+    label: "{{ scaffold_ctr.image }}"
+
+- name: "Scaffold | Run the containers"
+  community.docker.docker_container:
+    name: "{{ scaffold_ctr.name }}"
+    image: "{{ scaffold_ctr.image }}"
+    state: started
+    restart_policy: "{{ scaffold_ctr.restart_policy | default('unless-stopped') }}"
+    networks: "{{ [{'name': service_scaffold_def.network}] if (service_scaffold_def.network | default('')) | length > 0 else omit }}"
+    network_mode: "{{ service_scaffold_def.network | default(omit, true) }}"
+    published_ports: "{{ scaffold_ctr.published | default([]) }}"
+    volumes: "{{ scaffold_ctr.volumes | default([]) }}"
+    env: "{{ scaffold_ctr.env | default({}) }}"
+    entrypoint: "{{ scaffold_ctr.entrypoint | default(omit) }}"
+    command: "{{ scaffold_ctr.command | default(omit) }}"
+    user: "{{ scaffold_ctr.user | default(omit) }}"
+  loop: "{{ service_scaffold_def.containers | default([]) }}"
+  loop_control:
+    loop_var: scaffold_ctr
+    label: "{{ scaffold_ctr.name }}"
+
+# A dry-run never started these, so it cannot test them: it skips rather than
+# reporting a failure it caused itself.
+- name: "Scaffold | Wait for each container that declares a health URL"
+  ansible.builtin.uri:
+    url: "{{ scaffold_ctr.health }}"
+    status_code: "{{ scaffold_ctr.health_status | default([200]) }}"
+  register: scaffold_health
+  retries: "{{ scaffold_ctr.health_retries | default(30) }}"
+  delay: "{{ scaffold_ctr.health_delay | default(4) }}"
+  until: scaffold_health.status | default(0) in (scaffold_ctr.health_status | default([200]))
+  loop: "{{ service_scaffold_def.containers | default([]) | selectattr('health', 'defined') | list }}"
+  loop_control:
+    loop_var: scaffold_ctr
+    label: "{{ scaffold_ctr.name }}"
+  when: not ansible_check_mode
