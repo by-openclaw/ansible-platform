@@ -1,0 +1,65 @@
+# {{ ansible_managed }}
+# Bind Authentik (OIDC) as the identity provider for CISO Assistant.
+#
+# The tool keeps SSO configuration in a database row (global_settings, name="sso") rather than in
+# environment or a config file, so the only declarative way to set it is through its own ORM. This
+# program is piped into `manage.py shell` on STDIN by roles/ciso_assistant, which keeps the client
+# secret out of the process arguments (docker exec -e would put it in `ps` on the guest).
+#
+# It is idempotent: it merges the desired keys into whatever is stored, writes ONLY on a real
+# difference, and prints CHANGED or UNCHANGED for Ansible's changed_when.
+from global_settings.models import GlobalSettings
+# The app seeds a new SSO row with its SAML defaults, and the endpoint the login page calls reads
+# settings["sp"] unconditionally — for SAML and OIDC alike. Starting from the same defaults the app
+# uses means this program can also REPAIR a row whose block was replaced instead of merged.
+from iam.sso.saml.defaults import DEFAULT_SAML_SETTINGS
+
+desired = {
+    "is_enabled": True,
+    # Local login stays available: this is the tool that documents break-glass, so it is not the
+    # one service that locks its administrators out when the identity provider is down.
+    "force_sso": {{ 'True' if ciso_assistant_oidc_force | bool else 'False' }},
+    "slo_enabled": False,
+    "provider": "openid_connect",
+    "provider_id": "{{ ciso_assistant_oidc_provider_id }}",
+    "name": "{{ ciso_assistant_oidc_display_name }}",
+    "client_id": "{{ ciso_assistant_oidc.client_id }}",
+    "secret": "{{ ciso_assistant_oidc.client_secret }}",
+    # Just-in-time provisioning: Authentik decides WHO may sign in (the application is restricted
+    # to {{ ciso_assistant_access_group }}), so the account is created on first login instead of
+    # being pre-created by hand in a second place.
+    "jit_provisioning_enabled": True,
+    "default_user_groups": [],
+    "settings": {
+        "server_url": "{{ ciso_assistant_oidc_issuer }}",
+        "token_auth_method": "client_secret_post",
+        "oauth_pkce_enabled": True,
+        "attribute_mapping": {
+            "uid": ["sub"],
+            "email": ["email"],
+            "email_verified": ["email_verified"],
+            "groups": ["groups"],
+        },
+    },
+}
+
+row, _created = GlobalSettings.objects.get_or_create(name="sso", defaults={"value": {}})
+current = dict(row.value or {})
+
+# Defaults first, then whatever is stored, then the OIDC keys. Replacing the block wholesale takes
+# the entire sign-in page down with a KeyError('sp'), which is exactly what happened the first time
+# this ran — so the layering both preserves and restores the keys the app expects to find.
+merged_settings = dict(DEFAULT_SAML_SETTINGS)
+merged_settings.update(current.get("settings") or {})
+merged_settings.update(desired.pop("settings"))
+
+merged = dict(current)
+merged.update(desired)
+merged["settings"] = merged_settings
+
+if merged != current:
+    row.value = merged
+    row.save(update_fields=["value"])
+    print("CHANGED")
+else:
+    print("UNCHANGED")

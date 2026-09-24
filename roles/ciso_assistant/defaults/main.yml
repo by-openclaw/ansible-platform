@@ -1,0 +1,96 @@
+---
+# ==============================================================================
+# Role: ciso_assistant — the compliance registry (intuitem/ciso-assistant-community, AGPLv3).
+# ADR security/0002 named it the authoritative registry (ISO 27001:2022, NIS2, GDPR catalogs,
+# applied controls, evidence linking back to the ADRs) and it was never deployed; the CISO
+# tables every ADR carries have had nowhere to land. Two containers from one image family plus
+# a task worker, the shared PostgreSQL cluster, evidence in S3, Traefik + Authentik.
+#
+# The product is "CISO Assistant"; the PLATFORM service it provides is "grc" (naming/0002 §3
+# {function}). One name, everywhere: host lxc-grc-01, route grc.<domain>, mailbox grc@, database
+# and S3 identity grc, Vault prod/grc/*, firewall aliases host4_grc / port_grc, SSO slug grc.
+# ==============================================================================
+ciso_assistant_service: "grc"                       # the platform function name — single source
+ciso_assistant_version: "v4.0.6"                    # exact pin, never :latest — bump deliberately
+ciso_assistant_backend_image: "ghcr.io/intuitem/ciso-assistant-community/backend:{{ ciso_assistant_version }}"
+ciso_assistant_frontend_image: "ghcr.io/intuitem/ciso-assistant-community/frontend:{{ ciso_assistant_version }}"
+ciso_assistant_state: present
+
+ciso_assistant_fqdn: "{{ ciso_assistant_service }}.{{ platform_domain }}"
+ciso_assistant_listen_ip: "{{ hostvars[inventory_hostname].ansible_host }}"
+ciso_assistant_frontend_port: 3000
+ciso_assistant_backend_port: 8000
+ciso_assistant_data_dir: "/opt/ciso-assistant"
+# First boot migrates and then imports the framework catalog before the API serves anything, which
+# takes minutes. Every later run answers on the first try, so a long ceiling costs nothing.
+ciso_assistant_api_probe_retries: 90
+ciso_assistant_api_probe_delay: 10
+
+# --- container topology ------------------------------------------------------------------------
+# A user-defined network so the containers resolve each other by name. Deliberately IPv4-only:
+# the daemon's fixed-cidr-v6 covers the default bridge, not this one, so an IPv6 address here has
+# no route out — the database's AAAA would be tried and time out on every connection. Without
+# IPv6 on the interface that attempt fails instantly and psycopg uses the A record.
+ciso_assistant_network: "{{ ciso_assistant_stack_name }}"
+# One stem names the stack. The frontend reaches the backend by container name on that private
+# network, and Django answers only a Host header it was told about, so the same variable has to
+# feed the container name, the frontend's backend URL and ALLOWED_HOSTS. Splitting them once cost
+# an afternoon: the frontend called "ciso-assistant-backend" while ALLOWED_HOSTS said "backend",
+# and every page returned 400 from a backend that was perfectly healthy.
+ciso_assistant_stack_name: "ciso-assistant"
+ciso_assistant_backend_container: "{{ ciso_assistant_stack_name }}-backend"
+ciso_assistant_worker_container: "{{ ciso_assistant_stack_name }}-huey"
+ciso_assistant_frontend_container: "{{ ciso_assistant_stack_name }}-frontend"
+# The ports the upstream images listen on inside the container, which the published ports above
+# map onto. They are separate knobs: the published port is ours, the container port is upstream's.
+ciso_assistant_backend_container_port: 8000
+ciso_assistant_frontend_container_port: 3000
+# PostgreSQL is reached with sslmode=verify-full (platform standard). The image has no CA store
+# at the path libpq expects, so the host's bundle is mounted there read-only.
+ciso_assistant_ca_bundle: "/etc/ssl/certs/ca-certificates.crt"
+ciso_assistant_container_ca_path: "/home/app/.postgresql/root.crt"
+
+# --- shared PostgreSQL (service_scaffold mints the database + role in Vault) --------------------
+ciso_assistant_db_name: "{{ ciso_assistant_service }}"
+ciso_assistant_db_user: "{{ ciso_assistant_service }}"
+ciso_assistant_db_host: "lxc-pgsql-01.{{ platform_domain }}"
+ciso_assistant_db_port: 5432
+ciso_assistant_db_sslmode: "verify-full"
+ciso_assistant_db_vault_path: "{{ platform_env | default('prod') }}/{{ ciso_assistant_service }}/db-pgsql"
+
+# --- evidence in S3 (SeaweedFS), never on the guest's disk --------------------------------------
+ciso_assistant_s3_bucket: "{{ ciso_assistant_service }}"
+ciso_assistant_s3_endpoint: "https://s3.{{ platform_domain }}"
+ciso_assistant_s3_vault_path: "{{ platform_env | default('prod') }}/{{ ciso_assistant_service }}/s3"
+
+# --- application secrets + mail -----------------------------------------------------------------
+ciso_assistant_vault_path: "{{ platform_env | default('prod') }}/{{ ciso_assistant_service }}/app"
+ciso_assistant_mail_vault_path: "{{ platform_env | default('prod') }}/mail/{{ ciso_assistant_service }}"
+ciso_assistant_superuser_email: "{{ (platform_people | selectattr('platform_owner', 'defined') | selectattr('platform_owner') | first).email }}"
+
+# --- observability (infra/0006, infra/0007) -----------------------------------------------------
+ciso_assistant_expose_metrics: true
+ciso_assistant_log_format: "json"                   # Loki reads structured lines
+ciso_assistant_auditlog_retention_days: 365         # compliance evidence outlives the default 90
+
+# --- SSO (mandatory, Authentik native OIDC) ------------------------------------------------------
+# The tool keeps its SSO configuration in the database (iam.sso — a GlobalSettings row), reachable
+# through /api/settings/sso/ and through the Django ORM. It is NOT a manual UI step: the role
+# writes the row, so the binding is declared here like every other setting.
+# The callback path comes from the app's own urls: core/urls.py mounts accounts/oidc/ and
+# allauth appends <provider_id>/login/callback/.
+ciso_assistant_oidc_slug: "{{ ciso_assistant_service }}"
+ciso_assistant_oidc_provider_id: "authentik"
+ciso_assistant_oidc_display_name: "Authentik"   # the label on the sign-in button
+ciso_assistant_authentik_base: "https://authentik.{{ platform_domain }}"
+# No trailing slash: django-allauth appends "/.well-known/openid-configuration" to this value,
+# and a trailing slash yields a double one. Authentik tolerates it, but the canonical URL is
+# what ends up in logs and in the app's own advertised configuration.
+ciso_assistant_oidc_issuer: "{{ ciso_assistant_authentik_base }}/application/o/{{ ciso_assistant_oidc_slug }}"
+ciso_assistant_oidc_redirect_uri: "https://{{ ciso_assistant_fqdn }}/api/accounts/oidc/{{ ciso_assistant_oidc_provider_id }}/login/callback/"
+ciso_assistant_oidc_vault_path: "{{ platform_env | default('prod') }}/{{ ciso_assistant_service }}/oidc"
+# Local login stays available alongside SSO: this is the tool that documents the break-glass
+# procedure, so it must not be the one service that locks its own administrators out when the
+# IdP is down. Set force_sso true only once the break-glass path is proven elsewhere.
+ciso_assistant_oidc_force: false
+ciso_assistant_access_group: "{{ ciso_assistant_service }}-users"

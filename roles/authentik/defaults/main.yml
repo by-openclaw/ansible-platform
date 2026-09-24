@@ -248,6 +248,19 @@ authentik_oidc_apps:
     # Harbor's OIDC callback path.
     redirect_uris:
       - "https://harbor.{{ platform_domain }}/c/oidc/callback"
+  - slug: grc
+    launch_url: "https://grc.{{ platform_domain }}"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/ciso-assistant.svg"
+    name: "Compliance registry (CISO Assistant)"
+    group: "grc-users"              # ACCESS group — only members may sign in to the registry
+    vault_path: "prod/grc/oidc"     # Vault-native client creds (like GitLab, Verdaccio)
+    restrict_to_group: true         # IdP-enforced: the tool provisions accounts just-in-time,
+                                    # so the identity provider is the only gate on who gets one
+    # Callback path read from the app's own routes: core/urls.py mounts accounts/oidc/ and
+    # django-allauth appends <provider_id>/login/callback/. provider_id is 'authentik'
+    # (roles/ciso_assistant defaults) — the two must agree or the IdP rejects the redirect.
+    redirect_uris:
+      - "https://grc.{{ platform_domain }}/api/accounts/oidc/authentik/login/callback/"
 
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
@@ -307,6 +320,7 @@ authentik_groups:
   - harbor-admins       # subset of harbor-users → Harbor system admins (oidc_admin_group)
   - jitsi-users         # access group — members may open Jitsi Meet (forwardAuth)
   - verdaccio-users     # access group — members may SSO into the npm registry (verdaccio-openid)
+  - grc-users           # access group — members may SSO into the compliance registry (accounts are provisioned just-in-time)
   - infra-admins
   - dev
 # Groups whose members are Authentik superusers (can manage Authentik itself).

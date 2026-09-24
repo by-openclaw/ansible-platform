@@ -222,3 +222,10 @@ contract_audit_service_checks:
     probe: "pvesh get /cluster/options --output-format json 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get(\"email_from\",\"\"))'"
     expect: "^alerts@{{ platform_domain | regex_escape }}$"
     groups: ["proxmox_nodes"]
+  - id: GRC-01
+    desc: "Compliance registry advertises SSO on its own endpoint (the binding is a role, not a UI step)"
+    probe: >-
+      curl -sf -m 10 https://grc.{{ platform_domain }}/api/settings/sso/info/
+      | grep -q '"is_enabled": *true' && echo PASS || echo FAIL
+    expect: "^PASS$"
+    groups: ["ciso_assistant"]
