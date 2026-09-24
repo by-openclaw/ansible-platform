@@ -50,7 +50,7 @@ authentik_oidc_apps:
     launch_url: "https://vault.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/hashicorp-vault.svg"
     name: "Vault"
-    group: "vault-admins"
+    group: "{{ platform_service_groups.vault.admin }}"
     secret_file: "fabric/app-oidc-vault.json"
     redirect_uris:
       - "https://vault.{{ platform_domain }}/ui/vault/auth/oidc/oidc/callback"
@@ -59,7 +59,7 @@ authentik_oidc_apps:
     launch_url: "https://pgadmin.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/pgadmin.svg"
     name: "pgAdmin"
-    group: "pgadmin-admins"
+    group: "{{ platform_service_groups.pgadmin.admin }}"
     secret_file: "fabric/app-oidc-pgadmin.json"
     redirect_uris:
       - "https://pgadmin.{{ platform_domain }}/oauth2/authorize"
@@ -67,7 +67,7 @@ authentik_oidc_apps:
     launch_url: "https://netbox.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/netbox.svg"
     name: "NetBox"
-    group: "netbox-admins"
+    group: "{{ platform_service_groups.netbox.admin }}"
     secret_file: "fabric/app-oidc-netbox.json"
     restrict_to_group: true     # IdP-enforced: only netbox-admins can log in
     redirect_uris:
@@ -76,7 +76,7 @@ authentik_oidc_apps:
     launch_url: "https://vaultwarden.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/vaultwarden.svg"
     name: "Vaultwarden"
-    group: "vaultwarden-admins"
+    group: "{{ platform_service_groups.vaultwarden.admin }}"
     secret_file: "fabric/app-oidc-vaultwarden.json"
     restrict_to_group: true     # IdP-enforced: only vaultwarden-admins can log in
     force_email_verified: true  # vaultwarden rejects email_verified=False (authentik default)
@@ -87,8 +87,8 @@ authentik_oidc_apps:
     launch_url: "https://nextcloud.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/nextcloud.svg"
     name: "Nextcloud"
-    group: "nextcloud-users"    # ACCESS group — any member may log into Nextcloud
-    admin_source_group: "nextcloud-admins"  # members of THIS group also get NC admin
+    group: "{{ platform_service_groups.nextcloud.access }}"    # ACCESS group — any member may log into Nextcloud
+    admin_source_group: "{{ platform_service_groups.nextcloud.admin }}"  # members of THIS group also get NC admin
     vault_path: "prod/nextcloud/oidc"   # Vault-native client creds (like GitLab); roles/nextcloud reads the same path
     restrict_to_group: true     # IdP-enforced: only nextcloud-users can log in
     admin_group_alias: "admin"  # admin_source_group members → NC "admin" group
@@ -100,7 +100,7 @@ authentik_oidc_apps:
     launch_url: "https://vpn.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/netbird.svg"
     name: "NetBird"
-    group: "netbird-users"        # ACCESS group — only members may authenticate
+    group: "{{ platform_service_groups.netbird.access }}"        # ACCESS group — only members may authenticate
     secret_file: "fabric/app-oidc-netbird.json"
     restrict_to_group: true       # IdP-enforced: only netbird-users can log in
     # Multi-container NetBird logs in against Authentik DIRECTLY (no Dex), per the
@@ -128,7 +128,7 @@ authentik_oidc_apps:
     launch_url: "https://mail.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/mailcow.svg"
     name: "Mailcow"
-    group: "mailcow-users"          # ACCESS group — only members may log into mail
+    group: "{{ platform_service_groups.mailcow.access }}"          # ACCESS group — only members may log into mail
     secret_file: "fabric/app-oidc-mailcow.json"
     restrict_to_group: true         # IdP-enforced: only mailcow-users can log in
     # mailcow's native Generic-OIDC. On first login it reads the `mailcow_template`
@@ -145,7 +145,7 @@ authentik_oidc_apps:
     launch_url: "https://pbs.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/proxmox.svg"
     name: "Proxmox Backup Server"
-    group: "pbs-admins"             # ACCESS group — only members may SSO into PBS
+    group: "{{ platform_service_groups.pbs.admin }}"             # ACCESS group — only members may SSO into PBS
     secret_file: "fabric/app-oidc-pbs.json"
     restrict_to_group: true         # IdP-enforced: only pbs-admins can log in
     # PBS (proxmox-backup-manager openid) redirects to its own web root after auth.
@@ -157,7 +157,7 @@ authentik_oidc_apps:
     launch_url: "https://portainer.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/portainer.svg"
     name: "Portainer (containers)"
-    group: "platform-admins"            # ACCESS group — the console can restart and exec into containers
+    group: "{{ platform_admins_group }}"            # ACCESS group — the console can restart and exec into containers
     vault_path: "prod/portainer/oidc"   # Vault-native client creds; roles/portainer configures Portainer with them
     restrict_to_group: true             # IdP-enforced: only platform-admins may sign in
     redirect_uris:
@@ -168,7 +168,7 @@ authentik_oidc_apps:
     launch_url: "https://wazuh.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/wazuh.svg"
     name: "Wazuh (security monitoring)"
-    group: "platform-admins"            # ACCESS group — the dashboard shows every host's security state
+    group: "{{ platform_admins_group }}"            # ACCESS group — the dashboard shows every host's security state
     vault_path: "prod/wazuh/oidc"       # Vault-native client creds; roles/wazuh renders the dashboard + indexer config
     restrict_to_group: true
     redirect_uris:
@@ -179,7 +179,7 @@ authentik_oidc_apps:
     launch_url: "https://proxmox.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/proxmox.svg"
     name: "Proxmox VE (hypervisor)"
-    group: "proxmox-admins"             # ACCESS group; PVE maps it to proxmox-admins-authentik → Administrator (roles/pve_host)
+    group: "{{ platform_service_groups.proxmox.admin }}"             # ACCESS group; PVE maps it to proxmox-admins-authentik → Administrator (roles/pve_host)
     vault_path: "prod/pve/oidc"         # roles/pve_host reads it for the OIDC realm
     restrict_to_group: true
     redirect_uris:
@@ -190,7 +190,7 @@ authentik_oidc_apps:
     launch_url: "https://grafana.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/grafana.svg"
     name: "Grafana"
-    group: "grafana-admins"         # ACCESS group — only members may SSO into Grafana
+    group: "{{ platform_service_groups.monitoring.admin }}"         # ACCESS group — only members may SSO into Grafana
     secret_file: "fabric/app-oidc-grafana.json"
     restrict_to_group: true         # IdP-enforced: only grafana-admins can log in
     # Grafana generic_oauth callback. role_attribute_path maps the groups claim.
@@ -200,7 +200,7 @@ authentik_oidc_apps:
     launch_url: "https://gitlab.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/gitlab.svg"
     name: "GitLab"
-    group: "gitlab-users"           # ACCESS group — only members may authenticate
+    group: "{{ platform_service_groups.gitlab.access }}"           # ACCESS group — only members may authenticate
     # Vault-native (GitLab chain): client creds read from Vault, not a local file.
     # Other apps still carry secret_file until their own Phase-2 migration.
     vault_path: "prod/gitlab/oidc"   # post-migration KV convention (security/0001)
@@ -216,7 +216,7 @@ authentik_oidc_apps:
     launch_url: "https://jumpserver.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/jumpserver.svg"
     name: "JumpServer"
-    group: "jumpserver-users"        # ACCESS group — only members may SSO into the bastion
+    group: "{{ platform_service_groups.jumpserver.access }}"        # ACCESS group — only members may SSO into the bastion
     vault_path: "prod/jumpserver/oidc"   # Vault-native client creds (like GitLab)
     restrict_to_group: true          # IdP-enforced: only jumpserver-users can log in
     offline_access: true             # JumpServer requests refresh tokens
@@ -230,7 +230,7 @@ authentik_oidc_apps:
     launch_url: "https://npm.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/verdaccio.svg"
     name: "npm registry (Verdaccio)"
-    group: "verdaccio-users"         # ACCESS group — only members may SSO into the registry
+    group: "{{ platform_service_groups.verdaccio.access }}"         # ACCESS group — only members may SSO into the registry
     vault_path: "prod/verdaccio/oidc"   # Vault-native client creds (like GitLab)
     restrict_to_group: true          # IdP-enforced; verdaccio-openid also checks authorized-groups
     # verdaccio-openid callbacks: web UI, WebAuthn (npm >=9 `npm login`), CLI fallback.
@@ -242,7 +242,7 @@ authentik_oidc_apps:
     launch_url: "https://harbor.{{ platform_domain }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/harbor.svg"
     name: "Harbor"
-    group: "harbor-users"           # ACCESS group — who may log in; harbor-admins (subset) become Harbor admins (oidc_admin_group)
+    group: "{{ platform_service_groups.harbor.access }}"           # ACCESS group — who may log in; harbor-admins (subset) become Harbor admins (oidc_admin_group)
     secret_file: "fabric/app-oidc-harbor.json"  # pragma: allowlist secret
     restrict_to_group: true         # IdP-enforced: only harbor-users can log in
     # Harbor's OIDC callback path.
@@ -264,19 +264,19 @@ authentik_proxy_apps_retired:
 authentik_proxy_apps:
   - slug: jitsi
     name: "Jitsi Meet"
-    group: "jitsi-users"                          # only members may open the conferencing app (forwardAuth)
+    group: "{{ platform_service_groups.jitsi.access }}"                          # only members may open the conferencing app (forwardAuth)
     external_host: "https://meet.{{ platform_domain }}"
   - slug: demo-apps
     name: "Demo app (k3s)"
-    group: "nextcloud-users"                      # every platform user (forwardAuth on the demo route)
+    group: "{{ platform_service_groups.nextcloud.access }}"                      # every platform user (forwardAuth on the demo route)
     external_host: "https://demo.{{ platform_domain }}"
   - slug: traefik-dashboard
     name: "Traefik Dashboard"
-    group: "traefik-admins"                       # only this group passes forwardAuth
+    group: "{{ platform_service_groups.traefik.admin }}"                       # only this group passes forwardAuth
     external_host: "https://traefik.{{ platform_domain }}"
   - slug: seaweedfs
     name: "SeaweedFS Admin"
-    group: "seaweedfs-admins"                     # only this group passes forwardAuth
+    group: "{{ platform_service_groups.seaweedfs.admin }}"                     # only this group passes forwardAuth
     external_host: "https://seaweedfs.{{ platform_domain }}"
   # NOTE: drawio is intentionally NOT SSO-gated — it's consumed as an iframe embed
   # by GitLab/Nextcloud (forwardAuth-in-iframe breaks), and is a stateless editor.
@@ -286,29 +286,13 @@ authentik_proxy_apps:
 # --- Identity: groups + human users (declarative) -------------------------------
 # Passwords set via API from app-user-<username>.json after the blueprint creates
 # the user (Authentik hashes them; can't be set in a blueprint).
-authentik_groups:
-  - platform-admins
-  - vault-admins
-  - pgadmin-admins
-  - netbox-admins
-  - vaultwarden-admins
-  - nextcloud-users     # access group — any member can use Nextcloud (OneDrive-like)
-  - nextcloud-admins    # subset of users that additionally get NC admin rights
-  - traefik-admins      # forwardAuth gate for the Traefik dashboard (admin-only svc)
-  - seaweedfs-admins    # forwardAuth gate for the SeaweedFS admin console (admin-only svc)
-  - netbird-users       # access group — only members may authenticate to NetBird VPN
-  - netbird-admins      # NetBird admins (NetBird's own owner/admin role set in-app)
-  - mailcow-users       # access group — only members may SSO into mailcow webmail
-  - pbs-admins          # access group — only members may SSO into Proxmox Backup Server
-  - gitlab-users        # access group — only members may SSO into GitLab
-  - gitlab-admins       # subset of gitlab-users → GitLab instance admins (admin_groups)
-  - jumpserver-users    # access group — only members may SSO into the JumpServer bastion
-  - harbor-users        # access group — members may SSO into Harbor (pull/push per project role)
-  - harbor-admins       # subset of harbor-users → Harbor system admins (oidc_admin_group)
-  - jitsi-users         # access group — members may open Jitsi Meet (forwardAuth)
-  - verdaccio-users     # access group — members may SSO into the npm registry (verdaccio-openid)
-  - infra-admins
-  - dev
+# Derived from platform_service_groups + platform_standalone_groups (group_vars/all/identity.yml).
+# It used to be a second hand-kept list, which is how four groups ended up live but unmanaged —
+# a rebuild from this blueprint would have deleted them. The blueprint template is unchanged: it
+# still iterates a flat list of names.
+authentik_groups: >-
+  {{ (platform_service_groups.values() | map('dict2items') | flatten | map(attribute='value') | list)
+     + platform_standalone_groups | unique }}
 # Groups whose members are Authentik superusers (can manage Authentik itself).
 # platform-admins = top-level platform operators.
 authentik_superuser_groups:

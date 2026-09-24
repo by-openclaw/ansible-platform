@@ -32,3 +32,48 @@ platform_jump_args: >-
   {{ platform_jump_user }}@{{ platform_jump_host }}"
   -o StrictHostKeyChecking=no
   -o UserKnownHostsFile=/dev/null
+
+# --- Access groups — ONE source (identity/0004, naming/0002) -------------------------------------
+# A group name was being written in three places: the Authentik registry that creates it, the role
+# that gates on it, and people.yml membership. The role's copy is the one that drifts, so roles now
+# read the name from here and never type it.
+#
+# Diffing this against the live identity provider on 2026-09-24 found four groups that existed only
+# by hand — diagrams-users, grafana-admins, ldap-search, proxmox-admins. A blueprint rebuild would
+# have deleted all four and with them the gates they enforce. They are declared here now.
+#
+# `access` = who may sign in at all. `admin` = the subset that additionally administers the service.
+# The key is the platform service name; the value is the group's real name, never derived — several
+# do not follow the service (monitoring is served by grafana-admins, proxmox by proxmox-admins).
+platform_service_groups:
+  diagrams:    {access: diagrams-users}
+  gitlab:      {access: gitlab-users,     admin: gitlab-admins}
+  harbor:      {access: harbor-users,     admin: harbor-admins}
+  grc:         {access: grc-users,        admin: grc-admins}       # compliance registry (PR #526)
+  jitsi:       {access: jitsi-users}
+  jumpserver:  {access: jumpserver-users}
+  mailcow:     {access: mailcow-users}
+  monitoring:  {admin: grafana-admins}
+  netbird:     {access: netbird-users,    admin: netbird-admins}
+  netbox:      {admin: netbox-admins}
+  nextcloud:   {access: nextcloud-users,  admin: nextcloud-admins}
+  pbs:         {admin: pbs-admins}
+  pgadmin:     {admin: pgadmin-admins}
+  proxmox:     {admin: proxmox-admins}
+  seaweedfs:   {admin: seaweedfs-admins}
+  traefik:     {admin: traefik-admins}
+  vault:       {admin: vault-admins}
+  vaultwarden: {admin: vaultwarden-admins}
+  verdaccio:   {access: verdaccio-users}
+
+# Groups that gate no single service. Named individually so a role references the name rather than
+# an index into a list.
+platform_admins_group: "platform-admins"        # Authentik superusers; also the Wazuh/Portainer gate
+platform_infra_admins_group: "infra-admins"
+platform_ldap_search_group: "ldap-search"       # the LDAP outpost's search account
+platform_dev_group: "dev"
+platform_standalone_groups:
+  - "{{ platform_admins_group }}"
+  - "{{ platform_infra_admins_group }}"
+  - "{{ platform_ldap_search_group }}"
+  - "{{ platform_dev_group }}"
