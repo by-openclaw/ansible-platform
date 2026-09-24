@@ -1,0 +1,45 @@
+---
+# The absent direction. services/0007 §7.1: "a resource with no absent-path is a
+# contract violation — nothing may exist in the platform that cannot be cleanly
+# removed by code."
+#
+# This removes what the scaffold puts ON THE HOST and at the edge. It deliberately
+# does NOT drop the database, the bucket, the secrets or the mailbox: those carry
+# archive-before-destroy and disable-never-delete semantics that roles/service_
+# decommission already owns. Teardown that silently destroys data is worse than
+# no teardown at all, so this points at that role instead of half-reimplementing it.
+- name: "Scaffold | Stop and remove the containers (reverse start order)"
+  community.docker.docker_container:
+    name: "{{ scaffold_ctr.name }}"
+    state: absent
+  loop: "{{ service_scaffold_def.containers | default([]) | reverse | list }}"
+  loop_control:
+    loop_var: scaffold_ctr
+    label: "{{ scaffold_ctr.name }}"
+
+- name: "Scaffold | Remove the private network"
+  community.docker.docker_network:
+    name: "{{ service_scaffold_def.network }}"
+    state: absent
+  when: (service_scaffold_def.network | default('')) | length > 0
+
+- name: "Scaffold | Withdraw every route the service published"
+  ansible.builtin.include_role:
+    name: traefik_route
+  vars:
+    traefik_route_name: "{{ scaffold_route.name }}"
+    traefik_route_fqdn: "{{ scaffold_route.fqdn }}"
+    traefik_route_backend_url: "{{ scaffold_route.backend_url }}"
+    traefik_route_state: absent
+  loop: "{{ service_scaffold_routes }}"
+  loop_control:
+    loop_var: scaffold_route
+    label: "{{ scaffold_route.name }}"
+
+- name: "Scaffold | What absent does NOT remove, and who owns it"
+  ansible.builtin.debug:
+    msg: >-
+      {{ service_scaffold_def.name }} removed from the host: containers, network, route.
+      Its database, S3 bucket, Vault secrets and mailbox are intact by design —
+      archive-before-destroy lives in roles/service_decommission
+      (playbooks/decommission-service.yml -e decommission_target={{ service_scaffold_def.name }}).
