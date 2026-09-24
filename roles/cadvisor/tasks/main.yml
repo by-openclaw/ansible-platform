@@ -49,16 +49,15 @@
       - "--whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service"
     log_driver: journald
 
-- name: "cAdvisor | Allow the monitoring host to scrape it when ufw is active"
-  community.general.ufw:
-    rule: allow
-    port: "{{ cadvisor_port | string }}"
-    proto: tcp
-    from_ip: "{{ item }}"
-    comment: "cAdvisor scrape (Prometheus)"
-  loop: "{{ cadvisor_scrapers }}"
-  failed_when: false
-
+- name: "cAdvisor | Admit the scrapers (roles/host_firewall owns every ufw rule)"
+  ansible.builtin.include_role:
+    name: host_firewall
+  vars:
+    host_firewall_rules:
+      - port: "{{ cadvisor_port | string }}"
+        proto: tcp
+        from: "{{ cadvisor_scrapers }}"
+        comment: "cAdvisor scrape (Prometheus)"
 - name: "cAdvisor | Answers /metrics"
   ansible.builtin.uri:
     url: "http://{{ cadvisor_listen_ip }}:{{ cadvisor_port }}/healthz"

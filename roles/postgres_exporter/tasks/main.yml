@@ -48,23 +48,15 @@
   no_log: true
   when: postgres_exporter_password is defined
 
-- name: "PG exporter | ufw present?"
-  ansible.builtin.stat:
-    path: /usr/sbin/ufw
-  register: postgres_exporter_ufw
-
-- name: "PG exporter | Admit the scraper when ufw is active (port {{ postgres_exporter_port }})"
-  community.general.ufw:
-    rule: allow
-    port: "{{ postgres_exporter_port }}"
-    proto: tcp
-    from_ip: "{{ item }}"
-    comment: "Prometheus postgres exporter scrape"
-  loop: "{{ postgres_exporter_scrapers }}"
-  become: true
-  when: postgres_exporter_ufw.stat.exists
-  failed_when: false
-
+- name: "PG exporter | Admit the scrapers (roles/host_firewall owns every ufw rule)"
+  ansible.builtin.include_role:
+    name: host_firewall
+  vars:
+    host_firewall_rules:
+      - port: "{{ postgres_exporter_port | string }}"
+        proto: tcp
+        from: "{{ postgres_exporter_scrapers }}"
+        comment: "Prometheus postgres exporter scrape"
 - name: "PG exporter | It answers with DATABASE metrics (not just its own runtime)"
   ansible.builtin.uri:
     url: "http://{{ postgres_exporter_listen_ip }}:{{ postgres_exporter_port }}/metrics"

@@ -101,19 +101,23 @@
   delay: 4
   until: nextcloud_collab_wb.status in [200, 404]
 
-- name: "Collab | Open the backend ports to Traefik / VPN when ufw is active"
-  community.general.ufw:
-    rule: allow
-    port: "{{ item.0 | string }}"
-    proto: tcp
-    from_ip: "{{ item.1 }}"
-    comment: "Nextcloud collab backend via Traefik"
-  loop: >-
-    {{ [nextcloud_collab_signaling_port, nextcloud_collab_recording_port, nextcloud_collab_whiteboard_port]
-       | product([platform_internal_cidr4, platform_vpn_cidr]) | list }}
-  failed_when: false
-
-# --- Traefik: three path routes under the Nextcloud host name (prefix stripped) ------
+- name: "Collab | Admit the backend ports (roles/host_firewall owns every ufw rule)"
+  ansible.builtin.include_role:
+    name: host_firewall
+  vars:
+    host_firewall_rules:
+      - port: "{{ nextcloud_collab_signaling_port | string }}"
+        proto: tcp
+        from: &collab_sources ["{{ platform_internal_cidr4 }}", "{{ platform_vpn_cidr }}"]
+        comment: "Nextcloud collab signaling via Traefik"
+      - port: "{{ nextcloud_collab_recording_port | string }}"
+        proto: tcp
+        from: *collab_sources
+        comment: "Nextcloud collab recording via Traefik"
+      - port: "{{ nextcloud_collab_whiteboard_port | string }}"
+        proto: tcp
+        from: *collab_sources
+        comment: "Nextcloud collab whiteboard via Traefik"
 - name: "Collab | Traefik path routes on {{ nextcloud_collab_nc_domain }}"
   ansible.builtin.include_role:
     name: traefik_route

@@ -131,14 +131,16 @@
   register: promtail_ufw_bin
   when: promtail_syslog_listeners | default([]) | length > 0
 
-- name: "Promtail | Syslog listener ports (ufw, from the shipping hosts only — hosts without ufw rely on the FW)"
-  community.general.ufw:
-    rule: allow
-    proto: tcp
-    port: "{{ item.0.port | string }}"
-    from_ip: "{{ item.1 }}"
-    comment: "promtail syslog {{ item.0.name }}"
-  loop: "{{ promtail_syslog_listeners | default([]) | subelements('allow_from') }}"
-  loop_control:
-    label: "{{ item.0.name }}:{{ item.0.port }} from {{ item.1 }}"
-  when: promtail_ufw_bin.stat.exists | default(false)
+- name: "Promtail | Admit the syslog listeners (roles/host_firewall owns every ufw rule)"
+  ansible.builtin.include_role:
+    name: host_firewall
+  vars:
+    # One rule per listener, its own allow_from as the sources. Written out rather than
+    # filter-chained: a reader has to be able to see what reaches this host.
+    host_firewall_rules: >-
+      [{% for listener in promtail_syslog_listeners | default([]) %}
+        {"port": "{{ listener.port }}", "proto": "tcp",
+         "from": {{ listener.allow_from | to_json }},
+         "comment": "promtail syslog {{ listener.name }}"}{{ "," if not loop.last else "" }}
+      {% endfor %}]
+  when: promtail_syslog_listeners | default([]) | length > 0
