@@ -1,0 +1,47 @@
+# {{ ansible_managed }}
+# Make a signed-in identity land with the right rights, from GROUP membership only.
+#
+# Two things have to be true or an Authentik sign-in ends in "SSO authentication failed":
+#
+#  1. Just-in-time provisioning needs BOTH the SSO setting AND the `jit_provisioning` feature
+#     flag. The setting alone is silently inert (iam/adapter.py: jit_provisioning_active is the
+#     AND of the two), so a person the identity provider authorised still hits "user not found".
+#
+#  2. The account it creates carries no rights of its own. The tool grants rights to an IdP group
+#     bound to one of its own groups (iam/models.py resolves permissions through
+#     idp_groups -> user_groups), which is how membership decides who administers the registry —
+#     no per-person edits here, the same rule as every other service on the platform.
+#
+# Piped into `manage.py shell` by roles/ciso_assistant. Idempotent; prints CHANGED or UNCHANGED.
+from global_settings.models import GlobalSettings
+from iam.models import IdPGroup, UserGroup
+
+changed = False
+
+# --- 1. the feature flag JIT provisioning depends on -------------------------------------------
+flags, _created = GlobalSettings.objects.get_or_create(name="feature-flags", defaults={"value": {}})
+value = dict(flags.value or {})
+if value.get("jit_provisioning") is not True:
+    value["jit_provisioning"] = True
+    flags.value = value
+    flags.save(update_fields=["value"])
+    changed = True
+
+# --- 2. identity-provider group -> the tool's own group ----------------------------------------
+{% for pair in ciso_assistant_group_map %}
+idp, created = IdPGroup.objects.get_or_create(name="{{ pair.idp }}")
+if created:
+    changed = True
+if idp.source != IdPGroup.Source.SSO:
+    idp.source = IdPGroup.Source.SSO
+    idp.save(update_fields=["source"])
+    changed = True
+target = UserGroup.objects.filter(name="{{ pair.app }}").first()
+if target is None:
+    raise SystemExit("no such group in the tool: {{ pair.app }}")
+if not target.idp_groups.filter(pk=idp.pk).exists():
+    target.idp_groups.add(idp)
+    changed = True
+{% endfor %}
+
+print("CHANGED" if changed else "UNCHANGED")

@@ -94,3 +94,13 @@ ciso_assistant_oidc_vault_path: "{{ platform_env | default('prod') }}/{{ ciso_as
 # IdP is down. Set force_sso true only once the break-glass path is proven elsewhere.
 ciso_assistant_oidc_force: false
 ciso_assistant_access_group: "{{ ciso_assistant_service }}-users"
+ciso_assistant_admin_group: "{{ ciso_assistant_service }}-admins"
+# Identity-provider group -> the tool's own group. The tool resolves a person's rights through
+# idp_groups -> user_groups, so membership in Authentik decides what they can do here and nobody
+# is granted anything by name. Its built-in groups: BI-UG-ADM Administrator, BI-UG-ANA Analyst,
+# BI-UG-GAD Reader, BI-UG-GAP Approver, BI-UG-GAE Respondent.
+# grc-users are the people invited to do the compliance work, so Analyst and not Reader —
+# a registry nobody may write to cannot hold the platform's posture.
+ciso_assistant_group_map:
+  - { idp: "{{ ciso_assistant_admin_group }}", app: "BI-UG-ADM" }
+  - { idp: "{{ ciso_assistant_access_group }}", app: "BI-UG-ANA" }

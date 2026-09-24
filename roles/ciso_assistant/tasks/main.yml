@@ -257,6 +257,20 @@
   until: ciso_assistant_probe.status | default(0) == 200
   when: not ansible_check_mode
 
+# Binding the provider is not enough on its own: without the feature flag below a person the
+# identity provider authorised is still refused with "user not found", and without the group
+# mapping the account that is created carries no rights at all.
+- name: "CISO Assistant | Group-driven access (JIT provisioning + IdP group → tool group)"
+  ansible.builtin.command:
+    cmd: "docker exec -i {{ ciso_assistant_backend_container }} python manage.py shell"
+    stdin: "{{ lookup('template', 'sso_access.py.j2') }}"
+  register: ciso_assistant_access
+  changed_when: ciso_assistant_access.stdout_lines | default(['']) | last == 'CHANGED'
+  failed_when: >-
+    ciso_assistant_access.rc != 0
+    or (ciso_assistant_access.stdout_lines | default(['']) | last) not in ['CHANGED', 'UNCHANGED']
+  when: not ansible_check_mode
+
 - name: "CISO Assistant | Report"
   ansible.builtin.debug:
     msg: >-
