@@ -24,7 +24,7 @@ prometheus_cadvisor_port: 9180
 # cluster every service depends on. 2026-09-22 showed the symptom (500s everywhere) long before
 # anyone could see the cause.
 prometheus_postgres_exporter_port: 9187
-prometheus_postgres_exporter_hosts: ["lxc-pgsql-01"]
+prometheus_postgres_exporter_hosts: "{{ groups['postgresql'] | default([]) }}"
 # Bind to localhost only — Grafana is co-located and Traefik/edge (if any) fronts it.
 prometheus_listen: "127.0.0.1"
 
@@ -35,7 +35,7 @@ prometheus_blackbox_url: "127.0.0.1:9115"
 # HTTPS targets FOLLOW THE ROUTES: the live Traefik host list is read at play time
 # (every Host() rule under the dynamic dir) so a new service is probed the moment
 # it is published. Deep health paths and exclusions are declared here.
-prometheus_traefik_host: "lxc-traefik-01"
+prometheus_traefik_host: "{{ groups['traefik'] | first }}"
 prometheus_traefik_dynamic_dir: "/etc/traefik/dynamic"
 # Names that cannot be probed from inside: ca.<domain> has no internal record (VPN-only name)
 # and vpn.<domain> resolves to the WAN address (no NAT reflection). Their daemons are probed
@@ -59,16 +59,32 @@ prometheus_resolver_host: "{{ groups['adguard'] | first }}"
 prometheus_blackbox_dns_v4: ["{{ hostvars[prometheus_resolver_host].ansible_host }}:53"]
 prometheus_blackbox_dns_v6: ["[{{ hostvars[prometheus_resolver_host].platform_host_v6 }}]:53"]
 # Plain TCP listeners (Talk TURN on the collab host)
-prometheus_blackbox_tcp:
-  - "10.1.3.195:6443"     # k3s API server (application platform)
-  - "10.1.3.194:3478"     # Talk TURN listener (collab)
-  - "10.1.3.192:9000"     # step-ca (HTTPS probe once its root is in the trust store, A.4)
-  - "10.1.3.181:33073"    # NetBird management (public name is WAN-only from inside)
+# Each entry is the host's inventory GROUP and the port — the address comes from the
+# inventory, so a rebuilt or readdressed service stays monitored without editing this list.
+prometheus_blackbox_tcp_targets:
+  - {group: k3s,      port: 6443,  what: "k3s API server (application platform)"}
+  - {group: collab,   port: 3478,  what: "Talk TURN listener"}
+  - {group: step_ca,  port: 9000,  what: "step-ca (HTTPS probe once its root is trusted, A.4)"}
+  - {group: netbird,  port: 33073, what: "NetBird management (public name is WAN-only from inside)"}
+prometheus_blackbox_tcp: >-
+  {%- set out = [] -%}
+  {%- for t in prometheus_blackbox_tcp_targets -%}
+    {%- for h in groups.get(t.group, []) -%}
+      {%- set _ = out.append(hostvars[h].ansible_host ~ ':' ~ t.port) -%}
+    {%- endfor -%}
+  {%- endfor -%}
+  {{ out }}
 # TLS listeners — also yields the certificate expiry (mail-port wildcard expired unseen on 2026-09-17)
-prometheus_blackbox_tcp_tls: ["vm-mailcow-01.{{ platform_domain }}:993"]
-prometheus_blackbox_smtp_starttls: ["vm-mailcow-01.{{ platform_domain }}:587", "vm-mailcow-01.{{ platform_domain }}:25"]
+prometheus_blackbox_tcp_tls: ["{{ groups['mailcow'] | first }}.{{ platform_domain }}:993"]
+prometheus_blackbox_smtp_starttls:
+  - "{{ groups['mailcow'] | first }}.{{ platform_domain }}:587"
+  - "{{ groups['mailcow'] | first }}.{{ platform_domain }}:25"
 # ICMP: gateways + the resolver
-prometheus_blackbox_icmp: ["10.1.3.1", "10.1.2.1", "10.1.3.101"]
+# The two zone gateways and the resolver — all three from their own source, never typed.
+prometheus_blackbox_icmp:
+  - "{{ platform_zones.svc.gw4 }}"
+  - "{{ platform_zones.dmz.gw4 }}"
+  - "{{ hostvars[prometheus_resolver_host].ansible_host }}"
 # Alert thresholds
 prometheus_alert_probe_for: "2m"
 prometheus_alert_resolver_for: "1m"
