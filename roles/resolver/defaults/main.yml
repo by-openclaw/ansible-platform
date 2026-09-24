@@ -9,14 +9,16 @@
 # firewall, because nothing set the resolver at all (surveyed 2026-09-09).
 
 # AdGuard, on both families. The v6 address matters: a dual-stack guest prefers IPv6.
-resolver_primary_v4: 10.1.3.101
-resolver_primary_v6: "fd01:3::101"
+# The resolver is whichever host is in the adguard group — the inventory decides, not this file.
+resolver_primary_host: "{{ groups['adguard'] | first }}"
+resolver_primary_v4: "{{ hostvars[resolver_primary_host].ansible_host }}"
+resolver_primary_v6: "{{ hostvars[resolver_primary_host].platform_host_v6 }}"
 
 # The firewall's Unbound, as fallback ONLY. AdGuard is a single VM: without a fallback its
 # reboot takes name resolution down platform-wide, which is worse than briefly resolving
 # unfiltered. The resolver library only reaches it when AdGuard does not answer.
-resolver_fallback_v4: 10.1.3.1
-resolver_fallback_v6: "fd01:3::1"
+resolver_fallback_v4: "{{ platform_zones.svc.gw4 }}"
+resolver_fallback_v6: "{{ platform_zones.svc.gw6 }}"
 
 resolver_search_domain: "{{ platform_domain | default('') }}"
 
