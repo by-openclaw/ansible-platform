@@ -176,9 +176,12 @@
   loop_control:
     label: "{{ item.name }}"
   register: jumpserver_probe
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
+  # The key this probe uses is staged and unlocked by tasks --check skips (they write files on the
+  # bastion), so under --check it would test a key that is not there and call every asset broken.
+  # A dry-run cannot verify logins; it skips instead of inventing a failure.
+  when: not ansible_check_mode
 
 - name: "JumpServer reconcile | Every probe must have logged in"
   ansible.builtin.assert:
@@ -188,6 +191,7 @@
       {{ jumpserver_probe.results | rejectattr('rc', 'equalto', 0) | map(attribute='item.name') | list }}
       (port/account/key per the hardening baseline — see roles/jumpserver/defaults)
     success_msg: "bastion login OK on {{ jumpserver_probe.results | length }} assets"
+  when: not ansible_check_mode
 - name: "JumpServer reconcile | Shred the staged secrets (LXC + container)"
   ansible.builtin.command:
     cmd: "{{ item }}"

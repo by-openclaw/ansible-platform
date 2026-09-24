@@ -87,7 +87,12 @@
     mode: put
     permission: []          # SeaweedFS: skip PutObjectAcl (limited ACL support; scoped key)
   no_log: true
-  when: mailcow_backup_latest is defined
+  when:
+    - mailcow_backup_latest is defined
+    # The archive above is only simulated under --check, so there is no file to send — and a
+    # dry-run should not be shipping a backup to object storage in any case. Without this the
+    # whole mailcow play could not be dry-run at all: it died here on a missing archive.
+    - not ansible_check_mode
 
 - name: "backup | Prune local archives beyond retention"
   ansible.builtin.find:
