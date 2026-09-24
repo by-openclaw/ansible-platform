@@ -92,17 +92,15 @@
       until: portainer_status.status == 200
       when: not ansible_check_mode
 
-    - name: "Portainer | Open the UI port to Traefik / VPN when ufw is active"
-      community.general.ufw:
-        rule: allow
-        port: "{{ portainer_http_port | string }}"
-        proto: tcp
-        from_ip: "{{ item }}"
-        comment: "Portainer via Traefik"
-      loop: ["{{ platform_internal_cidr4 }}", "{{ platform_internal_cidr6 }}", "{{ platform_vpn_cidr }}"]
-      failed_when: false
-
-    # --- platform concerns: route, mailbox, Vault inventory, SSO assertion ----------
+    - name: "Portainer | Admit the UI port (roles/host_firewall owns every ufw rule)"
+      ansible.builtin.include_role:
+        name: host_firewall
+      vars:
+        host_firewall_rules:
+          - port: "{{ portainer_http_port | string }}"
+            proto: tcp
+            from: ["{{ platform_internal_cidr4 }}", "{{ platform_internal_cidr6 }}", "{{ platform_vpn_cidr }}"]
+            comment: "Portainer via Traefik"
     - name: "Portainer | Scaffold the platform concerns"
       ansible.builtin.include_role:
         name: service_scaffold
@@ -115,6 +113,12 @@
           forward_auth: false             # native OIDC below; Portainer authenticates people itself
           mailbox: true                   # portainer@<domain> for notifications
           sso_slug: "{{ portainer_oidc_slug }}"
+          teardown:
+            # Keeping the Vault paths is the platform rule, not a Portainer exception, so it
+            # is not declared here. What is worth recording is that nothing else survives:
+            # this holds console state only — environments, users, settings — and the
+            # platform can rebuild all of it from the role.
+            note: "console state only (environments, users, settings); the role rebuilds it"
           vault_secrets:
             - path: "{{ portainer_admin_vault_path }}"
             - path: "{{ portainer_agent_vault_path }}"

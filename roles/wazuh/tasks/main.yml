@@ -403,26 +403,23 @@
         - (wazuh_groups_now.stdout | default('')) is not search('(?m)^\\s*' ~ item ~ ' \\(')
       changed_when: true
 
-    - name: "Wazuh | Host firewall: agents from the platform supernet, dashboard from Traefik / VPN"
-      community.general.ufw:
-        rule: allow
-        port: "{{ item.port | string }}"
-        proto: tcp
-        from_ip: "{{ item.from }}"
-        comment: "Wazuh {{ item.what }}"
-      loop:
-        - { port: "{{ wazuh_agent_port }}", from: "{{ platform_internal_cidr4 }}", what: agents }
-        - { port: "{{ wazuh_agent_port }}", from: "{{ platform_internal_cidr6 }}", what: agents v6 }
-        - { port: "{{ wazuh_enrol_port }}", from: "{{ platform_internal_cidr4 }}", what: enrolment }
-        - { port: "{{ wazuh_enrol_port }}", from: "{{ platform_internal_cidr6 }}", what: enrolment v6 }
-        - { port: "{{ wazuh_dashboard_port }}", from: "{{ platform_internal_cidr4 }}", what: dashboard }
-        - { port: "{{ wazuh_dashboard_port }}", from: "{{ platform_internal_cidr6 }}", what: dashboard v6 }
-        - { port: "{{ wazuh_dashboard_port }}", from: "{{ platform_vpn_cidr }}", what: dashboard VPN }
-      loop_control:
-        label: "{{ item.what }} {{ item.port }}"
-      failed_when: false
-
-    # --- platform concerns: route (HTTP backend, TLS at Traefik), mailbox, Vault, SSO assertion
+    - name: "Wazuh | Admit agents, enrolment and the dashboard (roles/host_firewall owns every ufw rule)"
+      ansible.builtin.include_role:
+        name: host_firewall
+      vars:
+        host_firewall_rules:
+          - port: "{{ wazuh_agent_port | string }}"
+            proto: tcp
+            from: &wazuh_platform ["{{ platform_internal_cidr4 }}", "{{ platform_internal_cidr6 }}"]
+            comment: "Wazuh agents"
+          - port: "{{ wazuh_enrol_port | string }}"
+            proto: tcp
+            from: *wazuh_platform
+            comment: "Wazuh enrolment"
+          - port: "{{ wazuh_dashboard_port | string }}"
+            proto: tcp
+            from: ["{{ platform_internal_cidr4 }}", "{{ platform_internal_cidr6 }}", "{{ platform_vpn_cidr }}"]
+            comment: "Wazuh dashboard"
     - name: "Wazuh | Scaffold the platform concerns"
       ansible.builtin.include_role:
         name: service_scaffold
@@ -435,6 +432,13 @@
           forward_auth: false             # the dashboard authenticates people itself (OpenID)
           mailbox: true
           sso_slug: "{{ wazuh_oidc_slug }}"
+          teardown:
+            # Naming the volume is the service-specific part: a person retiring Wazuh should
+            # know THIS is where the alerts, file-integrity history and vulnerability
+            # inventory live. That such a record outlives the tool is the platform rule, and
+            # applies to Loki's logs and GitLab's repositories exactly the same way.
+            keep_volumes: ["wazuh-indexer-data"]
+            note: "the indexer volume is the security record — alerts, FIM history, vulnerabilities"
           vault_secrets:
             - path: "{{ wazuh_vault_admin }}"
             - path: "{{ wazuh_vault_dashboard }}"

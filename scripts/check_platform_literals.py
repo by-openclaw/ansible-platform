@@ -12,7 +12,29 @@ PATTERNS = {
     "org literal": re.compile(r"(?<![a-z0-9_-])by-research(?![a-z0-9.-])"),
     "identity fallback": re.compile(r"default\((['\"])(by-research(\.be)?)\1\)"),
     "zone or aggregate CIDR": re.compile(r"\b10\.1\.\d{1,3}\.0/\d{1,2}\b|\bfd01:[0-9a-f]*::/\d{1,3}\b|\b100\.64\.0\.0/10\b"),
+
+    # Host addresses have a single source since 2026-09-24: the inventory carries
+    # platform_host_v6 for every guest, and platform_zones carries gw4/gw6 per zone.
+    # A literal here is a second copy that drifts — the firewall catalog held a SLAAC
+    # address for CrowdSec while the host answered on its static one.
+    "host IPv6 literal": re.compile(r"\bfd01:[0-9a-f]{1,4}::[0-9a-f:]{1,30}\b(?!/)"),
+
+    # Access groups have a single source since 2026-09-24: platform_service_groups and the
+    # platform_*_group vars in group_vars/all/identity.yml. The pattern deliberately lists the
+    # real names instead of matching *-users/*-admins, because JumpServer owns an internal group
+    # called bastion-admins that is NOT an identity-provider group — a blanket suffix rule would
+    # flag it and teach people to ignore the guard.
+    "access group literal": re.compile(
+        r"[\"\']("
+        r"diagrams-users|gitlab-users|gitlab-admins|harbor-users|harbor-admins|jitsi-users|"
+        r"jumpserver-users|mailcow-users|grafana-admins|netbird-users|netbird-admins|"
+        r"netbox-admins|nextcloud-users|nextcloud-admins|pbs-admins|pgadmin-admins|"
+        r"proxmox-admins|seaweedfs-admins|traefik-admins|vault-admins|vaultwarden-admins|"
+        r"verdaccio-users|platform-admins|infra-admins|ldap-search"
+        r")[\"\']"
+    ),
 }
+
 ROOTS = ("roles", "playbooks")
 SUFFIXES = (".yml", ".yaml", ".j2")
 

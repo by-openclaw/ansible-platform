@@ -27,6 +27,29 @@
 #   sso_slug        the expected authentik_oidc_apps slug (assert present).
 #   fw_alias        the expected OPNsense catalog port alias (assert present).
 #   audit_id        the expected contract_audit check id (assert present).
+#   state           "present" (default) | "absent" — BOTH directions are the
+#                   contract (services/0007 §7.1: a resource with no absent-path
+#                   is a contract violation). absent removes what this role puts
+#                   on the host; the data-bearing concerns (database, bucket,
+#                   secrets, mailbox) carry archive-before-destroy semantics and
+#                   belong to roles/service_decommission, which absent points at.
+#   network         "" (default) | name — a private docker network for the app.
+#   teardown        OPTIONAL, and only for what is specific to THIS service:
+#                     keep_volumes  [names] — named volumes that hold a
+#                                   record, listed so a person retiring the
+#                                   service knows what they are looking at
+#                     note          one line: WHAT this service holds and
+#                                   why it matters, for the reader in two
+#                                   years
+#                   The POLICY is not per-service and is not declared here —
+#                   see service_scaffold_teardown_policy below. Every service
+#                   gets it, whether or not it writes a teardown block.
+#   containers      list, in start order. Each: {name, image, published (list),
+#                   env (dict), volumes (list), entrypoint (list), command (list),
+#                   user, health (url polled until it answers), health_status
+#                   (default [200]), restart_policy (default unless-stopped)}.
+#                   This is what turned a service role into data: a container
+#                   service was N copies of pull-image / run / wait-for-health.
 # ==============================================================================
 
 service_scaffold_def: {}
@@ -38,3 +61,24 @@ service_scaffold_env: "{{ platform_env | default('prod') }}"
 # Toggle the central-registration assertions off ONLY for a first bring-up where
 # the SSO app / catalog / audit row are landing in the same change set.
 service_scaffold_assert_central: true
+
+# One route or many, resolved to a single list so the edge step has one shape to loop.
+service_scaffold_routes: >-
+  {{ service_scaffold_def.routes
+     | default([{'name': service_scaffold_def.name,
+                 'fqdn': service_scaffold_def.fqdn | default(''),
+                 'backend_url': service_scaffold_def.backend_url | default('')}])
+     | selectattr('fqdn', 'defined') | selectattr('fqdn', 'ne', '') | list }}
+
+# Teardown policy — the SAME for every service, which is why it lives here and not in a
+# per-service block. Two rules were briefly written as if wazuh and portainer were special:
+# "keep the Vault paths" and "keep the volume that holds the record". Neither is special.
+# Credentials are never destroyed anywhere (security/0001, never-delete), and data that is a
+# record outlives the tool that wrote it — that is true of wazuh's indexer, of Loki's logs,
+# of GitLab's repositories and of Nextcloud's files alike.
+service_scaffold_teardown_policy:
+  # Removing a container never destroys its named volumes. Releasing storage is a deliberate
+  # act in the retirement path, never a side effect of taking a service off a host.
+  keep_volumes: true
+  # Vault paths are archived, never dropped.
+  keep_secrets: true

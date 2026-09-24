@@ -44,15 +44,16 @@ decommission_crowdsec_host: "lxc-crowdsec-01"
 #     split_dns:      <fqdn>                               # ⚠️ remove from opn_unbound.host_overrides → logged
 #
 decommission_catalog:
-  defguard:
-    db: { database: "defguard", role: "defguard" }
-    secrets: ["db-pgsql-defguard", "defguard-core"]
-  wazuh:
-    # DB-less; the indexer data volume is kept (security record = evidence); Vault paths stay.
-    secrets: []
-  portainer:
-    # DB-less console; its Vault paths stay (archive rule), the guest goes via Terraform.
-    secrets: []
-  minio:
-    # DB-less; MinIO was replaced by SeaweedFS. Only stray secrets (if any).
-    secrets: []
+  # defguard and minio were retired and are GONE: no catalog row, no role, no host, no play, no
+  # database, no login role, no CrowdSec registration. Their entries were describing nothing, so
+  # they are removed rather than kept as folklore.
+  #
+  # wazuh and portainer are LIVE. What their entries held was not a retirement order but teardown
+  # intent — "keep the indexer volume, it is the security record" and "keep the Vault paths". That
+  # intent belongs with the service, next to what the service IS, so it moved into their role
+  # contracts (service_scaffold `teardown:`). A list called decommission_catalog naming two running
+  # services reads as a deletion queue, which is exactly the wrong thing to leave lying around.
+  #
+  # What remains here is the legacy path for a service whose role has already been deleted, where
+  # there is no contract left to read. Anything still installed declares its own teardown.
+  {}

@@ -52,12 +52,12 @@
   check_mode: false
   when: not ansible_check_mode
 
-- name: "Portainer k8s | NodePort reachable from the console host only (ufw)"
-  community.general.ufw:
-    rule: allow
-    port: "{{ portainer_k8s_agent_nodeport | string }}"
-    proto: tcp
-    from_ip: "{{ item }}"
-    comment: "Portainer k8s agent (console on lxc-portainer-01)"
-  loop: "{{ groups['portainer'] | map('extract', hostvars, 'ansible_host') | list }}"
-  failed_when: false
+- name: "Portainer k8s | Admit the console host only (roles/host_firewall owns every ufw rule)"
+  ansible.builtin.include_role:
+    name: host_firewall
+  vars:
+    host_firewall_rules:
+      - port: "{{ portainer_k8s_agent_nodeport | string }}"
+        proto: tcp
+        from: "{{ groups['portainer'] | map('extract', hostvars, 'ansible_host') | list }}"
+        comment: "Portainer k8s agent (console only)"
