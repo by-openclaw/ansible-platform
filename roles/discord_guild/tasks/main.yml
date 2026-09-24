@@ -25,9 +25,20 @@
   failed_when: "'DISCORD_DONE' not in discord_guild_run.stdout"
   no_log: true
 
+# The reconcile above CREATES Discord objects, so --check rightly skips it — and then hands this
+# role an empty stdout. Parsing it into a fact with a safe default is what keeps the rest of the
+# role working: `when: not ansible_check_mode` on the loop below would not help, because Ansible
+# evaluates a task's loop expression BEFORE its when, and `| last` on an empty list ends the play.
+- name: "Discord | Parse the reconcile result (empty when --check skipped it)"
+  ansible.builtin.set_fact:
+    discord_guild_webhooks: >-
+      {{ ((discord_guild_run.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}'))
+          | from_json).webhooks | default({}) }}
+  no_log: true
+
 - name: "Discord | Report (webhook URLs never shown)"
   ansible.builtin.debug:
-    msg: "{{ discord_guild_run.stdout_lines | reject('match', '^\\{') | list }}"
+    msg: "{{ discord_guild_run.stdout_lines | default([]) | reject('match', '^\\{') | list }}"
 
 - name: "Discord | Webhook URLs → Vault (get-or-create per webhook; secret stays in Vault)"
   ansible.builtin.include_role:
@@ -39,7 +50,7 @@
       id: "{{ item.value.id }}"
       channel: "{{ item.value.channel }}"
       _note: "Discord webhook (bot svc-chatops-prod, managed by roles/discord_guild) — consumed by gitlab_rbac_integrations / GitHub / Alertmanager"
-  loop: "{{ ((discord_guild_run.stdout_lines | select('match', '^\\{') | last) | from_json).webhooks | dict2items }}"
+  loop: "{{ discord_guild_webhooks | dict2items }}"
   loop_control:
     label: "{{ item.key }} -> #{{ item.value.channel }}"
   no_log: true
