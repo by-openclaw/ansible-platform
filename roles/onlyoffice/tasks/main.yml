@@ -83,16 +83,15 @@
   changed_when: false
   check_mode: false
 
-- name: "ONLYOFFICE | Open the port to Traefik / VPN when ufw is active"
-  community.general.ufw:
-    rule: allow
-    port: "{{ onlyoffice_http_port | string }}"
-    proto: tcp
-    from_ip: "{{ item }}"
-    comment: "ONLYOFFICE via Traefik"
-  loop: ["{{ platform_internal_cidr4 }}", "{{ platform_vpn_cidr }}"]
-  failed_when: false
-
+- name: "ONLYOFFICE | Admit the port (roles/host_firewall owns every ufw rule)"
+  ansible.builtin.include_role:
+    name: host_firewall
+  vars:
+    host_firewall_rules:
+      - port: "{{ onlyoffice_http_port | string }}"
+        proto: tcp
+        from: ["{{ platform_internal_cidr4 }}", "{{ platform_vpn_cidr }}"]
+        comment: "ONLYOFFICE via Traefik"
 - name: "ONLYOFFICE | Scaffold the platform concerns (public route, no mailbox, no SSO — JWT with Nextcloud)"
   ansible.builtin.include_role:
     name: service_scaffold

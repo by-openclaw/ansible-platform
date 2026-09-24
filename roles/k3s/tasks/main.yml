@@ -115,17 +115,19 @@
     label: "{{ ns.name }}"
   when: not ansible_check_mode
 
-- name: "k3s | Open the ingress + API to Traefik / runner / VPN when ufw is active"
-  community.general.ufw:
-    rule: allow
-    port: "{{ item.0 | string }}"
-    proto: tcp
-    from_ip: "{{ item.1 }}"
-    comment: "k3s ingress/API"
-  loop: "{{ [k3s_ingress_http_port, 6443] | product([platform_internal_cidr4, platform_vpn_cidr]) | list }}"
-  failed_when: false
-
-# --- publish the apps on the platform Traefik (internal-only, SSO forwardAuth) -------------
+- name: "k3s | Admit the ingress and API (roles/host_firewall owns every ufw rule)"
+  ansible.builtin.include_role:
+    name: host_firewall
+  vars:
+    host_firewall_rules:
+      - port: "{{ k3s_ingress_http_port | string }}"
+        proto: tcp
+        from: ["{{ platform_internal_cidr4 }}", "{{ platform_vpn_cidr }}"]
+        comment: "k3s ingress"
+      - port: "6443"
+        proto: tcp
+        from: ["{{ platform_internal_cidr4 }}", "{{ platform_vpn_cidr }}"]
+        comment: "k3s API"
 - name: "k3s | Traefik routes for the published apps"
   ansible.builtin.include_role:
     name: traefik_route
