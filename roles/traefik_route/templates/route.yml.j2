@@ -4,7 +4,11 @@
    forward_auth=true    -> add the global Authentik `authentik` forwardAuth middleware
                            + a per-host outpost sub-router (login callback/assets).
    The `authentik` middleware and `authentik-outpost` service are defined globally in
-   the traefik role's dynamic.yml.j2 (file provider) — referenced here by name. #}
+   the traefik role's dynamic.yml.j2 (file provider) — referenced here by name.
+   traefik_route_endpoints non-empty -> several backends under ONE host name, one
+                           router+service per entry in THIS file (NetBird: gRPC
+                           management/signal, REST, ws, relay, dashboard). The network
+                           middleware applies to every endpoint, same as a single route. #}
 {% if traefik_route_internal_only | bool %}
 {%   set _net_mw = traefik_route_name ~ '-internal' %}
 {% elif traefik_route_public_hardening | bool %}
@@ -23,6 +27,33 @@
 {% if traefik_route_forward_auth | bool %}{% set _ = _mws.append('authentik') %}{% endif %}
 http:
   routers:
+{% if traefik_route_endpoints | length > 0 %}
+{% for ep in traefik_route_endpoints %}
+{%   set _prefixes = ep.path_prefixes | default([]) %}
+{%   if _prefixes | length > 1 %}
+{%     set _ep_rule = traefik_route_rule ~ ' && (' ~ (_prefixes | map('regex_replace', '^(.*)$', 'PathPrefix(`\\1`)') | join(' || ')) ~ ')' %}
+{%   elif _prefixes | length == 1 %}
+{%     set _ep_rule = traefik_route_rule ~ ' && PathPrefix(`' ~ _prefixes[0] ~ '`)' %}
+{%   else %}
+{%     set _ep_rule = traefik_route_rule %}
+{%   endif %}
+    {{ traefik_route_name }}-{{ ep.name }}:
+      rule: "{{ _ep_rule }}"
+      entryPoints:
+        - websecure
+      service: {{ traefik_route_name }}-{{ ep.name }}
+{% if ep.priority is defined %}
+      priority: {{ ep.priority }}
+{% endif %}
+{% if _mws %}
+      middlewares:
+{% for m in _mws %}
+        - {{ m }}
+{% endfor %}
+{% endif %}
+      tls: {}
+{% endfor %}
+{% else %}
     {{ traefik_route_name }}:
       rule: "{{ _rule }}"
 {% if traefik_route_path_prefix | length > 0 %}
@@ -55,13 +86,26 @@ http:
       tls: {}
 {% endif %}
 
+{% endif %}
   services:
+{% if traefik_route_endpoints | length > 0 %}
+{% for ep in traefik_route_endpoints %}
+    {{ traefik_route_name }}-{{ ep.name }}:
+      loadBalancer:
+        servers:
+          - url: "{{ ep.backend_url }}"
+{% if traefik_route_backend_insecure_skip_verify | bool or traefik_route_backend_root_ca_file | length > 0 %}
+        serversTransport: {{ traefik_route_name }}-transport
+{% endif %}
+{% endfor %}
+{% else %}
     {{ traefik_route_name }}:
       loadBalancer:
         servers:
           - url: "{{ traefik_route_backend_url }}"
 {% if traefik_route_backend_insecure_skip_verify | bool or traefik_route_backend_root_ca_file | length > 0 %}
         serversTransport: {{ traefik_route_name }}-transport
+{% endif %}
 {% endif %}
 {% if traefik_route_backend_insecure_skip_verify | bool %}
 
