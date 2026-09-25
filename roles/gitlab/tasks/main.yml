@@ -31,14 +31,21 @@
     update_cache: true
 
 # --- Secrets from Vault (no local files; owning roles created each path) --------
+# apply: is required, not decorative — an include_role's tags do NOT propagate to
+# the role's own tasks, so under --tags gitlab-dr the login would be skipped and
+# gitlab_vault_token would come out undefined.
 - name: "GitLab | Authenticate to Vault (ansible-deploy AppRole; root fallback)"
   ansible.builtin.include_role:
     name: vault_login
+    apply:
+      tags: [gitlab, gitlab-dr]
+  tags: [gitlab, gitlab-dr]
 
 - name: "GitLab | Use the deploy token"
   ansible.builtin.set_fact:
     gitlab_vault_token: "{{ vault_deploy_token }}"
   no_log: true
+  tags: [gitlab, gitlab-dr]
 
 - name: "GitLab | Read PostgreSQL creds from Vault"
   ansible.builtin.include_role:
@@ -265,6 +272,7 @@
     src: /etc/gitlab/gitlab-secrets.json
   register: gitlab_secrets_raw
   no_log: true
+  tags: [gitlab, gitlab-dr]
 
 - name: "GitLab | Slurp initial root password (exists ~24h post-install)"
   ansible.builtin.slurp:
@@ -272,6 +280,7 @@
   register: gitlab_initial_root_raw
   failed_when: false
   no_log: true
+  tags: [gitlab, gitlab-dr]
 
 - name: "GitLab | Read the currently stored secrets from Vault"
   ansible.builtin.command:
@@ -285,6 +294,36 @@
   changed_when: false
   failed_when: false
   no_log: true
+  tags: [gitlab, gitlab-dr]
+
+# GitLab deletes /etc/gitlab/initial_root_password ~24h after install. The slurp
+# above is failed_when:false, so after that it yields nothing — and a kv put
+# replaces the WHOLE document, which is how Vault ended up holding no
+# initial_root_password_file at all (#572). A field that can no longer be re-read
+# must be carried over, never overwritten with empty.
+- name: "GitLab | Read the initial root password already stored in Vault"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -e VAULT_TOKEN={{ gitlab_vault_token }} vault
+      vault kv get -mount=secret -field=initial_root_password_file
+      {{ gitlab_secrets_vault_path }}
+  delegate_to: "{{ groups['vault'] | first }}"
+  become: true
+  register: gitlab_vault_rootpw
+  check_mode: false  # read-only probe: a later task reads its result
+  changed_when: false
+  failed_when: false
+  no_log: true
+  tags: [gitlab, gitlab-dr]
+
+- name: "GitLab | Keep whichever initial root password still exists"
+  ansible.builtin.set_fact:
+    gitlab_initial_root_keep: >-
+      {{ (gitlab_initial_root_raw.content | default('') | b64decode)
+         if ((gitlab_initial_root_raw.content | default('') | b64decode) | length > 0)
+         else (gitlab_vault_rootpw.stdout | default('') if gitlab_vault_rootpw.rc | default(1) == 0 else '') }}
+  no_log: true
+  tags: [gitlab, gitlab-dr]
 
 - name: "GitLab | Write GitLab-generated secrets to Vault ({{ gitlab_secrets_vault_path }})"
   ansible.builtin.command:
@@ -294,7 +333,7 @@
     stdin: >-
       {{ {
         'gitlab_secrets': (gitlab_secrets_raw.content | b64decode | from_json),
-        'initial_root_password_file': (gitlab_initial_root_raw.content | default('') | b64decode)
+        'initial_root_password_file': gitlab_initial_root_keep
       } | to_json }}
   delegate_to: "{{ groups['vault'] | first }}"
   become: true
@@ -303,7 +342,10 @@
     gitlab_vault_stored.rc != 0
     or (gitlab_vault_stored.stdout | default('') | from_json)
        != (gitlab_secrets_raw.content | b64decode | from_json)
+    or (gitlab_initial_root_keep | length > 0
+        and (gitlab_vault_rootpw.rc | default(1)) != 0)
   no_log: true
+  tags: [gitlab, gitlab-dr]
 
 # --- Nightly backup → SeaweedFS gitlab-backups (pure gitlab command, no .sh) ---
 - name: "GitLab | Schedule nightly backup to S3"
