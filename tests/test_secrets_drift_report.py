@@ -52,7 +52,7 @@ def test_a_value_never_appears_in_the_output():
     """The whole point. Plant a secret on each side and in a shared key."""
     out = diff(
         {"password": PLANTED, "url": "https://x", "only_here": PLANTED},
-        {"password": "other", "url": "https://x", "rotated": PLANTED},
+        {"password": "other", "url": "https://x", "rotated": PLANTED},  # pragma: allowlist secret
     )
     blob = json.dumps(out)
     assert PLANTED not in blob, f"the report leaked a value: {blob}"
