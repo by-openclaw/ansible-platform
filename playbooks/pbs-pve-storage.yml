@@ -46,15 +46,28 @@
         - r_acl.rc != 0
         - "'already' not in (r_acl.stderr | default(''))"
 
-    - name: "PVE-wire | Stat the controller-side token secret"
-      ansible.builtin.stat:
-        path: "{{ pbs_secret_dir | expanduser }}/fabric/pbs-pve-backup-token.json"
-      delegate_to: localhost
-      become: false
-      register: pbs_tok_stat
+    # Vault decides whether the token is held, not a file on the controller. It
+    # used to be the file, and Vault was a copy something had to remember to
+    # refresh — it did not: after the 2026-09-01 rename of the backup user, Vault
+    # kept pve-backup@pbs!pve, an auth-id PBS no longer has (#570).
+    - name: "PVE-wire | Read the backup API token from Vault (absent is valid)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ pbs_token_vault_path }}"
+        vault_secret_optional: true
 
-    - name: "PVE-wire | (Re)generate the API token when its secret is not held"
-      when: not pbs_tok_stat.stat.exists
+    - name: "PVE-wire | Is the token held, and is it the one PBS actually has?"
+      ansible.builtin.set_fact:
+        # A token whose auth-id no longer matches the configured user is as good
+        # as absent: it cannot authenticate, and keeping it hides that.
+        pbs_tok_held: >-
+          {{ (vault_secret_result | default({})).value | default('') | length > 0
+             and (vault_secret_result | default({})).tokenid | default('')
+                 == pbs_pve_backup_user ~ '!' ~ pbs_pve_backup_token }}
+
+    - name: "PVE-wire | (Re)generate the API token when Vault does not hold a usable one"
+      when: not (pbs_tok_held | bool)
       block:
         - name: "PVE-wire | Delete any stale token (secret unknown)"
           ansible.builtin.command:
@@ -72,19 +85,18 @@
           changed_when: true
           no_log: true
 
-        - name: "PVE-wire | Persist the token secret on the controller (0600)"
-          ansible.builtin.copy:
-            dest: "{{ pbs_secret_dir | expanduser }}/fabric/pbs-pve-backup-token.json"
-            mode: "0600"
-            content: |
-              {{ {'fields': {
-                   'tokenid': (r_gentok.stdout | regex_replace('^[^{]*', '') | from_json).tokenid,
-                   'value': (r_gentok.stdout | regex_replace('^[^{]*', '') | from_json).value,
-                   'note': 'PVE->PBS backup API token (pve-backup@pbs!pve)'
-                 }} | to_nice_json }}
-          delegate_to: localhost
-          become: false
-          no_log: true
+        # PBS mints the value, so this is read-then-create-then-store, not
+        # vault_secret's plain get-or-create: force_fields writes exactly these
+        # (a new KV v2 version; the previous one is retained).
+        - name: "PVE-wire | Store the minted token in Vault"
+          ansible.builtin.include_role:
+            name: vault_secret
+          vars:
+            vault_secret_path: "{{ pbs_token_vault_path }}"
+            vault_secret_force_fields:
+              tokenid: "{{ (r_gentok.stdout | regex_replace('^[^{]*', '') | from_json).tokenid }}"
+              value: "{{ (r_gentok.stdout | regex_replace('^[^{]*', '') | from_json).value }}"
+              note: "PVE->PBS backup API token ({{ pbs_pve_backup_user }}!{{ pbs_pve_backup_token }})"
 
     - name: "PVE-wire | Grant DatastoreBackup to the API TOKEN (privsep default)"
       ansible.builtin.command:
@@ -118,12 +130,22 @@
   vars_files:
     - ../roles/pbs/defaults/main.yml
   vars:
-    pbs_tok: "{{ (lookup('file', (pbs_secret_dir | expanduser) + '/fabric/pbs-pve-backup-token.json') | from_json).fields }}"
     pbs_fp: "{{ hostvars[groups['pbs'][0]]['pbs_fingerprint'] }}"
     pbs_ip: "{{ hostvars[groups['pbs'] | first].ansible_host }}"
     pbs_svc_subnet: "{{ platform_zones.svc.cidr4 }}"     # SVC VLAN (where PBS lives)
     pbs_fw_oob_ip: "{{ hostvars[groups['opnsense'] | first].ansible_host }}"     # FW OOB IP the node routes SVC traffic through
   tasks:
+    - name: "PVE-wire | Read the backup API token from Vault"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ pbs_token_vault_path }}"
+
+    - name: "PVE-wire | Bind the token"
+      ansible.builtin.set_fact:
+        pbs_tok: "{{ vault_secret_result }}"
+      no_log: true
+
     # The node sits on OOB (10.6.224.105); PBS is on the SVC VLAN behind the FW.
     # The node reaches the FW's OOB IP (10.6.239.196), and the FW routes+permits
     # OOB->SVC, so a static route via the FW makes PBS:8007 reachable. Persist it
