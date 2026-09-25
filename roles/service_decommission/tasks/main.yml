@@ -1,16 +1,38 @@
 ---
-- name: "decommission | Require + resolve the target service"
+# The footprint comes from the platform service catalog, not a second hand-kept list. Emptying
+# that list in #535 was right — it only ever covered 4 of 32 services — but it left this role
+# with nothing to read, so it refused every target. services.yml already records the database,
+# the route and the host for all of them; decommission_catalog now only carries the leftovers
+# of a service whose role is already gone, where there is no catalog row left to read.
+- name: "decommission | Require a target"
   ansible.builtin.assert:
-    that:
-      - decommission_target | length > 0
-      - decommission_target in decommission_catalog
-    fail_msg: "Set -e decommission_target=<name>. Known: {{ decommission_catalog.keys() | list }}"
+    that: decommission_target | length > 0
+    fail_msg: "Set -e decommission_target=<name>, as it appears in group_vars/all/services.yml."
+    quiet: true
+
+- name: "decommission | Resolve the service from the platform catalog"
+  ansible.builtin.set_fact:
+    _row: >-
+      {{ (platform_services | default([]) | selectattr('name', 'equalto', decommission_target)
+          | list | first) | default({}, true) }}
+    _stamp: "{{ lookup('pipe', 'date +%Y-%m-%d') }}"
+
+- name: "decommission | The service must be known somewhere"
+  ansible.builtin.assert:
+    that: (_row | length > 0) or (decommission_target in decommission_catalog)
+    fail_msg: >-
+      '{{ decommission_target }}' is in neither services.yml nor decommission_catalog.
+      A service that was never catalogued cannot be decommissioned by code.
     success_msg: "Decommissioning '{{ decommission_target }}' (ABSENT)."
 
 - name: "decommission | Pin the service footprint"
   ansible.builtin.set_fact:
-    _svc: "{{ decommission_catalog[decommission_target] }}"
-    _stamp: "{{ lookup('pipe', 'date +%Y-%m-%d') }}"
+    _svc: >-
+      {{ decommission_catalog[decommission_target]
+         if decommission_target in decommission_catalog
+         else {'db': ({'database': _row.name, 'role': _row.name} if _row.db | default('none') != 'none' else omit),
+               'traefik_route': (_row.name if _row.fqdn | default(None) else omit),
+               'secrets': []} }}
 
 # ============================ Postgres DB + role =============================
 - name: "decommission | DB — dump (archive) then drop"
@@ -114,11 +136,17 @@
       loop: "{{ _svc.secrets }}"
 
 # ============================ Traefik route =================================
-- name: "decommission | Remove the Traefik route file (file provider hot-reloads)"
-  ansible.builtin.file:
-    path: "{{ decommission_traefik_dynamic_dir }}/{{ _svc.traefik_route }}.yml"
-    state: absent
-  delegate_to: "{{ decommission_traefik_host }}"
+# roles/traefik_route owns route files in both directions. Deleting one by path here meant
+# two places knew where routes live and what they are called — and the withdrawal only
+# existed in this role, so a service torn down any other way left its router behind.
+- name: "decommission | Withdraw the Traefik route"
+  ansible.builtin.include_role:
+    name: traefik_route
+  vars:
+    traefik_route_name: "{{ _svc.traefik_route }}"
+    traefik_route_fqdn: ""
+    traefik_route_backend_url: ""
+    traefik_route_state: absent
   when: _svc.traefik_route is defined
 
 # ============================ Authentik OIDC app ============================
