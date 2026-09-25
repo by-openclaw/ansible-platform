@@ -79,21 +79,14 @@
 
 # --- SSO client creds: written to Vault by roles/authentik (app slug 'verdaccio') --
 - name: "Verdaccio | Read the OIDC client creds from Vault"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} vault
-      vault kv get -mount=secret -format=json {{ verdaccio_oidc_vault_path }}
-  delegate_to: "{{ groups['vault'] | first }}"
-  become: true
-  register: verdaccio_oidc_get
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-  changed_when: false
-  failed_when: verdaccio_oidc_get.rc != 0
-  no_log: true
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ verdaccio_oidc_vault_path }}"
 
 - name: "Verdaccio | Bind the OIDC client creds"
   ansible.builtin.set_fact:
-    verdaccio_oidc: "{{ (verdaccio_oidc_get.stdout | from_json).data.data }}"
+    verdaccio_oidc: "{{ vault_secret_result }}"
   no_log: true
 
 - name: "Verdaccio | S3 identity present (from the scaffold's bucket step)"

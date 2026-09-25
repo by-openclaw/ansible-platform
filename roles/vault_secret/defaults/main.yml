@@ -26,4 +26,11 @@ vault_secret_bootstrap_file: "vault-init.json"   # root_token lives here (bootst
 
 vault_secret_path: ""                      # REQUIRED — KV path, e.g. fabric/db-pgsql-gitlab
 vault_secret_init: {}                      # fields written ONLY if the path is absent
+# Read-if-present. Several consumers legitimately probe for a secret that may not exist yet —
+# optional SMTP credentials, an OIDC client another role has not minted. Without this they had
+# to reach past this role and call the vault CLI themselves, each with its own error handling,
+# no_log discipline and check-mode behaviour. That is how ten roles ended up bypassing it.
+# With vault_secret_optional, an absent path yields an empty vault_secret_result instead of
+# failing, and the caller decides what that means.
+vault_secret_optional: false
 vault_secret_force_fields: {}   # SEC-09 rotation: set to OVERWRITE the secret with exactly these fields
