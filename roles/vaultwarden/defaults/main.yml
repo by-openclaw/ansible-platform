@@ -30,22 +30,22 @@ vaultwarden_pg_name: "vaultwarden"
 vaultwarden_pg_user: "vaultwarden"
 
 # Controller secret store.
-vaultwarden_secret_dir: "~/.openclaw/workspace/infra/secrets"
-vaultwarden_secret_file: "fabric/vaultwarden.json"           # admin_token
-vaultwarden_pg_secret_file: "fabric/db-pgsql-vaultwarden.json" # written by postgres_db
+# Vault KV paths (security/0001 secret/{env}/{service}/{key}) — no controller files.
+vaultwarden_vault_path: "{{ platform_env | default('prod') }}/vaultwarden/admin"        # admin_token
+vaultwarden_pg_vault_path: "{{ platform_env | default('prod') }}/vaultwarden/db-pgsql"  # minted by postgres_db
 
 # --- Authentik OIDC SSO (wired only when the client secret file exists) ---------
 # Vaultwarden's built-in SSO (>=1.33). Access is gated IdP-side by the
 # vaultwarden-admins group (authentik restrict_to_group). The master password
 # still protects the vault (E2EE) — SSO only handles authentication.
-vaultwarden_oidc_secret_file: "fabric/app-oidc-vaultwarden.json"
+vaultwarden_oidc_vault_path: "{{ platform_env | default('prod') }}/vaultwarden/oidc"    # minted by roles/authentik
 vaultwarden_authentik_base: "https://authentik.{{ platform_domain }}"
 vaultwarden_oidc_app_slug: "vaultwarden"
 
 # SMTP via Resend — required so SSO account email verification (and password
 # hints) actually send. Without it vaultwarden asks for an email confirmation
 # that is never delivered. Wired only when the secret file exists.
-vaultwarden_resend_secret_file: "shared/app-resend-by-research.json"
+vaultwarden_smtp_vault_path: "{{ platform_env | default('prod') }}/resend/{{ platform_org }}"
 
 # Persistent volume (attachments, RSA keys, icon cache, sends).
 vaultwarden_data_volume: "vaultwarden-data"
