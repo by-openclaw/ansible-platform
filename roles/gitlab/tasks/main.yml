@@ -90,7 +90,7 @@
     cmd: >-
       docker exec -e VAULT_TOKEN={{ gitlab_vault_token }} vault
       vault kv get -mount=secret -format=json {{ gitlab_smtp_vault_path }}
-  delegate_to: lxc-vault-01
+  delegate_to: "{{ groups['vault'] | first }}"
   become: true
   register: gitlab_smtp_get
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
@@ -110,7 +110,7 @@
     cmd: >-
       docker exec -e VAULT_TOKEN={{ gitlab_vault_token }} vault
       vault kv get -mount=secret -format=json {{ gitlab_mail_vault_path }}
-  delegate_to: lxc-vault-01
+  delegate_to: "{{ groups['vault'] | first }}"
   become: true
   register: gitlab_mail_get
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
@@ -209,7 +209,7 @@
     cmd: >-
       docker exec -e VAULT_TOKEN={{ gitlab_vault_token }} vault
       vault kv get -mount=secret -format=json {{ gitlab_secrets_vault_path }}
-  delegate_to: lxc-vault-01
+  delegate_to: "{{ groups['vault'] | first }}"
   become: true
   register: gitlab_secrets_restore
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
@@ -290,7 +290,7 @@
     cmd: >-
       docker exec -e VAULT_TOKEN={{ gitlab_vault_token }} vault
       vault kv get -mount=secret -field=gitlab_secrets -format=json {{ gitlab_secrets_vault_path }}
-  delegate_to: lxc-vault-01
+  delegate_to: "{{ groups['vault'] | first }}"
   become: true
   register: gitlab_vault_stored
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
@@ -308,7 +308,7 @@
         'gitlab_secrets': (gitlab_secrets_raw.content | b64decode | from_json),
         'initial_root_password_file': (gitlab_initial_root_raw.content | default('') | b64decode)
       } | to_json }}
-  delegate_to: lxc-vault-01
+  delegate_to: "{{ groups['vault'] | first }}"
   become: true
   changed_when: true
   when: >-

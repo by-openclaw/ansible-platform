@@ -59,7 +59,7 @@
     - name: "Read installed Postgres extensions (gitlab db)"
       ansible.builtin.command:
         cmd: docker exec postgres psql -tAU postgres -d gitlabhq_production -c "SELECT extname FROM pg_extension"
-      delegate_to: lxc-pgsql-01
+      delegate_to: "{{ groups['postgresql'] | first }}"
       register: gitlab_pg_ext
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
@@ -69,7 +69,7 @@
         cmd: >-
           docker exec postgres psql -U postgres -d gitlabhq_production
           -c "CREATE EXTENSION IF NOT EXISTS {{ item }}"
-      delegate_to: lxc-pgsql-01
+      delegate_to: "{{ groups['postgresql'] | first }}"
       loop:
         - pg_trgm
         - btree_gist
@@ -105,7 +105,7 @@
       vars:
         traefik_route_name: gitlab
         traefik_route_fqdn: gitlab.{{ platform_domain }}
-        traefik_route_backend_url: "http://lxc-gitlab-01.{{ platform_domain }}:80"
+        traefik_route_backend_url: "http://{{ inventory_hostname }}.{{ platform_domain }}:80"
 
     - name: "Traefik route — Container registry"
       ansible.builtin.include_role:
@@ -113,7 +113,7 @@
       vars:
         traefik_route_name: gitlab-registry
         traefik_route_fqdn: registry.{{ platform_domain }}
-        traefik_route_backend_url: "http://lxc-gitlab-01.{{ platform_domain }}:5050"
+        traefik_route_backend_url: "http://{{ inventory_hostname }}.{{ platform_domain }}:5050"
 
     - name: "Traefik route — GitLab Pages (apex + wildcard)"
       ansible.builtin.include_role:
@@ -126,4 +126,4 @@
         # escape in the rendered double-quoted route file and makes Traefik reject
         # the whole dynamic dir (outage). [.] is backslash-free and YAML-safe.
         traefik_route_rule: 'HostRegexp(`^([a-zA-Z0-9-]+[.])?pages[.]{{ platform_domain | replace(".", "[.]") }}$`)'
-        traefik_route_backend_url: "http://lxc-gitlab-01.{{ platform_domain }}:8091"
+        traefik_route_backend_url: "http://{{ inventory_hostname }}.{{ platform_domain }}:8091"
