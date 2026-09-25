@@ -10,7 +10,7 @@
 # ==============================================================================
 
 # Central LAPI (lxc-crowdsec-01, SVC).
-crowdsec_fw_bouncer_lapi_host: "10.1.3.190"
+crowdsec_fw_bouncer_lapi_host: "{{ hostvars[groups['crowdsec'] | first].ansible_host }}"
 crowdsec_fw_bouncer_lapi_port: "8080"
 
 # Secrets — Vault only (read by the playbook pre-play on the Vault host and handed over as
@@ -35,7 +35,7 @@ crowdsec_fw_bouncer_config_path: "/usr/local/etc/crowdsec/bouncers/crowdsec-fire
 # 12 guests), so it detects events against itself (SSH, etc.) and feeds them to
 # the shared decision store. It does NOT run its own LAPI — lxc-crowdsec-01 is
 # the only LAPI. Reuses the guests' registration token (Vault, above); no new secret.
-crowdsec_fw_bouncer_machine_name: "vm-opns-01"
+crowdsec_fw_bouncer_machine_name: "{{ groups['opnsense'] | first }}"
 crowdsec_fw_bouncer_lapi_url: "http://{{ crowdsec_fw_bouncer_lapi_host }}:{{ crowdsec_fw_bouncer_lapi_port }}"
 # Collections the FW detects for itself. sshd = brute-force against the FW.
 crowdsec_fw_bouncer_collections:

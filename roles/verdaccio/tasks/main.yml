@@ -83,7 +83,7 @@
     cmd: >-
       docker exec -e VAULT_TOKEN={{ vault_deploy_token }} vault
       vault kv get -mount=secret -format=json {{ verdaccio_oidc_vault_path }}
-  delegate_to: lxc-vault-01
+  delegate_to: "{{ groups['vault'] | first }}"
   become: true
   register: verdaccio_oidc_get
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)

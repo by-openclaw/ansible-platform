@@ -120,9 +120,9 @@
   vars:
     pbs_tok: "{{ (lookup('file', (pbs_secret_dir | expanduser) + '/fabric/pbs-pve-backup-token.json') | from_json).fields }}"
     pbs_fp: "{{ hostvars[groups['pbs'][0]]['pbs_fingerprint'] }}"
-    pbs_ip: "10.1.3.222"
+    pbs_ip: "{{ hostvars[groups['pbs'] | first].ansible_host }}"
     pbs_svc_subnet: "{{ platform_zones.svc.cidr4 }}"     # SVC VLAN (where PBS lives)
-    pbs_fw_oob_ip: "10.6.239.196"     # FW OOB IP the node routes SVC traffic through
+    pbs_fw_oob_ip: "{{ hostvars[groups['opnsense'] | first].ansible_host }}"     # FW OOB IP the node routes SVC traffic through
   tasks:
     # The node sits on OOB (10.6.224.105); PBS is on the SVC VLAN behind the FW.
     # The node reaches the FW's OOB IP (10.6.239.196), and the FW routes+permits

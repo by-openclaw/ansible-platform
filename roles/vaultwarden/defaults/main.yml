@@ -19,12 +19,12 @@ vaultwarden_fqdn: "vaultwarden.{{ platform_domain }}"
 
 # HTTP backend (Traefik terminates TLS) — published on the SVC IP. Vaultwarden
 # serves the web vault + WebSocket notifications on the same :80 in 1.36.
-vaultwarden_listen_ip: "10.1.3.160"
+vaultwarden_listen_ip: "{{ hostvars[groups['vaultwarden'] | first].ansible_host }}"
 vaultwarden_host_port: 80
 vaultwarden_container_port: 80
 
 # Shared PostgreSQL (DB + role created by the postgres_db role).
-vaultwarden_pg_host: "lxc-pgsql-01.{{ platform_domain }}"
+vaultwarden_pg_host: "{{ groups['postgresql'] | first }}.{{ platform_domain }}"
 vaultwarden_pg_port: 5432
 vaultwarden_pg_name: "vaultwarden"
 vaultwarden_pg_user: "vaultwarden"

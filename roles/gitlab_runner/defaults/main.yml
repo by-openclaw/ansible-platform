@@ -12,7 +12,7 @@
 
 # --- GitLab target ------------------------------------------------------------
 gitlab_runner_gitlab_url: "https://gitlab.{{ platform_domain }}"
-gitlab_runner_gitlab_host: "lxc-gitlab-01"          # inventory host to mint the token on
+gitlab_runner_gitlab_host: "{{ groups['gitlab'] | first }}"          # inventory host to mint the token on
 gitlab_runner_description: "linux-kaniko"
 gitlab_runner_tags: ["linux", "docker", "kaniko"]
 gitlab_runner_run_untagged: true                     # also pick up untagged jobs (the default lane)
@@ -20,7 +20,7 @@ gitlab_runner_run_untagged: true                     # also pick up untagged job
 # Auth token (glrt-…). Minted once on the GitLab server, stored in Vault, reused
 # after (no local file). Vault IS the store.
 gitlab_runner_token_vault_path: "prod/gitlab/runner-token"
-gitlab_runner_vault_host: "lxc-vault-01"
+gitlab_runner_vault_host: "{{ groups['vault'] | first }}"
 gitlab_runner_vault_bootstrap: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/vault-init.json"
 
 # --- Version pins (NEVER unpinned / :latest) ----------------------------------

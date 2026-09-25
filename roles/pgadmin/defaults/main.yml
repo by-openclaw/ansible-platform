@@ -9,7 +9,7 @@ pgadmin_image: "dpage/pgadmin4:9.17"   # exact pin — bump deliberately
 pgadmin_fqdn: "pgadmin.{{ platform_domain }}"
 
 # Bind the container to the SVC IP so Traefik (on the DMZ host) can reach it.
-pgadmin_listen_ip: "10.1.3.140"
+pgadmin_listen_ip: "{{ hostvars[groups['pgadmin'] | first].ansible_host }}"
 pgadmin_host_port: 8080
 pgadmin_container_port: 80
 pgadmin_traefik_backend: "http://{{ pgadmin_listen_ip }}:{{ pgadmin_host_port }}"
@@ -37,7 +37,7 @@ pgadmin_oidc_access_group: "{{ platform_service_groups.pgadmin.admin }}"
 # Password is NOT stored — entered on connect (sourced from Vault later).
 pgadmin_register_pg_server: true
 pgadmin_pg_server_name: "BY-RESEARCH PostgreSQL"
-pgadmin_pg_host: "lxc-pgsql-01.{{ platform_domain }}"   # FQDN so verify-full matches the cert
+pgadmin_pg_host: "{{ groups['postgresql'] | first }}.{{ platform_domain }}"   # FQDN so verify-full matches the cert
 pgadmin_pg_port: 5432
 pgadmin_pg_maintenance_db: "postgres"
 pgadmin_pg_username: "postgres"                   # superuser → sees all service DBs
