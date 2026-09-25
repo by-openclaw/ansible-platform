@@ -26,7 +26,7 @@ mailcow_timezone: "Europe/Brussels"
 # --- Reverse-proxy posture (Traefik terminates TLS; mailcow's nginx is HTTP-only
 #     on the VM, bound to the DMZ IP). SKIP_LETS_ENCRYPT=y — we bring our own
 #     wildcard cert via Traefik, mailcow does not run ACME. ----------------------
-mailcow_listen_ip: "10.1.2.120" # bind mailcow nginx to the DMZ IP, not 0.0.0.0
+mailcow_listen_ip: "{{ hostvars[groups['mailcow'] | first].ansible_host }}" # bind mailcow nginx to the DMZ IP, not 0.0.0.0
 mailcow_http_port: 8080
 mailcow_https_port: 8443 # unused by Traefik (HTTP backend) but bound for SOGo internals
 mailcow_skip_lets_encrypt: "y"

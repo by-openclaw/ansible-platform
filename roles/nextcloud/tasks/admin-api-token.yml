@@ -14,7 +14,7 @@
     cmd: >-
       docker exec -e VAULT_TOKEN={{ vault_deploy_token }} vault
       vault kv get -mount=secret -format=json {{ nextcloud_vault_api_token_path }}
-  delegate_to: lxc-vault-01
+  delegate_to: "{{ groups['vault'] | first }}"
   become: true
   register: nextcloud_api_token_read
   failed_when: false
@@ -42,7 +42,7 @@
           'token': (nextcloud_api_token_mint.stdout | regex_search('[A-Za-z0-9]{40,}')),
           'name': 'ansible-admin-api',
           'note': 'Nextcloud admin app password for Ansible admin-API calls (Mail provisioning)'} | to_json }}
-  delegate_to: lxc-vault-01
+  delegate_to: "{{ groups['vault'] | first }}"
   become: true
   when: nextcloud_api_token_read.rc != 0
   changed_when: true

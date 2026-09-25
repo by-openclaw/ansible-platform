@@ -15,7 +15,7 @@ nextcloud_image: "nextcloud:34.0.4-apache"   # latest 34.x; 35.0.0 waits for sta
 nextcloud_fqdn: "nextcloud.{{ platform_domain }}"
 
 # Web HTTP backend (Traefik terminates TLS) — published on the SVC IP.
-nextcloud_listen_ip: "10.1.3.170"
+nextcloud_listen_ip: "{{ hostvars[groups['nextcloud'] | first].ansible_host }}"
 nextcloud_host_port: 80
 nextcloud_container_port: 80
 
@@ -23,13 +23,13 @@ nextcloud_container_port: 80
 # container's immediate peer is the docker bridge gateway (published-port NAT), so
 # that range must ALSO be trusted for Nextcloud to read the X-Forwarded-For chain
 # (else "remote address could not be determined" + wrong client IP for bruteforce).
-nextcloud_trusted_proxy: "10.1.2.110"
+nextcloud_trusted_proxy: "{{ hostvars[groups['traefik'] | first].ansible_host }}"
 nextcloud_docker_bridge_cidr: "172.17.0.0/16"
 
 # Shared PostgreSQL (DB + role created by the postgres_db role). Nextcloud uses
 # libpq; verify-full + CA enforced via config.php dbdriveroptions (the official
 # image has no sslmode env).
-nextcloud_pg_host: "lxc-pgsql-01.{{ platform_domain }}"
+nextcloud_pg_host: "{{ groups['postgresql'] | first }}.{{ platform_domain }}"
 nextcloud_pg_port: 5432
 nextcloud_pg_name: "nextcloud"
 nextcloud_pg_user: "nextcloud"
@@ -38,7 +38,7 @@ nextcloud_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"
 
 # Shared Redis (TLS). The official image's REDIS_HOST env does NOT enable TLS,
 # so Redis is configured via a mounted config.php snippet with ssl_context.
-nextcloud_redis_host: "lxc-redis-01.{{ platform_domain }}"
+nextcloud_redis_host: "{{ groups['redis'] | first }}.{{ platform_domain }}"
 nextcloud_redis_port: 6379
 
 # Contabo S3 — PRIMARY object storage (bucket precreated out-of-band).
@@ -181,7 +181,7 @@ nextcloud_apps_disabled:
 nextcloud_mail_provisioning_enabled: true
 nextcloud_vault_master_path: "{{ platform_env | default('prod') }}/mailcow/master-user"   # login + password (roles/mailcow mints it)
 nextcloud_vault_api_token_path: "{{ platform_env | default('prod') }}/nextcloud/api-token" # break-glass admin app password for the admin APIs (minted here once)
-nextcloud_mail_host: "vm-mailcow-01.{{ platform_domain }}"   # asset FQDN (split-DNS → DMZ IP; wildcard cert valid)
+nextcloud_mail_host: "{{ groups['mailcow'] | first }}.{{ platform_domain }}"   # asset FQDN (split-DNS → DMZ IP; wildcard cert valid)
 nextcloud_mail_provisioning:
   provisioningDomain: "{{ platform_domain }}"
   emailTemplate: "%EMAIL%"          # the account's e-mail (people.yml email = username@domain)

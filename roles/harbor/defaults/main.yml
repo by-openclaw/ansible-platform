@@ -10,7 +10,7 @@
 
 # Identity / addressing
 harbor_fqdn: "harbor.{{ platform_domain }}"
-harbor_listen_ip: "10.1.3.240"
+harbor_listen_ip: "{{ hostvars[groups['harbor'] | first].ansible_host }}"
 harbor_host_port: 8080                 # Harbor portal/registry HTTP (Traefik does HTTPS)
 
 # Harbor release (PINNED — never :latest, per platform standard)
@@ -27,7 +27,7 @@ harbor_secret_file: "fabric/harbor.json"                 # admin password (gener
 # --- Cluster Postgres (roles/postgres_db creates the DB + role) ----------------
 harbor_pg_name: "harbor"
 harbor_pg_user: "harbor"
-harbor_pg_host: "lxc-pgsql-01.{{ platform_domain }}"            # FQDN so verify-full matches the cert
+harbor_pg_host: "{{ groups['postgresql'] | first }}.{{ platform_domain }}"            # FQDN so verify-full matches the cert
 harbor_pg_port: 5432
 harbor_pg_sslmode: "verify-full"
 # Bound the metadata DB pool. Harbor's own default (max_open_conns 0) is UNLIMITED: on a shared

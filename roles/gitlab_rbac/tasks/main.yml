@@ -22,7 +22,7 @@
     cmd: >-
       docker exec -e VAULT_TOKEN={{ vault_deploy_token }} vault
       vault kv get -mount=secret -field=webhook {{ item.webhook_vault_path }}
-  delegate_to: lxc-vault-01
+  delegate_to: "{{ groups['vault'] | first }}"
   become: true
   register: gitlab_rbac_webhook_get
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
@@ -69,7 +69,7 @@
       docker exec -e VAULT_TOKEN={{ vault_deploy_token }} vault
       vault kv get -mount=secret -format=json
       {{ platform_env | default('prod') }}/users/{{ item.username }}/keys
-  delegate_to: lxc-vault-01
+  delegate_to: "{{ groups['vault'] | first }}"
   become: true
   loop: "{{ gitlab_rbac_key_people }}"
   loop_control: { label: "{{ item.username }}" }

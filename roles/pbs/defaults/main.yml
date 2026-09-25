@@ -57,8 +57,8 @@ pbs_port: 8007                                   # PBS API/UI (own TLS)
 pbs_traefik_backend_url: "https://{{ ansible_host }}:{{ pbs_port }}"
 
 # --- PVE storage wiring + 2nd backup job (delegated to the node) --------------
-pbs_pve_node: "srv-proxmox-poc-01"
-pbs_pve_node_ssh: "10.6.224.105"          # node OOB, root SSH (id_ed25519_rune_automation)
+pbs_pve_node: "{{ groups['proxmox_nodes'] | first }}"
+pbs_pve_node_ssh: "{{ hostvars[groups['proxmox_nodes'] | first].ansible_host }}"          # node OOB, root SSH (id_ed25519_rune_automation)
 pbs_pve_storage_id: "pbs"                 # PVE storage entry name
 pbs_pve_backup_user: "svc-pbs-backup-prod@pbs"   # naming/0002 §3 (renamed 2026-09-01; was pve-backup@pbs)
 pbs_pve_backup_token: "pve"               # API token name -> pve-backup@pbs!pve
@@ -66,7 +66,7 @@ pbs_backup_schedule: "03:30"              # 2nd job; NFS vzdump is 05:00 — off
 # The PBS VM must NOT be in its OWN S3 job — backing the backup server up into the
 # datastore it serves deadlocks ("http upgrade request timed out") and is pointless
 # (PBS's DR copy is the NFS/vzdump job). Excluded by VMID (auto-detected by name).
-pbs_self_vm_name: "vm-pbs-01"
+pbs_self_vm_name: "{{ groups['pbs'] | first }}"
 # VMs whose guest agent can't fs-freeze (FreeBSD/OPNsense → "Resource deadlock
 # avoided"), so the whole backup job errors. Set freeze-fs-on-backup=0 on these so
 # the backup runs crash-consistent (fine for a firewall) with no error. NOTE: the

@@ -27,8 +27,8 @@ mailbox_aliases: []                          # extra local-parts -> this box
 mailbox_delegates: []                        # full addresses (adm_x@..., ops@...)
 
 # --- Mailcow API (mirrors roles/mailcow) --------------------------------------
-mailbox_mailcow_host: "vm-mailcow-01"
-mailbox_listen_ip: "{{ mailcow_listen_ip | default('10.1.2.120') }}"
+mailbox_mailcow_host: "{{ groups['mailcow'] | first }}"
+mailbox_listen_ip: "{{ mailcow_listen_ip | default(hostvars[groups['mailcow'] | first].ansible_host) }}"
 mailbox_https_port: "{{ mailcow_https_port | default(8443) }}"
 mailbox_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
 mailbox_mailcow_secret_file: "fabric/mailcow.json"   # api_key  # pragma: allowlist secret

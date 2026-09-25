@@ -10,12 +10,12 @@ netbox_image: "netboxcommunity/netbox:v4.6.8"   # exact pin — bump deliberatel
 netbox_fqdn: "netbox.{{ platform_domain }}"
 
 # Web HTTP backend (Traefik terminates TLS) — published on the SVC IP.
-netbox_listen_ip: "10.1.3.120"
+netbox_listen_ip: "{{ hostvars[groups['netbox'] | first].ansible_host }}"
 netbox_host_port: 8080
 netbox_container_port: 8080
 
 # Shared PostgreSQL (DB + role created by the postgres_db role).
-netbox_pg_host: "lxc-pgsql-01.{{ platform_domain }}"
+netbox_pg_host: "{{ groups['postgresql'] | first }}.{{ platform_domain }}"
 netbox_pg_port: 5432
 netbox_pg_name: "netbox"
 netbox_pg_user: "netbox"
@@ -23,7 +23,7 @@ netbox_pg_sslmode: "verify-full"          # falls back to "require" only if repo
 netbox_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"
 
 # Shared Redis (TLS, two logical DBs: tasks=0, cache=1).
-netbox_redis_host: "lxc-redis-01.{{ platform_domain }}"
+netbox_redis_host: "{{ groups['redis'] | first }}.{{ platform_domain }}"
 netbox_redis_port: 6379
 netbox_redis_tasks_db: 0
 netbox_redis_cache_db: 1

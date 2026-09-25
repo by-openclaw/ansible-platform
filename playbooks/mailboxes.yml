@@ -55,7 +55,7 @@
     # the local password is random-once and never stored — login is Authentik.
     - name: "Admin mailbox | Load the Mailcow API key"
       ansible.builtin.set_fact:
-        mailboxes_api: "https://{{ mailcow_listen_ip | default('10.1.2.120') }}:{{ mailcow_https_port | default(8443) }}/api/v1"
+        mailboxes_api: "https://{{ mailcow_listen_ip | default(hostvars[groups['mailcow'] | first].ansible_host) }}:{{ mailcow_https_port | default(8443) }}/api/v1"
         mailboxes_api_hdr:
           X-API-Key: "{{ (lookup('file', lookup('env', 'HOME') + '/.openclaw/workspace/infra/secrets/fabric/mailcow.json') | from_json).fields.api_key }}"
           Content-Type: "application/json"
@@ -118,7 +118,7 @@
     # --- catchall@ (SVC-09): a REAL delivery path for the whole domain ---------
     - name: "Catchall | Load the Mailcow API key"
       ansible.builtin.set_fact:
-        mailboxes_api: "https://{{ mailcow_listen_ip | default('10.1.2.120') }}:{{ mailcow_https_port | default(8443) }}/api/v1"
+        mailboxes_api: "https://{{ mailcow_listen_ip | default(hostvars[groups['mailcow'] | first].ansible_host) }}:{{ mailcow_https_port | default(8443) }}/api/v1"
         mailboxes_api_hdr:
           X-API-Key: "{{ (lookup('file', lookup('env', 'HOME') + '/.openclaw/workspace/infra/secrets/fabric/mailcow.json') | from_json).fields.api_key }}"
           Content-Type: "application/json"
