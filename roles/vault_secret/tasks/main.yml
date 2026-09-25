@@ -35,6 +35,7 @@
   when:
     - vault_secret_get.rc != 0
     - vault_secret_init | length == 0
+    - not (vault_secret_optional | bool)
 
 - name: "Vault secret | Initialize secret in Vault when absent (stdin, no argv)"
   ansible.builtin.command:
@@ -80,6 +81,10 @@
     vault_secret_result: >-
       {{ vault_secret_force_fields
          if (vault_secret_force_fields | default({}) | length > 0)
-         else ((vault_secret_get2 if (vault_secret_get.rc != 0) else vault_secret_get).stdout
-               | from_json).data.data }}
+         else ({}
+               if (vault_secret_optional | bool
+                   and vault_secret_get.rc != 0
+                   and (vault_secret_get2.rc | default(1)) != 0)
+               else ((vault_secret_get2 if (vault_secret_get.rc != 0) else vault_secret_get).stdout
+                     | from_json).data.data) }}
   no_log: true
