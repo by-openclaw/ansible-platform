@@ -1,0 +1,23 @@
+---
+# Read several secrets in one step.
+#
+# The role reads ONE path per include, which is why every consumer that needed a
+# list reached past it and shelled out to the Vault container: a looped
+# include_role registers nothing per item, so there was no way to collect the
+# results. That is how ten roles ended up with their own error handling, their
+# own no_log discipline and their own check-mode behaviour.
+#
+# Callers set `vault_secret_paths` (a list of KV paths) and read
+# `vault_secret_results` — a dict keyed by path. `vault_secret_optional` applies
+# to every path in the list, so a probe for secrets that may not exist yet does
+# not have to be written by hand.
+- name: "Vault secret | Start with nothing collected"
+  ansible.builtin.set_fact:
+    vault_secret_results: {}
+
+- name: "Vault secret | Read each path and collect it"
+  ansible.builtin.include_tasks: many_one.yml
+  loop: "{{ vault_secret_paths }}"
+  loop_control:
+    loop_var: vault_secret_one
+    label: "{{ vault_secret_one }}"
