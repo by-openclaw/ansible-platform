@@ -95,9 +95,14 @@
           - gitlab-backups
         seaweedfs_bucket_vault_path: prod/gitlab/s3
 
+    # gitlab-dr selects only the DR-capture tasks inside the role. The tag has to
+    # be HERE as well: an untagged include_role is skipped before the role's own
+    # task tags are ever evaluated. No `apply:` — that would stamp the tag on
+    # every task in the role and make --tags gitlab-dr run the whole install.
     - name: "Install + configure GitLab CE"
       ansible.builtin.include_role:
         name: gitlab
+      tags: [gitlab, gitlab-dr]
 
     - name: "Traefik route — GitLab web"
       ansible.builtin.include_role:
