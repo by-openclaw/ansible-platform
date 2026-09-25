@@ -59,7 +59,7 @@
           WHERE p.user_id = u.id AND u.is_service_user = false
           RETURNING p.id
         ) SELECT count(*) FROM d;
-  delegate_to: "{{ netbird_pg_delegate | default('lxc-pgsql-01') }}"
+  delegate_to: "{{ netbird_pg_delegate | default(groups['postgresql'] | first) }}"
   register: netbird_pat_revoked
   changed_when: (netbird_pat_revoked.stdout | trim | int) > 0
   notify: "Restart netbird management"

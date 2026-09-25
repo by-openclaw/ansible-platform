@@ -23,9 +23,9 @@
         _gitlab_addr: "{{ hostvars[groups['gitlab'] | first].ansible_host }}"
         _fw_addr: "{{ hostvars[groups['opnsense'] | first].ansible_host }}"
 
-    - name: "Add lxc-gitlab-01 as a target (same access as the other SVC LXCs)"
+    - name: "Add the GitLab host as a target (same access as the other SVC LXCs)"
       ansible.builtin.add_host:
-        name: lxc-gitlab-01
+        name: "{{ groups['gitlab'] | first }}"
         groups: _harbor_gitlab_ci
         ansible_host: "{{ harbor_gitlab_host | default(_gitlab_addr) }}"
         ansible_user: root

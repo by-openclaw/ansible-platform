@@ -74,8 +74,10 @@ pbs_self_vm_name: "{{ groups['pbs'] | first }}"
 # module ignores agent drift, so Ansible owns it here. Applies on the VM's next
 # `qm reboot` (a guest reboot is NOT enough — it doesn't cycle the QEMU process).
 pbs_no_fsfreeze_vms:
-  - vm-opns-01
-  - vm-opns-01-new     # the prod firewall's live VM name since the 26.7 cutover (VMID 196)
+  - "{{ groups['opnsense'] | first }}"
+  # The VM name the prod firewall has carried since the 26.7 cutover (VMID 196). It is a
+  # Proxmox guest name, not an inventory host, so there is nothing to derive it from.
+  - "{{ groups['opnsense'] | first }}-new"
 pbs_backup_notes: "PBS S3 copy (SeaweedFS) — 2nd copy alongside NFS. {{ '{{' }} guestname {{ '}}' }} (VMID {{ '{{' }} vmid {{ '}}' }})"
 # Client-side encryption: the key is generated + stored in Vault; PVE encrypts
 # before upload. Losing the key = unrecoverable backups -> Vault is the store.
