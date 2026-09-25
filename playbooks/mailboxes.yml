@@ -1,20 +1,28 @@
 ---
 # ==============================================================================
-# Per-service rx/tx mailboxes (SVC-16) + the mandatory catchall@ (SVC-09), via
-# the reusable mailbox concern-role. Idempotent.
+# Per-service rx/tx mailboxes (SVC-16), via the reusable mailbox concern-role.
+# Data only: every write goes through roles/mailbox, so this play holds no
+# credentials and no API calls of its own. Idempotent.
 #
-# NOT here: postmaster@/abuse@ (RFC boxes, mailcow role) and mailcow itself.
+# NOT here, and deliberately:
+#   people          adm_yboujraf and every other person come from platform_people
+#                   via identity_orchestrator — a person named in two places is a
+#                   person whose name can differ in two places, and it did.
+#   catchall@       a property of the DOMAIN (SVC-09), so it lives with the domain
+#                   in roles/mailcow.
+#   postmaster@/abuse@   RFC boxes the mailcow role bootstraps, and mailcow itself.
+#
 # gitlab@/jumpserver@/alerts@ WERE pre-existing: converged 2026-09-01 by seeding
 # Vault prod/mail/{svc} with their live passwords BEFORE adding them (no re-mint).
 #
 #   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/mailboxes.yml
 # ==============================================================================
-- name: "Service mailboxes (rx/tx) + catchall"
+- name: "Service mailboxes (rx/tx)"
   hosts: mailcow
   become: true
   gather_facts: false
   vars:
-    mailboxes_default_delegates: ["adm_yboujraf@{{ platform_domain }}"]
+    mailboxes_default_delegates: "{{ platform_service_mail_delegates }}"
     mailboxes_services:
       # Pre-existing boxes, CONVERGED 2026-09-01: Vault prod/mail/{svc} was
       # seeded with their EXISTING passwords first, so nothing is re-minted —
@@ -50,96 +58,18 @@
       - { svc: wazuh }
       - { svc: grc }
   tasks:
-    # --- the ADMIN identity's mailbox (naming/0002 §2: admin duty = adm_*) -----
-    # SSO-backed (authsource generic-oidc, kept by the mailcow role's SSO list);
-    # the local password is random-once and never stored — login is Authentik.
-    - name: "Admin mailbox | Load the Mailcow API key"
-      ansible.builtin.set_fact:
-        mailboxes_api: "https://{{ mailcow_listen_ip | default(hostvars[groups['mailcow'] | first].ansible_host) }}:{{ mailcow_https_port | default(8443) }}/api/v1"
-        mailboxes_api_hdr:
-          X-API-Key: "{{ (lookup('file', lookup('env', 'HOME') + '/.openclaw/workspace/infra/secrets/fabric/mailcow.json') | from_json).fields.api_key }}"
-          Content-Type: "application/json"
-      no_log: true
-
-    # set_fact materializes the random ONCE — a lazy `vars:` lookup re-evaluates
-    # per reference and password/password2 would differ (password_mismatch).
-    - name: "Admin mailbox | Mint the one-time password"
-      ansible.builtin.set_fact:
-        mailboxes_adm_pw: "{{ lookup('community.general.random_string', length=32, special=false) }}"
-      no_log: true
-
-    - name: "Admin mailbox | Create adm_yboujraf (SSO; password random-once, unused)"
-      ansible.builtin.uri:
-        url: "{{ mailboxes_api }}/add/mailbox"
-        method: POST
-        headers: "{{ mailboxes_api_hdr }}"
-        body_format: json
-        body:
-          local_part: "adm_yboujraf"
-          domain: "{{ platform_domain }}"
-          name: "Yassine Boujraf (admin)"
-          password: "{{ mailboxes_adm_pw }}"
-          password2: "{{ mailboxes_adm_pw }}"
-          quota: 5120
-          active: "1"
-        validate_certs: false
-        status_code: [200]
-      register: mailboxes_adm_add
-      changed_when: "'mailbox_added' in (mailboxes_adm_add.json | default([]) | string)"
-      failed_when: >-
-        mailboxes_adm_add.json is defined and
-        (mailboxes_adm_add.json | string is search('danger')) and
-        not (mailboxes_adm_add.json | string is search('object_exists'))
-      no_log: true
-
-    - name: "Admin mailbox | Force SSO authsource (idempotent)"
-      ansible.builtin.shell: |
-        set -o pipefail
-        C=$(docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -iE 'mysql|mariadb' | head -1)
-        P=$(grep -oP 'DBROOT=\K.*' /opt/mailcow-dockerized/mailcow.conf)
-        docker exec "$C" mysql -u root -p"$P" mailcow -N -e           "UPDATE mailbox SET authsource='generic-oidc'
-           WHERE username='adm_yboujraf@{{ platform_domain }}'
-           AND authsource <> 'generic-oidc'; SELECT ROW_COUNT();" | tail -1
-      args: { executable: /bin/bash }
-      register: mailboxes_adm_sso
-      changed_when: (mailboxes_adm_sso.stdout | default('0') | trim) == '1'
-
+    # loop_var, not `item`: include_role re-evaluates these vars inside the role, and
+    # the role loops over aliases and delegates. Inside those, `item` is the alias or
+    # delegate — a string — so "{{ item.svc }}" dies on
+    # "object of type 'str' has no attribute 'svc'". A named loop_var cannot be shadowed.
     - name: "Provision each service mailbox (delegates: co-delivery + send-as)"
       ansible.builtin.include_role:
         name: mailbox
       vars:
-        mailbox_service: "{{ item.svc }}"
-        mailbox_aliases: "{{ item.aliases | default([]) }}"
-        mailbox_delegates: "{{ item.delegates | default(mailboxes_default_delegates) }}"
+        mailbox_service: "{{ mb_svc.svc }}"
+        mailbox_aliases: "{{ mb_svc.aliases | default([]) }}"
+        mailbox_delegates: "{{ mb_svc.delegates | default(mailboxes_default_delegates) }}"
       loop: "{{ mailboxes_services }}"
       loop_control:
-        label: "{{ item.svc }}"
-
-    # --- catchall@ (SVC-09): a REAL delivery path for the whole domain ---------
-    - name: "Catchall | Load the Mailcow API key"
-      ansible.builtin.set_fact:
-        mailboxes_api: "https://{{ mailcow_listen_ip | default(hostvars[groups['mailcow'] | first].ansible_host) }}:{{ mailcow_https_port | default(8443) }}/api/v1"
-        mailboxes_api_hdr:
-          X-API-Key: "{{ (lookup('file', lookup('env', 'HOME') + '/.openclaw/workspace/infra/secrets/fabric/mailcow.json') | from_json).fields.api_key }}"
-          Content-Type: "application/json"
-      no_log: true
-
-    - name: "Catchall | Domain catch-all alias → postmaster (SVC-09)"
-      ansible.builtin.uri:
-        url: "{{ mailboxes_api }}/add/alias"
-        method: POST
-        headers: "{{ mailboxes_api_hdr }}"
-        body_format: json
-        body:
-          address: "@{{ platform_domain }}"
-          goto: "postmaster@{{ platform_domain }}"
-          active: "1"
-        validate_certs: false
-        status_code: [200]
-      register: mailboxes_catchall
-      changed_when: "'alias_added' in (mailboxes_catchall.json | default([]) | string)"
-      failed_when: >-
-        mailboxes_catchall.json is defined and
-        (mailboxes_catchall.json | string is search('danger')) and
-        not (mailboxes_catchall.json | string is search('object_exists|is_alias_or_mailbox'))
-      no_log: true
+        loop_var: mb_svc
+        label: "{{ mb_svc.svc }}"

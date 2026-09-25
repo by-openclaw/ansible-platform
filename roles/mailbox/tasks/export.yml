@@ -1,0 +1,58 @@
+---
+# One-time export of the maildir to S3 before the mailbox goes quiet. Keyed on the
+# local part, so a re-run finds the object already there and does nothing. Runs on
+# the mailcow host (the maildir is a docker volume on its disk).
+- name: "Mailbox | Export already in S3?"
+  amazon.aws.s3_object:
+    endpoint_url: "{{ mailbox_s3.endpoint }}"
+    access_key: "{{ mailbox_s3.access_key }}"
+    secret_key: "{{ mailbox_s3.secret_key }}"
+    bucket: "{{ mailbox_s3.buckets[0] }}"
+    mode: list
+    prefix: "{{ mailbox_export_prefix }}/{{ mailbox_local }}-"
+  register: mailbox_export_ls
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "Mailbox | Maildir present? (a never-used mailbox has none)"
+  ansible.builtin.stat:
+    path: "{{ mailbox_vmail_dir }}/{{ mailbox_at_domain }}/{{ mailbox_local }}"
+  register: mailbox_maildir
+
+- name: "Mailbox | Export (archive → S3 → clean staging)"
+  when:
+    - (mailbox_export_ls.s3_keys | default([])) | length == 0
+    - mailbox_maildir.stat.exists
+  block:
+    - name: "Mailbox | Staging dir"
+      ansible.builtin.file:
+        path: "{{ mailbox_export_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: "Mailbox | Archive the maildir"
+      community.general.archive:
+        path: "{{ mailbox_vmail_dir }}/{{ mailbox_at_domain }}/{{ mailbox_local }}"
+        dest: "{{ mailbox_export_dir }}/{{ mailbox_local }}-{{ ansible_date_time.date | default(lookup('pipe', 'date +%F')) }}.tar.gz"
+        format: gz
+        mode: "0600"
+      register: mailbox_tar
+
+    - name: "Mailbox | Upload to S3"
+      amazon.aws.s3_object:
+        endpoint_url: "{{ mailbox_s3.endpoint }}"
+        access_key: "{{ mailbox_s3.access_key }}"
+        secret_key: "{{ mailbox_s3.secret_key }}"
+        bucket: "{{ mailbox_s3.buckets[0] }}"
+        object: "{{ mailbox_export_prefix }}/{{ mailbox_tar.dest | basename }}"
+        src: "{{ mailbox_tar.dest }}"
+        mode: put
+        permission: []
+      no_log: true
+
+    # The staging copy is unencrypted on the mailcow host — it does not stay there.
+    - name: "Mailbox | Remove the staging archive"
+      ansible.builtin.file:
+        path: "{{ mailbox_tar.dest }}"
+        state: absent

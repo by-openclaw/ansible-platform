@@ -1,248 +1,49 @@
 ---
 # ==============================================================================
-# identity_orchestrator — person mailbox lifecycle (mailcow API), one person per
-# include. Runs on the mailcow host (API on its own listen IP).
-#   joiner : mailbox exists BEFORE the first SSO login — authsource generic-oidc,
-#            display name, quota, aliases. The generated password is never used
-#            (SSO-bound) and never stored.
-#   mover  : name / quota / active / authsource reconciled, aliases added.
-#   leaver : state != active → login disallowed while mail is still accepted
+# identity_orchestrator — a person's mailbox, through roles/mailbox. One person
+# per include. This file decides POLICY (what a joiner, mover and leaver mean for
+# a person); the mailbox role performs it, and is the only writer of mailcow
+# mailbox state on the platform.
+#
+#   joiner : the mailbox exists BEFORE the first SSO login — authsource
+#            generic-oidc, display name, quota, aliases.
+#   mover  : name / quota / active / authsource reconciled, aliases added. The
+#            role reads each attribute before writing it, so a converged person
+#            reports no change.
+#   leaver : suspended — login disallowed while mail is still accepted
 #            (mailcow active=2), optional forward + auto-reply as a prefilter
-#            sieve script, ONE-TIME export of the maildir to S3 (bucket
-#            mailcow-backups/<prefix>/). Never deleted (archive-before-destroy).
+#            sieve, ONE-TIME export of the maildir to S3. Never deleted.
+#
 # Per-person optional block in people.yml:
 #   mailbox: { quota_mb: 5120, aliases: [ "y.boujraf" ], forward_to: "x@…", leave_message: "…" }
 # ==============================================================================
-- name: "IdentityOrch | Mailbox facts — {{ io_person.username }}"
-  ansible.builtin.set_fact:
-    io_mb_address: "{{ io_person.email }}"
-    io_mb_local: "{{ io_person.email.split('@')[0] }}"
-    io_mb_domain: "{{ io_person.email.split('@')[1] }}"
-    io_mb_opts: "{{ io_person.mailbox | default({}) }}"
-    io_mb_active: "{{ (io_person.state | default('active')) == 'active' }}"
-    io_mb_quota_mb: "{{ (io_person.mailbox | default({})).quota_mb | default(identity_orchestrator_mailbox_quota_mb) }}"
-
-- name: "IdentityOrch | Mailbox current state — {{ io_mb_address }}"
-  ansible.builtin.uri:
-    url: "{{ identity_orchestrator_mailcow_api }}/get/mailbox/{{ io_mb_address }}"
-    headers: "{{ io_mc_hdr }}"
-    validate_certs: false
-    status_code: [200]
-    return_content: true
-  delegate_to: "{{ identity_orchestrator_mailcow_host }}"
-  become: true
-  register: io_mb_cur
-  no_log: true
-  check_mode: false   # read-only, valid under --check
-
-- name: "IdentityOrch | Mailbox existence"
-  ansible.builtin.set_fact:
-    io_mb_exists: "{{ io_mb_cur.json is mapping and (io_mb_cur.json.username | default('')) == io_mb_address }}"
-
-# --- joiner -------------------------------------------------------------------
-- name: "IdentityOrch | One-time throwaway password (SSO-bound mailbox, never stored)"
-  ansible.builtin.set_fact:
-    io_mb_pw: "{{ lookup('community.general.random_string', length=32, special=false) }}"
-  no_log: true
-  when:
-    - io_mb_active | bool
-    - not io_mb_exists
-
-- name: "IdentityOrch | Create the mailbox before first login — {{ io_mb_address }}"
-  ansible.builtin.uri:
-    url: "{{ identity_orchestrator_mailcow_api }}/add/mailbox"
-    method: POST
-    headers: "{{ io_mc_hdr }}"
-    body_format: json
-    body:
-      local_part: "{{ io_mb_local }}"
-      domain: "{{ io_mb_domain }}"
-      name: "{{ io_person.name }}"
-      password: "{{ io_mb_pw }}"
-      password2: "{{ io_mb_pw }}"
-      quota: "{{ io_mb_quota_mb }}"
-      active: "1"
-      authsource: "{{ identity_orchestrator_mailbox_authsource }}"
-      force_pw_update: "0"
-    validate_certs: false
-    status_code: [200]
-  delegate_to: "{{ identity_orchestrator_mailcow_host }}"
-  become: true
-  register: io_mb_add
-  when:
-    - io_mb_active | bool
-    - not io_mb_exists
-  changed_when: "'mailbox_added' in (io_mb_add.json | default([]) | string)"
-  failed_when: >-
-    io_mb_add.json is defined and
-    (io_mb_add.json | string is search('danger')) and
-    not (io_mb_add.json | string is search('object_exists'))
-  no_log: true
-
-# --- mover: reconcile attributes (only when they drift) ------------------------
-- name: "IdentityOrch | Mailbox attribute drift — {{ io_mb_address }}"
-  ansible.builtin.set_fact:
-    io_mb_drift: >-
-      {{ io_mb_exists and (
-           (io_mb_cur.json.name | default('')) != io_person.name
-        or (io_mb_cur.json.quota | default(0) | int) != (io_mb_quota_mb | int) * 1048576
-        or (io_mb_cur.json.active_int | default(io_mb_cur.json.active) | int) != 1
-        or (io_mb_cur.json.authsource | default('')) != identity_orchestrator_mailbox_authsource
-      ) }}
-  when: io_mb_active | bool
-
-- name: "IdentityOrch | Reconcile mailbox attributes — {{ io_mb_address }}"
-  ansible.builtin.uri:
-    url: "{{ identity_orchestrator_mailcow_api }}/edit/mailbox"
-    method: POST
-    headers: "{{ io_mc_hdr }}"
-    body_format: json
-    body:
-      items: ["{{ io_mb_address }}"]
-      attr:
-        name: "{{ io_person.name }}"
-        quota: "{{ io_mb_quota_mb }}"
-        active: "1"
-        authsource: "{{ identity_orchestrator_mailbox_authsource }}"
-    validate_certs: false
-    status_code: [200]
-  delegate_to: "{{ identity_orchestrator_mailcow_host }}"
-  become: true
-  when:
-    - io_mb_active | bool
-    - io_mb_drift | default(false) | bool
-  changed_when: true
-  no_log: true
-
-- name: "IdentityOrch | Aliases → {{ io_mb_address }}"
-  ansible.builtin.uri:
-    url: "{{ identity_orchestrator_mailcow_api }}/add/alias"
-    method: POST
-    headers: "{{ io_mc_hdr }}"
-    body_format: json
-    body:
-      address: "{{ item }}@{{ io_mb_domain }}"
-      goto: "{{ io_mb_address }}"
-      active: "1"
-    validate_certs: false
-    status_code: [200]
-  delegate_to: "{{ identity_orchestrator_mailcow_host }}"
-  become: true
-  loop: "{{ io_mb_opts.aliases | default([]) | reject('in', io_mc_aliases | map('regex_replace', '@.*$', '') | list) | list }}"
-  register: io_mb_alias
-  when: io_mb_active | bool
-  changed_when: "'alias_added' in (io_mb_alias.json | default([]) | string)"
-  failed_when: >-
-    io_mb_alias.json is defined and
-    (io_mb_alias.json | string is search('danger')) and
-    not (io_mb_alias.json | string is search('object_exists|is_alias_or_mailbox'))
-  no_log: true
-
-# --- leaver -------------------------------------------------------------------
-- name: "IdentityOrch | Leaver — {{ io_mb_address }}"
-  when:
-    - not (io_mb_active | bool)
-    - io_mb_exists
-  delegate_to: "{{ identity_orchestrator_mailcow_host }}"
-  become: true
-  block:
-    - name: "IdentityOrch | Disallow login, keep receiving (active=2)"
-      ansible.builtin.uri:
-        url: "{{ identity_orchestrator_mailcow_api }}/edit/mailbox"
-        method: POST
-        headers: "{{ io_mc_hdr }}"
-        body_format: json
-        body:
-          items: ["{{ io_mb_address }}"]
-          attr: { active: "2" }
-        validate_certs: false
-        status_code: [200]
-      when: (io_mb_cur.json.active_int | default(io_mb_cur.json.active) | int) != 2
-      changed_when: true
-      no_log: true
-
-    # Forward + auto-reply = a prefilter sieve script in mailcow's own table
-    # (what the UI "Filters" tab writes); Dovecot applies it at delivery.
-    - name: "IdentityOrch | Leaver sieve script (forward + auto-reply)"
-      ansible.builtin.set_fact:
-        io_mb_sieve: >-
-          require ["vacation"{{ ',"copy"' if (io_mb_opts.forward_to | default('')) | length > 0 else '' }}];
-          {% if (io_mb_opts.forward_to | default('')) | length > 0 %}redirect :copy "{{ io_mb_opts.forward_to }}";{% endif %}
-          {% if (io_mb_opts.leave_message | default('')) | length > 0 %}vacation :days {{ identity_orchestrator_mailbox_leave_days }} :subject "Automatic reply" "{{ io_mb_opts.leave_message | replace('"', '\\"') }}";{% endif %}
-      when: (io_mb_opts.forward_to | default('')) | length > 0 or (io_mb_opts.leave_message | default('')) | length > 0
-
-    - name: "IdentityOrch | Leaver sieve present?"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec {{ identity_orchestrator_mailcow_mysql_container }} sh -c
-          'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e "SELECT COUNT(*) FROM sieve_filters WHERE username=\"{{ io_mb_address }}\" AND script_desc=\"leaver\""'
-      register: io_mb_sieve_cnt
-      changed_when: false
-      check_mode: false   # read-only, valid under --check
-      when: io_mb_sieve is defined
-
-    - name: "IdentityOrch | Leaver sieve upsert (stdin, no argv)"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec -i {{ identity_orchestrator_mailcow_mysql_container }} sh -c
-          'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow'
-        stdin: >-
-          INSERT INTO sieve_filters (username, script_desc, script_name, script_data, filter_type, created, modified)
-          VALUES ('{{ io_mb_address }}', 'leaver', 'active', '{{ io_mb_sieve | replace("'", "''") }}', 'prefilter', NOW(), NOW());
-      when:
-        - io_mb_sieve is defined
-        - (io_mb_sieve_cnt.stdout | default('0') | trim) == '0'
-      changed_when: true
-      no_log: true
-
-    # One-time export of the maildir to S3 (mailcow-backups/<prefix>/<local>-<date>.tar.gz)
-    - name: "IdentityOrch | Leaver export already in S3?"
-      amazon.aws.s3_object:
-        endpoint_url: "{{ io_mc_s3.endpoint }}"
-        access_key: "{{ io_mc_s3.access_key }}"
-        secret_key: "{{ io_mc_s3.secret_key }}"
-        bucket: "{{ io_mc_s3.buckets[0] }}"
-        mode: list
-        prefix: "{{ identity_orchestrator_mailbox_export_prefix }}/{{ io_mb_local }}-"
-      register: io_mb_export_ls
-      no_log: true
-      changed_when: false
-      check_mode: false   # read-only, valid under --check
-
-    - name: "IdentityOrch | Maildir present? (a never-used mailbox has none)"
-      ansible.builtin.stat:
-        path: "{{ identity_orchestrator_mailcow_vmail_dir }}/{{ io_mb_domain }}/{{ io_mb_local }}"
-      register: io_mb_maildir
-
-    - name: "IdentityOrch | Leaver export (archive → S3 → clean staging)"
-      when:
-        - (io_mb_export_ls.s3_keys | default([])) | length == 0
-        - io_mb_maildir.stat.exists
-      block:
-        - name: "IdentityOrch | Staging dir"
-          ansible.builtin.file:
-            path: "{{ identity_orchestrator_mailbox_export_dir }}"
-            state: directory
-            mode: "0700"
-        - name: "IdentityOrch | Archive the maildir"
-          community.general.archive:
-            path: "{{ identity_orchestrator_mailcow_vmail_dir }}/{{ io_mb_domain }}/{{ io_mb_local }}"
-            dest: "{{ identity_orchestrator_mailbox_export_dir }}/{{ io_mb_local }}-{{ ansible_date_time.date | default(lookup('pipe', 'date +%F')) }}.tar.gz"
-            format: gz
-            mode: "0600"
-          register: io_mb_tar
-        - name: "IdentityOrch | Upload to S3"
-          amazon.aws.s3_object:
-            endpoint_url: "{{ io_mc_s3.endpoint }}"
-            access_key: "{{ io_mc_s3.access_key }}"
-            secret_key: "{{ io_mc_s3.secret_key }}"
-            bucket: "{{ io_mc_s3.buckets[0] }}"
-            object: "{{ identity_orchestrator_mailbox_export_prefix }}/{{ io_mb_tar.dest | basename }}"
-            src: "{{ io_mb_tar.dest }}"
-            mode: put
-            permission: []
-          no_log: true
-        - name: "IdentityOrch | Remove the staging archive"
-          ansible.builtin.file:
-            path: "{{ io_mb_tar.dest }}"
-            state: absent
+- name: "IdentityOrch | Mailbox — {{ io_person.username }}"
+  ansible.builtin.include_role:
+    name: mailbox
+  vars:
+    mailbox_address: "{{ io_person.email }}"
+    mailbox_domain: "{{ io_person.email.split('@')[1] }}"
+    mailbox_display_name: "{{ io_person.name }}"
+    mailbox_quota_mb: >-
+      {{ (io_person.mailbox | default({})).quota_mb | default(identity_orchestrator_mailbox_quota_mb) }}
+    mailbox_aliases: "{{ (io_person.mailbox | default({})).aliases | default([]) }}"
+    # SSO-bound: the generated password is never used and never stored — the
+    # person authenticates through Authentik.
+    mailbox_credential: sso
+    mailbox_authsource: "{{ identity_orchestrator_mailbox_authsource }}"
+    # A person's mailbox does not model delegation in people.yml, so the role must
+    # not revoke grants that nothing here declares.
+    mailbox_delegates_declarative: false
+    # active -> present; anything else is a leaver.
+    mailbox_state: "{{ 'present' if (io_person.state | default('active')) == 'active' else 'suspended' }}"
+    mailbox_forward_to: "{{ (io_person.mailbox | default({})).forward_to | default('') }}"
+    mailbox_autoreply: "{{ (io_person.mailbox | default({})).leave_message | default('') }}"
+    mailbox_autoreply_days: "{{ identity_orchestrator_mailbox_leave_days }}"
+    mailbox_export_s3: true
+    mailbox_export_bucket_vault_path: "{{ identity_orchestrator_mailcow_s3_vault_path }}"
+    mailbox_export_prefix: "{{ identity_orchestrator_mailbox_export_prefix }}"
+    mailbox_export_dir: "{{ identity_orchestrator_mailbox_export_dir }}"
+    mailbox_vmail_dir: "{{ identity_orchestrator_mailcow_vmail_dir }}"
+    mailbox_api_vault_path: "{{ identity_orchestrator_mailcow_vault_path }}"
+    mailbox_mailcow_host: "{{ identity_orchestrator_mailcow_host }}"
+    mailbox_mysql_container: "{{ identity_orchestrator_mailcow_mysql_container }}"

@@ -159,6 +159,28 @@
   failed_when: false
   no_log: true
 
+- name: "config | Domain catch-all alias (SVC-09)"
+  ansible.builtin.uri:
+    url: "{{ mailcow_api }}/add/alias"
+    method: POST
+    headers: "{{ mailcow_api_hdr }}"
+    body_format: json
+    body:
+      address: "@{{ item.domain }}"
+      goto: "{{ item.catchall_to }}"
+      active: "1"
+    validate_certs: false
+    status_code: [200]
+  loop: "{{ mailcow_domains | selectattr('catchall_to', 'defined') | list }}"
+  loop_control: { label: "@{{ item.domain }} -> {{ item.catchall_to }}" }
+  register: mailcow_catchall
+  changed_when: "'alias_added' in (mailcow_catchall.json | default([]) | string)"
+  failed_when: >-
+    mailcow_catchall.json is defined and
+    (mailcow_catchall.json | string is search('danger')) and
+    not (mailcow_catchall.json | string is search('object_exists|is_alias_or_mailbox'))
+  no_log: true
+
 # --- mailboxes: postmaster/abuse (RFC) + the personal user --------------------
 - name: "config | Create mailboxes (postmaster/abuse + personal user)"
   ansible.builtin.uri:

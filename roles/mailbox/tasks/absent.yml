@@ -1,0 +1,51 @@
+---
+# active=0 and the grants removed. The mail itself stays — archive-before-destroy;
+# so does the Vault credential, because it is the history of what that box was.
+- name: "Mailbox | Nothing to decommission — no such mailbox: {{ mailbox_address }}"
+  ansible.builtin.debug:
+    msg: "{{ mailbox_address }} is not on mailcow; nothing to decommission."
+  when: not mailbox_exists
+
+- name: "Mailbox | Decommission"
+  when: mailbox_exists
+  delegate_to: "{{ mailbox_mailcow_host }}"
+  become: true
+  block:
+    - name: "Mailbox | Deactivate (mail retained)"
+      ansible.builtin.uri:
+        url: "{{ mailbox_api }}/edit/mailbox"
+        method: POST
+        headers: "{{ mailbox_api_hdr }}"
+        body_format: json
+        body:
+          items: ["{{ mailbox_address }}"]
+          attr: { active: "0" }
+        validate_certs: false
+        status_code: [200]
+      when: (mailbox_cur.json.active_int | default(mailbox_cur.json.active) | default(0) | int) != 0
+      changed_when: true
+      no_log: true
+
+    - name: "Mailbox | Remove aliases"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ mailbox_mysql_container }} sh -c
+          'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e
+           "DELETE FROM alias WHERE address=\"{{ item }}@{{ mailbox_at_domain }}\"
+              AND goto=\"{{ mailbox_address }}\"; SELECT ROW_COUNT();"'
+      loop: "{{ mailbox_aliases }}"
+      register: mailbox_alias_del
+      changed_when: (mailbox_alias_del.stdout | default('0') | trim) != '0'
+      no_log: true
+
+    - name: "Mailbox | Remove delegate bcc + sender_acl grants"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ mailbox_mysql_container }} sh -c
+          'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e
+           "DELETE FROM bcc_maps WHERE local_dest=\"{{ mailbox_address }}\";
+            DELETE FROM sender_acl WHERE send_as=\"{{ mailbox_address }}\";
+            SELECT ROW_COUNT();"'
+      register: mailbox_deleg_del
+      changed_when: (mailbox_deleg_del.stdout | default('0') | trim) != '0'
+      no_log: true
