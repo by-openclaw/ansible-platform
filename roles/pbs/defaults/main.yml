@@ -62,6 +62,11 @@ pbs_pve_node_ssh: "{{ hostvars[groups['proxmox_nodes'] | first].ansible_host }}"
 pbs_pve_storage_id: "pbs"                 # PVE storage entry name
 pbs_pve_backup_user: "svc-pbs-backup-prod@pbs"   # naming/0002 §3 (renamed 2026-09-01; was pve-backup@pbs)
 pbs_pve_backup_token: "pve"               # API token name -> pve-backup@pbs!pve
+# Where the minted token lives. Vault, not a controller file: the file used to be
+# the authority for whether the token was held, and Vault a copy something had to
+# remember to refresh. It did not — after the 2026-09-01 rename Vault still held
+# pve-backup@pbs!pve, an auth-id PBS no longer has (#570).
+pbs_token_vault_path: "{{ platform_env | default('prod') }}/pbs/pve-backup-token"
 pbs_backup_schedule: "03:30"              # 2nd job; NFS vzdump is 05:00 — offset to not overlap
 # The PBS VM must NOT be in its OWN S3 job — backing the backup server up into the
 # datastore it serves deadlocks ("http upgrade request timed out") and is pointless

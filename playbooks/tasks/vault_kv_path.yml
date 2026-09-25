@@ -2,6 +2,10 @@
 # Resolve ONE fabric basename (var: _kv_base, no .json) to its Vault KV path
 # segment "{service}/{key}" (var out: _kv_rel). Explicit map first, then the
 # rule families; anything unmatched FAILS — no silent misplacement.
+#
+# The lab/test firewalls resolve to opnsense-lab/ and opnsense-test/, deliberately
+# NOT into the prod firewall's opnsense/ tree: a lab credential landing on the path
+# something reads for prod is the failure this map exists to prevent.
 # Requires vars/vault_kv_map.yml loaded (vault_kv_explicit_map).
 - name: "Kvmap | Resolve {{ _kv_base }}"
   ansible.builtin.set_fact:
@@ -11,6 +15,8 @@
       {%- elif _kv_base is match('^db-pgsql-.+') -%}{{ _kv_base[9:] }}/db-pgsql
       {%- elif _kv_base is match('^infra-seaweedfs-.+') -%}{{ _kv_base[16:] }}/s3
       {%- elif _kv_base is match('^app-smtp-.+') -%}{{ _kv_base[9:] }}/smtp
+      {%- elif _kv_base is match('^net-opnsense-(lab|test)-.+') -%}
+      {{- 'opnsense-' ~ _kv_base.split('-')[2] ~ '/' ~ _kv_base.split('-', 3)[3] -}}
       {%- else -%}__UNMAPPED__{%- endif -%}
 
 - name: "Kvmap | Refuse unmapped fabric names"
