@@ -69,3 +69,28 @@ traefik_route_strip_prefix: false    # add a stripPrefix middleware for the pref
 # that leaves its router behind gives Traefik a rule pointing at nothing, which answers 502 on a
 # name that should simply stop existing.
 traefik_route_state: present
+
+# --- Multi-endpoint routes ---------------------------------------------------
+# Some products are several backends behind ONE host name. NetBird is six: gRPC
+# management, gRPC signal, REST API, signal WebSocket, relay, dashboard SPA. List
+# them here and the role renders one router + one service each, all into the SAME
+# {{ traefik_route_name }}.yml — so the route is still published and WITHDRAWN by
+# one name (services/0007 §7.1), not six files to remember.
+#
+# Each entry:
+#   name           required — router/service id becomes <route_name>-<name>
+#   backend_url    required — full URL incl. scheme; use h2c:// for gRPC backends
+#   path_prefixes  optional — OR'd together and ANDed with the host rule.
+#                  Omit for the catch-all (give it the lowest priority).
+#   priority       optional — explicit, because every rule matches the same host
+#                  and Traefik would otherwise order them by rule length.
+#
+# traefik_route_endpoints:
+#   - {name: api,       path_prefixes: ["/api", "/ws-proxy/management"], backend_url: "http://10.1.3.9:33073", priority: 90}
+#   - {name: dashboard, backend_url: "http://10.1.3.9:80",                                                     priority: 1}
+#
+# The network gate (ipAllowList or rateLimit) applies to EVERY endpoint, exactly as
+# it does to a single-endpoint route — a multi-endpoint route must not be a way to
+# lose it silently. A product that genuinely must carry neither says so explicitly
+# with internal_only=false + public_hardening=false.
+traefik_route_endpoints: []

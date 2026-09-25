@@ -21,6 +21,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install pytest
-        run: python -m pip install --disable-pip-version-check pytest
+        # jinja2 + pyyaml: the traefik_route tests render the real template and
+        # parse the result, so they fail on a change to the template itself.
+        run: python -m pip install --disable-pip-version-check pytest jinja2 pyyaml
       - name: Run the tests
         run: python -m pytest tests/ -q

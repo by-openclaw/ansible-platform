@@ -1,13 +1,50 @@
 ---
-# Publish NetBird via OUR Traefik: drop a watched file-provider config on the
-# Traefik host (translation of the official combined-model docker labels). PUBLIC —
-# no ipAllowList (remote peers must reach /api, gRPC, /relay from the internet; the
-# WAN DNAT forwards 443 here). h2c for the gRPC router.
-- name: "route | Render the netbird Traefik dynamic config on the Traefik host"
-  ansible.builtin.template:
-    src: traefik-netbird.yml.j2
-    dest: "{{ netbird_traefik_dynamic_dir }}/netbird.yml"
-    owner: root
-    group: root
-    mode: "0644"
-  delegate_to: "{{ netbird_traefik_host }}"
+# Publish NetBird via OUR Traefik through the shared route role. NetBird is six
+# backends behind ONE host name (the translation of the official combined-model
+# docker labels, infrastructure_files/docker-compose.yml.tmpl.traefik), so it uses
+# the role's multi-endpoint form: one router + one service per endpoint, all in the
+# single netbird.yml — published and withdrawn by one name.
+#
+# PUBLIC and deliberately un-gated: remote peers must reach /api, both gRPC services
+# and /relay from the internet (the WAN DNAT forwards :443 here), and a per-client
+# rate limit would throttle the long-lived gRPC management streams that every peer
+# behind one NAT shares. The protections are the FW (CrowdSec/Suricata), Authentik
+# on login, and NetBird's own setup key / peer approval — not a Traefik middleware.
+- name: "route | Publish the netbird routers through roles/traefik_route"
+  ansible.builtin.include_role:
+    name: traefik_route
+  vars:
+    traefik_route_name: netbird
+    traefik_route_fqdn: "{{ netbird_fqdn }}"
+    traefik_route_host: "{{ netbird_traefik_host }}"
+    traefik_route_dynamic_dir: "{{ netbird_traefik_dynamic_dir }}"
+    traefik_route_internal_only: false        # PUBLIC — remote peers, see above
+    traefik_route_public_hardening: false     # no rateLimit on gRPC streams, see above
+    traefik_route_endpoints:
+      # --- gRPC (h2c backends) ------------------------------------------------
+      - name: mgmt-grpc
+        path_prefixes: ["/management.ManagementService/", "/management.ProxyService/"]
+        backend_url: "h2c://{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}"
+        priority: 100
+      - name: signal-grpc
+        path_prefixes: ["/signalexchange.SignalExchange/"]
+        backend_url: "h2c://{{ netbird_listen_ip }}:{{ netbird_signal_grpc_port }}"
+        priority: 100
+      # --- REST / WebSocket ---------------------------------------------------
+      - name: api
+        path_prefixes: ["/api", "/ws-proxy/management"]
+        backend_url: "http://{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}"
+        priority: 90
+      - name: signal-ws
+        path_prefixes: ["/ws-proxy/signal"]
+        backend_url: "http://{{ netbird_listen_ip }}:{{ netbird_signal_ws_host_port }}"
+        priority: 90
+      - name: relay
+        path_prefixes: ["/relay"]
+        backend_url: "http://{{ netbird_listen_ip }}:{{ netbird_relay_port }}"
+        priority: 90
+      # --- Dashboard catch-all (lowest priority, per the official label) -------
+      # There is NO /oauth2 route — login goes straight to Authentik.
+      - name: dashboard
+        backend_url: "http://{{ netbird_listen_ip }}:{{ netbird_dashboard_port }}"
+        priority: 1
