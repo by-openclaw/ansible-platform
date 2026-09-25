@@ -1,0 +1,19 @@
+---
+# One entry of the list. include_tasks, not include_role in a loop: the loop form
+# keeps nothing per item, so the accumulation below is the whole point.
+#
+# An entry is either a bare path, or {path, init} when the caller wants
+# get-or-create with values specific to that path — which is what collapses a
+# read / mint-if-missing / re-read sequence into a single step.
+- name: "Vault secret | Read {{ vault_secret_one.path | default(vault_secret_one) }}"
+  ansible.builtin.include_tasks: main.yml
+  vars:
+    vault_secret_path: "{{ vault_secret_one.path | default(vault_secret_one) }}"
+    vault_secret_init: "{{ vault_secret_one.init | default(vault_secret_init_default) }}"
+
+- name: "Vault secret | Collect {{ vault_secret_one.path | default(vault_secret_one) }}"
+  ansible.builtin.set_fact:
+    vault_secret_results: >-
+      {{ vault_secret_results
+         | combine({(vault_secret_one.path | default(vault_secret_one)): vault_secret_result}) }}
+  no_log: true
