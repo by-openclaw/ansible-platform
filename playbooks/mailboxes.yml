@@ -58,13 +58,18 @@
       - { svc: wazuh }
       - { svc: grc }
   tasks:
+    # loop_var, not `item`: include_role re-evaluates these vars inside the role, and
+    # the role loops over aliases and delegates. Inside those, `item` is the alias or
+    # delegate — a string — so "{{ item.svc }}" dies on
+    # "object of type 'str' has no attribute 'svc'". A named loop_var cannot be shadowed.
     - name: "Provision each service mailbox (delegates: co-delivery + send-as)"
       ansible.builtin.include_role:
         name: mailbox
       vars:
-        mailbox_service: "{{ item.svc }}"
-        mailbox_aliases: "{{ item.aliases | default([]) }}"
-        mailbox_delegates: "{{ item.delegates | default(mailboxes_default_delegates) }}"
+        mailbox_service: "{{ mb_svc.svc }}"
+        mailbox_aliases: "{{ mb_svc.aliases | default([]) }}"
+        mailbox_delegates: "{{ mb_svc.delegates | default(mailboxes_default_delegates) }}"
       loop: "{{ mailboxes_services }}"
       loop_control:
-        label: "{{ item.svc }}"
+        loop_var: mb_svc
+        label: "{{ mb_svc.svc }}"

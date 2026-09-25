@@ -21,12 +21,19 @@
     mailbox_at_domain: "{{ mailbox_address.split('@')[1] }}"
 
 # --- the API key, from Vault (never a file on the controller) ------------------
-- name: "Mailbox | Read the Mailcow API key from Vault"
+# Read ONCE per play, not once per mailbox. A play provisioning 25 service
+# mailboxes includes this role 25 times, and an unguarded read meant 25 Vault
+# logins plus 25 kv gets — around 9 seconds of the ~20 per mailbox, enough to push
+# the run past a quarter of an hour. The key cannot change mid-run, so the bound
+# fact is reused. (A play that had to talk to a second mailcow would need to clear
+# mailbox_api_hdr between them; nothing does.)
+- name: "Mailbox | Read the Mailcow API key from Vault (first mailbox only)"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
     vault_secret_path: "{{ mailbox_api_vault_path }}"
     vault_secret_init: {}
+  when: mailbox_api_hdr is not defined
 
 - name: "Mailbox | Bind the API endpoint and header"
   ansible.builtin.set_fact:
@@ -35,6 +42,7 @@
       X-API-Key: "{{ vault_secret_result.api_key }}"
       Content-Type: "application/json"
   no_log: true
+  when: mailbox_api_hdr is not defined
 
 # Read here, not inside the export: the tasks there run delegated to the mailcow
 # host, and vault_secret must not be delegated with them.
