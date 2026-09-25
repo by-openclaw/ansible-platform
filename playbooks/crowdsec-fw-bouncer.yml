@@ -8,7 +8,7 @@
 # Prerequisites on the firewall (seed-owned): sudo_allow_wheel=1 and the automation user's
 # password in Vault ({env}/opnsense/svc-ansible-{env}, key webgui_password) — see catalog opn_auth_users.
 - name: "CrowdSec FW bouncer — secrets from Vault (read outside the connection:local plays)"
-  hosts: lxc-vault-01
+  hosts: vault
   become: true
   gather_facts: false
   vars:
@@ -64,7 +64,7 @@
       no_log: true
 
 - name: "CrowdSec FW bouncer — plugin settings via API"
-  hosts: vm-opns-01
+  hosts: opnsense
   gather_facts: false
   connection: local
   become: false
@@ -79,7 +79,7 @@
         tasks_from: api_settings
 
 - name: "CrowdSec FW bouncer — is the firewall enrolled under our machine name? (SSH + become)"
-  hosts: vm-opns-01
+  hosts: opnsense
   gather_facts: false
   vars:
     crowdsec_fw_bouncer_ssh_user: "{{ hostvars[inventory_hostname].crowdsec_fw_bouncer_ssh_user | default('svc-ansible-' ~ (platform_env | default('prod'))) }}"
@@ -100,10 +100,10 @@
 
 # A rebuilt firewall cannot register under a name the LAPI still holds for its predecessor.
 - name: "CrowdSec FW bouncer — retire a stale registration on the central LAPI"
-  hosts: lxc-crowdsec-01
+  hosts: crowdsec
   gather_facts: false
   vars:
-    crowdsec_fw_bouncer_fw_host: vm-opns-01
+    crowdsec_fw_bouncer_fw_host: "{{ groups['opnsense'] | first }}"
   tasks:
     - name: Retire when stale
       ansible.builtin.import_role:
@@ -111,7 +111,7 @@
         tasks_from: lapi_retire_stale
 
 - name: "CrowdSec FW bouncer — write api_key (SSH + become)"
-  hosts: vm-opns-01
+  hosts: opnsense
   gather_facts: false
   vars:
     crowdsec_fw_bouncer_ssh_user: "{{ hostvars[inventory_hostname].crowdsec_fw_bouncer_ssh_user | default('svc-ansible-' ~ (platform_env | default('prod'))) }}"
@@ -139,7 +139,7 @@
         tasks_from: write_key
 
 - name: "CrowdSec FW bouncer — reconfigure + verify"
-  hosts: vm-opns-01
+  hosts: opnsense
   gather_facts: false
   connection: local
   become: false
@@ -154,7 +154,7 @@
         tasks_from: reconfigure
 
 - name: "CrowdSec FW bouncer — verify on the central LAPI"
-  hosts: lxc-crowdsec-01
+  hosts: crowdsec
   gather_facts: false
   tasks:
     - name: Load role defaults for the machine name

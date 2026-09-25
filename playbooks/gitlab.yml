@@ -16,7 +16,7 @@
 # ==============================================================================
 
 - name: "GitLab — persistent ZFS git-data (PVE host)"
-  hosts: srv-proxmox-poc-01
+  hosts: proxmox_nodes
   gather_facts: false
   vars:
     ansible_user: root
@@ -34,7 +34,7 @@
     - role: pve_zfs_mount
 
 - name: "GitLab — Authentik OIDC application (SSO)"
-  hosts: lxc-authentik-01
+  hosts: authentik
   become: true
   gather_facts: true
   # Regenerates blueprints + generates any missing client creds (incl. the new
@@ -44,7 +44,7 @@
       tags: ["secrets", "blueprints"]
 
 - name: "GitLab — dependencies, install, routes"
-  hosts: lxc-gitlab-01
+  hosts: gitlab
   become: true
   gather_facts: true
   tasks:
