@@ -9,15 +9,15 @@ groups:
         annotations:
           summary: "Platform resolver {{ '{{' }} $labels.instance {{ '}}' }} does not answer"
           description: "The guests' first nameserver ({{ '{{' }} $labels.instance {{ '}}' }}) has not answered the {{ '{{' }} $labels.job {{ '}}' }} lookup for {{ prometheus_alert_resolver_for }}. Every lookup on every guest stalls up to 5 s until it is back, so most other probes fail with it (#424)."
-          runbook: "Check the resolver chain in order: AdGuard on vm-adguard-01 → the firewall's Unbound → dnscrypt. A firewall rebuild or reboot looks exactly like this. The probe alerts this one explains are held back until it clears."
+          runbook: "Check the resolver chain in order: AdGuard on {{ groups['adguard'] | first }} → the firewall's Unbound → dnscrypt. A firewall rebuild or reboot looks exactly like this. The probe alerts this one explains are held back until it clears."
       - alert: ProbeFailed
         expr: probe_success{job!~"blackbox_dns_v[46]"} == 0
         for: {{ prometheus_alert_probe_for }}
         labels: {severity: critical}
         annotations:
           summary: "{{ '{{' }} $labels.job {{ '}}' }} probe failed for {{ '{{' }} $labels.instance {{ '}}' }}"
-          description: "lxc-monitoring-01 could not complete the {{ '{{' }} $labels.job {{ '}}' }} check against this target for {{ prometheus_alert_probe_for }}: the service is down, unreachable from the monitoring host, or answering wrongly (bad status code, TLS or DNS)."
-          runbook: "Many targets at once = the path, not the services: check the firewall (rebuild, reboot, ISP) and the resolver first. One target = open it from inside (curl from lxc-vault-01) and read that service's log; a 403 on everything is the CrowdSec bouncer."
+          description: "{{ groups['monitoring'] | first }} could not complete the {{ '{{' }} $labels.job {{ '}}' }} check against this target for {{ prometheus_alert_probe_for }}: the service is down, unreachable from the monitoring host, or answering wrongly (bad status code, TLS or DNS)."
+          runbook: "Many targets at once = the path, not the services: check the firewall (rebuild, reboot, ISP) and the resolver first. One target = open it from inside (curl from {{ groups['vault'] | first }}) and read that service's log; a 403 on everything is the CrowdSec bouncer."
       - alert: TLSCertExpiringSoon
         expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < {{ prometheus_alert_cert_warn_days }}
         for: 1h
@@ -67,7 +67,7 @@ groups:
         annotations:
           summary: "Prometheus has no Alertmanager — alerts are not delivered"
           description: "Prometheus cannot reach its Alertmanager: rules still evaluate but nothing is sent by mail or to Discord. This alert reaches you only through the Prometheus UI or Grafana."
-          runbook: "On lxc-monitoring-01: check the prometheus-alertmanager unit and its /-/ready endpoint, then the alertmanager role's last run."
+          runbook: "On {{ groups['monitoring'] | first }}: check the prometheus-alertmanager unit and its /-/ready endpoint, then the alertmanager role's last run."
   - name: platform-database
     rules:
       - alert: PostgresConnectionsNearMax

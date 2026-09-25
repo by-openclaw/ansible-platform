@@ -6,7 +6,7 @@
 # is written only when its content differs; update-ca-certificates runs on change.
 # ==============================================================================
 platform_ca_env: "{{ platform_env | default('prod') }}"
-platform_ca_url: "https://{{ hostvars['lxc-stepca-01'].ansible_host }}:9000/roots.pem"
+platform_ca_url: "https://{{ hostvars[groups['step_ca'] | first].ansible_host }}:9000/roots.pem"
 platform_ca_vault_path: "{{ platform_ca_env }}/step-ca/root"           # fingerprint (sha256 of the DER root)
 platform_ca_name: "{{ platform_domain | regex_replace('\\.', '-') }}-internal-ca"
 platform_ca_file: "/usr/local/share/ca-certificates/{{ platform_ca_name }}.crt"

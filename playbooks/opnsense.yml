@@ -48,7 +48,7 @@
           - ServerAliveInterval=30
           - -N
           - -L
-          - 8443:10.6.224.106:443
+          - "8443:{{ opnsense_gui_tunnel_host }}:443"
           - root@{{ hostvars[groups['proxmox_nodes'] | first].ansible_host }}
       async: 3600
       poll: 0
@@ -126,7 +126,7 @@
         opnsense_monitchk_smtp:
           # Asset FQDN, not mail. (which split-DNS maps to Traefik / public IP;
           # SMTP is NOT proxied). Wildcard cert *.{domain} covers it -> TLS verify stays ON.
-          smtp_host: "vm-mailcow-01.{{ platform_mail_domain | default(platform_domain) }}"
+          smtp_host: "{{ groups['mailcow'] | first }}.{{ platform_mail_domain | default(platform_domain) }}"
           smtp_port: "{{ vault_secret_result.smtp_port }}"
           smtp_username: "{{ vault_secret_result.address }}"
           smtp_password: "{{ vault_secret_result.password }}"

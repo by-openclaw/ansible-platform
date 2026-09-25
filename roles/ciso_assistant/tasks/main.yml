@@ -169,11 +169,11 @@
     host_firewall_rules:
       - port: "{{ ciso_assistant_frontend_port }}"
         proto: tcp
-        from: ["{{ hostvars['lxc-traefik-01'].ansible_host }}"]   # a list: the role iterates it
+        from: ["{{ hostvars[groups['traefik'] | first].ansible_host }}"]   # a list: the role iterates it
         comment: "Traefik -> CISO Assistant (app)"
       - port: "{{ ciso_assistant_backend_port }}"
         proto: tcp
-        from: ["{{ hostvars['lxc-traefik-01'].ansible_host }}"]
+        from: ["{{ hostvars[groups['traefik'] | first].ansible_host }}"]
         comment: "Traefik -> CISO Assistant (API)"
 
 # The frontend renders every page through the backend, so testing it while the backend is still
