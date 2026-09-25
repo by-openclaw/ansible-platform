@@ -1,0 +1,131 @@
+---
+# active=1. Creates the mailbox if it is missing, then reconciles attributes,
+# aliases and delegates — each only when it has drifted.
+
+# --- the password -------------------------------------------------------------
+# vault: minted once and kept, because the service authenticates with it.
+- name: "Mailbox | Get-or-create the mailbox credential in Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ mailbox_env }}/mail/{{ mailbox_service }}"
+    vault_secret_init:
+      address: "{{ mailbox_address }}"
+      smtp_host: "mail.{{ mailbox_domain }}"
+      smtp_port: 587
+      imap_host: "mail.{{ mailbox_domain }}"
+      imap_port: 993
+      password: "{{ lookup('community.general.random_string', length=28, special=false) }}"
+  when: mailbox_credential == 'vault'
+
+- name: "Mailbox | Bind the credential"
+  ansible.builtin.set_fact:
+    mailbox_password: >-
+      {{ vault_secret_result.password if mailbox_credential == 'vault'
+         else lookup('community.general.random_string', length=32, special=false) }}
+  no_log: true
+
+# --- create -------------------------------------------------------------------
+# No check_mode: false — this POST CREATES the mailbox, and a dry-run must never
+# create one (#518: mailcow answers 200 either way, so the response cannot tell us).
+- name: "Mailbox | Create — {{ mailbox_address }}"
+  ansible.builtin.uri:
+    url: "{{ mailbox_api }}/add/mailbox"
+    method: POST
+    headers: "{{ mailbox_api_hdr }}"
+    body_format: json
+    body: >-
+      {{ {
+           'local_part': mailbox_local,
+           'domain': mailbox_at_domain,
+           'name': mailbox_display_name,
+           'password': mailbox_password,
+           'password2': mailbox_password,
+           'quota': mailbox_quota_mb,
+           'active': '1',
+           'force_pw_update': '0',
+         } | combine({'authsource': mailbox_authsource} if mailbox_authsource | length > 0 else {}) }}
+    validate_certs: false
+    status_code: [200]
+  delegate_to: "{{ mailbox_mailcow_host }}"
+  become: true
+  register: mailbox_add
+  when: not mailbox_exists
+  changed_when: "'mailbox_added' in (mailbox_add.json | default([]) | string)"
+  failed_when: >-
+    mailbox_add.json is defined and
+    (mailbox_add.json | string is search('danger')) and
+    not (mailbox_add.json | string is search('object_exists'))
+  no_log: true
+
+# --- reconcile ----------------------------------------------------------------
+- name: "Mailbox | Reconcile attributes — {{ mailbox_address }}"
+  ansible.builtin.uri:
+    url: "{{ mailbox_api }}/edit/mailbox"
+    method: POST
+    headers: "{{ mailbox_api_hdr }}"
+    body_format: json
+    body:
+      items: ["{{ mailbox_address }}"]
+      attr: >-
+        {{ {
+             'name': mailbox_display_name,
+             'quota': mailbox_quota_mb,
+             'active': '1',
+           } | combine({'authsource': mailbox_authsource} if mailbox_authsource | length > 0 else {}) }}
+    validate_certs: false
+    status_code: [200]
+  delegate_to: "{{ mailbox_mailcow_host }}"
+  become: true
+  when: mailbox_drift | bool
+  changed_when: true
+  no_log: true
+
+- name: "Mailbox | Existing aliases (read-only, for idempotent creation)"
+  ansible.builtin.uri:
+    url: "{{ mailbox_api }}/get/alias/all"
+    headers: "{{ mailbox_api_hdr }}"
+    validate_certs: false
+    status_code: [200]
+    return_content: true
+  delegate_to: "{{ mailbox_mailcow_host }}"
+  become: true
+  register: mailbox_alias_all
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when: mailbox_aliases | length > 0
+
+- name: "Mailbox | Aliases → {{ mailbox_address }}"
+  ansible.builtin.uri:
+    url: "{{ mailbox_api }}/add/alias"
+    method: POST
+    headers: "{{ mailbox_api_hdr }}"
+    body_format: json
+    body:
+      address: "{{ item }}@{{ mailbox_at_domain }}"
+      goto: "{{ mailbox_address }}"
+      active: "1"
+    validate_certs: false
+    status_code: [200]
+  delegate_to: "{{ mailbox_mailcow_host }}"
+  become: true
+  # The registered read above is check_mode: false, so this list is real under
+  # --check too — a loop is evaluated before its when and cannot be guarded later.
+  loop: >-
+    {{ mailbox_aliases | reject('in', (mailbox_alias_all.json | default([]))
+       | map(attribute='address') | map('regex_replace', '@.*$', '') | list) | list }}
+  register: mailbox_alias_add
+  changed_when: "'alias_added' in (mailbox_alias_add.json | default([]) | string)"
+  failed_when: >-
+    mailbox_alias_add.json is defined and
+    (mailbox_alias_add.json | string is search('danger')) and
+    not (mailbox_alias_add.json | string is search('object_exists|is_alias_or_mailbox'))
+  no_log: true
+
+# --- delegates ----------------------------------------------------------------
+# (a) incoming copies via a recipient bcc map, (b) send-as via sender_acl — access
+# to a service identity without sharing its password.
+- name: "Mailbox | Delegate grants"
+  ansible.builtin.include_tasks: delegates.yml
+  when: mailbox_delegates | length > 0 or mailbox_exists

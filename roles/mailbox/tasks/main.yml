@@ -1,224 +1,113 @@
 ---
+# See defaults/main.yml for the contract. This file resolves identity, reads the
+# current state, and dispatches to present/suspended/absent.
 - name: "Mailbox | Validate input"
   ansible.builtin.assert:
-    that: mailbox_service | length > 0
-    fail_msg: "mailbox requires mailbox_service"
+    that:
+      - mailbox_address | length > 0
+      - "'@' in mailbox_address"
+      - mailbox_state in ['present', 'suspended', 'absent']
+      - mailbox_credential in ['vault', 'sso']
+    fail_msg: >-
+      mailbox needs a full address (mailbox_service or mailbox_address),
+      state present|suspended|absent and credential vault|sso —
+      got address='{{ mailbox_address }}' state='{{ mailbox_state }}'
+      credential='{{ mailbox_credential }}'
     quiet: true
 
 - name: "Mailbox | Address facts"
   ansible.builtin.set_fact:
-    mailbox_address: "{{ mailbox_service }}@{{ mailbox_domain }}"
+    mailbox_local: "{{ mailbox_address.split('@')[0] }}"
+    mailbox_at_domain: "{{ mailbox_address.split('@')[1] }}"
 
-- name: "Mailbox | Load the Mailcow API key"
-  ansible.builtin.set_fact:
-    mailbox_api: "https://{{ mailbox_listen_ip }}:{{ mailbox_https_port }}/api/v1"
-    mailbox_api_hdr:
-      X-API-Key: "{{ (lookup('file', mailbox_secret_dir + '/' + mailbox_mailcow_secret_file) | from_json).fields.api_key }}"
-      Content-Type: "application/json"
-  no_log: true
-
-# --- credentials: Vault-native, minted once (SVC-11) ---------------------------
-- name: "Mailbox | Get-or-create the mailbox credential in Vault"
+# --- the API key, from Vault (never a file on the controller) ------------------
+- name: "Mailbox | Read the Mailcow API key from Vault"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
-    vault_secret_path: "{{ mailbox_env }}/mail/{{ mailbox_service }}"
-    vault_secret_init:
-      address: "{{ mailbox_address }}"
-      smtp_host: "mail.{{ mailbox_domain }}"
-      smtp_port: 587
-      imap_host: "mail.{{ mailbox_domain }}"
-      imap_port: 993
-      password: "{{ lookup('community.general.random_string', length=28, special=false) }}"
-  when: mailbox_state == 'present'
+    vault_secret_path: "{{ mailbox_api_vault_path }}"
+    vault_secret_init: {}
 
-- name: "Mailbox | Bind the credential"
+- name: "Mailbox | Bind the API endpoint and header"
   ansible.builtin.set_fact:
-    mailbox_password: "{{ vault_secret_result.password }}"
+    mailbox_api: "https://{{ mailbox_listen_ip }}:{{ mailbox_https_port }}/api/v1"
+    mailbox_api_hdr:
+      X-API-Key: "{{ vault_secret_result.api_key }}"
+      Content-Type: "application/json"
   no_log: true
-  when: mailbox_state == 'present'
 
-# ============================ PRESENT =========================================
+# Read here, not inside the export: the tasks there run delegated to the mailcow
+# host, and vault_secret must not be delegated with them.
+- name: "Mailbox | Read the export bucket's S3 key from Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ mailbox_export_bucket_vault_path }}"
+    vault_secret_init: {}
+  when:
+    - mailbox_state == 'suspended'
+    - mailbox_export_s3 | bool
+
+- name: "Mailbox | Bind the S3 key"
+  ansible.builtin.set_fact:
+    mailbox_s3: "{{ vault_secret_result }}"
+  no_log: true
+  when:
+    - mailbox_state == 'suspended'
+    - mailbox_export_s3 | bool
+
+# --- read before write --------------------------------------------------------
+# Read-only, so it is valid under --check and must run there: every decision below
+# depends on it, and a skipped read registers a bare dict that reads as "absent".
+- name: "Mailbox | Current state — {{ mailbox_address }}"
+  ansible.builtin.uri:
+    url: "{{ mailbox_api }}/get/mailbox/{{ mailbox_address }}"
+    headers: "{{ mailbox_api_hdr }}"
+    validate_certs: false
+    status_code: [200]
+    return_content: true
+  delegate_to: "{{ mailbox_mailcow_host }}"
+  become: true
+  register: mailbox_cur
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "Mailbox | Existence and current attributes"
+  ansible.builtin.set_fact:
+    mailbox_exists: "{{ mailbox_cur.json is mapping and (mailbox_cur.json.username | default('')) == mailbox_address }}"
+    mailbox_want_active: "{{ {'present': 1, 'suspended': 2, 'absent': 0}[mailbox_state] }}"
+
+- name: "Mailbox | Attribute drift"
+  ansible.builtin.set_fact:
+    # Only these are reconciled. A quota is reported in bytes, active as an int.
+    mailbox_drift: >-
+      {{ mailbox_exists and (
+           (mailbox_cur.json.name | default('')) != mailbox_display_name
+        or (mailbox_cur.json.quota | default(0) | int) != (mailbox_quota_mb | int) * 1048576
+        or (mailbox_cur.json.active_int | default(mailbox_cur.json.active) | default(0) | int) != (mailbox_want_active | int)
+        or (mailbox_cur.json.authsource | default('')) != mailbox_authsource
+      ) }}
+
 - name: "Mailbox | Provision (state=present)"
+  ansible.builtin.include_tasks: present.yml
   when: mailbox_state == 'present'
-  delegate_to: "{{ mailbox_mailcow_host }}"
-  become: true
-  block:
-    # NO check_mode here: this POST CREATES the mailbox. Its changed_when: false is wrong
-    # (mailcow answers 200 either way) — tracked in #518; a dry-run must never create one.
-    - name: "Mailbox | Create the mailbox — {{ mailbox_address }}"
-      ansible.builtin.uri:
-        url: "{{ mailbox_api }}/add/mailbox"
-        method: POST
-        headers: "{{ mailbox_api_hdr }}"
-        body_format: json
-        body:
-          local_part: "{{ mailbox_service }}"
-          domain: "{{ mailbox_domain }}"
-          name: "{{ mailbox_display_name }}"
-          password: "{{ mailbox_password }}"
-          password2: "{{ mailbox_password }}"
-          quota: "{{ mailbox_quota_mb }}"
-          active: "1"
-        validate_certs: false
-        status_code: [200]
-      register: mailbox_add
-      changed_when: "'mailbox_added' in (mailbox_add.json | default([]) | string)"
-      failed_when: >-
-        mailbox_add.json is defined and
-        (mailbox_add.json | string is search('danger')) and
-        not (mailbox_add.json | string is search('object_exists'))
-      no_log: true
 
-    - name: "Mailbox | Ensure the mailbox is active (idempotent re-activate)"
-      ansible.builtin.uri:
-        url: "{{ mailbox_api }}/edit/mailbox"
-        method: POST
-        headers: "{{ mailbox_api_hdr }}"
-        body_format: json
-        body:
-          items: ["{{ mailbox_address }}"]
-          attr: { active: "1" }
-        validate_certs: false
-        status_code: [200]
-      register: mailbox_activate
-      changed_when: false
-      no_log: true
+- name: "Mailbox | Suspend (state=suspended — receives, cannot log in)"
+  ansible.builtin.include_tasks: suspended.yml
+  when: mailbox_state == 'suspended'
 
-    - name: "Mailbox | Aliases → {{ mailbox_address }}"
-      ansible.builtin.uri:
-        url: "{{ mailbox_api }}/add/alias"
-        method: POST
-        headers: "{{ mailbox_api_hdr }}"
-        body_format: json
-        body:
-          address: "{{ item }}@{{ mailbox_domain }}"
-          goto: "{{ mailbox_address }}"
-          active: "1"
-        validate_certs: false
-        status_code: [200]
-      loop: "{{ mailbox_aliases }}"
-      register: mailbox_alias_add
-      changed_when: "'alias_added' in (mailbox_alias_add.json | default([]) | string)"
-      failed_when: >-
-        mailbox_alias_add.json is defined and
-        (mailbox_alias_add.json | string is search('danger')) and
-        not (mailbox_alias_add.json | string is search('object_exists|is_alias_or_mailbox'))
-      no_log: true
-
-    # Delegates (a): incoming copies via a recipient bcc map (rx access).
-    - name: "Mailbox | Delegate rx copies (bcc map) — {{ mailbox_delegates | join(', ') }}"
-      ansible.builtin.uri:
-        url: "{{ mailbox_api }}/add/bcc"
-        method: POST
-        headers: "{{ mailbox_api_hdr }}"
-        body_format: json
-        body:
-          local_dest: "{{ mailbox_address }}"
-          bcc_dest: "{{ item }}"
-          type: "rcpt"
-          active: "1"
-        validate_certs: false
-        status_code: [200]
-      loop: "{{ mailbox_delegates }}"
-      register: mailbox_bcc_add
-      changed_when: "'bcc_saved' in (mailbox_bcc_add.json | default([]) | string) or 'added' in (mailbox_bcc_add.json | default([]) | string)"
-      failed_when: >-
-        mailbox_bcc_add.json is defined and
-        (mailbox_bcc_add.json | string is search('danger')) and
-        not (mailbox_bcc_add.json | string is search('exists'))
-      no_log: true
-
-    # Reconcile: delegates is DECLARATIVE — remove rx-copy/send-as grants for
-    # anyone no longer in the list (e.g. the yboujraf@ -> adm_yboujraf@ flip).
-    - name: "Mailbox | Build the delegate keep-list (SQL-quoted)"
-      ansible.builtin.set_fact:
-        mailbox_keep_sql: >-
-          {% for d in (mailbox_delegates + ['__none__']) %}'{{ d }}'{% if not loop.last %},{% endif %}{% endfor %}
-
-    - name: "Mailbox | Reconcile delegates (drop grants not in the list)"
-      ansible.builtin.shell: |
-        set -o pipefail
-        C=$(docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -iE 'mysql|mariadb' | head -1)
-        P=$(grep -oP 'DBROOT=\K.*' /opt/mailcow-dockerized/mailcow.conf)
-        docker exec "$C" mysql -u root -p"$P" mailcow -N -e \
-          "DELETE FROM bcc_maps WHERE local_dest='{{ mailbox_address }}' AND bcc_dest NOT IN ({{ mailbox_keep_sql }});
-           DELETE FROM sender_acl WHERE send_as='{{ mailbox_address }}' AND logged_in_as NOT IN ({{ mailbox_keep_sql }});
-           SELECT ROW_COUNT();" | tail -1
-      args: { executable: /bin/bash }
-      register: mailbox_deleg_rec
-      changed_when: (mailbox_deleg_rec.stdout | default('0') | trim) != '0'
-      no_log: true
-
-    # Delegates (b): send-as via sender_acl (tx access, no shared password).
-    - name: "Mailbox | Delegate send-as (sender_acl, idempotent insert)"
-      ansible.builtin.shell: |
-        set -o pipefail
-        C=$(docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -iE 'mysql|mariadb' | head -1)
-        P=$(grep -oP 'DBROOT=\K.*' /opt/mailcow-dockerized/mailcow.conf)
-        docker exec "$C" mysql -u root -p"$P" mailcow -N -e \
-          "INSERT INTO sender_acl (logged_in_as, send_as, external)
-           SELECT '{{ item }}', '{{ mailbox_address }}', 0
-           WHERE NOT EXISTS (SELECT 1 FROM sender_acl
-             WHERE logged_in_as='{{ item }}' AND send_as='{{ mailbox_address }}');
-           SELECT ROW_COUNT();" | tail -1
-      args: { executable: /bin/bash }
-      loop: "{{ mailbox_delegates }}"
-      register: mailbox_sacl
-      changed_when: (mailbox_sacl.stdout | default('0') | trim) == '1'
-      no_log: true
-
-# ============================ ABSENT ==========================================
-- name: "Mailbox | Decommission (state=absent — deactivate, keep mail)"
+- name: "Mailbox | Decommission (state=absent)"
+  ansible.builtin.include_tasks: absent.yml
   when: mailbox_state == 'absent'
-  delegate_to: "{{ mailbox_mailcow_host }}"
-  become: true
-  block:
-    - name: "Mailbox | Deactivate the mailbox (archive-before-destroy)"
-      ansible.builtin.uri:
-        url: "{{ mailbox_api }}/edit/mailbox"
-        method: POST
-        headers: "{{ mailbox_api_hdr }}"
-        body_format: json
-        body:
-          items: ["{{ mailbox_address }}"]
-          attr: { active: "0" }
-        validate_certs: false
-        status_code: [200]
-      changed_when: true
-      no_log: true
-
-    - name: "Mailbox | Remove aliases"
-      ansible.builtin.shell: |
-        set -o pipefail
-        C=$(docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -iE 'mysql|mariadb' | head -1)
-        P=$(grep -oP 'DBROOT=\K.*' /opt/mailcow-dockerized/mailcow.conf)
-        docker exec "$C" mysql -u root -p"$P" mailcow -N -e \
-          "DELETE FROM alias WHERE address='{{ item }}@{{ mailbox_domain }}' AND goto='{{ mailbox_address }}'; SELECT ROW_COUNT();" | tail -1
-      args: { executable: /bin/bash }
-      loop: "{{ mailbox_aliases }}"
-      register: mailbox_alias_del
-      changed_when: (mailbox_alias_del.stdout | default('0') | trim) != '0'
-      no_log: true
-
-    - name: "Mailbox | Remove delegate bcc + sender_acl entries"
-      ansible.builtin.shell: |
-        set -o pipefail
-        C=$(docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -iE 'mysql|mariadb' | head -1)
-        P=$(grep -oP 'DBROOT=\K.*' /opt/mailcow-dockerized/mailcow.conf)
-        docker exec "$C" mysql -u root -p"$P" mailcow -N -e \
-          "DELETE FROM bcc_maps WHERE local_dest='{{ mailbox_address }}';
-           DELETE FROM sender_acl WHERE send_as='{{ mailbox_address }}';
-           SELECT ROW_COUNT();" | tail -1
-      args: { executable: /bin/bash }
-      register: mailbox_deleg_del
-      changed_when: (mailbox_deleg_del.stdout | default('0') | trim) != '0'
-      no_log: true
 
 - name: "Mailbox | Summary"
   ansible.builtin.debug:
     msg: >-
       mailbox {{ mailbox_address }} state={{ mailbox_state }}
+      credential={{ mailbox_credential }} existed={{ mailbox_exists }}
       aliases={{ mailbox_aliases | length }} delegates={{ mailbox_delegates | length }}
-      (plus-addressing {{ mailbox_service }}+tag@{{ mailbox_domain }} active platform-wide;
-      creds in Vault {{ mailbox_env }}/mail/{{ mailbox_service }})
+      (plus-addressing {{ mailbox_local }}+tag@{{ mailbox_at_domain }} is active
+      platform-wide — postfix recipient_delimiter, nothing per-mailbox{{
+      '; creds in Vault ' ~ mailbox_env ~ '/mail/' ~ mailbox_service
+      if mailbox_credential == 'vault' else '; SSO-bound, no password stored' }})

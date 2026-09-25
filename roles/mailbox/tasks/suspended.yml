@@ -1,0 +1,71 @@
+---
+# active=2: the box still RECEIVES mail but nobody can log into it. For a person
+# that is what leaving means; for a service it is the quiet period before absent.
+# Mail is never deleted — archive-before-destroy.
+- name: "Mailbox | Nothing to suspend — no such mailbox: {{ mailbox_address }}"
+  ansible.builtin.debug:
+    msg: "{{ mailbox_address }} is not on mailcow; nothing to suspend."
+  when: not mailbox_exists
+
+- name: "Mailbox | Suspend"
+  when: mailbox_exists
+  delegate_to: "{{ mailbox_mailcow_host }}"
+  become: true
+  block:
+    - name: "Mailbox | Disallow login, keep receiving (active=2)"
+      ansible.builtin.uri:
+        url: "{{ mailbox_api }}/edit/mailbox"
+        method: POST
+        headers: "{{ mailbox_api_hdr }}"
+        body_format: json
+        body:
+          items: ["{{ mailbox_address }}"]
+          attr: { active: "2" }
+        validate_certs: false
+        status_code: [200]
+      when: (mailbox_cur.json.active_int | default(mailbox_cur.json.active) | default(0) | int) != 2
+      changed_when: true
+      no_log: true
+
+    # Forward + auto-reply = a prefilter sieve script in mailcow's own table (what
+    # the UI "Filters" tab writes); Dovecot applies it at delivery. redirect :copy
+    # forwards AND keeps a copy, so nothing is lost if the forward address changes.
+    - name: "Mailbox | Sieve script (forward + auto-reply)"
+      ansible.builtin.set_fact:
+        mailbox_sieve: >-
+          require ["vacation"{{ ',"copy"' if mailbox_forward_to | length > 0 else '' }}];
+          {% if mailbox_forward_to | length > 0 %}redirect :copy "{{ mailbox_forward_to }}";{% endif %}
+          {% if mailbox_autoreply | length > 0 %}vacation :days {{ mailbox_autoreply_days }}
+          :subject "Automatic reply" "{{ mailbox_autoreply | replace('"', '\\"') }}";{% endif %}
+      when: mailbox_forward_to | length > 0 or mailbox_autoreply | length > 0
+
+    - name: "Mailbox | Sieve script already present?"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ mailbox_mysql_container }} sh -c
+          'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e
+           "SELECT COUNT(*) FROM sieve_filters WHERE username=\"{{ mailbox_address }}\"
+            AND script_desc=\"{{ mailbox_sieve_name }}\""'
+      register: mailbox_sieve_cnt
+      changed_when: false
+      check_mode: false
+      when: mailbox_sieve is defined
+
+    - name: "Mailbox | Install the sieve script (stdin, never argv)"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -i {{ mailbox_mysql_container }} sh -c
+          'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow'
+        stdin: >-
+          INSERT INTO sieve_filters (username, script_desc, script_name, script_data, filter_type, created, modified)
+          VALUES ('{{ mailbox_address }}', '{{ mailbox_sieve_name }}', 'active',
+                  '{{ mailbox_sieve | replace("'", "''") }}', 'prefilter', NOW(), NOW());
+      when:
+        - mailbox_sieve is defined
+        - (mailbox_sieve_cnt.stdout | default('0') | trim) == '0'
+      changed_when: true
+      no_log: true
+
+    - name: "Mailbox | One-time maildir export to S3"
+      ansible.builtin.include_tasks: export.yml
+      when: mailbox_export_s3 | bool

@@ -1,0 +1,72 @@
+---
+# Access to a mailbox WITHOUT sharing its password:
+#   (a) rx — a copy of everything incoming, via a recipient bcc map;
+#   (b) tx — permission to send as the address, via sender_acl.
+# Both live in mailcow's database; only (a) has an API endpoint.
+
+- name: "Mailbox | Delegate rx copies (bcc map) — {{ mailbox_delegates | join(', ') }}"
+  ansible.builtin.uri:
+    url: "{{ mailbox_api }}/add/bcc"
+    method: POST
+    headers: "{{ mailbox_api_hdr }}"
+    body_format: json
+    body:
+      local_dest: "{{ mailbox_address }}"
+      bcc_dest: "{{ item }}"
+      type: "rcpt"
+      active: "1"
+    validate_certs: false
+    status_code: [200]
+  delegate_to: "{{ mailbox_mailcow_host }}"
+  become: true
+  loop: "{{ mailbox_delegates }}"
+  register: mailbox_bcc_add
+  changed_when: >-
+    'bcc_saved' in (mailbox_bcc_add.json | default([]) | string) or
+    'added' in (mailbox_bcc_add.json | default([]) | string)
+  failed_when: >-
+    mailbox_bcc_add.json is defined and
+    (mailbox_bcc_add.json | string is search('danger')) and
+    not (mailbox_bcc_add.json | string is search('exists'))
+  no_log: true
+
+- name: "Mailbox | Delegate send-as (sender_acl, idempotent insert)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ mailbox_mysql_container }} sh -c
+      'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e
+       "INSERT INTO sender_acl (logged_in_as, send_as, external)
+        SELECT \"{{ item }}\", \"{{ mailbox_address }}\", 0
+        WHERE NOT EXISTS (SELECT 1 FROM sender_acl
+          WHERE logged_in_as=\"{{ item }}\" AND send_as=\"{{ mailbox_address }}\");
+        SELECT ROW_COUNT();"'
+  delegate_to: "{{ mailbox_mailcow_host }}"
+  become: true
+  loop: "{{ mailbox_delegates }}"
+  register: mailbox_sacl
+  changed_when: (mailbox_sacl.stdout | default('0') | trim) == '1'
+  no_log: true
+
+# Declarative revoke: drop grants for anyone no longer listed. Only for a caller
+# that declares the WHOLE set — a person's mailbox does not model delegation in
+# people.yml, so running this for people would delete grants nothing declares.
+- name: "Mailbox | Reconcile delegates (drop grants not in the list)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ mailbox_mysql_container }} sh -c
+      'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e
+       "DELETE FROM bcc_maps WHERE local_dest=\"{{ mailbox_address }}\"
+          AND bcc_dest NOT IN ({{ mailbox_keep_sql }});
+        DELETE FROM sender_acl WHERE send_as=\"{{ mailbox_address }}\"
+          AND logged_in_as NOT IN ({{ mailbox_keep_sql }});
+        SELECT ROW_COUNT();"'
+  delegate_to: "{{ mailbox_mailcow_host }}"
+  become: true
+  vars:
+    # '__none__' keeps the IN() list valid when every delegate has been removed.
+    mailbox_keep_sql: >-
+      {% for d in (mailbox_delegates + ['__none__']) %}\"{{ d }}\"{% if not loop.last %},{% endif %}{% endfor %}
+  register: mailbox_deleg_rec
+  changed_when: (mailbox_deleg_rec.stdout | default('0') | trim) != '0'
+  when: mailbox_delegates_declarative | bool
+  no_log: true
