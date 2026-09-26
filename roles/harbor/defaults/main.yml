@@ -21,8 +21,8 @@ harbor_install_dir: "/opt/harbor"
 harbor_data_dir: "/data/harbor"        # Harbor's local /data (logs, trivy cache) — blobs are on S3
 
 # --- Secrets (controller fabric store; Vault mirror = follow-up) ---------------
-harbor_secret_dir: "~/.openclaw/workspace/infra/secrets"
-harbor_secret_file: "fabric/harbor.json"                 # admin password (generated here)  # pragma: allowlist secret
+# Vault KV paths (security/0001 secret/{env}/{service}/{key}) — no controller files.
+harbor_vault_path: "{{ platform_env | default('prod') }}/harbor/admin"         # admin password  # pragma: allowlist secret
 
 # --- Cluster Postgres (roles/postgres_db creates the DB + role) ----------------
 harbor_pg_name: "harbor"
@@ -35,7 +35,7 @@ harbor_pg_sslmode: "verify-full"
 # service. 20 open / 5 idle covers core + jobservice (10 job workers) with margin.
 harbor_pg_max_open_conns: 20
 harbor_pg_max_idle_conns: 5
-harbor_pg_secret_file: "fabric/db-pgsql-harbor.json"     # written by postgres_db  # pragma: allowlist secret
+harbor_pg_vault_path: "{{ platform_env | default('prod') }}/harbor/db-pgsql"    # minted by postgres_db
 
 # Redis: Harbor uses its own bundled instance (internal job-queue/cache), so no
 # cluster-Redis wiring here — see the comment in templates/harbor.yml.j2.
@@ -45,11 +45,11 @@ harbor_s3_identity: "harbor"
 harbor_s3_bucket: "harbor-registry"
 harbor_s3_region: "us-east-1"
 harbor_s3_endpoint: "https://s3.{{ platform_domain }}"           # Traefik route (reused, no new split-DNS)
-harbor_s3_secret_file: "fabric/infra-seaweedfs-harbor.json"  # pragma: allowlist secret
+harbor_s3_vault_path: "{{ platform_env | default('prod') }}/harbor/s3"          # minted by seaweedfs_bucket
 
 # --- Authentik OIDC (app declared in roles/authentik authentik_oidc_apps) -------
 harbor_oidc_enabled: true
-harbor_oidc_secret_file: "fabric/app-oidc-harbor.json"    # written by the authentik role  # pragma: allowlist secret
+harbor_oidc_vault_path: "{{ platform_env | default('prod') }}/harbor/oidc"      # minted by roles/authentik
 harbor_authentik_base: "https://authentik.{{ platform_domain }}"
 harbor_oidc_slug: "harbor"
 harbor_oidc_endpoint: "{{ harbor_authentik_base }}/application/o/{{ harbor_oidc_slug }}/"
@@ -83,5 +83,11 @@ harbor_ci_enabled: true
 harbor_ci_project: "gitlab"                               # private project images land in
 harbor_ci_robot_name: "gitlab-ci"                         # system robot -> login name robot$gitlab-ci
 harbor_ci_robot_duration: -1                              # days; -1 = non-expiring
+# STILL A FILE, deliberately: the GitLab CI robot token is written and read by
+# tasks/gitlab-ci.yml, and playbooks/harbor-gitlab-ci.yml cannot run at all today
+# (#551 — it assumes root SSH on :22 through the retired jump path). Converting code
+# whose play cannot be dry-run would be shipping an unverified change; it follows
+# once #551 is fixed. Vault already holds the value at harbor/robot-gitlab.
+harbor_secret_dir: "~/.openclaw/workspace/infra/secrets"
 harbor_ci_robot_secret_file: "fabric/harbor-robot-gitlab.json"  # pragma: allowlist secret
 harbor_ci_pull_cache_project: "dockerhub"                 # proxy-cache the robot may pull from

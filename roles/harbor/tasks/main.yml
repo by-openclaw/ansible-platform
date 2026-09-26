@@ -11,7 +11,6 @@
     postgres_db_vault_path: "{{ platform_env | default('prod') }}/harbor/db-pgsql"
     postgres_db_name: "{{ harbor_pg_name }}"
     postgres_db_user: "{{ harbor_pg_user }}"
-    postgres_db_secret_file: "{{ harbor_pg_secret_file }}"   # fabric/db-pgsql-harbor.json (convention + Vault)
   tags: [harbor, database]
 
 - name: "Provision the SeaweedFS S3 bucket + scoped identity"
@@ -20,7 +19,11 @@
   vars:
     seaweedfs_bucket_identity: "{{ harbor_s3_identity }}"
     seaweedfs_bucket_names: ["{{ harbor_s3_bucket }}"]
-    seaweedfs_bucket_secret_file: "{{ harbor_s3_secret_file }}"
+    # Vault-native, not the legacy file mode this was in: seaweedfs_bucket was
+    # still PERSISTING harbor's S3 access key to the controller's disk. Same path
+    # the role reads below, and get-or-create reads the live key rather than
+    # minting a new one — a new one would orphan the registry's storage.
+    seaweedfs_bucket_vault_path: "{{ harbor_s3_vault_path }}"
   tags: [harbor, s3]
 
 - name: "Resolve / generate Harbor secrets + load dependencies' creds"
