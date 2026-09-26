@@ -16,8 +16,8 @@ pgadmin_traefik_backend: "http://{{ pgadmin_listen_ip }}:{{ pgadmin_host_port }}
 
 # Initial admin login (password generated once + stored in the controller store).
 pgadmin_default_email: "admin@{{ platform_domain }}"
-pgadmin_secret_dir: "~/.openclaw/workspace/infra/secrets"
-pgadmin_secret_file: "fabric/pgadmin-admin.json"
+# Vault KV paths (security/0001) — no controller files.
+pgadmin_vault_path: "{{ platform_env | default('prod') }}/pgadmin/admin"
 
 # Persistent data (server list, prefs) across container re-creation.
 pgadmin_data_volume: "pgadmin-data"
@@ -25,7 +25,7 @@ pgadmin_data_volume: "pgadmin-data"
 # --- Authentik OIDC SSO (optional) ---------------------------------------------
 # Wired only when the OIDC client secret file exists (created by the SSO phase).
 # The Authentik app/provider is declared in the authentik role (authentik_oidc_apps).
-pgadmin_oidc_secret_file: "fabric/app-oidc-pgadmin.json"
+pgadmin_oidc_vault_path: "{{ platform_env | default('prod') }}/pgadmin/oidc"   # minted by roles/authentik
 pgadmin_authentik_base: "https://authentik.{{ platform_domain }}"
 pgadmin_oidc_app_slug: "pgadmin"
 pgadmin_oidc_display_name: "BY-RESEARCH SSO"
@@ -53,7 +53,7 @@ pgadmin_servers_host_path: "/etc/pgadmin/servers.json"
 # recreate (which is what made the old live-only fix regress on restart).
 # Source of truth for the superuser password (fabric secret; Vault migration = TODO,
 # tracked platform-wide for ALL db-pgsql-*.json, not just pgAdmin).
-pgadmin_pg_superuser_secret_file: "fabric/db-pgsql-superuser.json"  # pragma: allowlist secret
+pgadmin_pg_superuser_vault_path: "{{ platform_env | default('prod') }}/postgres/superuser"  # pragma: allowlist secret
 pgadmin_pg_passfile_container: "/var/lib/pgadmin/.pgpass-pg"   # in the persistent volume
 pgadmin_pg_passexec_cmd: "/bin/cat {{ pgadmin_pg_passfile_container }}"
 # libpq (used by pgAdmin to reach Postgres) looks for the verify-full CA at
