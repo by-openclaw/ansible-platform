@@ -7,10 +7,11 @@
   ansible.builtin.include_role:
     name: postgres_db
   vars:
-    postgres_db_vault_path: "{{ platform_env | default('prod') }}/grafana/db-pgsql"
+    # The same path the role reads back in secrets.yml, so the provisioning and
+    # consuming sides agree by construction rather than by a filename matching.
+    postgres_db_vault_path: "{{ grafana_pg_vault_path }}"
     postgres_db_name: "{{ grafana_pg_name }}"
     postgres_db_user: "{{ grafana_pg_user }}"
-    postgres_db_secret_file: "{{ grafana_pg_secret_file }}"
   when: grafana_db_enabled | bool
   tags: [db]
 
