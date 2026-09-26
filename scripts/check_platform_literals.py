@@ -8,9 +8,12 @@ host addresses)."""
 import re, sys, pathlib
 
 PATTERNS = {
-    "domain literal": re.compile(r"by-research\.be"),
-    "org literal": re.compile(r"(?<![a-z0-9_-])by-research(?![a-z0-9.-])"),
-    "identity fallback": re.compile(r"default\((['\"])(by-research(\.be)?)\1\)"),
+    # BOTH org names. Only "by-research" was listed, so a hardcoded by-systems.be in
+    # roles/hardening's postfix template and a default('ops@by-systems.be') fallback
+    # were invisible to the check meant to catch exactly that.
+    "domain literal": re.compile(r"by-(research|systems)\.be"),
+    "org literal": re.compile(r"(?<![a-z0-9_-])by-(research|systems)(?![a-z0-9.-])"),
+    "identity fallback": re.compile(r"default\((['\"])(by-(research|systems)(\.be)?)\1\)"),
     # 10.6.x covers OOB and the switch fabric. They were missing from this pattern,
     # which is why five roles kept spelling them out long after the 10.1.x zones
     # were factored out — the guard simply never looked for them.
@@ -49,6 +52,11 @@ def main() -> int:
     for root in ROOTS:
         for p in pathlib.Path(root).rglob("*"):
             if p.suffix not in SUFFIXES or "README" in p.name or "_archive" in p.parts:
+                continue
+            # role metadata is never templated by Ansible, so an org name in an author
+            # field is not a literal anyone can parameterise. Flagging it only teaches
+            # people to ignore this check.
+            if "meta" in p.parts:
                 continue
             for n, line in enumerate(p.read_text(errors="ignore").splitlines(), 1):
                 code = line.split("#", 1)[0] if not line.lstrip().startswith("#") else ""
