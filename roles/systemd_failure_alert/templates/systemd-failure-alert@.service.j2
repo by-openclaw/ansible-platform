@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/systemd_failure_alert).
+# Templated: one instance per failing unit, named by the unit that triggered it.
+[Unit]
+Description=Report %i failing
+# No OnFailure here — a notifier that notifies about itself loops.
+
+[Service]
+Type=oneshot
+ExecStart={{ systemd_failure_alert_script }} %i
+# The failed unit's own timeout is not this one's problem.
+TimeoutStartSec=60

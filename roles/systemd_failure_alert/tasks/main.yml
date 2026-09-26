@@ -1,0 +1,34 @@
+---
+# Install the notifier. Idempotent; safe to include from every role that owns a timer.
+- name: "FailureAlert | The notifier script"
+  ansible.builtin.template:
+    src: systemd-failure-alert.sh.j2
+    dest: "{{ systemd_failure_alert_script }}"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: "FailureAlert | The templated notifier unit"
+  ansible.builtin.template:
+    src: systemd-failure-alert@.service.j2
+    dest: /etc/systemd/system/systemd-failure-alert@.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: "FailureAlert | Reload systemd"
+
+# A notifier nobody has proven is the same as no notifier — this is the third time
+# a silent failure went unnoticed, so the delivery path is asserted, not assumed.
+- name: "FailureAlert | sendmail must exist, or the unit cannot report anything"
+  ansible.builtin.stat:
+    path: "{{ systemd_failure_alert_sendmail }}"
+  register: systemd_failure_alert_sendmail_stat
+
+- name: "FailureAlert | Fail loudly rather than install a notifier that cannot send"
+  ansible.builtin.assert:
+    that: systemd_failure_alert_sendmail_stat.stat.exists
+    fail_msg: >-
+      {{ systemd_failure_alert_sendmail }} is missing on {{ inventory_hostname }} —
+      roles/hardening installs the postfix satellite that provides it. Without it a
+      failing timer would still fail silently, which is the whole point of this role.
+    quiet: true
