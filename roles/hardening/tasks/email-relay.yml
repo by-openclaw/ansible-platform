@@ -57,6 +57,15 @@
     state: started
     enabled: true
 
+# Without this the FIRST test send always fails: it runs before the Postmap and
+# Restart handlers, so sasl_passwd.db does not exist yet and postfix answers
+#   dsn=4.3.0 status=deferred (local data error while talking to <relay>)
+# Observed exactly that on the first apply — sasl_passwd at 19:53, the .db at
+# 19:54, the send at 19:53:44. It recovers on the queue retry, so the test was
+# reporting a failure the relay had not actually made.
+- name: "Postfix | Apply the credential and restart before testing"
+  ansible.builtin.meta: flush_handlers
+
 # command + stdin, not shell with a pipe: no pipefail trap, and nothing to quote.
 - name: "Postfix | Send a test message through the relay"
   ansible.builtin.command:
@@ -74,5 +83,5 @@
     msg: >-
       Test email to {{ hardening_email_alert_dest }} exit={{ hardening_mail_test.rc | default('skipped (--check)') }}.
       NOTE exit=0 means the local queue ACCEPTED it, not that it was delivered —
-      read /var/log/mail.log for the relay's answer.
+      run: journalctl -u postfix | grep status=   (the node logs to journald, not /var/log/mail.log).
   when: not ansible_check_mode
