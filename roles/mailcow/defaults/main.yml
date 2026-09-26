@@ -19,8 +19,8 @@ mailcow_mysql_container: "mailcowdockerized-mysql-mailcow-1"
 # The mail SERVER hostname. Clients of EVERY hosted domain connect here, so this
 # is the only name that needs a TLS cert — covered by the *.{{ platform_domain }}
 # wildcard (which is why the unowned internal example.com needs no cert).
-mailcow_hostname: "mail.{{ platform_domain }}"
-mailcow_fqdn: "mail.{{ platform_domain }}" # web UI / SOGo (behind Traefik)
+mailcow_hostname: "{{ platform_service_fqdns.mailcow }}"
+mailcow_fqdn: "{{ platform_service_fqdns.mailcow }}" # web UI / SOGo (behind Traefik)
 mailcow_timezone: "Europe/Brussels"
 
 # --- Reverse-proxy posture (Traefik terminates TLS; mailcow's nginx is HTTP-only
@@ -99,7 +99,7 @@ mailcow_postmaster_addresses:
 # claim → maps to a mailbox template → creates the mailbox with the 5 GB quota.
 mailcow_oidc_enabled: true
 mailcow_oidc_slug: "mailcow" # Authentik application slug
-mailcow_authentik_base: "https://authentik.{{ platform_domain }}"
+mailcow_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 mailcow_oidc_authorization_endpoint: "{{ mailcow_authentik_base }}/application/o/authorize/"
 mailcow_oidc_token_endpoint: "{{ mailcow_authentik_base }}/application/o/token/"
 mailcow_oidc_userinfo_endpoint: "{{ mailcow_authentik_base }}/application/o/userinfo/"

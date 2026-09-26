@@ -37,7 +37,7 @@ gitlab_version: "19.4.0-ce.0"          # ladder target; move through playbooks/g
 gitlab_apt_repo_url: "https://packages.gitlab.com/gitlab/gitlab-ce"
 
 # --- Identity / URLs ----------------------------------------------------------
-gitlab_external_url: "https://gitlab.{{ platform_domain }}"
+gitlab_external_url: "https://{{ platform_service_fqdns.gitlab }}"
 gitlab_registry_external_url: "https://registry.{{ platform_domain }}"
 gitlab_pages_external_url: "https://pages.{{ platform_domain }}"   # wildcard TLS route = follow-up
 gitlab_svc_ip: "{{ hostvars[inventory_hostname].ansible_host }}"
@@ -92,7 +92,7 @@ gitlab_registry_bucket: "gitlab-registry"
 gitlab_backup_bucket: "gitlab-backups"
 
 # --- SSO (Authentik OIDC) -----------------------------------------------------
-gitlab_oidc_issuer: "https://authentik.{{ platform_domain }}/application/o/gitlab/"
+gitlab_oidc_issuer: "https://{{ platform_service_fqdns.authentik }}/application/o/gitlab/"
 gitlab_oidc_required_groups: ["{{ platform_service_groups.gitlab.access }}"]   # only these may sign in (CE, from claim)
 gitlab_oidc_admin_groups: ["{{ platform_service_groups.gitlab.admin }}"]     # these become GitLab admins (CE)
 gitlab_oidc_block_auto_created: false           # auto-provision on first SSO login

@@ -62,7 +62,7 @@ cloudflare_dns_records:
   - {record: "mail", type: A, value: "{{ cloudflare_dns_apex_v4 }}", state: present, solo: true}
   - {record: "mail", type: AAAA, value: "{{ cloudflare_dns_apex_v6 }}", state: present, solo: true}
   # receive mail → the mail host (single MX)
-  - {record: "@", type: MX, value: "mail.{{ platform_domain }}", priority: 10, state: present, solo: true}
+  - {record: "@", type: MX, value: "{{ platform_service_fqdns.mailcow }}", priority: 10, state: present, solo: true}
   # SPF — STRICT (-all hard-fail). `mx` authorises the MX host's A+AAAA (dual-stack,
   # Telenet) — exactly one SPF record is allowed (RFC 7208), so remove the older
   # IPv4-only SPF that pre-dated this and would otherwise cause a permerror.
@@ -73,5 +73,5 @@ cloudflare_dns_records:
   # DMARC — STRICT alignment (adkim/aspf=s), p=reject; reports → postmaster.
   - {record: "_dmarc", type: TXT, value: "{{ cloudflare_dns_mailcow_dmarc }}", state: present, solo: true}
   # client autoconfiguration: Outlook (autodiscover) + Thunderbird (autoconfig)
-  - {record: "autodiscover", type: CNAME, value: "mail.{{ platform_domain }}", state: present, solo: true}
-  - {record: "autoconfig", type: CNAME, value: "mail.{{ platform_domain }}", state: present, solo: true}
+  - {record: "autodiscover", type: CNAME, value: "{{ platform_service_fqdns.mailcow }}", state: present, solo: true}
+  - {record: "autoconfig", type: CNAME, value: "{{ platform_service_fqdns.mailcow }}", state: present, solo: true}

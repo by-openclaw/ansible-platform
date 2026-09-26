@@ -41,18 +41,18 @@ prometheus_traefik_dynamic_dir: "/etc/traefik/dynamic"
 # and vpn.<domain> resolves to the WAN address (no NAT reflection). Their daemons are probed
 # on TCP below; external reachability is the status page's job.
 prometheus_blackbox_http_exclude:
-  - "vpn.{{ platform_domain }}"
+  - "{{ platform_service_fqdns.netbird }}"
   - "{{ platform_service_fqdns['step-ca'] }}"        # no page at /, the API answers 404; its /health is probed explicitly below
 # Per-host URL override when the internal path differs from the public one (split-DNS sends
 # mail.<domain> straight to the mail server, which serves HTTPS on 8443, not 443).
 # (a list, not a dict: Ansible does not template dict KEYS, so "mail.{{ domain }}" as a key never matched)
 prometheus_blackbox_http_overrides:
-  - { host: "mail.{{ platform_domain }}", url: "https://mail.{{ platform_domain }}:8443/" }
+  - { host: "{{ platform_service_fqdns.mailcow }}", url: "https://{{ platform_service_fqdns.mailcow }}:8443/" }
 prometheus_blackbox_http_extra:
-  - "https://nextcloud.{{ platform_domain }}/status.php"
-  - "https://nextcloud.{{ platform_domain }}/standalone-signaling/api/v1/welcome"
-  - "https://nextcloud.{{ platform_domain }}/recording/api/v1/welcome"
-  - "https://office.{{ platform_domain }}/healthcheck"
+  - "https://{{ platform_service_fqdns.nextcloud }}/status.php"
+  - "https://{{ platform_service_fqdns.nextcloud }}/standalone-signaling/api/v1/welcome"
+  - "https://{{ platform_service_fqdns.nextcloud }}/recording/api/v1/welcome"
+  - "https://{{ platform_service_fqdns.collab }}/healthcheck"
   - "https://{{ platform_service_fqdns['step-ca'] }}/health"
 # The platform resolver on both families (the 2026-09-18 outage, #424)
 prometheus_resolver_host: "{{ groups['adguard'] | first }}"

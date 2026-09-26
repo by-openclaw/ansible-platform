@@ -15,13 +15,13 @@ verdaccio_plugin_node_persist_version: "4.0.4"  # peer of verdaccio-openid store
 # --- SSO (Authentik OIDC via verdaccio-openid) — creds written by roles/authentik ---
 verdaccio_oidc_vault_path: "{{ platform_env | default('prod') }}/verdaccio/oidc"
 # Internal Authentik name is authentik.<domain> (split-DNS → Traefik); auth.<domain> is public-only.
-verdaccio_oidc_provider_host: "https://authentik.{{ platform_domain }}/application/o/verdaccio/"
+verdaccio_oidc_provider_host: "https://{{ platform_service_fqdns.authentik }}/application/o/verdaccio/"
 verdaccio_oidc_group: "{{ platform_service_groups.verdaccio.access }}"      # Authentik ACCESS group (IdP-enforced + plugin authorized-groups)
 # --- S3 storage (SeaweedFS) — bucket+identity provisioned by service_scaffold (Vault-native) ---
 verdaccio_s3_bucket: "verdaccio"
 verdaccio_listen_ip: "{{ hostvars[groups['verdaccio'] | first].ansible_host }}"
 verdaccio_port: 4873
-verdaccio_fqdn: "npm.{{ platform_domain }}"
+verdaccio_fqdn: "{{ platform_service_fqdns.verdaccio }}"
 verdaccio_build_dir: "/opt/verdaccio"
 verdaccio_storage_dir: "/opt/verdaccio/storage"   # packages live in S3; this holds the openid token store only
 verdaccio_conf_dir: "/opt/verdaccio/conf"

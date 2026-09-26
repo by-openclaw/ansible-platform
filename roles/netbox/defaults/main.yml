@@ -7,7 +7,7 @@
 # ==============================================================================
 netbox_image: "netboxcommunity/netbox:v4.6.8"   # exact pin — bump deliberately
 
-netbox_fqdn: "netbox.{{ platform_domain }}"
+netbox_fqdn: "{{ platform_service_fqdns.netbox }}"
 
 # Web HTTP backend (Traefik terminates TLS) — published on the SVC IP.
 netbox_listen_ip: "{{ hostvars[groups['netbox'] | first].ansible_host }}"
@@ -48,7 +48,7 @@ netbox_superuser_email: "admin@{{ platform_domain }}"
 # python-social-auth OIDC backend. The Authentik app/provider/group are declared
 # in the authentik role (authentik_oidc_apps: netbox). Access = netbox-admins.
 netbox_oidc_vault_path: "{{ platform_env | default('prod') }}/netbox/oidc"   # minted by roles/authentik
-netbox_authentik_base: "https://authentik.{{ platform_domain }}"
+netbox_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 netbox_oidc_app_slug: "netbox"
 # Members of this Authentik group become NetBox superusers (group sync from the
 # OIDC `groups` claim). Login restriction to the group is enforced IdP-side

@@ -9,7 +9,7 @@
 # cannot drift away from it — one variable moves both.
 authentik_image: "ghcr.io/goauthentik/server:{{ authentik_version }}"
 
-authentik_fqdn: "authentik.{{ platform_domain }}"
+authentik_fqdn: "{{ platform_service_fqdns.authentik }}"
 
 # Server HTTP backend (Traefik terminates TLS) — published on the SVC IP.
 authentik_listen_ip: "{{ hostvars[groups['authentik'] | first].ansible_host }}"
@@ -47,33 +47,33 @@ authentik_blueprints_dir: "/opt/authentik/blueprints"
 # service here to wire its SSO — same pattern for every svc.
 authentik_oidc_apps:
   - slug: vault
-    launch_url: "https://vault.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.vault }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/hashicorp-vault.svg"
     name: "Vault"
     group: "{{ platform_service_groups.vault.admin }}"
     secret_file: "fabric/app-oidc-vault.json"
     redirect_uris:
-      - "https://vault.{{ platform_domain }}/ui/vault/auth/oidc/oidc/callback"
+      - "https://{{ platform_service_fqdns.vault }}/ui/vault/auth/oidc/oidc/callback"
       - "http://localhost:8250/oidc/callback"
   - slug: pgadmin
-    launch_url: "https://pgadmin.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.pgadmin }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/pgadmin.svg"
     name: "pgAdmin"
     group: "{{ platform_service_groups.pgadmin.admin }}"
     secret_file: "fabric/app-oidc-pgadmin.json"
     redirect_uris:
-      - "https://pgadmin.{{ platform_domain }}/oauth2/authorize"
+      - "https://{{ platform_service_fqdns.pgadmin }}/oauth2/authorize"
   - slug: netbox
-    launch_url: "https://netbox.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.netbox }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/netbox.svg"
     name: "NetBox"
     group: "{{ platform_service_groups.netbox.admin }}"
     secret_file: "fabric/app-oidc-netbox.json"
     restrict_to_group: true     # IdP-enforced: only netbox-admins can log in
     redirect_uris:
-      - "https://netbox.{{ platform_domain }}/oauth/complete/oidc/"
+      - "https://{{ platform_service_fqdns.netbox }}/oauth/complete/oidc/"
   - slug: vaultwarden
-    launch_url: "https://vaultwarden.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.vaultwarden }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/vaultwarden.svg"
     name: "Vaultwarden"
     group: "{{ platform_service_groups.vaultwarden.admin }}"
@@ -82,9 +82,9 @@ authentik_oidc_apps:
     force_email_verified: true  # vaultwarden rejects email_verified=False (authentik default)
     offline_access: true        # vaultwarden requests offline_access → needs refresh_token
     redirect_uris:
-      - "https://vaultwarden.{{ platform_domain }}/identity/connect/oidc-signin"
+      - "https://{{ platform_service_fqdns.vaultwarden }}/identity/connect/oidc-signin"
   - slug: nextcloud
-    launch_url: "https://nextcloud.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.nextcloud }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/nextcloud.svg"
     name: "Nextcloud"
     group: "{{ platform_service_groups.nextcloud.access }}"    # ACCESS group — any member may log into Nextcloud
@@ -93,11 +93,11 @@ authentik_oidc_apps:
     restrict_to_group: true     # IdP-enforced: only nextcloud-users can log in
     admin_group_alias: "admin"  # admin_source_group members → NC "admin" group
     redirect_uris:
-      - "https://nextcloud.{{ platform_domain }}/apps/user_oidc/code"
+      - "https://{{ platform_service_fqdns.nextcloud }}/apps/user_oidc/code"
     logout_uris:                                # post_logout_redirect_uri (type=logout)
-      - "https://nextcloud.{{ platform_domain }}/"
+      - "https://{{ platform_service_fqdns.nextcloud }}/"
   - slug: netbird
-    launch_url: "https://vpn.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.netbird }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/netbird.svg"
     name: "NetBird"
     group: "{{ platform_service_groups.netbird.access }}"        # ACCESS group — only members may authenticate
@@ -120,12 +120,12 @@ authentik_oidc_apps:
     # "Error: Unauthenticated" before ever reaching the authorize endpoint (2026-09-16).
     redirect_uris:
       - "http://localhost:53000"
-      - "https://vpn.{{ platform_domain }}/auth"
-      - "https://vpn.{{ platform_domain }}/silent-auth"
+      - "https://{{ platform_service_fqdns.netbird }}/auth"
+      - "https://{{ platform_service_fqdns.netbird }}/silent-auth"
     redirect_uris_regex:
       - "https://vpn\\.{{ platform_domain | replace('.', '\\.') }}/.*"
   - slug: mailcow
-    launch_url: "https://mail.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.mailcow }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/mailcow.svg"
     name: "Mailcow"
     group: "{{ platform_service_groups.mailcow.access }}"          # ACCESS group — only members may log into mail
@@ -137,12 +137,12 @@ authentik_oidc_apps:
     # domain), so the mailbox address = the email claim — no domain rewrite needed.
     mailcow_template: true          # emit the static mailcow_template="default" scope
     redirect_uris:
-      - "https://mail.{{ platform_domain }}/"
-      - "https://mail.{{ platform_domain }}"
+      - "https://{{ platform_service_fqdns.mailcow }}/"
+      - "https://{{ platform_service_fqdns.mailcow }}"
     redirect_uris_regex:
       - "https://mail\\.{{ platform_domain | replace('.', '\\.') }}/.*"
   - slug: pbs
-    launch_url: "https://pbs.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.pbs }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/proxmox.svg"
     name: "Proxmox Backup Server"
     group: "{{ platform_service_groups.pbs.admin }}"             # ACCESS group — only members may SSO into PBS
@@ -150,44 +150,44 @@ authentik_oidc_apps:
     restrict_to_group: true         # IdP-enforced: only pbs-admins can log in
     # PBS (proxmox-backup-manager openid) redirects to its own web root after auth.
     redirect_uris:
-      - "https://pbs.{{ platform_domain }}"
+      - "https://{{ platform_service_fqdns.pbs }}"
     redirect_uris_regex:
       - "https://pbs\\.{{ platform_domain | replace('.', '\\.') }}/.*"
   - slug: portainer
-    launch_url: "https://portainer.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.portainer }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/portainer.svg"
     name: "Portainer (containers)"
     group: "{{ platform_admins_group }}"            # ACCESS group — the console can restart and exec into containers
     vault_path: "prod/portainer/oidc"   # Vault-native client creds; roles/portainer configures Portainer with them
     restrict_to_group: true             # IdP-enforced: only platform-admins may sign in
     redirect_uris:
-      - "https://portainer.{{ platform_domain }}/"
+      - "https://{{ platform_service_fqdns.portainer }}/"
     logout_uris:
-      - "https://portainer.{{ platform_domain }}/"
+      - "https://{{ platform_service_fqdns.portainer }}/"
   - slug: wazuh
-    launch_url: "https://wazuh.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.wazuh }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/wazuh.svg"
     name: "Wazuh (security monitoring)"
     group: "{{ platform_admins_group }}"            # ACCESS group — the dashboard shows every host's security state
     vault_path: "prod/wazuh/oidc"       # Vault-native client creds; roles/wazuh renders the dashboard + indexer config
     restrict_to_group: true
     redirect_uris:
-      - "https://wazuh.{{ platform_domain }}/auth/openid/login"
+      - "https://{{ platform_service_fqdns.wazuh }}/auth/openid/login"
     logout_uris:
-      - "https://wazuh.{{ platform_domain }}/"
+      - "https://{{ platform_service_fqdns.wazuh }}/"
   - slug: proxmox
-    launch_url: "https://proxmox.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.proxmox }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/proxmox.svg"
     name: "Proxmox VE (hypervisor)"
     group: "{{ platform_service_groups.proxmox.admin }}"             # ACCESS group; PVE maps it to proxmox-admins-authentik → Administrator (roles/pve_host)
     vault_path: "prod/pve/oidc"         # roles/pve_host reads it for the OIDC realm
     restrict_to_group: true
     redirect_uris:
-      - "https://proxmox.{{ platform_domain }}"
+      - "https://{{ platform_service_fqdns.proxmox }}"
     logout_uris:
-      - "https://proxmox.{{ platform_domain }}/"
+      - "https://{{ platform_service_fqdns.proxmox }}/"
   - slug: grafana
-    launch_url: "https://grafana.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.monitoring }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/grafana.svg"
     name: "Grafana"
     group: "{{ platform_service_groups.monitoring.admin }}"         # ACCESS group — only members may SSO into Grafana
@@ -195,9 +195,9 @@ authentik_oidc_apps:
     restrict_to_group: true         # IdP-enforced: only grafana-admins can log in
     # Grafana generic_oauth callback. role_attribute_path maps the groups claim.
     redirect_uris:
-      - "https://grafana.{{ platform_domain }}/login/generic_oauth"
+      - "https://{{ platform_service_fqdns.monitoring }}/login/generic_oauth"
   - slug: gitlab
-    launch_url: "https://gitlab.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.gitlab }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/gitlab.svg"
     name: "GitLab"
     group: "{{ platform_service_groups.gitlab.access }}"           # ACCESS group — only members may authenticate
@@ -211,9 +211,9 @@ authentik_oidc_apps:
     #   grants admin — configured on the GitLab side (roles/gitlab). gitlab-admins
     #   members MUST also be in gitlab-users to pass this IdP access policy.
     redirect_uris:
-      - "https://gitlab.{{ platform_domain }}/users/auth/openid_connect/callback"
+      - "https://{{ platform_service_fqdns.gitlab }}/users/auth/openid_connect/callback"
   - slug: jumpserver
-    launch_url: "https://jumpserver.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.jumpserver }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/jumpserver.svg"
     name: "JumpServer"
     group: "{{ platform_service_groups.jumpserver.access }}"        # ACCESS group — only members may SSO into the bastion
@@ -224,10 +224,10 @@ authentik_oidc_apps:
     # auto-discover Authentik; the role feeds it the explicit Authentik endpoints.
     # Callback is /core/auth/openid/callback/ (confirmed from the running core).
     redirect_uris:
-      - "https://jumpserver.{{ platform_domain }}/core/auth/openid/callback/"
+      - "https://{{ platform_service_fqdns.jumpserver }}/core/auth/openid/callback/"
 
   - slug: verdaccio
-    launch_url: "https://npm.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.verdaccio }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/verdaccio.svg"
     name: "npm registry (Verdaccio)"
     group: "{{ platform_service_groups.verdaccio.access }}"         # ACCESS group — only members may SSO into the registry
@@ -235,11 +235,11 @@ authentik_oidc_apps:
     restrict_to_group: true          # IdP-enforced; verdaccio-openid also checks authorized-groups
     # verdaccio-openid callbacks: web UI, WebAuthn (npm >=9 `npm login`), CLI fallback.
     redirect_uris:
-      - "https://npm.{{ platform_domain }}/-/oauth/callback"
-      - "https://npm.{{ platform_domain }}/-/oauth/callback/authn"
-      - "https://npm.{{ platform_domain }}/-/oauth/callback/cli"
+      - "https://{{ platform_service_fqdns.verdaccio }}/-/oauth/callback"
+      - "https://{{ platform_service_fqdns.verdaccio }}/-/oauth/callback/authn"
+      - "https://{{ platform_service_fqdns.verdaccio }}/-/oauth/callback/cli"
   - slug: harbor
-    launch_url: "https://harbor.{{ platform_domain }}"
+    launch_url: "https://{{ platform_service_fqdns.harbor }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/harbor.svg"
     name: "Harbor"
     group: "{{ platform_service_groups.harbor.access }}"           # ACCESS group — who may log in; harbor-admins (subset) become Harbor admins (oidc_admin_group)
@@ -247,7 +247,7 @@ authentik_oidc_apps:
     restrict_to_group: true         # IdP-enforced: only harbor-users can log in
     # Harbor's OIDC callback path.
     redirect_uris:
-      - "https://harbor.{{ platform_domain }}/c/oidc/callback"
+      - "https://{{ platform_service_fqdns.harbor }}/c/oidc/callback"
 
 # --- forwardAuth (proxy) blueprints — gate NO-AUTH apps behind Authentik SSO ------
 # For apps that can't speak OIDC themselves (e.g. the Traefik dashboard, api@internal),
@@ -265,7 +265,7 @@ authentik_proxy_apps:
   - slug: jitsi
     name: "Jitsi Meet"
     group: "{{ platform_service_groups.jitsi.access }}"                          # only members may open the conferencing app (forwardAuth)
-    external_host: "https://meet.{{ platform_domain }}"
+    external_host: "https://{{ platform_service_fqdns.jitsi }}"
   - slug: demo-apps
     name: "Demo app (k3s)"
     group: "{{ platform_service_groups.nextcloud.access }}"                      # every platform user (forwardAuth on the demo route)
@@ -273,7 +273,7 @@ authentik_proxy_apps:
   - slug: traefik-dashboard
     name: "Traefik Dashboard"
     group: "{{ platform_service_groups.traefik.admin }}"                       # only this group passes forwardAuth
-    external_host: "https://traefik.{{ platform_domain }}"
+    external_host: "https://{{ platform_service_fqdns.traefik }}"
   - slug: seaweedfs
     name: "SeaweedFS Admin"
     group: "{{ platform_service_groups.seaweedfs.admin }}"                     # only this group passes forwardAuth

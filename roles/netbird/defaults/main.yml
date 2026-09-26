@@ -35,7 +35,7 @@ netbird_coturn_image: "coturn/coturn:4.6.2"
 
 # --- Identity / addressing ------------------------------------------------------
 # Public name = vpn.{{ platform_domain }} (CNAME -> apex/Telenet; see cloudflare_dns role).
-netbird_fqdn: "vpn.{{ platform_domain }}"
+netbird_fqdn: "{{ platform_service_fqdns.netbird }}"
 netbird_listen_ip: "{{ hostvars[groups['netbird'] | first].ansible_host }}"                # SVC IP the containers publish on
 netbird_public_port: 443                        # TLS terminated by our Traefik
 netbird_http_protocol: "https"
@@ -57,7 +57,7 @@ netbird_stun_port: 3478                          # coturn STUN/TURN (host networ
 netbird_oidc_secret_file: "fabric/app-oidc-netbird.json"
 netbird_authentik_sa_file: "fabric/netbird-authentik-sa.json"
 netbird_oidc_app_slug: "netbird"
-netbird_oidc_base: "https://authentik.{{ platform_domain }}/application/o/{{ netbird_oidc_app_slug }}"
+netbird_oidc_base: "https://{{ platform_service_fqdns.authentik }}/application/o/{{ netbird_oidc_app_slug }}"
 netbird_oidc_config_endpoint: "{{ netbird_oidc_base }}/.well-known/openid-configuration"
 
 # Scopes — exactly as the goauthentik.io doc prescribes.
