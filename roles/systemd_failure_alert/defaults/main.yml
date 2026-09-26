@@ -1,0 +1,32 @@
+---
+# ==============================================================================
+# Role: systemd_failure_alert — a failure path for scheduled work.
+#
+# The platform installs timers and services and, before this role, had NO
+# OnFailure= anywhere. Three outages were each found by someone happening to
+# look rather than by being told:
+#   #403  the mail wildcard renewal        — noticed when it expired
+#   #415  the nightly OPNsense config export — 11 nights, 13 configs never taken
+#   #364  the off-host Vault snapshot pull  — the copy went two weeks stale
+# A backup job that cannot report its own failure is a cron entry that has
+# happened to work so far.
+#
+# Mail, not a webhook: every hardened host already runs a postfix satellite to
+# alerts@ (roles/hardening), which is the same mailbox alertmanager and the
+# firewall's Monit use. A Discord webhook would mean copying that secret onto
+# every host that owns a timer, to say less.
+#
+# Two entry points:
+#   tasks/main.yml    install the notifier (once per host)
+#   tasks/attach.yml  add OnFailure= to one unit — include with
+#                     systemd_failure_alert_unit: <name>.service
+# ==============================================================================
+systemd_failure_alert_to: "{{ hardening_email_alert_dest | default('alerts@' ~ platform_domain) }}"
+systemd_failure_alert_from: "{{ hardening_email_from | default('alerts@' ~ platform_domain) }}"
+# Enough to see the cause without mailing a whole run.
+systemd_failure_alert_journal_lines: 40
+systemd_failure_alert_script: "/usr/local/sbin/systemd-failure-alert.sh"
+systemd_failure_alert_sendmail: "/usr/sbin/sendmail"      # postfix provides it
+# The unit to attach to; required by tasks/attach.yml, unset here on purpose so a
+# caller that forgets it fails loudly instead of stamping a drop-in onto nothing.
+systemd_failure_alert_unit: ""

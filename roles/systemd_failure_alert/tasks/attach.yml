@@ -1,0 +1,33 @@
+---
+# Attach the notifier to ONE unit. Include with:
+#   systemd_failure_alert_unit: opnsense-config-backup.service
+#
+# A drop-in rather than an edit of the unit: the unit stays owned by whichever role
+# writes it, and OnFailure survives that role rewriting it.
+- name: "FailureAlert | A unit must be named"
+  ansible.builtin.assert:
+    that: systemd_failure_alert_unit | length > 0
+    fail_msg: "set systemd_failure_alert_unit to the unit to watch, e.g. foo.service"
+    quiet: true
+
+- name: "FailureAlert | Drop-in dir for {{ systemd_failure_alert_unit }}"
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ systemd_failure_alert_unit }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# %n expands to the failing unit's own name, so ONE templated notifier serves every
+# unit and the drop-in is identical everywhere.
+- name: "FailureAlert | OnFailure for {{ systemd_failure_alert_unit }}"
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ systemd_failure_alert_unit }}.d/onfailure.conf"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/systemd_failure_alert).
+      [Unit]
+      OnFailure=systemd-failure-alert@%n.service
+  notify: "FailureAlert | Reload systemd"

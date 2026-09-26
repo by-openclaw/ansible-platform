@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Managed by Ansible (roles/systemd_failure_alert). Report ONE failed unit by mail.
+#
+# Deliberately NOT `set -e`, and it always exits 0: this runs as the OnFailure
+# handler of something that has already failed. A notifier that fails, or that
+# makes systemd report a second failure, loses the message it exists to deliver.
+set -uo pipefail
+
+UNIT="${1:-}"
+if [ -z "$UNIT" ]; then
+  echo "systemd-failure-alert: no unit given" >&2
+  exit 0
+fi
+
+HOST="$(hostname -f 2>/dev/null || hostname)"
+STATUS="$(systemctl show "$UNIT" --no-pager \
+  -p Result -p ExecMainStatus -p ExecMainExitTimestamp -p NRestarts 2>/dev/null)"
+LOGS="$(journalctl -u "$UNIT" -n {{ systemd_failure_alert_journal_lines }} \
+  --no-pager --output=short-iso 2>/dev/null)"
+
+{{ systemd_failure_alert_sendmail }} -t <<MAIL || echo "systemd-failure-alert: sendmail failed for $UNIT" >&2
+From: {{ systemd_failure_alert_from }}
+To: {{ systemd_failure_alert_to }}
+Subject: [${HOST}] unit failed: ${UNIT}
+Auto-Submitted: auto-generated
+
+${UNIT} failed on ${HOST}.
+
+${STATUS}
+
+Last {{ systemd_failure_alert_journal_lines }} journal lines:
+${LOGS}
+MAIL
+
+exit 0

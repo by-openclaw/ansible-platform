@@ -79,6 +79,19 @@
     label: "{{ item.name }}"
   notify: Reload systemd (FW backup)
 
+# This unit failed for 11 nights and nothing said so (#415/#580): the export was
+# never taken, and it recovered on its own without anyone knowing either way.
+- name: "FW backup | Install the failure notifier"
+  ansible.builtin.include_role:
+    name: systemd_failure_alert
+
+- name: "FW backup | Report this unit when it fails"
+  ansible.builtin.include_role:
+    name: systemd_failure_alert
+    tasks_from: attach
+  vars:
+    systemd_failure_alert_unit: opnsense-config-backup.service
+
 - name: "FW backup | Flush handlers before enabling"
   ansible.builtin.meta: flush_handlers
 
