@@ -60,7 +60,7 @@
 # verify again. No restart when it already holds.
 - name: "platform_ca | Proxy hosts: does the proxy reach the CA through its route?"
   ansible.builtin.uri:
-    url: "https://ca.{{ platform_domain }}/health"
+    url: "https://{{ platform_service_fqdns['step-ca'] }}/health"
     status_code: [200, 500, 502, 503]
     validate_certs: true
   register: platform_ca_route
@@ -80,7 +80,7 @@
 
 - name: "platform_ca | Proxy hosts: the route answers with the root in place"
   ansible.builtin.uri:
-    url: "https://ca.{{ platform_domain }}/health"
+    url: "https://{{ platform_service_fqdns['step-ca'] }}/health"
     status_code: [200]
     validate_certs: true
   register: platform_ca_route_after

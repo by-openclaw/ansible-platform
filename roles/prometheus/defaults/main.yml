@@ -42,7 +42,7 @@ prometheus_traefik_dynamic_dir: "/etc/traefik/dynamic"
 # on TCP below; external reachability is the status page's job.
 prometheus_blackbox_http_exclude:
   - "vpn.{{ platform_domain }}"
-  - "ca.{{ platform_domain }}"        # no page at /, the API answers 404; its /health is probed explicitly below
+  - "{{ platform_service_fqdns['step-ca'] }}"        # no page at /, the API answers 404; its /health is probed explicitly below
 # Per-host URL override when the internal path differs from the public one (split-DNS sends
 # mail.<domain> straight to the mail server, which serves HTTPS on 8443, not 443).
 # (a list, not a dict: Ansible does not template dict KEYS, so "mail.{{ domain }}" as a key never matched)
@@ -53,7 +53,7 @@ prometheus_blackbox_http_extra:
   - "https://nextcloud.{{ platform_domain }}/standalone-signaling/api/v1/welcome"
   - "https://nextcloud.{{ platform_domain }}/recording/api/v1/welcome"
   - "https://office.{{ platform_domain }}/healthcheck"
-  - "https://ca.{{ platform_domain }}/health"
+  - "https://{{ platform_service_fqdns['step-ca'] }}/health"
 # The platform resolver on both families (the 2026-09-18 outage, #424)
 prometheus_resolver_host: "{{ groups['adguard'] | first }}"
 prometheus_blackbox_dns_v4: ["{{ hostvars[prometheus_resolver_host].ansible_host }}:53"]

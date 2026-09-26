@@ -16,6 +16,33 @@
 #   backup:   classes of infra/0008 (pbs = guest backup by the node job)
 #   vendor:   the official documentation the audit points to
 # ==============================================================================
+# ==============================================================================
+# Service FQDNs, DERIVED from the catalog below — the catalog already records the
+# `fqdn` label for 25 of the 32 services and nothing used it. Roles and playbooks
+# assembled the name by hand instead, ~100 times.
+#
+# The domain was never the problem; platform_domain is already single-sourced. The
+# duplicated part is the LABEL, and that is not cosmetic, because the label is
+# frequently not the service name:
+#     collab -> office    jitsi -> meet    mailcow -> mail
+#     netbird -> vpn      verdaccio -> npm  seaweedfs -> s3   step-ca -> ca
+# So the service-to-public-name mapping lived once in the catalog and was then
+# re-derived by hand everywhere. Renaming a public name meant finding every site;
+# missing one leaves a Traefik route or an OIDC redirect URI on a name that no
+# longer resolves.
+#
+# This lives in group_vars because a role's own *_fqdn default is not visible to
+# another role — which is exactly why the other roles re-assembled it.
+#
+# Keyed by service name. The seven internal services with no fqdn (opnsense,
+# postgres, redis, …) have no public name and are absent by design.
+#   platform_service_fqdns.authentik   -> authentik.<domain>
+#   platform_service_fqdns['step-ca']  -> ca.<domain>       (hyphen: bracket form)
+platform_service_fqdns: >-
+  {{ dict(platform_services | selectattr('fqdn') | map(attribute='name') | zip(
+       platform_services | selectattr('fqdn') | map(attribute='fqdn')
+       | map('regex_replace', '$', '.' ~ platform_domain))) }}
+
 platform_services:
   - {name: authentik,     role: authentik,        playbook: authentik.yml,    host: lxc-authentik-01,   fqdn: authentik, exposure: public,  sso: oidc,        db: shared-pg, pin: authentik_version,      backup: [pbs, app-native], monitoring: [node, cadvisor, probe], vendor: {name: authentik,        docs: https://docs.goauthentik.io/}}
   - {name: nextcloud,     role: nextcloud,        playbook: nextcloud.yml,    host: lxc-nextcloud-01,   fqdn: nextcloud, exposure: public,  sso: oidc,        db: shared-pg, pin: nextcloud_image,         backup: [pbs, app-native], monitoring: [node, cadvisor, probe], vendor: {name: Nextcloud,        docs: https://docs.nextcloud.com/}}
