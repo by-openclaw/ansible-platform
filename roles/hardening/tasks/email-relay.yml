@@ -17,10 +17,18 @@
   vars:
     vault_secret_path: "{{ hardening_email_relay_vault_path }}"
   run_once: true
-  when: hardening_email_relay_user == ""
 
 # run_once leaves the fact on one host only, so it is pushed to every host in the
-# play — otherwise the other 30 template an empty relay user.
+# play — otherwise the other 30 template an empty relay user and postfix points at
+# a sasl_passwd map that was never written ("local data error while talking to").
+#
+# NO `when:` here, deliberately. It previously read
+#     when: hardening_email_relay_user == ""
+# which tests the variable THIS TASK SETS. Under run_once the condition is
+# evaluated in a single host's context, so the first loop iteration made it false
+# and every remaining host was skipped — one host configured, thirty silently not:
+#     ok:       [srv-proxmox-poc-01] => (item=…)
+#     skipping: [srv-proxmox-poc-01] => (item=…)
 - name: "Postfix | Bind it on every host in the play"
   ansible.builtin.set_fact:
     hardening_email_relay_user: "{{ vault_secret_result.address }}"
@@ -30,7 +38,6 @@
   loop: "{{ ansible_play_hosts }}"
   run_once: true
   no_log: true
-  when: hardening_email_relay_user == ""
 
 - name: "Postfix | Install"
   ansible.builtin.package:
