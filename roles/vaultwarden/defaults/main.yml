@@ -15,7 +15,7 @@
 vaultwarden_image: "vaultwarden/server:1.37.1"   # exact pin — bump deliberately
 
 vaultwarden_container_name: vaultwarden
-vaultwarden_fqdn: "vaultwarden.{{ platform_domain }}"
+vaultwarden_fqdn: "{{ platform_service_fqdns.vaultwarden }}"
 
 # HTTP backend (Traefik terminates TLS) — published on the SVC IP. Vaultwarden
 # serves the web vault + WebSocket notifications on the same :80 in 1.36.
@@ -39,7 +39,7 @@ vaultwarden_pg_vault_path: "{{ platform_env | default('prod') }}/vaultwarden/db-
 # vaultwarden-admins group (authentik restrict_to_group). The master password
 # still protects the vault (E2EE) — SSO only handles authentication.
 vaultwarden_oidc_vault_path: "{{ platform_env | default('prod') }}/vaultwarden/oidc"    # minted by roles/authentik
-vaultwarden_authentik_base: "https://authentik.{{ platform_domain }}"
+vaultwarden_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 vaultwarden_oidc_app_slug: "vaultwarden"
 
 # SMTP via Resend — required so SSO account email verification (and password

@@ -8,7 +8,7 @@
 vault_image: "hashicorp/vault:2.0.4"   # exact pin. NOTE: recreating this container RE-SEALS Vault
 vault_container_name: "vault"
 
-vault_fqdn: "vault.{{ platform_domain }}"            # external (Traefik) name
+vault_fqdn: "{{ platform_service_fqdns.vault }}"            # external (Traefik) name
 vault_node_fqdn: "{{ groups['vault'] | first }}.{{ platform_domain }}"  # the node's own address
 
 # Published on the SVC IP + loopback.
@@ -37,7 +37,7 @@ vault_admin_policy_name: "admins"
 vault_oidc_secret_file: "fabric/app-oidc-vault.json" # client_id/secret/redirect_uris (shared with the Authentik blueprint)
 vault_oidc_default_role: "default"
 vault_oidc_admin_group: "{{ platform_service_groups.vault.admin }}"        # Authentik group → Vault admins policy
-vault_oidc_discovery_url: "https://authentik.{{ platform_domain }}/application/o/vault/"
+vault_oidc_discovery_url: "https://{{ platform_service_fqdns.authentik }}/application/o/vault/"
 
 # Verified-TLS API address (FQDN matches the wildcard cert; skip-verify banned).
 vault_api_addr: "https://{{ groups['vault'] | first }}.{{ platform_domain }}:8200"

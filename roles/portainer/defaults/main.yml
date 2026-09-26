@@ -9,7 +9,7 @@ portainer_version: "2.45.1"
 portainer_server_image: "portainer/portainer-ce:{{ portainer_version }}-alpine"
 portainer_agent_image: "portainer/agent:{{ portainer_version }}"
 portainer_env: "{{ platform_env | default('prod') }}"
-portainer_fqdn: "portainer.{{ platform_domain }}"
+portainer_fqdn: "{{ platform_service_fqdns.portainer }}"
 portainer_dir: "/opt/portainer"
 portainer_listen_ip: "{{ ansible_host }}"
 portainer_http_port: 9000                # server UI/API (HTTP; TLS is the platform Traefik's)
@@ -25,7 +25,7 @@ portainer_oidc_vault_path: "{{ portainer_env }}/portainer/oidc"     # client_id,
 portainer_admin_user: "admin"
 # SSO
 portainer_oidc_slug: "portainer"
-portainer_authentik_base: "https://authentik.{{ platform_domain }}"
+portainer_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 # Per-host switch (inventory host_vars): portainer_agent: false removes the agent from a
 # host and skips it. Default true everywhere — one console for every Docker host and the
 # cluster. The agent is one container reading the Docker socket; what hurt the mail

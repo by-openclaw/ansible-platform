@@ -6,7 +6,7 @@
 # ==============================================================================
 pgadmin_image: "dpage/pgadmin4:9.17"   # exact pin — bump deliberately
 
-pgadmin_fqdn: "pgadmin.{{ platform_domain }}"
+pgadmin_fqdn: "{{ platform_service_fqdns.pgadmin }}"
 
 # Bind the container to the SVC IP so Traefik (on the DMZ host) can reach it.
 pgadmin_listen_ip: "{{ hostvars[groups['pgadmin'] | first].ansible_host }}"
@@ -26,7 +26,7 @@ pgadmin_data_volume: "pgadmin-data"
 # Wired only when the OIDC client secret file exists (created by the SSO phase).
 # The Authentik app/provider is declared in the authentik role (authentik_oidc_apps).
 pgadmin_oidc_secret_file: "fabric/app-oidc-pgadmin.json"
-pgadmin_authentik_base: "https://authentik.{{ platform_domain }}"
+pgadmin_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 pgadmin_oidc_app_slug: "pgadmin"
 pgadmin_oidc_display_name: "BY-RESEARCH SSO"
 # Only members of this Authentik group may log into pgAdmin (group-based access).

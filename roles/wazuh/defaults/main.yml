@@ -12,7 +12,7 @@ wazuh_dashboard_image: "wazuh/wazuh-dashboard:{{ wazuh_version }}"
 wazuh_certs_generator_image: "wazuh/wazuh-certs-generator:0.0.4"   # one-shot: the stack's internal PKI
 wazuh_cert_tool_version: "4.14"
 wazuh_env: "{{ platform_env | default('prod') }}"
-wazuh_fqdn: "wazuh.{{ platform_domain }}"
+wazuh_fqdn: "{{ platform_service_fqdns.wazuh }}"
 wazuh_dir: "/opt/wazuh"
 # Endpoints, container names and image paths the tasks talk to — no literals in tasks.
 wazuh_compose_project: "{{ wazuh_dir | basename }}"            # compose names containers <project>-<service>-1
@@ -44,7 +44,7 @@ wazuh_vault_oidc: "{{ wazuh_env }}/wazuh/oidc"              # client_id, client_
 # SSO: native OpenID on the dashboard + the indexer's security plugin; the Authentik
 # group in the `groups` claim is mapped to the indexer role all_access.
 wazuh_oidc_slug: "wazuh"
-wazuh_authentik_base: "https://authentik.{{ platform_domain }}"
+wazuh_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 wazuh_admin_group: "{{ platform_admins_group }}"
 wazuh_state: present
 

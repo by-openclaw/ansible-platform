@@ -2,7 +2,7 @@
 # Grafana — dashboards on lxc-monitoring-01. Official APT repo (pinned channel),
 # systemd. SSO via Authentik OIDC (generic_oauth); datasource = local Prometheus
 # (+ Loki when it exists). Behind Traefik (grafana.{{ platform_domain }}, VPN-only).
-grafana_fqdn: "grafana.{{ platform_domain }}"
+grafana_fqdn: "{{ platform_service_fqdns.monitoring }}"
 grafana_port: 3000
 grafana_listen: "0.0.0.0"          # Traefik (DMZ) reaches it; route is VPN-gated
 # Vault KV paths (security/0001 secret/{env}/{service}/{key}) — no controller files.
@@ -18,7 +18,7 @@ grafana_admin_vault_path: "{{ platform_env | default('prod') }}/grafana/admin"  
 # --- Authentik OIDC -----------------------------------------------------------
 grafana_oidc_enabled: true
 grafana_oidc_vault_path: "{{ platform_env | default('prod') }}/grafana/oidc"         # minted by roles/authentik
-grafana_authentik_base: "https://authentik.{{ platform_domain }}"
+grafana_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 grafana_oidc_slug: "grafana"
 grafana_admin_group: "{{ platform_service_groups.monitoring.admin }}"   # members -> Grafana Admin (role_attribute_path)
 

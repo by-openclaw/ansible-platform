@@ -13,7 +13,7 @@ k3s_sha256: "39eed8f53f277497dfc2542f66eab0ed68a94dfc598946dbebfb50366916c7a2"  
 k3s_download_url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_version | urlencode }}/k3s"
 k3s_env: "{{ platform_env | default('prod') }}"
 k3s_node_ip: "{{ ansible_host }}"
-k3s_fqdn: "k3s.{{ platform_domain }}"                 # API name (tls-san), internal only
+k3s_fqdn: "{{ platform_service_fqdns.k3s }}"                 # API name (tls-san), internal only
 # Apps are published as <app>.<domain> (ONE label: the Let's Encrypt wildcard covers *.<domain> only;
 # a second level such as demo.apps.<domain> would get Traefik's default certificate).
 k3s_ingress_http_port: 80                              # embedded Traefik (servicelb) — HTTP only, TLS is the platform Traefik's
@@ -22,7 +22,7 @@ k3s_service_cidr: "10.43.0.0/16"
 k3s_disable: ["metrics-server"]                        # keep traefik + servicelb + local-storage + coredns
 # Registry mirrors: Docker Hub through the Harbor pull-through cache (rate limits, on-net, scanned)
 k3s_registry_mirrors:
-  - { upstream: "docker.io", endpoint: "https://harbor.{{ platform_domain }}", rewrite_from: "^(.*)$", rewrite_to: "dockerhub/$1" }
+  - { upstream: "docker.io", endpoint: "https://{{ platform_service_fqdns.harbor }}", rewrite_from: "^(.*)$", rewrite_to: "dockerhub/$1" }
 # Namespaces with a CI deployer service account (kubeconfig → Vault + GitLab CI variable of the project)
 k3s_ci_namespaces:
   - { name: demo, gitlab_project: "platform/apps/demo" }

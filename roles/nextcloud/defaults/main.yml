@@ -12,7 +12,7 @@
 # playbooks/nextcloud-upgrade.yml, which walks the ladder one rung at a time.
 nextcloud_image: "nextcloud:34.0.4-apache"   # latest 34.x; 35.0.0 waits for stable app releases (D15, 2026-09-19)
 
-nextcloud_fqdn: "nextcloud.{{ platform_domain }}"
+nextcloud_fqdn: "{{ platform_service_fqdns.nextcloud }}"
 
 # Web HTTP backend (Traefik terminates TLS) — published on the SVC IP.
 nextcloud_listen_ip: "{{ hostvars[groups['nextcloud'] | first].ansible_host }}"
@@ -110,7 +110,7 @@ nextcloud_apps_pinned:
 # Official user_oidc app, configured idempotently via occ. Access is gated
 # IdP-side by the nextcloud-admins group (authentik restrict_to_group); groups
 # are provisioned into Nextcloud from the `groups` claim.
-nextcloud_authentik_base: "https://authentik.{{ platform_domain }}"
+nextcloud_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 nextcloud_oidc_app_slug: "nextcloud"
 nextcloud_oidc_provider_id: "authentik"
 
@@ -238,7 +238,7 @@ nextcloud_guides:
 nextcloud_collab_enabled: true
 nextcloud_collab_vault_path: "{{ platform_env | default('prod') }}/collab/secrets"
 nextcloud_onlyoffice_vault_path: "{{ platform_env | default('prod') }}/onlyoffice/secrets"
-nextcloud_onlyoffice_fqdn: "office.{{ platform_domain }}"
+nextcloud_onlyoffice_fqdn: "{{ platform_service_fqdns.collab }}"
 nextcloud_collab_talk_host: "talk.{{ platform_domain }}"   # TURN/STUN — public DNS only (no split-DNS override)
 nextcloud_collab_turn_public_port: 3479                    # 3478 on the WANs is NetBird's coturn (FW alias port_turn_pub)
 nextcloud_collab_signaling_prefix: "/standalone-signaling"

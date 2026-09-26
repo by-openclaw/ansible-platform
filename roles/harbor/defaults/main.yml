@@ -9,7 +9,7 @@
 # ==============================================================================
 
 # Identity / addressing
-harbor_fqdn: "harbor.{{ platform_domain }}"
+harbor_fqdn: "{{ platform_service_fqdns.harbor }}"
 harbor_listen_ip: "{{ hostvars[groups['harbor'] | first].ansible_host }}"
 harbor_host_port: 8080                 # Harbor portal/registry HTTP (Traefik does HTTPS)
 
@@ -50,7 +50,7 @@ harbor_s3_vault_path: "{{ platform_env | default('prod') }}/harbor/s3"          
 # --- Authentik OIDC (app declared in roles/authentik authentik_oidc_apps) -------
 harbor_oidc_enabled: true
 harbor_oidc_vault_path: "{{ platform_env | default('prod') }}/harbor/oidc"      # minted by roles/authentik
-harbor_authentik_base: "https://authentik.{{ platform_domain }}"
+harbor_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 harbor_oidc_slug: "harbor"
 harbor_oidc_endpoint: "{{ harbor_authentik_base }}/application/o/{{ harbor_oidc_slug }}/"
 harbor_oidc_scope: "openid,email,profile,groups"
