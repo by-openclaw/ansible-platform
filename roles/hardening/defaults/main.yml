@@ -67,6 +67,16 @@ hardening_email_relay_password: ""
 hardening_email_from: "alerts@{{ platform_domain }}"
 hardening_email_alert_dest: "alerts@{{ platform_domain }}"
 hardening_email_hostname: "{{ inventory_hostname }}"
+# platform_domain, NOT platform_org_domain. This template is only written when the
+# relay is enabled — which it is nowhere — so it has been inert and the contradiction
+# went unnoticed: mail-identity.yml, which IS always applied, sets
+#   myhostname = <inventory_hostname>.{{ platform_domain }}   myorigin = {{ platform_domain }}
+# and this template set <host>.by-systems.be with myorigin = $myhostname. Asset FQDNs
+# resolve under platform_domain (FW Unbound override); by-systems.be does not. Enabling
+# the relay with the old value would have produced a sender domain that does not
+# resolve — which is 2026-09-18 exactly: "mailcow answers 450 Sender address rejected:
+# Domain not found, the queue retries forever and CrowdSec read that as postfix-spam".
+hardening_email_helo_domain: "{{ platform_domain }}"
 # Mail identity for ANY host that carries a local postfix (Debian default MTA), relay or
 # not: myhostname = <inventory_hostname>.<platform_domain> (resolves via the FW overrides),
 # myorigin = <platform_domain>. Without it system mail goes out as root@<host>.localdomain,
@@ -83,7 +93,9 @@ hardening_mail_domain: "{{ platform_domain }}"
 hardening_auto_updates: true
 hardening_auto_reboot: false
 hardening_auto_reboot_time: "03:30"
-hardening_updates_mail: "{{ hardening_email_alert_dest | default('ops@by-systems.be') }}"
+# No default(): hardening_email_alert_dest is set unconditionally above, so the
+# fallback could never fire — and it pointed at a different domain than the sender.
+hardening_updates_mail: "{{ hardening_email_alert_dest }}"
 
 # sudoers: secure_path (env-PATH hardening) + logged, tty-required sudo
 hardening_sudo_secure_path: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
