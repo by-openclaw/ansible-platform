@@ -9,11 +9,12 @@
   vars:
     seaweedfs_bucket_identity: "{{ pbs_s3_identity }}"
     seaweedfs_bucket_names: ["{{ pbs_s3_bucket }}"]
-    seaweedfs_bucket_secret_file: "{{ pbs_s3_secret_file }}"
+    # Vault mode — file mode persisted the S3 key to the controller's disk.
+    seaweedfs_bucket_vault_path: "{{ pbs_s3_vault_path }}"
 
-- name: "Datastore | Load the PBS S3 credentials"
+- name: "Datastore | Bind the PBS S3 credentials (handed back by seaweedfs_bucket)"
   ansible.builtin.set_fact:
-    pbs_s3_creds: "{{ (lookup('file', pbs_secret_dir + '/' + pbs_s3_secret_file) | from_json).fields }}"
+    pbs_s3_creds: "{{ seaweedfs_bucket_key }}"
   no_log: true
 
 - name: "Datastore | List existing S3 endpoints"

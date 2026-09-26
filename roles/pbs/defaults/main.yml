@@ -8,6 +8,8 @@
 # ==============================================================================
 
 pbs_fqdn: "{{ platform_service_fqdns.pbs }}"
+# Still used ONLY by playbooks/pbs-pve-storage.yml to persist the PBS encryption key;
+# that write moves to Vault in the next #377 batch.
 pbs_secret_dir: "~/.openclaw/workspace/infra/secrets"
 
 # --- PBS 4 apt repo (no-subscription) on Debian 13 (trixie) --------------------
@@ -23,7 +25,7 @@ pbs_s3_endpoint_port: 443
 pbs_s3_path_style: true
 pbs_s3_bucket: "pbs-datastore"
 pbs_s3_identity: "pbs"                                   # SeaweedFS scoped S3 user
-pbs_s3_secret_file: "fabric/infra-seaweedfs-pbs.json"   # written by seaweedfs_bucket role
+pbs_s3_vault_path: "{{ platform_env | default('prod') }}/pbs/s3"   # minted by seaweedfs_bucket (Vault mode)
 
 pbs_datastore_name: "pbs-datastore"
 pbs_datastore_cache_path: "/var/lib/proxmox-backup/s3-cache/pbs-datastore"  # local cache/metadata for the S3-backed datastore
@@ -37,7 +39,7 @@ pbs_keep:
 
 # --- Authentik OIDC (SSO) -----------------------------------------------------
 pbs_oidc_enabled: true
-pbs_oidc_secret_file: "fabric/app-oidc-pbs.json"        # written by the authentik role
+pbs_oidc_vault_path: "{{ platform_env | default('prod') }}/pbs/oidc"   # minted by roles/authentik
 pbs_oidc_realm: "authentik"
 pbs_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 pbs_oidc_slug: "pbs"

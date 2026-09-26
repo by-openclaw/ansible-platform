@@ -3,9 +3,15 @@
 # fabric/app-oidc-pbs.json). PBS autocreates users on first SSO login; we also
 # pre-create the privileged account so its Admin ACL is in place before login.
 
-- name: "OIDC | Load the Authentik OIDC client (id + secret)"
+- name: "OIDC | The Authentik OIDC client (id + secret), from Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ pbs_oidc_vault_path }}"
+
+- name: "OIDC | Bind it"
   ansible.builtin.set_fact:
-    pbs_oidc_client: "{{ (lookup('file', pbs_secret_dir + '/' + pbs_oidc_secret_file) | from_json).fields }}"
+    pbs_oidc_client: "{{ vault_secret_result }}"
   no_log: true
 
 - name: "OIDC | List existing OpenID realms"

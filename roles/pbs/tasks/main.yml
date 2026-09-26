@@ -13,19 +13,29 @@
   ansible.builtin.import_tasks: datastore.yml
   tags: [datastore, s3]
 
-- name: "PBS | Stat the Authentik OIDC client secret (controller)"
-  ansible.builtin.stat:
-    path: "{{ pbs_secret_dir | expanduser }}/{{ pbs_oidc_secret_file }}"
-  delegate_to: localhost
-  become: false
-  register: pbs_oidc_stat
+# Read-if-present: roles/authentik mints the client; PBS can be installed first.
+# apply: so `--tags oidc` still runs vault_secret's own tasks.
+- name: "PBS | Is the Authentik OIDC client in Vault yet?"
+  ansible.builtin.include_role:
+    name: vault_secret
+    apply:
+      tags: [oidc, sso]
+  vars:
+    vault_secret_path: "{{ pbs_oidc_vault_path }}"
+    vault_secret_optional: true
   tags: [oidc, sso]
 
-- name: "PBS | Authentik OIDC SSO (only once the authentik role wrote the secret)"
+- name: "PBS | Remember whether SSO can be configured"
+  ansible.builtin.set_fact:
+    pbs_oidc_held: "{{ (vault_secret_result | default({})).client_secret | default('') | length > 0 }}"
+  no_log: true
+  tags: [oidc, sso]
+
+- name: "PBS | Authentik OIDC SSO (only once the client exists)"
   ansible.builtin.import_tasks: oidc.yml
   when:
     - pbs_oidc_enabled | bool
-    - pbs_oidc_stat.stat.exists
+    - pbs_oidc_held | bool
   tags: [oidc, sso]
 
 - name: Retention + verification jobs (infra/0008)
