@@ -7,17 +7,28 @@
 # The alerts@ service mailbox IS the relay identity. roles/mailbox mints it at
 # {env}/mail/alerts (address + password), so there is nothing new to provision and
 # no credential on disk.
-- name: "Postfix | Relay credential from Vault"
+# run_once: every host relays as the SAME alerts@ identity, so this is ONE secret,
+# not one per host. Read per-host it became 31 concurrent delegated SSH sessions to
+# lxc-vault-01 and the Vault host went UNREACHABLE for most of them — a fleet-wide
+# play must not open a connection per host to a single delegate.
+- name: "Postfix | Relay credential from Vault (once for the whole play)"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
     vault_secret_path: "{{ hardening_email_relay_vault_path }}"
+  run_once: true
   when: hardening_email_relay_user == ""
 
-- name: "Postfix | Bind it"
+# run_once leaves the fact on one host only, so it is pushed to every host in the
+# play — otherwise the other 30 template an empty relay user.
+- name: "Postfix | Bind it on every host in the play"
   ansible.builtin.set_fact:
     hardening_email_relay_user: "{{ vault_secret_result.address }}"
     hardening_email_relay_password: "{{ vault_secret_result.password }}"
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  loop: "{{ ansible_play_hosts }}"
+  run_once: true
   no_log: true
   when: hardening_email_relay_user == ""
 
@@ -51,11 +62,17 @@
     - Restart postfix
   no_log: true
 
+# Skipped under --check: the install above does not really happen there, so on a
+# host that does not have postfix yet the unit does not exist and this aborts the
+# whole fleet dry-run with "Could not find the requested service postfix". Same
+# shape as the crowdsec_agent fix (#583) — a dry-run has to be able to REPORT which
+# hosts still need the package, not die on the first one.
 - name: "Postfix | Ensure service enabled"
   ansible.builtin.service:
     name: postfix
     state: started
     enabled: true
+  when: not ansible_check_mode
 
 # Without this the FIRST test send always fails: it runs before the Postmap and
 # Restart handlers, so sasl_passwd.db does not exist yet and postfix answers
