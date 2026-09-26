@@ -28,15 +28,10 @@ platform_public_ipv6: "2a02:1802:21::5"
 # agent (roles/crowdsec_agent, roles/crowdsec). Attackers come from the WAN; a deferred system
 # mail or a failed health check from inside must never turn into a ban (2026-09-18: all SVC hosts
 # and the office were banned by postfix-spam on 450-deferred mail → Traefik 403 for everything).
-platform_trusted_cidrs:
-  - "10.1.0.0/16"          # service zones (MGMT, DMZ, SVC, VPN, IoT, VoIP, storage, media, …)
-  - "10.6.224.0/20"        # OOB management
-  - "10.6.240.0/20"        # fabric management VLAN 600
-  - "fd01::/16"            # ULA v6 of the same zones
-  - "100.64.0.0/10"        # NetBird VPN peers
-  - "213.214.47.216/29"    # Telenet /29: office egress (.218), prod FW (.222), test FW (.220)
+# Composed, not re-listed: every CIDR here is defined once in network.yml.
+platform_trusted_cidrs: "{{ [platform_internal_cidr4] + platform_mgmt_cidrs
+  + [platform_internal_cidr6, platform_vpn_cidr, platform_isp_egress_cidr4] }}"
 
 # Management networks of the platform itself (hypervisor UI/API and SSH to nodes): OOB + fabric.
-platform_mgmt_cidrs:
-  - "10.6.224.0/20"        # OOB management
-  - "10.6.240.0/20"        # fabric management VLAN 600
+# Derived from platform_zones, so the CIDRs are written down exactly once.
+platform_mgmt_cidrs: "{{ [platform_zones.oob.cidr4, platform_zones.fabric.cidr4] }}"
