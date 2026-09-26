@@ -4,6 +4,41 @@
 # Only runs when hardening_email_relay_enabled: true
 # ==============================================================================
 
+# The alerts@ service mailbox IS the relay identity. roles/mailbox mints it at
+# {env}/mail/alerts (address + password), so there is nothing new to provision and
+# no credential on disk.
+# run_once: every host relays as the SAME alerts@ identity, so this is ONE secret,
+# not one per host. Read per-host it became 31 concurrent delegated SSH sessions to
+# lxc-vault-01 and the Vault host went UNREACHABLE for most of them — a fleet-wide
+# play must not open a connection per host to a single delegate.
+- name: "Postfix | Relay credential from Vault (once for the whole play)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ hardening_email_relay_vault_path }}"
+  run_once: true
+
+# run_once leaves the fact on one host only, so it is pushed to every host in the
+# play — otherwise the other 30 template an empty relay user and postfix points at
+# a sasl_passwd map that was never written ("local data error while talking to").
+#
+# NO `when:` here, deliberately. It previously read
+#     when: hardening_email_relay_user == ""
+# which tests the variable THIS TASK SETS. Under run_once the condition is
+# evaluated in a single host's context, so the first loop iteration made it false
+# and every remaining host was skipped — one host configured, thirty silently not:
+#     ok:       [srv-proxmox-poc-01] => (item=…)
+#     skipping: [srv-proxmox-poc-01] => (item=…)
+- name: "Postfix | Bind it on every host in the play"
+  ansible.builtin.set_fact:
+    hardening_email_relay_user: "{{ vault_secret_result.address }}"
+    hardening_email_relay_password: "{{ vault_secret_result.password }}"
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  loop: "{{ ansible_play_hosts }}"
+  run_once: true
+  no_log: true
+
 - name: "Postfix | Install"
   ansible.builtin.package:
     name:
@@ -34,23 +69,43 @@
     - Restart postfix
   no_log: true
 
+# Skipped under --check: the install above does not really happen there, so on a
+# host that does not have postfix yet the unit does not exist and this aborts the
+# whole fleet dry-run with "Could not find the requested service postfix". Same
+# shape as the crowdsec_agent fix (#583) — a dry-run has to be able to REPORT which
+# hosts still need the package, not die on the first one.
 - name: "Postfix | Ensure service enabled"
   ansible.builtin.service:
     name: postfix
     state: started
     enabled: true
+  when: not ansible_check_mode
 
-- name: "Postfix | Send test email"
-  ansible.builtin.shell: |
-    echo "Postfix relay test from {{ inventory_hostname }} at $(date)" | \
-    mail -s "[BY-SYSTEMS] Postfix relay test - {{ inventory_hostname }}" \
-    -r "{{ hardening_email_from }}" \
-    "{{ hardening_email_alert_dest }}"
-  changed_when: false
-  ignore_errors: true
+# Without this the FIRST test send always fails: it runs before the Postmap and
+# Restart handlers, so sasl_passwd.db does not exist yet and postfix answers
+#   dsn=4.3.0 status=deferred (local data error while talking to <relay>)
+# Observed exactly that on the first apply — sasl_passwd at 19:53, the .db at
+# 19:54, the send at 19:53:44. It recovers on the queue retry, so the test was
+# reporting a failure the relay had not actually made.
+- name: "Postfix | Apply the credential and restart before testing"
+  ansible.builtin.meta: flush_handlers
+
+# command + stdin, not shell with a pipe: no pipefail trap, and nothing to quote.
+- name: "Postfix | Send a test message through the relay"
+  ansible.builtin.command:
+    cmd: >-
+      mail -s "[{{ platform_org }}] postfix relay test — {{ inventory_hostname }}"
+      -r "{{ hardening_email_from }}" "{{ hardening_email_alert_dest }}"
+    stdin: "Postfix relay test from {{ inventory_hostname }}."
+  changed_when: true
+  failed_when: false
   register: hardening_mail_test
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  when: not ansible_check_mode
 
 - name: "Postfix | Report test result"
   ansible.builtin.debug:
-    msg: "Test email sent to {{ hardening_email_alert_dest }} — check inbox. (exit: {{ hardening_mail_test.rc }})"
+    msg: >-
+      Test email to {{ hardening_email_alert_dest }} exit={{ hardening_mail_test.rc | default('skipped (--check)') }}.
+      NOTE exit=0 means the local queue ACCEPTED it, not that it was delivered —
+      run: journalctl -u postfix | grep status=   (the node logs to journald, not /var/log/mail.log).
+  when: not ansible_check_mode

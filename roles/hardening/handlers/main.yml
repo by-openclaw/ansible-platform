@@ -7,14 +7,21 @@
   community.general.ufw:
     state: reloaded
 
+# Both skipped under --check. A handler RUNS in check mode when notified, and on a
+# host that does not have postfix yet the unit does not exist and postmap has no
+# input — so a dry-run aborted on the three hosts that still need the package.
+# Third time today this shape appeared (crowdsec_agent #583, the postfix service
+# task, here): the tasks that notify a handler get guarded and the handler does not.
 - name: Restart postfix
   ansible.builtin.service:
     name: postfix
     state: restarted
+  when: not ansible_check_mode
 
 - name: Postmap sasl_passwd
   ansible.builtin.command: postmap /etc/postfix/sasl_passwd
   changed_when: true
+  when: not ansible_check_mode
 
 - name: Reload sysctl
   ansible.builtin.command: sysctl --system
