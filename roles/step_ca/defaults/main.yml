@@ -10,7 +10,7 @@
 step_ca_image: "smallstep/step-ca:0.28.4"     # pinned, never :latest
 step_ca_listen_ip: "{{ hostvars[groups['step_ca'] | first].ansible_host }}"
 step_ca_port: 9000
-step_ca_fqdn: "ca.{{ platform_domain }}"
+step_ca_fqdn: "{{ platform_service_fqdns['step-ca'] }}"
 step_ca_build_dir: "/opt/step-ca"
 # Where roles/platform_ca installs the internal root on every host (the Traefik host included)
 step_ca_root_ca_file: "/usr/local/share/ca-certificates/{{ (platform_domain) | regex_replace('\\.', '-') }}-internal-ca.crt"
@@ -23,4 +23,4 @@ step_ca_vault_path: "{{ step_ca_env }}/step-ca/ca-password"
 step_ca_name: "{{ (platform_domain) | regex_replace('\\.[a-z]+$', '') | upper }} Internal CA"
 step_ca_provisioner: "admin@{{ platform_domain }}"
 # DNS names the CA answers on (SAN of the CA cert).
-step_ca_dns_names: "ca.{{ platform_domain }},{{ groups['step_ca'] | first }}.{{ platform_domain }},{{ hostvars[groups['step_ca'] | first].ansible_host }},127.0.0.1"
+step_ca_dns_names: "{{ platform_service_fqdns['step-ca'] }},{{ groups['step_ca'] | first }}.{{ platform_domain }},{{ hostvars[groups['step_ca'] | first].ansible_host }},127.0.0.1"
