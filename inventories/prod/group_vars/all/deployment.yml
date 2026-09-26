@@ -6,6 +6,13 @@
 # ==============================================================================
 platform_org: "by-research"          # org short-name; also the break-glass account/group (naming/0002 §5.1)
 platform_domain: "by-research.be"    # DNS zone of THIS deployment (env = subdomain zone, naming/0001 §8)
+
+# Every host relays system mail through mailcow's submission port, authenticated as
+# the alerts@ service mailbox. Before this it was false everywhere, so postfix tried
+# direct-to-MX on :25 and mailcow answered 554 — meaning NO system mail worked at
+# all: not OnFailure, not cron, not smartd, not unattended-upgrades. That is why a
+# failing backup timer went 11 nights without telling anyone (#580, #415).
+platform_system_mail_enabled: true
 platform_env: "prod"                 # environment tier (infra/0005)
 
 # --- Connection default -------------------------------------------------------

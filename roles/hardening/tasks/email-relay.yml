@@ -4,6 +4,23 @@
 # Only runs when hardening_email_relay_enabled: true
 # ==============================================================================
 
+# The alerts@ service mailbox IS the relay identity. roles/mailbox mints it at
+# {env}/mail/alerts (address + password), so there is nothing new to provision and
+# no credential on disk.
+- name: "Postfix | Relay credential from Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ hardening_email_relay_vault_path }}"
+  when: hardening_email_relay_user == ""
+
+- name: "Postfix | Bind it"
+  ansible.builtin.set_fact:
+    hardening_email_relay_user: "{{ vault_secret_result.address }}"
+    hardening_email_relay_password: "{{ vault_secret_result.password }}"
+  no_log: true
+  when: hardening_email_relay_user == ""
+
 - name: "Postfix | Install"
   ansible.builtin.package:
     name:
@@ -40,17 +57,22 @@
     state: started
     enabled: true
 
-- name: "Postfix | Send test email"
-  ansible.builtin.shell: |
-    echo "Postfix relay test from {{ inventory_hostname }} at $(date)" | \
-    mail -s "[BY-SYSTEMS] Postfix relay test - {{ inventory_hostname }}" \
-    -r "{{ hardening_email_from }}" \
-    "{{ hardening_email_alert_dest }}"
-  changed_when: false
-  ignore_errors: true
+# command + stdin, not shell with a pipe: no pipefail trap, and nothing to quote.
+- name: "Postfix | Send a test message through the relay"
+  ansible.builtin.command:
+    cmd: >-
+      mail -s "[{{ platform_org }}] postfix relay test — {{ inventory_hostname }}"
+      -r "{{ hardening_email_from }}" "{{ hardening_email_alert_dest }}"
+    stdin: "Postfix relay test from {{ inventory_hostname }}."
+  changed_when: true
+  failed_when: false
   register: hardening_mail_test
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  when: not ansible_check_mode
 
 - name: "Postfix | Report test result"
   ansible.builtin.debug:
-    msg: "Test email sent to {{ hardening_email_alert_dest }} — check inbox. (exit: {{ hardening_mail_test.rc }})"
+    msg: >-
+      Test email to {{ hardening_email_alert_dest }} exit={{ hardening_mail_test.rc | default('skipped (--check)') }}.
+      NOTE exit=0 means the local queue ACCEPTED it, not that it was delivered —
+      read /var/log/mail.log for the relay's answer.
+  when: not ansible_check_mode
