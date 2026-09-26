@@ -36,11 +36,13 @@
   vars:
     seaweedfs_bucket_identity: "{{ loki_s3_identity }}"
     seaweedfs_bucket_names: ["{{ loki_s3_bucket }}"]
-    seaweedfs_bucket_secret_file: "{{ loki_s3_secret_file }}"
+    # Vault mode, not the legacy file mode this was in: file mode PERSISTED the S3
+    # key to the controller's disk. get-or-create reads the live key, never mints.
+    seaweedfs_bucket_vault_path: "{{ loki_s3_vault_path }}"
 
-- name: "Loki | Load the S3 credentials"
+- name: "Loki | Bind the S3 credentials (handed back by seaweedfs_bucket)"
   ansible.builtin.set_fact:
-    loki_s3_creds: "{{ (lookup('file', (lookup('env', 'HOME')) + '/.openclaw/workspace/infra/secrets/' + loki_s3_secret_file) | from_json).fields }}"
+    loki_s3_creds: "{{ seaweedfs_bucket_key }}"
   no_log: true
 
 - name: "Loki | Local scratch dir"
