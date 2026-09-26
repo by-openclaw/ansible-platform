@@ -67,10 +67,16 @@ hardening_email_relay_password: ""
 hardening_email_from: "alerts@{{ platform_domain }}"
 hardening_email_alert_dest: "alerts@{{ platform_domain }}"
 hardening_email_hostname: "{{ inventory_hostname }}"
-# HELO domain. NOTE the asymmetry this preserves rather than silently changes: the
-# envelope sender is alerts@{{ platform_domain }} while HELO is <host>.{{ platform_org_domain }}.
-# Whether they should match is a deliverability question, not a refactor — see the PR.
-hardening_email_helo_domain: "{{ platform_org_domain }}"
+# platform_domain, NOT platform_org_domain. This template is only written when the
+# relay is enabled — which it is nowhere — so it has been inert and the contradiction
+# went unnoticed: mail-identity.yml, which IS always applied, sets
+#   myhostname = <inventory_hostname>.{{ platform_domain }}   myorigin = {{ platform_domain }}
+# and this template set <host>.by-systems.be with myorigin = $myhostname. Asset FQDNs
+# resolve under platform_domain (FW Unbound override); by-systems.be does not. Enabling
+# the relay with the old value would have produced a sender domain that does not
+# resolve — which is 2026-09-18 exactly: "mailcow answers 450 Sender address rejected:
+# Domain not found, the queue retries forever and CrowdSec read that as postfix-spam".
+hardening_email_helo_domain: "{{ platform_domain }}"
 # Mail identity for ANY host that carries a local postfix (Debian default MTA), relay or
 # not: myhostname = <inventory_hostname>.<platform_domain> (resolves via the FW overrides),
 # myorigin = <platform_domain>. Without it system mail goes out as root@<host>.localdomain,
