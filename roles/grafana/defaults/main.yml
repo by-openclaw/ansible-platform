@@ -5,7 +5,7 @@
 grafana_fqdn: "grafana.{{ platform_domain }}"
 grafana_port: 3000
 grafana_listen: "0.0.0.0"          # Traefik (DMZ) reaches it; route is VPN-gated
-grafana_secret_dir: "~/.openclaw/workspace/infra/secrets"
+# Vault KV paths (security/0001 secret/{env}/{service}/{key}) — no controller files.
 
 # --- APT repo (grafana.com) ---------------------------------------------------
 grafana_apt_key_url: "https://apt.grafana.com/gpg.key"
@@ -13,11 +13,11 @@ grafana_apt_repo: "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://apt.g
 
 # --- local break-glass admin (generated + stored if absent) -------------------
 grafana_admin_user: "admin"
-grafana_admin_secret_file: "fabric/app-grafana-admin.json"
+grafana_admin_vault_path: "{{ platform_env | default('prod') }}/grafana/admin"       # break-glass admin
 
 # --- Authentik OIDC -----------------------------------------------------------
 grafana_oidc_enabled: true
-grafana_oidc_secret_file: "fabric/app-oidc-grafana.json"   # written by the authentik role
+grafana_oidc_vault_path: "{{ platform_env | default('prod') }}/grafana/oidc"         # minted by roles/authentik
 grafana_authentik_base: "https://authentik.{{ platform_domain }}"
 grafana_oidc_slug: "grafana"
 grafana_admin_group: "{{ platform_service_groups.monitoring.admin }}"   # members -> Grafana Admin (role_attribute_path)
@@ -34,7 +34,7 @@ grafana_pg_host: "{{ groups['postgresql'] | first }}.{{ platform_domain }}"
 grafana_pg_port: 5432
 grafana_pg_name: "grafana"
 grafana_pg_user: "grafana"
-grafana_pg_secret_file: "fabric/db-pgsql-grafana.json"   # written by postgres_db
+grafana_pg_vault_path: "{{ platform_env | default('prod') }}/grafana/db-pgsql"       # minted by postgres_db
 grafana_pg_ca: "/etc/ssl/certs/ca-certificates.crt"
 
 # Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
