@@ -2,9 +2,17 @@
 # ==============================================================================
 # postgres_db | provision one app DB + owner role on the shared cluster Postgres
 # Idempotent via `docker exec` (delegated to the Postgres host; local socket =
-# trust). Password is generated once + stored in the controller secret store.
+# trust). Password is generated once and stored in Vault (get-or-create).
 # ==============================================================================
-# --- Password: Vault-native (get-or-create) OR legacy file --------------------
+# --- Password: Vault (get-or-create) -----------------------------------------
+- name: "Postgresdb | A Vault path is required"
+  ansible.builtin.assert:
+    that: postgres_db_vault_path | length > 0
+    # The legacy file mode wrote each database's password to the controller's disk.
+    # Every caller now passes a Vault path (#377); an empty one would otherwise fall
+    # back to writing a secret file, silently.
+    fail_msg: "postgres_db requires postgres_db_vault_path (e.g. prod/<service>/db-pgsql)"
+    quiet: true
 - name: "Postgresdb | Resolve password from Vault (get-or-create)"
   ansible.builtin.include_role:
     name: vault_secret
@@ -16,52 +24,11 @@
       database: "{{ postgres_db_name }}"
       user: "{{ postgres_db_user }}"
       password: "{{ lookup('community.general.random_string', length=40, special=false) }}"
-  when: postgres_db_vault_path | length > 0
 
 - name: "Postgresdb | Adopt the Vault password"
   ansible.builtin.set_fact:
     postgres_db_password: "{{ vault_secret_result.password }}"
   no_log: true
-  when: postgres_db_vault_path | length > 0
-
-# Legacy file mode (only while a service is not yet migrated to Vault).
-- name: "Postgresdb | Stat controller secret for {{ postgres_db_name }}"
-  ansible.builtin.stat:
-    path: "{{ postgres_db_secret_dir }}/{{ postgres_db_secret_file }}"
-  delegate_to: localhost
-  become: false
-  register: postgres_db_secret_stat
-  when: postgres_db_vault_path | length == 0
-
-- name: "Postgresdb | Load existing password for {{ postgres_db_name }}"
-  ansible.builtin.set_fact:
-    postgres_db_password: "{{ (lookup('file', postgres_db_secret_dir + '/' + postgres_db_secret_file) | from_json).fields.password }}"
-  no_log: true
-  when:
-    - postgres_db_vault_path | length == 0
-    - postgres_db_secret_stat.stat.exists
-
-- name: "Postgresdb | Generate password for {{ postgres_db_name }}"
-  ansible.builtin.set_fact:
-    postgres_db_password: "{{ lookup('community.general.random_string', length=40, special=false) }}"
-  no_log: true
-  when:
-    - postgres_db_vault_path | length == 0
-    - not postgres_db_secret_stat.stat.exists
-
-- name: "Postgresdb | Persist controller secret (0600) for {{ postgres_db_name }}"
-  ansible.builtin.copy:
-    dest: "{{ postgres_db_secret_dir }}/{{ postgres_db_secret_file }}"
-    mode: "0600"
-    content: "{{ {'fields': {'host': postgres_db_listen_ip, 'port': postgres_db_port,
-      'database': postgres_db_name, 'user': postgres_db_user,
-      'password': postgres_db_password}} | to_nice_json }}"
-  delegate_to: localhost
-  become: false
-  no_log: true
-  when:
-    - postgres_db_vault_path | length == 0
-    - not postgres_db_secret_stat.stat.exists
 
 - name: "Postgresdb | Check role exists: {{ postgres_db_user }}"
   ansible.builtin.command:
@@ -96,7 +63,6 @@
   changed_when: false
   no_log: true
   when:
-    - postgres_db_vault_path | length > 0
     - postgres_db_role_exists.stdout | trim == '1'
 
 - name: "Postgresdb | Sync existing role password to Vault ({{ postgres_db_user }})"
@@ -106,7 +72,6 @@
       -c "ALTER ROLE {{ postgres_db_user }} LOGIN PASSWORD '{{ postgres_db_password }}'"
   delegate_to: "{{ postgres_db_host }}"
   when:
-    - postgres_db_vault_path | length > 0
     - postgres_db_role_exists.stdout | trim == '1'
     - postgres_db_pw_probe.rc | default(1) != 0
   no_log: true
