@@ -102,9 +102,15 @@
     published_ports:
       - "{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}:{{ netbird_mgmt_port }}"
     # Resolve Authentik internally via our Traefik (no public hairpin; survives the
-    # NetBird client rewriting host resolv.conf once the routing peer is up).
-    etc_hosts:
-      authentik.{{ platform_domain }}: "{{ netbird_traefik_ip }}"
+    # NetBird client rewriting host resolv.conf once the routing peer is up — #408).
+    #
+    # Built from an EXPRESSION, not a YAML mapping: Ansible does not template mapping
+    # KEYS. It was written as `authentik.{{ platform_domain }}: "<ip>"`, and the live
+    # container carried that literally —
+    #     "ExtraHosts": ["authentik.{{ platform_domain }}:10.1.2.110"]
+    # — so the pin never existed and management resolved Authentik through whatever
+    # resolv.conf said, which is exactly the failure this entry was added to prevent.
+    etc_hosts: "{{ {platform_service_fqdns.authentik: netbird_traefik_ip} }}"
     volumes:
       - "{{ netbird_mgmt_volume }}:/var/lib/netbird"
       - "{{ netbird_build_dir }}/management.json:/etc/netbird/management.json:ro"
