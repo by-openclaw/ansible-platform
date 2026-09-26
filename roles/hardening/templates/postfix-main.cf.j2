@@ -4,8 +4,10 @@
 # ==============================================================================
 
 # ---- Identity ----
-myhostname = {{ hardening_email_hostname }}.by-systems.be
-myorigin   = $myhostname
+myhostname = {{ hardening_email_hostname }}.{{ hardening_email_helo_domain }}
+# The domain, not $myhostname: root@<domain> has to be a deliverable address, and
+# mail-identity.yml (always applied) already sets myorigin this way. The two must agree.
+myorigin   = {{ hardening_email_helo_domain }}
 
 # ---- Relay ----
 relayhost = [{{ hardening_email_relay_host }}]:{{ hardening_email_relay_port }}
