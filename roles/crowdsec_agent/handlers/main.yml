@@ -1,5 +1,12 @@
 ---
+# Skipped under --check for the same reason as the role's own "Ensure the service
+# is enabled and running": a dry-run restarts nothing, and on a host that does not
+# have CrowdSec yet the unit does not exist, so the handler ABORTED the fleet
+# dry-run with "Could not find the requested service crowdsec" (#582). A handler
+# runs in check mode when notified, which is easy to miss — the tasks that notify
+# it were already guarded and this was not.
 - name: Restart crowdsec agent
   ansible.builtin.systemd_service:
     name: crowdsec
     state: restarted
+  when: not ansible_check_mode

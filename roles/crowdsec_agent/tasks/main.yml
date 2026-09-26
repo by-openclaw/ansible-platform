@@ -130,6 +130,22 @@
     mode: "0755"
   when: crowdsec_agent_disable_local_lapi | bool
 
+# There is nothing to back up until CrowdSec is installed. Under --check the
+# install above does not really happen, so on a host that does not have CrowdSec
+# yet this copy had no source and ABORTED the whole fleet dry-run:
+#   fatal: [lxc-grc-01]: Source /etc/crowdsec/config.yaml not found
+# which meant the play could not be dry-run to discover the hosts missing the
+# agent — the one question a dry-run of this play should answer (#582).
+#
+# A stat rather than `not ansible_check_mode`: it is also true on a real run where
+# the install failed, and "back it up if there is something to back up" is what
+# this task actually means.
+- name: "Crowdsec_agent | Is there a config.yaml to back up yet?"
+  ansible.builtin.stat:
+    path: /etc/crowdsec/config.yaml
+  register: crowdsec_agent_config_stat
+  when: crowdsec_agent_disable_local_lapi | bool
+
 - name: "Crowdsec_agent | Back up config.yaml before removing api.server"
   ansible.builtin.copy:
     src: /etc/crowdsec/config.yaml
@@ -139,7 +155,9 @@
     group: root
     mode: "0600"
     force: false
-  when: crowdsec_agent_disable_local_lapi | bool
+  when:
+    - crowdsec_agent_disable_local_lapi | bool
+    - crowdsec_agent_config_stat.stat.exists | default(false)
 
 - name: "Crowdsec_agent | Remove the api.server block (processor, not a LAPI)"
   ansible.builtin.command:
