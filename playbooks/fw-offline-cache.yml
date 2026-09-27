@@ -1,0 +1,69 @@
+---
+# ==============================================================================
+# Offline copies for the FIREWALL REBUILD chain, rewritten FROM Vault.
+#
+# Vault is the store of record. A firewall rebuild usually runs with Vault
+# unreachable (it sits behind the firewall being rebuilt), so the build reads
+# these files as its fallback. They are copies, never a second source: every run
+# while Vault answers rewrites a file whose fields differ from Vault (the previous
+# file is kept as a dated backup — archive, never delete). Keys outside `fields`
+# (_meta, notes of provenance) are preserved.
+#
+# The PPPoE file is not here: roles/opnsense_pppoe refreshes it in its own format.
+#
+#   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/fw-offline-cache.yml
+#   Also runs at the start of playbooks/opnsense.yml.
+# ==============================================================================
+- name: "Refresh the firewall-rebuild offline copies from Vault"
+  hosts: "{{ groups['vault'] | first }}"
+  gather_facts: false
+  become: true
+  vars:
+    fw_offline_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric"
+    fw_offline_copies:
+      - { file: "net-opnsense-{{ platform_env }}-oob-admin.json", path: "{{ platform_env }}/opnsense/oob-admin" }       # genesis (seed)
+      - { file: "net-opnsense-{{ platform_env }}-svc-ansible.json", path: "{{ platform_env }}/opnsense/api" }           # FW API key
+      - { file: "net-isp-telenet.json", path: "{{ platform_env }}/net/isp-telenet" }
+      - { file: "net-internal-domain.json", path: "{{ platform_env }}/net/internal-domain" }
+      - { file: "infra-proxmox-poc.json", path: "{{ platform_env }}/proxmox/admin" }                                  # PVE API (VM build)
+  tasks:
+    # Mid-rebuild Vault is expected to be down: skip, do not fail the firewall run.
+    - name: "Offline copies | Is Vault reachable?"
+      ansible.builtin.wait_for_connection:
+        timeout: 20
+      register: fw_offline_probe
+      failed_when: false
+      check_mode: false
+
+    - name: "Offline copies | Refresh (Vault reachable)"
+      when: not (fw_offline_probe.failed | default(false) | bool)
+      block:
+        - name: "Offline copies | Read the sources (Vault, plain reads)"
+          ansible.builtin.include_role:
+            name: vault_secret
+            tasks_from: many
+          vars:
+            vault_secret_paths: "{{ fw_offline_copies | map(attribute='path') | list }}"
+
+        - name: "Offline copies | Rewrite each copy whose fields differ from Vault (dated backup kept)"
+          ansible.builtin.copy:
+            dest: "{{ fw_offline_dir }}/{{ item.file }}"
+            content: "{{ _doc | combine({'fields': vault_secret_results[item.path]}) | to_nice_json }}\n"
+            mode: "0600"
+            backup: true
+          vars:
+            _doc: "{{ lookup('file', fw_offline_dir ~ '/' ~ item.file, errors='ignore') | default('{}', true) | from_json }}"
+          when: >-
+            (_doc.fields | default({}) | to_json(sort_keys=true))
+            != (vault_secret_results[item.path] | to_json(sort_keys=true))
+          loop: "{{ fw_offline_copies }}"
+          loop_control:
+            label: "{{ item.file }}"
+          delegate_to: localhost
+          become: false
+          no_log: true
+
+    - name: "Offline copies | Vault unreachable — copies left as they are"
+      ansible.builtin.debug:
+        msg: "Vault unreachable (expected mid-rebuild): offline copies not refreshed this run."
+      when: fw_offline_probe.failed | default(false) | bool
