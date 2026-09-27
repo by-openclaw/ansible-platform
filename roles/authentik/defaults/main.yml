@@ -26,11 +26,10 @@ authentik_pg_user: "authentik"
 authentik_redis_host: "{{ groups['redis'] | first }}.{{ platform_domain }}"
 authentik_redis_port: 6379
 
-# Controller secret store.
-authentik_secret_dir: "~/.openclaw/workspace/infra/secrets"
-authentik_secret_file: "fabric/authentik.json"               # secret_key + bootstrap
-authentik_pg_secret_file: "fabric/db-pgsql-authentik.json"   # written by postgres_db
-authentik_redis_secret_file: "fabric/db-redis.json"
+# Secrets — Vault only (secret/{env}/{service}/{key}); no controller files.
+authentik_vault_path: "{{ platform_env }}/authentik/admin"          # secret_key + bootstrap (get-or-create)
+authentik_pg_vault_path: "{{ platform_env }}/authentik/db-pgsql"    # postgres_db creates it
+authentik_redis_vault_path: "{{ platform_env }}/redis/admin"        # the redis role owns it (shared)
 
 # Initial admin (akadmin).
 authentik_bootstrap_email: "admin@{{ platform_domain }}"
@@ -42,16 +41,16 @@ authentik_templates_volume: "authentik-templates"
 # --- OIDC / SSO blueprints (declarative, one per cluster service) ----------------
 # Host dir mounted into the containers at /blueprints/custom; Authentik auto-applies.
 authentik_blueprints_dir: "/opt/authentik/blueprints"
-# Each entry → one OIDC app. client_id/client_secret are loaded from secret_file
-# (app-oidc-<slug>.json under the workspace secrets dir) in secrets.yml. Add a
-# service here to wire its SSO — same pattern for every svc.
+# Each entry → one OIDC app. client_id/client_secret live in Vault at vault_path
+# (get-or-create in secrets.yml: a new app is minted, an existing one is read).
+# Add a service here to wire its SSO — same pattern for every svc.
 authentik_oidc_apps:
   - slug: vault
     launch_url: "https://{{ platform_service_fqdns.vault }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/hashicorp-vault.svg"
     name: "Vault"
     group: "{{ platform_service_groups.vault.admin }}"
-    secret_file: "fabric/app-oidc-vault.json"
+    vault_path: "{{ platform_env }}/vault/oidc"
     redirect_uris:
       - "https://{{ platform_service_fqdns.vault }}/ui/vault/auth/oidc/oidc/callback"
       - "http://localhost:8250/oidc/callback"
@@ -60,7 +59,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/pgadmin.svg"
     name: "pgAdmin"
     group: "{{ platform_service_groups.pgadmin.admin }}"
-    secret_file: "fabric/app-oidc-pgadmin.json"
+    vault_path: "{{ platform_env }}/pgadmin/oidc"
     redirect_uris:
       - "https://{{ platform_service_fqdns.pgadmin }}/oauth2/authorize"
   - slug: netbox
@@ -68,7 +67,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/netbox.svg"
     name: "NetBox"
     group: "{{ platform_service_groups.netbox.admin }}"
-    secret_file: "fabric/app-oidc-netbox.json"
+    vault_path: "{{ platform_env }}/netbox/oidc"
     restrict_to_group: true     # IdP-enforced: only netbox-admins can log in
     redirect_uris:
       - "https://{{ platform_service_fqdns.netbox }}/oauth/complete/oidc/"
@@ -77,7 +76,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/vaultwarden.svg"
     name: "Vaultwarden"
     group: "{{ platform_service_groups.vaultwarden.admin }}"
-    secret_file: "fabric/app-oidc-vaultwarden.json"
+    vault_path: "{{ platform_env }}/vaultwarden/oidc"
     restrict_to_group: true     # IdP-enforced: only vaultwarden-admins can log in
     force_email_verified: true  # vaultwarden rejects email_verified=False (authentik default)
     offline_access: true        # vaultwarden requests offline_access → needs refresh_token
@@ -101,7 +100,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/netbird.svg"
     name: "NetBird"
     group: "{{ platform_service_groups.netbird.access }}"        # ACCESS group — only members may authenticate
-    secret_file: "fabric/app-oidc-netbird.json"
+    vault_path: "{{ platform_env }}/netbird/oidc"
     restrict_to_group: true       # IdP-enforced: only netbird-users can log in
     # Multi-container NetBird logs in against Authentik DIRECTLY (no Dex), per the
     # goauthentik.io NetBird guide. The dashboard is a PUBLIC SPA doing PKCE; the
@@ -129,7 +128,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/mailcow.svg"
     name: "Mailcow"
     group: "{{ platform_service_groups.mailcow.access }}"          # ACCESS group — only members may log into mail
-    secret_file: "fabric/app-oidc-mailcow.json"
+    vault_path: "{{ platform_env }}/mailcow/oidc"
     restrict_to_group: true         # IdP-enforced: only mailcow-users can log in
     # mailcow's native Generic-OIDC. On first login it reads the `mailcow_template`
     # claim and auto-provisions the mailbox from that template (the 5 GB "default").
@@ -146,7 +145,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/proxmox.svg"
     name: "Proxmox Backup Server"
     group: "{{ platform_service_groups.pbs.admin }}"             # ACCESS group — only members may SSO into PBS
-    secret_file: "fabric/app-oidc-pbs.json"
+    vault_path: "{{ platform_env }}/pbs/oidc"
     restrict_to_group: true         # IdP-enforced: only pbs-admins can log in
     # PBS (proxmox-backup-manager openid) redirects to its own web root after auth.
     redirect_uris:
@@ -191,7 +190,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/grafana.svg"
     name: "Grafana"
     group: "{{ platform_service_groups.monitoring.admin }}"         # ACCESS group — only members may SSO into Grafana
-    secret_file: "fabric/app-oidc-grafana.json"
+    vault_path: "{{ platform_env }}/grafana/oidc"
     restrict_to_group: true         # IdP-enforced: only grafana-admins can log in
     # Grafana generic_oauth callback. role_attribute_path maps the groups claim.
     redirect_uris:
@@ -202,7 +201,6 @@ authentik_oidc_apps:
     name: "GitLab"
     group: "{{ platform_service_groups.gitlab.access }}"           # ACCESS group — only members may authenticate
     # Vault-native (GitLab chain): client creds read from Vault, not a local file.
-    # Other apps still carry secret_file until their own Phase-2 migration.
     vault_path: "{{ platform_env }}/gitlab/oidc"   # post-migration KV convention (security/0001)
     restrict_to_group: true         # IdP-enforced: only gitlab-users can log in
     offline_access: true            # GitLab omniauth requests refresh tokens
@@ -243,7 +241,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/harbor.svg"
     name: "Harbor"
     group: "{{ platform_service_groups.harbor.access }}"           # ACCESS group — who may log in; harbor-admins (subset) become Harbor admins (oidc_admin_group)
-    secret_file: "fabric/app-oidc-harbor.json"  # pragma: allowlist secret
+    vault_path: "{{ platform_env }}/harbor/oidc"
     restrict_to_group: true         # IdP-enforced: only harbor-users can log in
     # Harbor's OIDC callback path.
     redirect_uris:
@@ -304,22 +302,22 @@ authentik_superuser_groups:
 # (bootstrap) + each app's local admin.
 authentik_users:
   - username: yboujraf
-    secret_file: "fabric/app-user-yboujraf.json"      # regular user (nextcloud-users)
+    vault_path: "{{ platform_env }}/authentik/user-yboujraf"      # regular user (nextcloud-users)
   - username: adm_yboujraf
-    secret_file: "fabric/app-user-adm_yboujraf.json"  # PRIVILEGED admin account
+    vault_path: "{{ platform_env }}/authentik/user-adm-yboujraf"  # PRIVILEGED admin account
   # Dedicated example.com mail identity. mailcow OIDC maps email->mailbox, so this
   # carries the @example.com email (in mailcow-users) to SSO into the example.com
   # inbox — the @{{ platform_domain }} account above can't reach a second-domain mailbox.
   # NOTE: there is no adm_*_example identity — adm_yboujraf is ADMIN-ONLY (no mailbox
   # on any domain); mailcow admin = the local admin account (no SSO-admin in mailcow).
   - username: yboujraf_example
-    secret_file: "fabric/app-user-yboujraf_example.json"      # -> yboujraf@example.com mailbox
+    vault_path: "{{ platform_env }}/authentik/user-yboujraf-example"      # -> yboujraf@example.com mailbox
 
 # Outbound email (password resets / MFA / notifications) via Resend (by-research).
 # RETIRED (2026-09-01): Resend replaced by the authentik@ service mailbox
 # (Vault {env}/mail/authentik via the mailbox concern-role). Resend creds stay
 # in Vault at resend/by-research.
-# authentik_resend_secret_file: "shared/app-resend-by-research.json"
+# (was shared/app-resend-by-research.json; now Vault resend/<org>)
 
 # ------------------------------------------------------------------------------
 # LDAP outpost — the container that serves LDAPS for the OPNsense WebGUI login.
@@ -349,8 +347,8 @@ authentik_ldap_image: "ghcr.io/goauthentik/ldap:{{ authentik_version }}"
 authentik_ldap_port: 636
 authentik_ldap_container_port: 6636
 
-# Outpost API token, issued by Authentik and stored in the secret folder.
-authentik_ldap_secret_file: "fabric/app-ldap-outpost.json"  # pragma: allowlist secret
+# Outpost API token, issued by Authentik and stored in Vault.
+authentik_ldap_vault_path: "{{ platform_env }}/authentik/ldap-outpost"
 
 # --- LDAP outpost TLS = platform wildcard (synced from the Traefik host, tasks/ldap_cert.yml) ---
 authentik_ldap_cert_name: "wildcard-{{ platform_org }}"          # Authentik certificate-keypair name
