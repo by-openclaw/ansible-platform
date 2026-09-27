@@ -141,10 +141,41 @@
     netbird up
     --management-url {{ netbird_http_protocol }}://{{ netbird_fqdn }}
     --setup-key {{ netbird_rp_key_slurp.content | b64decode | trim }}
+    --wireguard-port {{ netbird_host_peer_wg_port }}
+    {{ '--external-ip-map ' ~ (netbird_rp_external_ip_map | join(',')) if netbird_rp_external_ip_map | length else '' }}
   register: netbird_rp_up
   changed_when: true
   no_log: true
   when: "'Management: Connected' not in (netbird_rp_status.stdout | default(''))"
+
+# An already-enrolled peer keeps the port/mapping it was enrolled with; read the
+# client's own config and re-apply only on drift. `netbird up` does not change the
+# settings of a running engine, so drift means down + up (a few seconds without the
+# LAN route for connected VPN users).
+- name: "routing-peer | Read the client config (WireGuard port + external IP map)"
+  ansible.builtin.slurp:
+    src: "{{ netbird_rp_client_config }}"
+  register: netbird_rp_cfg_raw
+  check_mode: false  # read-only: the drift decision below depends on it
+  no_log: true       # the file carries the peer's WireGuard private key
+
+- name: "routing-peer | Client settings drift"
+  ansible.builtin.set_fact:
+    netbird_rp_cfg_drift: >-
+      {{ ((netbird_rp_cfg_raw.content | b64decode | from_json).WgPort | default(0) | int) != (netbird_host_peer_wg_port | int)
+         or ((netbird_rp_cfg_raw.content | b64decode | from_json).NATExternalIPs | default([], true) | sort)
+            != (netbird_rp_external_ip_map | sort) }}
+  no_log: true
+
+- name: "routing-peer | Re-apply WireGuard port + external IP map (down + up)"
+  ansible.builtin.shell: >-
+    netbird down &&
+    netbird up
+    --management-url {{ netbird_http_protocol }}://{{ netbird_fqdn }}
+    --wireguard-port {{ netbird_host_peer_wg_port }}
+    --external-ip-map '{{ netbird_rp_external_ip_map | join(',') }}'
+  changed_when: true
+  when: netbird_rp_cfg_drift | bool
 
 # --- Server-side: route + DNS (after the peer exists) ---------------------------
 - name: "routing-peer | Find this host's peer (wait for enrollment to register)"
