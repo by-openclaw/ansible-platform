@@ -1,0 +1,18 @@
+*filter
+:DOCKER-USER - [0:0]
+-F DOCKER-USER
+-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+-A DOCKER-USER ! -i {{ docker_user_uplink }} -j RETURN
+{% for r in docker_user_allow %}
+{% for src in r.from %}
+{% if (family == 4 and ':' not in src) or (family == 6 and ':' in src) %}
+-A DOCKER-USER -i {{ docker_user_uplink }} -p {{ r.proto | default('tcp') }} -s {{ src }} -m conntrack --ctorigdstport {{ r.port }} --ctdir ORIGINAL -j RETURN
+{% endif %}
+{% endfor %}
+{% endfor %}
+-A DOCKER-USER -i {{ docker_user_uplink }} -m conntrack --ctstate NEW -m limit --limit 30/min --limit-burst 10 -j LOG --log-prefix "{{ docker_user_log_prefix }}"
+{% if docker_user_firewall == 'enforce' %}
+-A DOCKER-USER -i {{ docker_user_uplink }} -m conntrack --ctstate NEW -j DROP
+{% endif %}
+-A DOCKER-USER -j RETURN
+COMMIT

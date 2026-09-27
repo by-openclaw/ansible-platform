@@ -47,3 +47,21 @@ docker_bridge_cidrs:
   - "{{ docker_fixed_cidr_v6 }}"
 docker_firewall_rules:
   - { from: "{{ docker_bridge_cidrs }}", comment: "Docker container networks -> host (hairpin, DNS, metrics)" }
+
+# --- Published container ports vs the host firewall ------------------------------
+# Docker's published ports are DNAT'ed and FORWARDed: ufw's INPUT rules never see
+# them (verified 2026-09-27: lxc-authentik-01:9000 reachable, no ufw rule). The
+# DOCKER-USER chain is where the host can filter them. Rendered into ufw's
+# after.rules / after6.rules so it survives ufw reloads, reboots and Docker restarts.
+#   audit   = NEW connections from outside the host that match no allow rule are
+#             LOGGED (prefix below) and still accepted — learn the real clients first
+#   enforce = the same, then DROPPED
+#   off     = no DOCKER-USER rules from Ansible
+docker_user_firewall: audit
+# Kernel LOG prefix (max 29 chars): mode + host, because LXC guests all log into the
+# hypervisor's journal (roles/pve_host netfilter_log.yml).
+docker_user_log_prefix: "du-{{ docker_user_firewall }} {{ inventory_hostname | truncate(17, true, '') }} "
+# Allowed sources per published (host-side) port, declared per service/host in the
+# inventory: [{port: 9000, proto: tcp, from: [10.1.2.110/32]}]
+docker_user_allow: []
+docker_user_uplink: "{{ ansible_default_ipv4.interface }}"   # from facts: the interface published ports arrive on

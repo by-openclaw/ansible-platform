@@ -1,0 +1,31 @@
+---
+# DOCKER-USER rules for published container ports (see defaults). One managed block
+# per family at the END of ufw's after*.rules — its own *filter … COMMIT section, the
+# established ufw + Docker pattern. ufw reload applies it; Docker only jumps to the chain.
+- name: "Docker | ufw present and active? (DOCKER-USER rules ride on its after.rules)"
+  ansible.builtin.command: ufw status
+  register: docker_user_ufw
+  changed_when: false
+  check_mode: false   # read-only
+
+- name: "Docker | DOCKER-USER rules — {{ docker_user_firewall }} (IPv4 / IPv6)"
+  ansible.builtin.blockinfile:
+    path: "/etc/ufw/{{ item.file }}"
+    marker: "# {mark} ANSIBLE MANAGED — DOCKER-USER (roles/docker)"
+    insertafter: EOF
+    block: "{{ lookup('ansible.builtin.template', 'docker-user.rules.j2', template_vars={'family': item.family}) }}"
+    state: "{{ 'absent' if docker_user_firewall == 'off' else 'present' }}"
+  loop:
+    - { file: after.rules, family: 4 }
+    - { file: after6.rules, family: 6 }
+  loop_control:
+    label: "{{ item.file }}"
+  register: docker_user_rules
+  when: "'Status: active' in docker_user_ufw.stdout"
+
+- name: "Docker | Apply (ufw reload)"
+  ansible.builtin.command: ufw reload
+  when:
+    - docker_user_rules is changed
+    - not ansible_check_mode
+  changed_when: true

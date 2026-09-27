@@ -1,0 +1,14 @@
+---
+# Guests (LXC) filter published container ports in DOCKER-USER (roles/docker) and log
+# what they would block. The kernel drops LOG output from any network namespace but
+# the host's unless nf_log_all_netns=1 — so without this the guests' audit is silent.
+# Each guest's rule is rate-limited and prefixed with its own name; the lines land in
+# this host's kernel journal.
+- name: "PVE host | Let guest network namespaces use the netfilter LOG target (persistent)"
+  ansible.posix.sysctl:
+    name: net.netfilter.nf_log_all_netns
+    value: "1"
+    sysctl_file: /etc/sysctl.d/70-netfilter-log-all-netns.conf
+    sysctl_set: true
+    state: present
+    reload: true
