@@ -42,15 +42,15 @@
           health: "http://127.0.0.1:{{ diagrams_drawio_port }}/"
       routes:
         - name: kroki
-          fqdn: "kroki.{{ platform_domain }}"
+          fqdn: "{{ platform_service_fqdns.diagrams_kroki }}"
           backend_url: "http://{{ inventory_hostname }}.{{ platform_domain }}:{{ diagrams_kroki_port }}"
         - name: plantuml
-          fqdn: "plantuml.{{ platform_domain }}"
+          fqdn: "{{ platform_service_fqdns.diagrams_plantuml }}"
           backend_url: "http://{{ inventory_hostname }}.{{ platform_domain }}:{{ diagrams_plantuml_port }}"
         # NO forwardAuth on drawio: it is consumed as an IFRAME EMBED by GitLab
         # (editing .drawio) and by Nextcloud's drawio app. An OAuth redirect
         # inside the iframe cannot complete, so the editor would never load.
         - name: drawio
-          fqdn: "drawio.{{ platform_domain }}"
+          fqdn: "{{ platform_service_fqdns.diagrams_drawio }}"
           backend_url: "http://{{ inventory_hostname }}.{{ platform_domain }}:{{ diagrams_drawio_port }}"
           forward_auth: false
