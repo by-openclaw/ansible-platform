@@ -1,0 +1,17 @@
+---
+- name: "Compose stack | A project directory is required"
+  ansible.builtin.assert:
+    that: compose_stack_dir | length > 0
+    fail_msg: "compose_stack needs compose_stack_dir (the directory with docker-compose.yml)"
+    quiet: true
+
+# docker_compose_v2 reports changed only when a container was created, started or
+# recreated — no guessing from the CLI's stderr text.
+- name: "Compose stack | Up — {{ compose_stack_dir }}"
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_stack_dir }}"
+    state: present
+    pull: "{{ compose_stack_pull }}"
+    remove_orphans: "{{ compose_stack_remove_orphans | bool }}"
+    env_files: "{{ compose_stack_env_files if compose_stack_env_files | length > 0 else omit }}"
+  register: compose_stack_result

@@ -49,28 +49,11 @@
   become: true
   register: jitsi_compose_file
 
-- name: "Jitsi | Ensure Compose v2 (Debian standalone docker-compose)"
-  ansible.builtin.apt:
-    name: docker-compose
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
-  become: true
-
-- name: "Jitsi | Pull images (pinned)"
-  ansible.builtin.command:
-    cmd: docker-compose pull
-    chdir: "{{ jitsi_build_dir }}"
-  become: true
-  changed_when: true
-
-- name: "Jitsi | Start the stack"
-  ansible.builtin.command:
-    cmd: docker-compose up -d --remove-orphans
-    chdir: "{{ jitsi_build_dir }}"
-  become: true
-  register: jitsi_up
-  changed_when: "'Started' in (jitsi_up.stderr | default('')) or 'Created' in (jitsi_up.stderr | default('')) or 'Recreated' in (jitsi_up.stderr | default(''))"
+- name: "Jitsi | Start the stack (roles/compose_stack)"
+  ansible.builtin.include_role:
+    name: compose_stack
+  vars:
+    compose_stack_dir: "{{ jitsi_build_dir }}"
 
 - name: "Jitsi | Wait for the web UI (loopback)"
   ansible.builtin.uri:

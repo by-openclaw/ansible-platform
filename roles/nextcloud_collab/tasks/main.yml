@@ -43,31 +43,11 @@
     group: root
     mode: "0644"
 
-- name: "Collab | Ensure Compose v2 (Debian standalone docker-compose)"
-  ansible.builtin.apt:
-    name: docker-compose
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
-
-- name: "Collab | Pull the pinned images"
-  community.docker.docker_image:
-    name: "{{ item }}"
-    source: pull
-  loop:
-    - "{{ nextcloud_collab_talk_image }}"
-    - "{{ nextcloud_collab_recording_image }}"
-    - "{{ nextcloud_collab_whiteboard_image }}"
-
-- name: "Collab | Start / reconcile the stack"
-  ansible.builtin.command:
-    cmd: docker-compose up -d --remove-orphans
-    chdir: "{{ nextcloud_collab_dir }}"
-  register: nextcloud_collab_up
-  changed_when: >-
-    'Started' in (nextcloud_collab_up.stderr | default(''))
-    or 'Created' in (nextcloud_collab_up.stderr | default(''))
-    or 'Recreat' in (nextcloud_collab_up.stderr | default(''))
+- name: "Collab | Start / reconcile the stack (roles/compose_stack)"
+  ansible.builtin.include_role:
+    name: compose_stack
+  vars:
+    compose_stack_dir: "{{ nextcloud_collab_dir }}"
 
 - name: "Collab | Wait for the signaling server"
   ansible.builtin.uri:
