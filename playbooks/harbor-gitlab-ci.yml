@@ -40,12 +40,16 @@
 - name: "Seed Harbor CI credentials into GitLab"
   hosts: _harbor_gitlab_ci
   gather_facts: false
-  vars:
-    harbor_robot_secret_file: "~/.openclaw/workspace/infra/secrets/fabric/harbor-robot-gitlab.json"
   tasks:
-    - name: "Load the Harbor CI robot creds (controller fabric)"
+    - name: "The Harbor CI robot creds (Vault, read — the harbor role stores them)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ platform_env }}/harbor/robot-gitlab"
+
+    - name: "Bind them"
       ansible.builtin.set_fact:
-        harbor_ci_robot: "{{ (lookup('file', harbor_robot_secret_file) | from_json).fields }}"
+        harbor_ci_robot: "{{ vault_secret_result }}"
       no_log: true
 
     - name: "Stage the CI-variable reconciler on the GitLab host"
