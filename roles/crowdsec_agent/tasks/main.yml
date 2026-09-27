@@ -3,11 +3,23 @@
 # crowdsec_agent — install the log processor and point it at the central LAPI.
 # ==============================================================================
 
-- name: "Crowdsec_agent | Load the LAPI registration token"
+# ONE token for every agent: read once per play, not once per host (a per-host
+# delegated read opens one SSH session per host to the Vault host at once).
+- name: "Crowdsec_agent | LAPI registration token (Vault, once for the play)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ crowdsec_agent_registration_token_vault_path }}"
+  run_once: true
+
+# No `when:` — under run_once a condition is evaluated in one host's context.
+- name: "Crowdsec_agent | Bind it on every host in the play"
   ansible.builtin.set_fact:
-    crowdsec_agent_token: >-
-      {{ (lookup('file', crowdsec_agent_secret_dir + '/' + crowdsec_agent_registration_token_file)
-          | from_json).fields.token }}
+    crowdsec_agent_token: "{{ vault_secret_result.token }}"
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  loop: "{{ ansible_play_hosts }}"
+  run_once: true
   no_log: true
 
 - name: "Crowdsec_agent | Ensure repo prerequisites (gpg, curl, ca-certs)"

@@ -4,9 +4,16 @@
 # ==============================================================================
 
 # --- CrowdSec bouncer: LAPI key file (referenced by crowdsecLapiKeyFile) --------
+- name: "config | The Traefik bouncer's LAPI key (Vault, read)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ traefik_crowdsec_vault_path }}"
+  when: traefik_crowdsec_enabled | default(false) | bool
+
 - name: "config | Write the CrowdSec LAPI key for the Traefik bouncer"
   ansible.builtin.copy:
-    content: "{{ (lookup('file', traefik_crowdsec_secret) | from_json).fields.api_key }}\n"
+    content: "{{ vault_secret_result.api_key }}\n"
     dest: "{{ traefik_crowdsec_keyfile }}"
     owner: "{{ traefik_user | default('root') }}"
     group: "{{ traefik_group | default('root') }}"
