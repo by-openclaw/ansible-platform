@@ -63,9 +63,18 @@
         mode: "0755"
       notify: Restart seaweedfs
 
-- name: "SeaweedFS | Load S3 identity credentials"
+# A plain READ, never get-or-create: this document carries sse_kek, the key that
+# encrypts every stored object. A freshly minted one would leave existing objects
+# unreadable. If the path is ever absent, failing is the correct outcome.
+- name: "SeaweedFS | S3 admin identity and encryption key, from Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ seaweedfs_vault_path }}"
+
+- name: "SeaweedFS | Bind them"
   ansible.builtin.set_fact:
-    seaweedfs_creds: "{{ (lookup('file', seaweedfs_secret_dir + '/' + seaweedfs_secret_file) | from_json).fields }}"
+    seaweedfs_creds: "{{ vault_secret_result }}"
   no_log: true
 
 - name: "SeaweedFS | Render S3 identities config"
@@ -220,9 +229,15 @@
 - name: "SeaweedFS | Offsite backup to Contabo"
   when: seaweedfs_offsite_enabled | bool
   block:
-    - name: "SeaweedFS | Load offsite (Contabo) credentials"
+    - name: "SeaweedFS | Offsite (Contabo) credentials, from Vault"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ seaweedfs_offsite_vault_path }}"
+
+    - name: "SeaweedFS | Bind them"
       ansible.builtin.set_fact:
-        seaweedfs_offsite: "{{ (lookup('file', seaweedfs_secret_dir + '/' + seaweedfs_offsite_secret_file) | from_json).fields }}"
+        seaweedfs_offsite: "{{ vault_secret_result }}"
       no_log: true
 
     - name: "SeaweedFS | Render replication.toml (S3 sink)"
