@@ -1,0 +1,42 @@
+---
+# ==============================================================================
+# Role: lego_cert — ONE way to obtain and renew an ACME certificate with lego
+# (Cloudflare DNS-01) on a host that terminates TLS itself (Traefik, AdGuard DoT,
+# mailcow). Replaces three copies of: pinned lego install, /etc/lego layout, the
+# Cloudflare env file, first issuance, a renew on every Ansible run and a cron +
+# shell script. Renewal is a systemd timer; run and renew use the SAME flags (a
+# renew with fewer flags than the run let mailcow's wildcard expire, 2026-09-17).
+#
+# lego runs --renew-hook WITHOUT a shell (argv split on spaces): a hook is one
+# command. A consumer that must do several things (mailcow: copy cert + key,
+# restart three containers) gives lego_cert_deploy_steps instead; they become a
+# oneshot unit the hook starts.
+# ==============================================================================
+lego_cert_id: ""                          # REQUIRED — unit names: lego-renew-<id>
+lego_cert_email: ""                       # REQUIRED — ACME account
+lego_cert_domains: []                     # REQUIRED — the first one names the files
+lego_cert_cf_token: ""                    # REQUIRED — Cloudflare DNS-01 token (caller reads Vault)
+
+lego_cert_version: "4.35.2"               # ONE pin for every lego on the platform
+lego_cert_url: "https://github.com/go-acme/lego/releases/download/v{{ lego_cert_version }}/lego_v{{ lego_cert_version }}_linux_amd64.tar.gz"
+lego_cert_dir: "/etc/lego"
+lego_cert_path: "{{ lego_cert_dir }}/cert"
+lego_cert_renew_days: 30
+lego_cert_propagation_wait: "60s"
+
+# What happens when a renewal actually replaced the certificate (never otherwise).
+lego_cert_renew_hook: ""                  # one command, e.g. "systemctl reload-or-restart traefik"
+lego_cert_deploy_steps: []                # or: commands run in order by lego-deploy-<id>.service
+lego_cert_deploy_workdir: "/"
+
+lego_cert_on_calendar: "*-*-* 03:17:00"
+lego_cert_randomized_delay: "30min"
+
+# The per-role automation this replaces: removed (cron) / archived (script).
+lego_cert_legacy_cron: ""                 # cron_file name, e.g. lego-renew-traefik
+lego_cert_legacy_script: ""               # e.g. /etc/lego/renew-traefik.sh
+
+# Derived — consumers read these (the files lego writes for the first domain).
+lego_cert_name: "{{ lego_cert_domains[0] | replace('*', '_') }}"
+lego_cert_crt: "{{ lego_cert_path }}/certificates/{{ lego_cert_name }}.crt"
+lego_cert_key: "{{ lego_cert_path }}/certificates/{{ lego_cert_name }}.key"

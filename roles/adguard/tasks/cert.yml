@@ -1,74 +1,15 @@
 ---
-# ==============================================================================
-# Role: adguard — wildcard TLS certificate via Cloudflare DNS-01 (lego)
-# First run uses `lego run`; subsequent runs use `lego renew --days`.
-# ==============================================================================
-
-- name: "cert | Ensure /etc/lego directories exist"
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0700"
-  loop:
-    - /etc/lego
-    - /etc/lego/cert
-
-- name: "cert | Template Cloudflare API credentials (root, 0600)"
-  ansible.builtin.template:
-    src: cloudflare.env.j2
-    dest: /etc/lego/cloudflare.env
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-
-- name: "cert | Check for existing wildcard certificate"
-  ansible.builtin.stat:
-    path: "/etc/lego/cert/certificates/_.{{ adguard_domain }}.crt"
-  register: adguard_cert_stat
-
-- name: "cert | Issue wildcard certificate (first run)"
-  ansible.builtin.command:
-    cmd: >-
-      /usr/local/bin/lego
-      --email {{ adguard_acme_email }}
-      --accept-tos
-      --dns cloudflare
-      --dns.propagation-wait 60s
-      --domains "*.{{ adguard_domain }}"
-      --domains "{{ adguard_domain }}"
-      run
-    creates: "/etc/lego/cert/certificates/_.{{ adguard_domain }}.crt"
-  environment:
-    CF_DNS_API_TOKEN: "{{ adguard_cf_token }}"
-    CF_ZONE_API_TOKEN: "{{ adguard_cf_token }}"
-    LEGO_PATH: /etc/lego/cert
-  when: not adguard_cert_stat.stat.exists
-  no_log: true
-
-- name: "cert | Renew wildcard certificate (subsequent runs, tolerant)"
-  ansible.builtin.command:
-    cmd: >-
-      /usr/local/bin/lego
-      --email {{ adguard_acme_email }}
-      --dns cloudflare
-      --dns.propagation-wait 60s
-      --domains "*.{{ adguard_domain }}"
-      --domains "{{ adguard_domain }}"
-      renew
-      --days {{ adguard_renew_days }}
-    chdir: /etc/lego
-  environment:
-    CF_DNS_API_TOKEN: "{{ adguard_cf_token }}"
-    CF_ZONE_API_TOKEN: "{{ adguard_cf_token }}"
-    LEGO_PATH: /etc/lego/cert
-  when: adguard_cert_stat.stat.exists
-  register: adguard_renew
-  changed_when: >-
-    'no renewal' not in ((adguard_renew.stdout | default('') + adguard_renew.stderr | default('')) | lower)
-    and 'is not due' not in ((adguard_renew.stdout | default('') + adguard_renew.stderr | default('')) | lower)
-  failed_when: adguard_renew.rc | default(0) != 0
-  no_log: true
-  notify: Restart AdGuardHome
+# The certificate (issue once, renew by systemd timer) — roles/lego_cert.
+- name: "cert | Wildcard certificate via roles/lego_cert"
+  ansible.builtin.include_role:
+    name: lego_cert
+  vars:
+    lego_cert_id: adguard
+    lego_cert_email: "{{ adguard_acme_email }}"
+    lego_cert_domains: ["*.{{ adguard_domain }}", "{{ adguard_domain }}"]
+    lego_cert_cf_token: "{{ adguard_cf_token }}"
+    lego_cert_renew_days: "{{ adguard_renew_days }}"
+    lego_cert_renew_hook: "systemctl reload-or-restart AdGuardHome"
+    lego_cert_on_calendar: "*-*-* 03:17:00"
+    lego_cert_legacy_cron: lego-renew-adguard
+    lego_cert_legacy_script: /etc/lego/renew-adguard.sh

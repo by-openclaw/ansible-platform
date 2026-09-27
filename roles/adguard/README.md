@@ -18,11 +18,10 @@ no WebUI clicks.
 
 | Task file     | Purpose |
 |---------------|---------|
-| `install.yml` | Install AdGuard Home (tarball + `AdGuardHome -s install`) and the `lego` ACME client (GitHub release; Debian's is too old for the Cloudflare provider). Idempotent via `stat`/`creates`. |
+| `install.yml` | Install AdGuard Home (tarball + `AdGuardHome -s install`). Idempotent via `stat`/`creates`. |
 | `secrets.yml` | Controller-side: read the Cloudflare token + ACME email; read-or-generate the admin bcrypt hash and persist the prod secret JSON back to the controller (`no_log`). |
-| `cert.yml`    | Issue (`lego run`) or renew (`lego renew --days`) the wildcard `*.{{ adguard_domain }}` cert via Cloudflare DNS-01. Cloudflare creds dropped at `/etc/lego/cloudflare.env` (root, 0600). |
 | `config.yml`  | Render the full `/opt/AdGuardHome/AdGuardHome.yaml` from a Jinja template and notify a restart. |
-| `renew.yml`   | Deploy `/etc/lego/renew-adguard.sh` + a daily `cron.d` job (03:17) logging to `/var/log/lego-renew.log`. |
+| `cert.yml`    | The wildcard certificate via `roles/lego_cert` (first issuance + systemd renewal timer; AdGuardHome reloaded only when a renewal replaced the cert). |
 
 ## DNS chain context
 
@@ -41,7 +40,6 @@ AdGuard is the per-client policy layer; recursion/encryption happen on the FW.
 | `adguard_domain` | `by-research.be` | **Prod** wildcard (NOT `test.by-research.be`). |
 | `adguard_upstreams` | `["10.1.3.1"]` | See caveat below. |
 | `adguard_renew_days` | `30` | Renew when cert expires within N days. |
-| `adguard_lego_version` | `4.21.0` | Pinned; bump as needed. Re-installs only if on-disk lego is absent or `< 5.x`. |
 | `adguard_cf_vault_path` | `{env}/cloudflare/{zone}` | Vault KV path of the zone secret (keys `api_token`, `acme_email`); read via the `vault_secret` role. |
 | `adguard_admin_vault_path` | `{env}/adguard/admin` | Admin creds in Vault (generated once). |
 | `adguard_vlan_clients` | 10 VLANs | Per-VLAN persistent clients; parental on `iot`+`cctv`, safe-search on `iot`. |

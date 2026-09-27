@@ -1,6 +1,6 @@
 ---
 # ==============================================================================
-# Role: traefik — install Traefik binary + lego + systemd unit
+# Role: traefik — install Traefik binary + systemd unit (the certificate: roles/lego_cert via cert.yml)
 # Idempotent: guarded by stat/version checks; fetch only when absent/outdated.
 # ==============================================================================
 
@@ -63,44 +63,6 @@
   when: traefik_needs_install | bool
   notify: Restart traefik
 
-# ------------------------------------------------------------------------------
-# lego — ACME client (Cloudflare DNS-01), pinned (reuse roles/adguard approach)
-# ------------------------------------------------------------------------------
-- name: "install | Detect installed lego version"
-  ansible.builtin.command: /usr/local/bin/lego --version
-  register: traefik_lego_check
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-  changed_when: false
-  failed_when: false
-
-- name: "install | Determine whether the pinned lego version needs (re)install"
-  ansible.builtin.set_fact:
-    traefik_lego_needs_install: >-
-      {{ traefik_lego_check.rc != 0
-         or traefik_lego_version not in traefik_lego_check.stdout }}
-
-- name: "install | Download lego release tarball"
-  ansible.builtin.get_url:
-    url: "{{ traefik_lego_url }}"
-    dest: /tmp/lego_linux_amd64.tar.gz
-    mode: "0644"
-  when: traefik_lego_needs_install | bool
-
-- name: "install | Extract lego binary to /usr/local/bin"
-  ansible.builtin.unarchive:
-    src: /tmp/lego_linux_amd64.tar.gz
-    dest: /usr/local/bin
-    remote_src: true
-    include:
-      - lego
-    owner: root
-    group: root
-    mode: "0755"
-  when: traefik_lego_needs_install | bool
-
-# ------------------------------------------------------------------------------
-# systemd unit
-# ------------------------------------------------------------------------------
 - name: "install | Deploy traefik systemd unit"
   ansible.builtin.template:
     src: traefik.service.j2
