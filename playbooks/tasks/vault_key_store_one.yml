@@ -28,7 +28,7 @@
   ansible.builtin.command:
     argv: ["docker", "exec", "-i", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
            "vault", "kv", "put", "-mount={{ vault_kv_path }}",
-           "prod/{{ keyres.item.vault_svc }}/ssh-passphrase", "-"]
+           "{{ platform_env }}/{{ keyres.item.vault_svc }}/ssh-passphrase", "-"]
     stdin: "{{ keystore_pass_doc | to_json }}"
     stdin_add_newline: false
   changed_when: true
@@ -42,7 +42,7 @@
   ansible.builtin.command:
     argv: ["docker", "exec", "-i", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
            "vault", "kv", "put", "-mount={{ vault_kv_path }}",
-           "prod/{{ keyres.item.vault_svc }}/ssh-key", "-"]
+           "{{ platform_env }}/{{ keyres.item.vault_svc }}/ssh-key", "-"]
     stdin: "{{ keystore_key_doc | to_json }}"
     stdin_add_newline: false
   changed_when: true

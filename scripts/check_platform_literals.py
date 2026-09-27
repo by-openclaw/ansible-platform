@@ -14,6 +14,12 @@ PATTERNS = {
     "domain literal": re.compile(r"by-(research|systems)\.be"),
     "org literal": re.compile(r"(?<![a-z0-9_-])by-(research|systems)(?![a-z0-9.-])"),
     "identity fallback": re.compile(r"default\((['\"])(by-(research|systems)(\.be)?)\1\)"),
+    # A missing inventory value must fail, never silently fall back to prod's.
+    "env fallback": re.compile(r"platform_env\s*\|\s*default\("),
+    "ssh port literal": re.compile(r"(?<![0-9])22222(?![0-9])"),
+    "prod Vault path literal": re.compile(r"(?<!inventories)[\"'/ ]prod/[a-z{]"),   # inventories/prod = a folder
+    "machine name": re.compile(r"\b(lxc|vm|srv)-[a-z0-9-]+-[0-9]{2}\b"),
+    "IPv4 literal": re.compile(r"\b(10|172|213)\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\b"),
     # 10.6.x covers OOB and the switch fabric. They were missing from this pattern,
     # which is why five roles kept spelling them out long after the 10.1.x zones
     # were factored out — the guard simply never looked for them.
@@ -44,6 +50,12 @@ PATTERNS = {
     ),
 }
 
+# Documented exceptions, per file and kind. vault_kv_map names two Vault PATHS that
+# happen to contain the firewall's name (see the comment there), not host references.
+EXEMPT = {
+    "playbooks/vars/vault_kv_map.yml": ("machine name",),
+}
+
 ROOTS = ("roles", "playbooks")
 SUFFIXES = (".yml", ".yaml", ".j2")
 
@@ -61,6 +73,8 @@ def main() -> int:
             for n, line in enumerate(p.read_text(errors="ignore").splitlines(), 1):
                 code = line.split("#", 1)[0] if not line.lstrip().startswith("#") else ""
                 for kind, rx in PATTERNS.items():
+                    if kind in EXEMPT.get(p.as_posix(), ()):
+                        continue
                     if rx.search(code):
                         bad.append(f"{p}:{n}: {kind}: {line.strip()[:100]}")
     if bad:
