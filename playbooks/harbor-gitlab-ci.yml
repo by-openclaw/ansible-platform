@@ -5,40 +5,17 @@
 #   docker login "$HARBOR_HOST" -u "$HARBOR_ROBOT_USER" -p "$HARBOR_ROBOT_TOKEN"
 # and push private images to harbor.{{ platform_domain }}/gitlab/<image>.
 #
-# Consumes fabric/harbor-robot-gitlab.json (written by roles/harbor gitlab-ci.yml).
+# Consumes {env}/harbor/robot-gitlab in Vault (written by roles/harbor gitlab-ci.yml).
 # House pattern = gitlab-rails runner reconciler (no API token), same as gitlab_rbac.
 # The desired-state file carries the token, so it is 0600 and removed after the run.
-# GitLab's host lives in the gitlab-ce inventory (#172); we add it at runtime here
-# so this integration stays self-contained on the harbor branch.
+# GitLab is a normal inventory host: the play uses the inventory connection (jump
+# host, user, key) like every other play. It used to add the host at runtime with
+# its own root login, keys and ProxyCommand, which no longer matched the inventory
+# and left the host UNREACHABLE.
 # ==============================================================================
-- name: "Register the GitLab host at runtime"
-  hosts: localhost
-  gather_facts: false
-  tasks:
-    # Resolve both addresses HERE, on the controller. Passing the expressions to add_host
-    # defers them to the new host's own context, where "this host's address" is defined in
-    # terms of itself — it resolves to nothing and the connection goes to UNKNOWN:65535.
-    - name: "Resolve the GitLab and firewall addresses before adding the host"
-      ansible.builtin.set_fact:
-        _gitlab_addr: "{{ hostvars[groups['gitlab'] | first].ansible_host }}"
-        _fw_addr: "{{ hostvars[groups['opnsense'] | first].ansible_host }}"
-
-    - name: "Add the GitLab host as a target (same access as the other SVC LXCs)"
-      ansible.builtin.add_host:
-        name: "{{ groups['gitlab'] | first }}"
-        groups: _harbor_gitlab_ci
-        ansible_host: "{{ harbor_gitlab_host | default(_gitlab_addr) }}"
-        ansible_user: root
-        ansible_ssh_private_key_file: ~/.ssh/id_ed25519_rune_nopass
-        ansible_ssh_common_args: >-
-          -o ProxyCommand="ssh -W %h:%p -i ~/.ssh/id_ed25519_opnsense
-          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          by-rune@{{ _fw_addr }}"
-          -o StrictHostKeyChecking=no
-          -o UserKnownHostsFile=/dev/null
-
 - name: "Seed Harbor CI credentials into GitLab"
-  hosts: _harbor_gitlab_ci
+  hosts: gitlab
+  become: true
   gather_facts: false
   tasks:
     - name: "The Harbor CI robot creds (Vault, read — the harbor role stores them)"
