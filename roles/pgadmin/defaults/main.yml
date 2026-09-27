@@ -28,7 +28,7 @@ pgadmin_data_volume: "pgadmin-data"
 pgadmin_oidc_vault_path: "{{ platform_env }}/pgadmin/oidc"   # minted by roles/authentik
 pgadmin_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 pgadmin_oidc_app_slug: "pgadmin"
-pgadmin_oidc_display_name: "BY-RESEARCH SSO"
+pgadmin_oidc_display_name: "{{ platform_org | upper }} SSO"
 # Only members of this Authentik group may log into pgAdmin (group-based access).
 pgadmin_oidc_access_group: "{{ platform_service_groups.pgadmin.admin }}"
 
@@ -36,7 +36,7 @@ pgadmin_oidc_access_group: "{{ platform_service_groups.pgadmin.admin }}"
 # Registers the platform Postgres as a SHARED server visible to all SSO users.
 # Password is NOT stored — entered on connect (sourced from Vault later).
 pgadmin_register_pg_server: true
-pgadmin_pg_server_name: "BY-RESEARCH PostgreSQL"
+pgadmin_pg_server_name: "{{ platform_org | upper }} PostgreSQL"
 pgadmin_pg_host: "{{ groups['postgresql'] | first }}.{{ platform_domain }}"   # FQDN so verify-full matches the cert
 pgadmin_pg_port: 5432
 pgadmin_pg_maintenance_db: "postgres"
@@ -60,3 +60,11 @@ pgadmin_pg_passexec_cmd: "/bin/cat {{ pgadmin_pg_passfile_container }}"
 # ~/.postgresql/root.crt by default. The container HOME is /home/pgadmin; point
 # that path at the system bundle (ISRG Root X1 → trusts the LE server cert).
 pgadmin_pg_root_cert_path: "/home/pgadmin/.postgresql/root.crt"
+
+# pgAdmin's OWN state (users, servers, preferences) on the shared PostgreSQL
+# (services/0004), not a SQLite file in the container volume. verify-full with the
+# platform CA already mounted for the managed server.
+pgadmin_state_db: "pgadmin"
+pgadmin_state_user: "pgadmin"
+pgadmin_state_vault_path: "{{ platform_env }}/pgadmin/db-pgsql"
+pgadmin_state_sqlite: "/var/lib/docker/volumes/{{ pgadmin_data_volume }}/_data/pgadmin4.db"   # pre-PostgreSQL store, archived
