@@ -1,0 +1,109 @@
+---
+# One identity: ed25519 SSH keypair + ed25519 GPG key, both passphrase-protected,
+# escrowed as ONE Vault document. loop_var: ik_person.
+- name: "IdKeys | Passphrases — {{ ik_person.username }}"
+  ansible.builtin.set_fact:
+    ik_ssh_pass: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+    ik_gpg_pass: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+  no_log: true
+
+- name: "IdKeys | Generate and escrow — {{ ik_person.username }}"
+  block:
+    - name: "IdKeys | Transient work directory (0700)"
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: idkeys
+      register: ik_wd
+
+    - name: "IdKeys | SSH keypair (ed25519, passphrase)"
+      community.crypto.openssh_keypair:
+        path: "{{ ik_wd.path }}/id"
+        type: ed25519
+        passphrase: "{{ ik_ssh_pass }}"
+        comment: "{{ ik_person.username }}@{{ ik_person.email.split('@')[1] }}"
+      register: ik_ssh
+      no_log: true
+
+    - name: "IdKeys | Read the private key"
+      ansible.builtin.slurp:
+        src: "{{ ik_wd.path }}/id"
+      register: ik_ssh_priv
+      no_log: true
+
+    - name: "IdKeys | GnuPG home (0700)"
+      ansible.builtin.file:
+        path: "{{ ik_wd.path }}/gnupg"
+        state: directory
+        mode: "0700"
+
+    - name: "IdKeys | GPG parameters (loopback pinentry, no expiry)"
+      ansible.builtin.copy:
+        dest: "{{ ik_wd.path }}/params"
+        mode: "0600"
+        content: |
+          Key-Type: eddsa
+          Key-Curve: ed25519
+          Key-Usage: sign,cert
+          Name-Real: {{ ik_person.name }}
+          Name-Email: {{ ik_person.email }}
+          Expire-Date: 0
+          Passphrase: {{ ik_gpg_pass }}
+          %commit
+      no_log: true
+
+    - name: "IdKeys | GPG key (ed25519)"
+      ansible.builtin.command:
+        argv: [gpg, --batch, --pinentry-mode, loopback, --gen-key, "{{ ik_wd.path }}/params"]
+      environment: { GNUPGHOME: "{{ ik_wd.path }}/gnupg" }
+      changed_when: true
+      no_log: true
+
+    - name: "IdKeys | GPG fingerprint"
+      ansible.builtin.command:
+        argv: [gpg, --batch, --with-colons, --list-keys, "{{ ik_person.email }}"]
+      environment: { GNUPGHOME: "{{ ik_wd.path }}/gnupg" }
+      register: ik_gpg_list
+      changed_when: false
+
+    - name: "IdKeys | GPG public key"
+      ansible.builtin.command:
+        argv: [gpg, --batch, --armor, --export, "{{ ik_person.email }}"]
+      environment: { GNUPGHOME: "{{ ik_wd.path }}/gnupg" }
+      register: ik_gpg_pub
+      changed_when: false
+
+    - name: "IdKeys | GPG private key (passphrase on stdin, never argv)"
+      ansible.builtin.command:
+        argv: [gpg, --batch, --pinentry-mode, loopback, --passphrase-fd, "0", --armor, --export-secret-keys, "{{ ik_person.email }}"]
+        stdin: "{{ ik_gpg_pass }}"
+      environment: { GNUPGHOME: "{{ ik_wd.path }}/gnupg" }
+      register: ik_gpg_priv
+      changed_when: false
+      no_log: true
+
+    - name: "IdKeys | Escrow the set in Vault (one new version)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ identity_keys_path_prefix }}/{{ ik_person.username }}/keys"
+        vault_secret_mount: "{{ identity_keys_vault_mount }}"
+        vault_secret_host: "{{ identity_keys_vault_host }}"
+        vault_secret_container: "{{ identity_keys_vault_container }}"
+        vault_secret_optional: true
+        vault_secret_force_fields:
+          username: "{{ ik_person.username }}"
+          ssh_private_key: "{{ ik_ssh_priv.content | b64decode }}"
+          ssh_public_key: "{{ ik_ssh.public_key }} {{ ik_ssh.comment }}"
+          ssh_fingerprint: "{{ ik_ssh.fingerprint }}"
+          ssh_passphrase: "{{ ik_ssh_pass }}"
+          gpg_public_key: "{{ ik_gpg_pub.stdout }}"
+          gpg_private_key: "{{ ik_gpg_priv.stdout }}"
+          gpg_fingerprint: "{{ (ik_gpg_list.stdout_lines | select('match', '^fpr:') | first).split(':')[9] }}"
+          gpg_passphrase: "{{ ik_gpg_pass }}"
+          created: "{{ ansible_date_time.iso8601 }}"
+  always:
+    - name: "IdKeys | Remove the transient directory"
+      ansible.builtin.file:
+        path: "{{ ik_wd.path }}"
+        state: absent
+      when: ik_wd.path is defined
