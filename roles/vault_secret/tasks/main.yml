@@ -26,6 +26,38 @@
   check_mode: false   # read-only `kv get` — must also run under --check so consumers can preview
   no_log: true
 
+- name: "Vault secret | Read the custom metadata (when asked)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -e
+      - "VAULT_TOKEN={{ vault_secret_token }}"
+      - "{{ vault_secret_container }}"
+      - vault
+      - kv
+      - metadata
+      - get
+      - "-mount={{ vault_secret_mount }}"
+      - -format=json
+      - "{{ vault_secret_path }}"
+  delegate_to: "{{ vault_secret_host }}"
+  become: true
+  register: vault_secret_meta_get
+  changed_when: false
+  failed_when: false
+  check_mode: false   # read-only
+  no_log: true
+  when: vault_secret_read_metadata | bool
+
+- name: "Vault secret | Publish the metadata as `vault_secret_metadata`"
+  ansible.builtin.set_fact:
+    vault_secret_metadata: >-
+      {{ {'custom': ((vault_secret_meta_get.stdout | from_json).data.custom_metadata | default({}, true)),
+          'current_version': (vault_secret_meta_get.stdout | from_json).data.current_version}
+         if (vault_secret_meta_get.rc | default(1)) == 0 else {} }}
+  when: vault_secret_read_metadata | bool
+
 - name: "Vault secret | Fail when absent and no init given (read-only consumer)"
   ansible.builtin.fail:
     msg: >-
@@ -84,6 +116,23 @@
   when: vault_secret_force_fields | default({}) | length > 0
   changed_when: true
   no_log: true
+
+- name: "Vault secret | Write custom metadata (audit trail)"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['docker', 'exec', '-e', 'VAULT_TOKEN=' ~ vault_secret_token, vault_secret_container,
+          'vault', 'kv', 'metadata', 'put', '-mount=' ~ vault_secret_mount]
+         + (vault_secret_metadata_put | dict2items | map(attribute='key')
+            | zip(vault_secret_metadata_put | dict2items | map(attribute='value'))
+            | map('join', '=') | map('regex_replace', '^', '-custom-metadata=') | list)
+         + [vault_secret_path] }}
+  delegate_to: "{{ vault_secret_host }}"
+  become: true
+  changed_when: true
+  no_log: true   # argv carries the token
+  when:
+    - vault_secret_metadata_put | default({}) | length > 0
+    - not ansible_check_mode
 
 - name: "Vault secret | Publish the secret fields as `vault_secret_result`"
   ansible.builtin.set_fact:

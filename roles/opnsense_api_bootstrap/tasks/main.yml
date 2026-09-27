@@ -38,21 +38,19 @@
     opnsense_api_bootstrap_api: "https://{{ opnsense_api_bootstrap_host }}:{{ opnsense_api_bootstrap_port }}/api"
 
 # --- 1. is the token already in Vault? (get-or-mint) --------------------------
-- name: "OPNsense bootstrap | Vault login (ansible-deploy AppRole)"
+- name: "OPNsense bootstrap | Existing token in Vault (roles/vault_secret, optional)"
   ansible.builtin.include_role:
-    name: vault_login
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ opnsense_api_bootstrap_vault_path }}"
+    vault_secret_optional: true
+    vault_secret_mount: "{{ opnsense_api_bootstrap_vault_mount }}"
+    vault_secret_host: "{{ opnsense_api_bootstrap_vault_host }}"
+    vault_secret_container: "{{ opnsense_api_bootstrap_vault_container }}"
 
-- name: "OPNsense bootstrap | Read existing token from Vault"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_api_bootstrap_vault_container }}
-      vault kv get -mount={{ opnsense_api_bootstrap_vault_mount }} -format=json {{ opnsense_api_bootstrap_vault_path }}
-  delegate_to: "{{ opnsense_api_bootstrap_vault_host }}"
-  become: true
-  register: opnsense_api_bootstrap_vault_get
-  changed_when: false
-  failed_when: false
-  check_mode: false
+- name: "OPNsense bootstrap | Keep it"
+  ansible.builtin.set_fact:
+    opnsense_api_bootstrap_stored: "{{ vault_secret_result | default({}) }}"
   no_log: true
 
 - name: "OPNsense bootstrap | Reuse token already in Vault (noop)"  # noqa: var-naming[no-role-prefix] (contract names used by the catalog + roles/opnsense)
@@ -63,9 +61,9 @@
     opnsense_api_secret: "{{ opnsense_api_bootstrap_kv.secret }}"
     opnsense_api_bootstrap_minted: false
   vars:
-    opnsense_api_bootstrap_kv: "{{ (opnsense_api_bootstrap_vault_get.stdout | from_json).data.data }}"
+    opnsense_api_bootstrap_kv: "{{ opnsense_api_bootstrap_stored }}"
   no_log: true
-  when: opnsense_api_bootstrap_vault_get.rc == 0
+  when: (opnsense_api_bootstrap_stored.key | default('') | length > 0)
 
 # A Vault token can be STALE: a Terraform+seed rebuild/reseed wipes on-box API keys
 # (the seed carries none for svc-ansible by design). Verify before trusting it;
@@ -86,16 +84,16 @@
   register: opnsense_api_bootstrap_reuse_probe
   check_mode: false          # read-only probe; must also run under --check
   no_log: true
-  when: opnsense_api_bootstrap_vault_get.rc == 0
+  when: (opnsense_api_bootstrap_stored.key | default('') | length > 0)
 
 - name: "OPNsense bootstrap | Decide: reuse, or (re)mint"
   ansible.builtin.set_fact:
     opnsense_api_bootstrap_need_mint: >-
       {{ (opnsense_api_bootstrap_force_rotate | bool)
-         or opnsense_api_bootstrap_vault_get.rc != 0
+         or (opnsense_api_bootstrap_stored.key | default('') | length == 0)
          or (opnsense_api_bootstrap_reuse_probe.status | default(0)) != 200 }}
     opnsense_api_bootstrap_stale: >-
-      {{ opnsense_api_bootstrap_vault_get.rc == 0
+      {{ (opnsense_api_bootstrap_stored.key | default('') | length > 0)
          and (opnsense_api_bootstrap_reuse_probe.status | default(0)) != 200 }}
 
 # --- 2. mint path (absent in Vault, or present but stale) ---------------------
@@ -159,28 +157,29 @@
     # when Vault already holds one for the service user, create the user with it so a rebuilt
     # firewall is usable over SSH + sudo right away (2026-09-21: a random one left sudo broken).
     - name: "OPNsense bootstrap | The service user's GUI password in Vault (if any)"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_api_bootstrap_vault_container }}
-          vault kv get -mount={{ opnsense_api_bootstrap_vault_mount }} -format=json
-          {{ opnsense_api_bootstrap_env }}/opnsense/{{ opnsense_api_bootstrap_user }}
-      delegate_to: "{{ opnsense_api_bootstrap_vault_host }}"
-      become: true
-      register: opnsense_api_bootstrap_user_secret
-      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-      changed_when: false
-      failed_when: false
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ opnsense_api_bootstrap_env }}/opnsense/{{ opnsense_api_bootstrap_user }}"
+        vault_secret_optional: true
+        vault_secret_mount: "{{ opnsense_api_bootstrap_vault_mount }}"
+        vault_secret_host: "{{ opnsense_api_bootstrap_vault_host }}"
+        vault_secret_container: "{{ opnsense_api_bootstrap_vault_container }}"
+      when: opnsense_api_bootstrap_user_row.name is not defined
+
+    - name: "OPNsense bootstrap | Keep it"
+      ansible.builtin.set_fact:
+        opnsense_api_bootstrap_user_secret: "{{ vault_secret_result | default({}) }}"
       no_log: true
       when: opnsense_api_bootstrap_user_row.name is not defined
 
     - name: "OPNsense bootstrap | Use the Vault GUI password for the new user"
       ansible.builtin.set_fact:
-        opnsense_api_bootstrap_gen_pw: "{{ (opnsense_api_bootstrap_user_secret.stdout | from_json).data.data.webgui_password }}"
+        opnsense_api_bootstrap_gen_pw: "{{ opnsense_api_bootstrap_user_secret.webgui_password }}"
       no_log: true
       when:
         - opnsense_api_bootstrap_user_row.name is not defined
-        - opnsense_api_bootstrap_user_secret.rc | default(1) == 0
-        - ((opnsense_api_bootstrap_user_secret.stdout | default('{}') | from_json).data.data.webgui_password | default('')) | length > 0
+        - (opnsense_api_bootstrap_user_secret | default({})).webgui_password | default('') | length > 0
 
     - name: "OPNsense bootstrap | Generate a random password (create-only; real auth = API key + SSH keys)"
       ansible.builtin.set_fact:
@@ -232,35 +231,29 @@
         fail_msg: "opnsense_auth_api_key did not return api_key/api_secret"
 
     # ---- store the minted token in Vault (primary store; new KV v2 version on rotate) ----
-    - name: "OPNsense bootstrap | Write minted token to Vault"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec -i -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_api_bootstrap_vault_container }}
-          vault kv put -mount={{ opnsense_api_bootstrap_vault_mount }} {{ opnsense_api_bootstrap_vault_path }} -
-        stdin: >-  # pragma: allowlist secret
-          {{ {'host': opnsense_api_bootstrap_host, 'port': opnsense_api_bootstrap_port,
-              'username': opnsense_api_bootstrap_user,
-              'key': opnsense_api_bootstrap_mint.api_key, 'secret': opnsense_api_bootstrap_mint.api_secret,
-              'created_via': 'mvc:auth/user/add_api_key', 'env': opnsense_api_bootstrap_env} | to_json }}
-      delegate_to: "{{ opnsense_api_bootstrap_vault_host }}"
-      become: true
-      changed_when: true
-      no_log: true
-
-    - name: "OPNsense bootstrap | Record the rotation in the secret's metadata (SEC-09 audit trail)"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_api_bootstrap_vault_container }}
-          vault kv metadata put -mount={{ opnsense_api_bootstrap_vault_mount }}
-          -custom-metadata=rotated_at={{ '%Y-%m-%dT%H:%M:%SZ' | strftime(utc=true) }}
-          -custom-metadata=rotated_by=ansible-deploy
-          -custom-metadata=reason={{ 'forced' if (opnsense_api_bootstrap_force_rotate | bool)
-                                     else ('stale' if (opnsense_api_bootstrap_stale | bool) else 'absent') }}
-          {{ opnsense_api_bootstrap_vault_path }}
-      delegate_to: "{{ opnsense_api_bootstrap_vault_host }}"
-      become: true
-      changed_when: true
-      no_log: true   # the command line carries the deploy token
+    # A new KV v2 version (history kept) + the SEC-09 rotation trail in custom metadata.
+    - name: "OPNsense bootstrap | Write minted token to Vault (+ rotation trail)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ opnsense_api_bootstrap_vault_path }}"
+        vault_secret_mount: "{{ opnsense_api_bootstrap_vault_mount }}"
+        vault_secret_host: "{{ opnsense_api_bootstrap_vault_host }}"
+        vault_secret_container: "{{ opnsense_api_bootstrap_vault_container }}"
+        vault_secret_optional: true          # absent is fine: force_fields writes the one new version
+        vault_secret_force_fields: "{{ _tok }}"
+        vault_secret_metadata_put:
+          rotated_at: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(utc=true) }}"
+          rotated_by: ansible-deploy
+          reason: "{{ 'forced' if (opnsense_api_bootstrap_force_rotate | bool) else ('stale' if (opnsense_api_bootstrap_stale | bool) else 'absent') }}"
+        _tok:
+          host: "{{ opnsense_api_bootstrap_host }}"
+          port: "{{ opnsense_api_bootstrap_port }}"
+          username: "{{ opnsense_api_bootstrap_user }}"
+          key: "{{ opnsense_api_bootstrap_mint.api_key }}"
+          secret: "{{ opnsense_api_bootstrap_mint.api_secret }}"
+          created_via: "mvc:auth/user/add_api_key"
+          env: "{{ opnsense_api_bootstrap_env }}"
 
     - name: "OPNsense bootstrap | Publish minted token as facts"  # noqa: var-naming[no-role-prefix] (contract names used by the catalog + roles/opnsense)
       ansible.builtin.set_fact:
