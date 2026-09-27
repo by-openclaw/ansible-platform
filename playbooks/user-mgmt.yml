@@ -1,8 +1,12 @@
 ---
 # Provision OS accounts/groups/sudo/keys per identity/0004 + naming/0002 §5.
-# Safe while connected as root — only ADDS accounts. Scope: -e target=<host|group>.
+# Adds/maintains the managed accounts AND deletes the foreign ones listed in
+# user_mgmt_purge_accounts. Scope: -e target=<host|group>.
+# Never the firewall by default: OPNsense is FreeBSD with its own account model
+# (opnsense role). A dry-run of the old default ('all') planned Linux groups,
+# accounts, sudoers and a foreign-account DELETE on the production firewall.
 - name: "Provision OS accounts (identity/0004-os-accounts)"
-  hosts: "{{ target | default('all') }}"
+  hosts: "{{ target | default('all:!opnsense') }}"
   become: true
   roles:
     - user-mgmt
