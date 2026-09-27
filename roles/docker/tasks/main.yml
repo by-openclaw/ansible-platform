@@ -1,4 +1,36 @@
 ---
+- name: "Docker | Docker CE apt repo (docker_engine=ce)"
+  when: docker_engine == 'ce'
+  block:
+    - name: "Docker | Keyring directory"
+      ansible.builtin.file:
+        path: "{{ docker_ce_keyring | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "Docker | Docker CE signing key"
+      ansible.builtin.get_url:
+        url: "{{ docker_ce_key_url }}"
+        dest: "{{ docker_ce_keyring }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "Docker | Docker CE apt repository"
+      ansible.builtin.apt_repository:
+        repo: "{{ docker_ce_repo }}"
+        filename: docker
+        state: present
+
+    # Remove, never purge: images, containers and volumes under /var/lib/docker stay.
+    - name: "Docker | Remove Debian packages that conflict with Docker CE"
+      ansible.builtin.apt:
+        name: "{{ docker_ce_conflicting_packages }}"
+        state: absent
+        purge: false
+
 - name: "Docker | Install Docker engine + python SDK"
   ansible.builtin.apt:
     name: "{{ docker_packages }}"
