@@ -10,11 +10,15 @@
 # LDAPS (636) ONLY — cleartext 389 is never published.
 # ==============================================================================
 
-- name: "ldap | Load the outpost API token"
+- name: "ldap | The outpost API token (Vault, read)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ authentik_ldap_vault_path }}"
+
+- name: "ldap | Bind it"
   ansible.builtin.set_fact:
-    authentik_ldap_token: >-
-      {{ (lookup('file', authentik_secret_dir + '/' + authentik_ldap_secret_file)
-          | from_json).fields.token }}
+    authentik_ldap_token: "{{ vault_secret_result.token }}"
   no_log: true
 
 - name: "ldap | Pull the pinned outpost image"
