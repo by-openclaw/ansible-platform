@@ -12,36 +12,24 @@
     mode: "0644"
 
 # --- Discord webhooks are secrets: resolve each Vault path into the desired state
-- name: "RBAC | Vault login (AppRole) for integration secrets"
+- name: "RBAC | Integration webhooks from Vault (roles/vault_secret)"
   ansible.builtin.include_role:
-    name: vault_login
+    name: vault_secret
+    tasks_from: many
+  vars:
+    vault_secret_paths: "{{ gitlab_rbac_integrations | map(attribute='webhook_vault_path') | unique | list }}"
   when: gitlab_rbac_integrations | length > 0
-
-- name: "RBAC | Resolve integration webhooks from Vault"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} vault
-      vault kv get -mount=secret -field=webhook {{ item.webhook_vault_path }}
-  delegate_to: "{{ groups['vault'] | first }}"
-  become: true
-  register: gitlab_rbac_webhook_get
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-  changed_when: false
-  no_log: true
-  loop: "{{ gitlab_rbac_integrations }}"
-  loop_control:
-    label: "{{ item.project }} {{ item.type }}"
 
 - name: "RBAC | Build the resolved integration list"
   ansible.builtin.set_fact:
     gitlab_rbac_integrations_resolved: >-
       {{ (gitlab_rbac_integrations_resolved | default([]))
-         + [item.item | combine({'webhook': item.stdout}) | dict2items
+         + [item | combine({'webhook': vault_secret_results[item.webhook_vault_path].webhook}) | dict2items
             | rejectattr('key', 'equalto', 'webhook_vault_path') | items2dict] }}
   no_log: true
-  loop: "{{ gitlab_rbac_webhook_get.results | default([]) }}"
+  loop: "{{ gitlab_rbac_integrations }}"
   loop_control:
-    label: "{{ item.item.project | default('') }}"
+    label: "{{ item.project | default('') }}"
   when: gitlab_rbac_integrations | length > 0
 
 - name: "RBAC | Stage the shared CI templates on the GitLab host"
@@ -58,40 +46,29 @@
   ansible.builtin.set_fact:
     gitlab_rbac_key_people: "{{ platform_people | default([]) | selectattr('manage_keys', 'defined') | selectattr('manage_keys') | list }}"
 
-- name: "RBAC | Vault login for escrowed public keys"
-  ansible.builtin.import_role:
-    name: vault_login
+# Optional: an identity whose keys are not escrowed yet is simply skipped.
+- name: "RBAC | Each identity's escrowed public keys (roles/vault_secret, optional)"
+  ansible.builtin.include_role:
+    name: vault_secret
+    tasks_from: many
+  vars:
+    vault_secret_optional: true
+    vault_secret_paths: "{{ gitlab_rbac_key_people | map(attribute='username') | map('regex_replace', '^', platform_env ~ '/users/') | map('regex_replace', '$', '/keys') | list }}"
   when: gitlab_rbac_key_people | length > 0
-
-- name: "RBAC | Read each identity's escrowed public keys"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} vault
-      vault kv get -mount=secret -format=json
-      {{ platform_env }}/users/{{ item.username }}/keys
-  delegate_to: "{{ groups['vault'] | first }}"
-  become: true
-  loop: "{{ gitlab_rbac_key_people }}"
-  loop_control: { label: "{{ item.username }}" }
-  register: gitlab_rbac_keyreads
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-  changed_when: false
-  failed_when: false
-  no_log: true
 
 - name: "RBAC | Assemble user_keys from the Vault reads"
   ansible.builtin.set_fact:
-    gitlab_rbac_user_keys: "{{ _uk | from_json }}"
-  vars:
-    _uk: >-
-      [
-      {% for r in gitlab_rbac_keyreads.results | default([]) if r.rc | default(1) == 0 %}
-        {% set d = (r.stdout | from_json).data.data %}
-        {"username": "{{ r.item.username }}",
-         "ssh_keys": [{"label": "identity", "key": {{ d.ssh_public_key | to_json }}}],
-         "gpg_keys": [{"label": "identity", "key": {{ d.gpg_public_key | to_json }}}]}{{ "," if not loop.last else "" }}
-      {% endfor %}
-      ]
+    gitlab_rbac_user_keys: >-
+      {%- set out = [] -%}
+      {%- for u in gitlab_rbac_key_people -%}
+        {%- set d = (vault_secret_results | default({})).get(platform_env ~ '/users/' ~ u.username ~ '/keys', {}) -%}
+        {%- if d | length > 0 -%}
+          {%- set _ = out.append({'username': u.username,
+                                  'ssh_keys': [{'label': 'identity', 'key': d.ssh_public_key}],
+                                  'gpg_keys': [{'label': 'identity', 'key': d.gpg_public_key}]}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
   no_log: true
   when: gitlab_rbac_key_people | length > 0
 
