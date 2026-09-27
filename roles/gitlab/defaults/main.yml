@@ -17,18 +17,18 @@
 # via the vault_secret role; the owning role (postgres_db / seaweedfs_bucket /
 # authentik / mailcow) creates it first. GitLab's OWN generated secrets are written
 # back to Vault after install (DR-critical).
-gitlab_pg_vault_path: "prod/gitlab/db-pgsql"          # postgres_db creates
-gitlab_redis_vault_path: "prod/redis/admin"         # redis role owns (shared)
-gitlab_s3_vault_path: "prod/gitlab/s3"   # seaweedfs_bucket creates
-gitlab_oidc_vault_path: "prod/gitlab/oidc"        # authentik creates
-gitlab_smtp_vault_path: "prod/gitlab/smtp"        # mailcow mailbox (optional)
+gitlab_pg_vault_path: "{{ platform_env }}/gitlab/db-pgsql"          # postgres_db creates
+gitlab_redis_vault_path: "{{ platform_env }}/redis/admin"         # redis role owns (shared)
+gitlab_s3_vault_path: "{{ platform_env }}/gitlab/s3"   # seaweedfs_bucket creates
+gitlab_oidc_vault_path: "{{ platform_env }}/gitlab/oidc"        # authentik creates
+gitlab_smtp_vault_path: "{{ platform_env }}/gitlab/smtp"        # mailcow mailbox (optional)
 # Service Desk / reply-by-email (mailroom over IMAPS on the gitlab@ box, Vault
 # prod/mail/gitlab). Dependency: mail.<domain> must resolve INTERNALLY to mailcow
 # (split-DNS record in the FW catalog) — SVC→DMZ is allowed by default, no FW
 # rule needed. Proven 2026-09-04: imap-login OK from lxc-gitlab-01.
 gitlab_service_desk_enabled: true
-gitlab_mail_vault_path: "prod/mail/gitlab"        # mailbox concern-role: address/imap_host/imap_port/password
-gitlab_secrets_vault_path: "prod/gitlab/secrets"      # GitLab's own secrets (written post-install)  # pragma: allowlist secret
+gitlab_mail_vault_path: "{{ platform_env }}/mail/gitlab"        # mailbox concern-role: address/imap_host/imap_port/password
+gitlab_secrets_vault_path: "{{ platform_env }}/gitlab/secrets"      # GitLab's own secrets (written post-install)  # pragma: allowlist secret
 
 # --- Version pin (NEVER unpinned / :latest) -----------------------------------
 # Verify the exact available string before apply: `apt-cache madison gitlab-ce`.
