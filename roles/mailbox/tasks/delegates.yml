@@ -32,14 +32,17 @@
 
 - name: "Mailbox | Delegate send-as (sender_acl, idempotent insert)"
   ansible.builtin.command:
-    cmd: >-
-      docker exec {{ mailbox_mysql_container }} sh -c
-      'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e
-       "INSERT INTO sender_acl (logged_in_as, send_as, external)
-        SELECT \"{{ item }}\", \"{{ mailbox_address }}\", 0
-        WHERE NOT EXISTS (SELECT 1 FROM sender_acl
-          WHERE logged_in_as=\"{{ item }}\" AND send_as=\"{{ mailbox_address }}\");
-        SELECT ROW_COUNT();"'
+    # SQL as its OWN argument: in a folded shell string the more-indented SQL lines
+    # kept their newlines and mysql got `-e` with nothing after it (every real run failed).
+    argv:
+      - docker
+      - exec
+      - "{{ mailbox_mysql_container }}"
+      - sh
+      - -c
+      - 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e "$1"'
+      - sh
+      - "INSERT INTO sender_acl (logged_in_as, send_as, external) SELECT '{{ item }}', '{{ mailbox_address }}', 0 WHERE NOT EXISTS (SELECT 1 FROM sender_acl WHERE logged_in_as='{{ item }}' AND send_as='{{ mailbox_address }}'); SELECT ROW_COUNT();"
   delegate_to: "{{ mailbox_mailcow_host }}"
   become: true
   loop: "{{ mailbox_delegates }}"
@@ -52,20 +55,23 @@
 # people.yml, so running this for people would delete grants nothing declares.
 - name: "Mailbox | Reconcile delegates (drop grants not in the list)"
   ansible.builtin.command:
-    cmd: >-
-      docker exec {{ mailbox_mysql_container }} sh -c
-      'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e
-       "DELETE FROM bcc_maps WHERE local_dest=\"{{ mailbox_address }}\"
-          AND bcc_dest NOT IN ({{ mailbox_keep_sql }});
-        DELETE FROM sender_acl WHERE send_as=\"{{ mailbox_address }}\"
-          AND logged_in_as NOT IN ({{ mailbox_keep_sql }});
-        SELECT ROW_COUNT();"'
+    # SQL as its OWN argument: in a folded shell string the more-indented SQL lines
+    # kept their newlines and mysql got `-e` with nothing after it (every real run failed).
+    argv:
+      - docker
+      - exec
+      - "{{ mailbox_mysql_container }}"
+      - sh
+      - -c
+      - 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e "$1"'
+      - sh
+      - "DELETE FROM bcc_maps WHERE local_dest='{{ mailbox_address }}' AND bcc_dest NOT IN ({{ mailbox_keep_sql }}); DELETE FROM sender_acl WHERE send_as='{{ mailbox_address }}' AND logged_in_as NOT IN ({{ mailbox_keep_sql }}); SELECT ROW_COUNT();"
   delegate_to: "{{ mailbox_mailcow_host }}"
   become: true
   vars:
     # '__none__' keeps the IN() list valid when every delegate has been removed.
     mailbox_keep_sql: >-
-      {% for d in (mailbox_delegates + ['__none__']) %}\"{{ d }}\"{% if not loop.last %},{% endif %}{% endfor %}
+      {% for d in (mailbox_delegates + ['__none__']) %}'{{ d }}'{% if not loop.last %},{% endif %}{% endfor %}
   register: mailbox_deleg_rec
   changed_when: (mailbox_deleg_rec.stdout | default('0') | trim) != '0'
   when: mailbox_delegates_declarative | bool

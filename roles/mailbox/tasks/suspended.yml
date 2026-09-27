@@ -41,11 +41,17 @@
 
     - name: "Mailbox | Sieve script already present?"
       ansible.builtin.command:
-        cmd: >-
-          docker exec {{ mailbox_mysql_container }} sh -c
-          'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e
-           "SELECT COUNT(*) FROM sieve_filters WHERE username=\"{{ mailbox_address }}\"
-            AND script_desc=\"{{ mailbox_sieve_name }}\""'
+        # SQL as its OWN argument: in a folded shell string the more-indented SQL lines
+        # kept their newlines and mysql got `-e` with nothing after it (every real run failed).
+        argv:
+          - docker
+          - exec
+          - "{{ mailbox_mysql_container }}"
+          - sh
+          - -c
+          - 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e "$1"'
+          - sh
+          - "SELECT COUNT(*) FROM sieve_filters WHERE username='{{ mailbox_address }}' AND script_desc='{{ mailbox_sieve_name }}'"
       register: mailbox_sieve_cnt
       changed_when: false
       check_mode: false

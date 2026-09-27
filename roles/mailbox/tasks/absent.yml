@@ -28,11 +28,17 @@
 
     - name: "Mailbox | Remove aliases"
       ansible.builtin.command:
-        cmd: >-
-          docker exec {{ mailbox_mysql_container }} sh -c
-          'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e
-           "DELETE FROM alias WHERE address=\"{{ item }}@{{ mailbox_at_domain }}\"
-              AND goto=\"{{ mailbox_address }}\"; SELECT ROW_COUNT();"'
+        # SQL as its OWN argument: in a folded shell string the more-indented SQL lines
+        # kept their newlines and mysql got `-e` with nothing after it (every real run failed).
+        argv:
+          - docker
+          - exec
+          - "{{ mailbox_mysql_container }}"
+          - sh
+          - -c
+          - 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e "$1"'
+          - sh
+          - "DELETE FROM alias WHERE address='{{ item }}@{{ mailbox_at_domain }}' AND goto='{{ mailbox_address }}'; SELECT ROW_COUNT();"
       loop: "{{ mailbox_aliases }}"
       register: mailbox_alias_del
       changed_when: (mailbox_alias_del.stdout | default('0') | trim) != '0'
@@ -40,12 +46,17 @@
 
     - name: "Mailbox | Remove delegate bcc + sender_acl grants"
       ansible.builtin.command:
-        cmd: >-
-          docker exec {{ mailbox_mysql_container }} sh -c
-          'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e
-           "DELETE FROM bcc_maps WHERE local_dest=\"{{ mailbox_address }}\";
-            DELETE FROM sender_acl WHERE send_as=\"{{ mailbox_address }}\";
-            SELECT ROW_COUNT();"'
+        # SQL as its OWN argument: in a folded shell string the more-indented SQL lines
+        # kept their newlines and mysql got `-e` with nothing after it (every real run failed).
+        argv:
+          - docker
+          - exec
+          - "{{ mailbox_mysql_container }}"
+          - sh
+          - -c
+          - 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mailcow -N -e "$1"'
+          - sh
+          - "DELETE FROM bcc_maps WHERE local_dest='{{ mailbox_address }}'; DELETE FROM sender_acl WHERE send_as='{{ mailbox_address }}'; SELECT ROW_COUNT();"
       register: mailbox_deleg_del
       changed_when: (mailbox_deleg_del.stdout | default('0') | trim) != '0'
       no_log: true
