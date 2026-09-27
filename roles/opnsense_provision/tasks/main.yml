@@ -46,10 +46,49 @@
     quiet: true
   when: opnsense_provision_vm.env | default('') != 'prod'
 
-- name: "Provision | Load the Proxmox API credentials"
+- name: "Provision | Is the Vault host reachable from here? (through its own connection)"
+  ansible.builtin.wait_for_connection:
+    timeout: 20
+    sleep: 5
+  register: opnsense_provision_vault_probe
+  failed_when: false
+  check_mode: false
+  delegate_to: "{{ opnsense_provision_vault_host }}"
+  become: false
+  when: opnsense_provision_vault_secrets | bool
+
+# Vault is the store of record for the Proxmox API token as well; the file is the
+# offline copy (playbooks/fw-offline-cache.yml rewrites it from Vault) for a rebuild
+# with Vault unreachable behind the firewall being rebuilt.
+- name: "Provision | Proxmox API credentials from Vault (best effort)"
+  when:
+    - opnsense_provision_vault_secrets | bool
+    - not (opnsense_provision_vault_probe.failed | default(false) | bool)
+  block:
+    - name: "Provision | Read the Proxmox API token"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ opnsense_provision_pve_vault_path }}"
+        vault_secret_optional: true
+
+    - name: "Provision | Keep it"
+      ansible.builtin.set_fact:
+        opnsense_provision_pve_vault: "{{ vault_secret_result }}"
+      no_log: true
+  rescue:
+    - name: "Provision | Vault read failed — the offline copy carries it"
+      ansible.builtin.set_fact:
+        opnsense_provision_pve_vault: {}
+
+- name: "Provision | Load the Proxmox API credentials (Vault, else the offline copy)"
   ansible.builtin.set_fact:
-    opnsense_provision_pve: "{{ (lookup('file', opnsense_provision_pve_secret) | from_json).fields }}"
+    opnsense_provision_pve: >-
+      {{ opnsense_provision_pve_vault
+         if (opnsense_provision_pve_vault | default({}) | length > 0)
+         else (lookup('file', opnsense_provision_pve_secret) | from_json).fields }}
   no_log: true
+
 
 # ── Decommission (state=absent) ──────────────────────────────────────────────────────────────────
 - name: "Provision | Decommission path — archive, destroy, stop here"
@@ -118,17 +157,6 @@
 # firewall), not with a TCP connect from the controller: the controller has no route to the
 # service network, so a raw port probe always says "unreachable" and the reads would be skipped
 # even while Vault answers perfectly through the hop.
-- name: "Provision | Is the Vault host reachable from here? (through its own connection)"
-  ansible.builtin.wait_for_connection:
-    timeout: 20
-    sleep: 5
-  register: opnsense_provision_vault_probe
-  failed_when: false
-  check_mode: false
-  delegate_to: "{{ opnsense_provision_vault_host }}"
-  become: false
-  when: opnsense_provision_vault_secrets | bool
-
 # Reachable is not the same as usable: Vault's own CLI resolves the Vault address through the
 # platform resolver, which may hold stale negative answers mid-rebuild. Any failure of the reads
 # (login, lookup, absent path) falls through to the break-glass files — the documented fallback —

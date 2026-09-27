@@ -15,6 +15,11 @@
 #             ansible-playbook playbooks/opnsense.yml --tags interfaces
 # Dry run:    ansible-playbook playbooks/opnsense.yml --check --diff
 
+# Keep the firewall-rebuild offline copies equal to Vault on every routine run
+# (skips cleanly when Vault is unreachable).
+- name: Refresh the firewall-rebuild offline copies from Vault
+  ansible.builtin.import_playbook: fw-offline-cache.yml
+
 - name: Open SSH tunnel to OPNsense API via Proxmox
   hosts: localhost
   gather_facts: false

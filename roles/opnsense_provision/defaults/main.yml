@@ -35,7 +35,9 @@ opnsense_provision_vault_paths:
   wan2: "{{ platform_env | default('prod') }}/net/isp-telenet"
   domain: "{{ platform_env | default('prod') }}/net/internal-domain"
 
-# Proxmox: API credentials come from the fabric secret store, never from the inventory.
+# Proxmox API credentials: Vault first; the file is the offline copy for a rebuild with
+# Vault unreachable (rewritten from Vault by playbooks/fw-offline-cache.yml). Never the inventory.
+opnsense_provision_pve_vault_path: "{{ platform_env | default('prod') }}/proxmox/admin"
 opnsense_provision_pve_secret: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric/infra-proxmox-poc.json"
 opnsense_provision_pve_node_host: "{{ groups['proxmox_nodes'] | first }}"     # inventory host, for the ISO upload
 opnsense_provision_validate_certs: false
