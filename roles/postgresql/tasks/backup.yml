@@ -7,19 +7,21 @@
     group: root
     mode: "0700"
 
-- name: "backup | Deploy pg-backup.sh (docker exec pg_dumpall)"
-  ansible.builtin.template:
-    src: pg-backup.sh.j2
-    dest: /usr/local/bin/pg-backup.sh
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: "backup | Daily pg_dumpall cron (root)"
-  ansible.builtin.cron:
-    name: "pg-backup"
-    cron_file: pg-backup
-    user: root
-    minute: "0"
-    hour: "2"
-    job: "/usr/local/bin/pg-backup.sh >> /var/log/pg-backup.log 2>&1"
+# Daily logical dump of the whole cluster (roles/host_job: systemd service + timer,
+# no script). One line, bash for pipefail so a failed pg_dumpall is not masked by
+# gzip; `%%` and `$$` are systemd's escapes for a literal % and $.
+- name: "backup | Daily pg_dumpall (roles/host_job)"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: pg-backup
+    host_job_description: "PostgreSQL logical backup (pg_dumpall, gzip)"
+    host_job_on_calendar: "*-*-* 02:00:00"
+    host_job_exec:
+      - >-
+        /bin/bash -c 'set -o pipefail; docker exec {{ pg_container_name }} pg_dumpall -U postgres
+        | gzip > {{ pg_backup_dir }}/all-$$(date +%%F).sql.gz'
+    host_job_retention:
+      - { path: "{{ pg_backup_dir }}", age: "{{ pg_backup_keep_days }}d" }
+    host_job_legacy_cron: pg-backup
+    host_job_legacy_script: /usr/local/bin/pg-backup.sh

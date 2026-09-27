@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+[Unit]
+Description={{ host_job_description or host_job_name }}
+{% if host_job_on_failure | bool %}
+OnFailure=systemd-failure-alert@%n.service
+{% endif %}
+{% if host_job_requires_mounts_for | length > 0 %}
+RequiresMountsFor={{ host_job_requires_mounts_for }}
+{% endif %}
+
+[Service]
+Type=oneshot
+WorkingDirectory={{ host_job_workdir }}
+TimeoutStartSec={{ host_job_timeout }}
+{% if host_job_runtime_directory | length > 0 %}
+RuntimeDirectory={{ host_job_runtime_directory }}
+RuntimeDirectoryMode=0700
+{% endif %}
+{% if host_job_environment_file | length > 0 %}
+EnvironmentFile={{ host_job_environment_file }}
+{% endif %}
+{% for line in host_job_exec %}
+ExecStart={{ line }}
+{% endfor %}

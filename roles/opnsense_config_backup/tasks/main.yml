@@ -41,63 +41,35 @@
     mode: "0600"
   no_log: true
 
-- name: "FW backup | Script"
-  ansible.builtin.template:
-    src: opnsense-config-backup.sh.j2
-    dest: "{{ opnsense_config_backup_script }}"
-    owner: root
-    group: root
-    mode: "0700"
-
-- name: "FW backup | systemd service + timer"
-  ansible.builtin.copy:
-    dest: "/etc/systemd/system/{{ item.name }}"
-    content: "{{ item.content }}"
-    owner: root
-    group: root
-    mode: "0644"
-  loop:
-    - name: opnsense-config-backup.service
-      content: |
-        [Unit]
-        Description=OPNsense config export (age-encrypted) to NFS
-        RequiresMountsFor={{ opnsense_config_backup_dest }}
-        [Service]
-        Type=oneshot
-        ExecStart={{ opnsense_config_backup_script }}
-    - name: opnsense-config-backup.timer
-      content: |
-        [Unit]
-        Description=Nightly OPNsense config export
-        [Timer]
-        OnCalendar={{ opnsense_config_backup_schedule }}
-        Persistent=true
-        RandomizedDelaySec=300
-        [Install]
-        WantedBy=timers.target
-  loop_control:
-    label: "{{ item.name }}"
-  notify: Reload systemd (FW backup)
-
-# This unit failed for 11 nights and nothing said so (#415/#580): the export was
-# never taken, and it recovered on its own without anyone knowing either way.
-- name: "FW backup | Install the failure notifier"
+# The nightly export (roles/host_job: systemd service + timer, no script). Steps run
+# in order: download → verify it is an OPNsense config → age-encrypt into daily/ →
+# on the 1st keep a monthly copy. Credentials come from the 0600 environment file
+# (${VAR} = systemd substitution; `$$`/`%%` = literal $ and % for bash/date).
+# Retention: daily by age; monthly by age (keep_monthly months).
+- name: "FW backup | Nightly export (roles/host_job)"
   ansible.builtin.include_role:
-    name: systemd_failure_alert
-
-- name: "FW backup | Report this unit when it fails"
-  ansible.builtin.include_role:
-    name: systemd_failure_alert
-    tasks_from: attach
+    name: host_job
   vars:
-    systemd_failure_alert_unit: opnsense-config-backup.service
-
-- name: "FW backup | Flush handlers before enabling"
-  ansible.builtin.meta: flush_handlers
-
-- name: "FW backup | Timer enabled + started"
-  ansible.builtin.systemd_service:
-    name: opnsense-config-backup.timer
-    enabled: true
-    state: started
-    daemon_reload: true
+    host_job_name: opnsense-config-backup
+    host_job_description: "OPNsense config export (age-encrypted) to NFS"
+    host_job_on_calendar: "{{ opnsense_config_backup_schedule }}"
+    host_job_randomized_delay: "300"
+    host_job_environment_file: "{{ opnsense_config_backup_env_file }}"
+    host_job_requires_mounts_for: "{{ opnsense_config_backup_dest }}"
+    host_job_runtime_directory: opnsense-config-backup
+    host_job_exec:
+      - >-
+        /usr/bin/curl -fsS --max-time 60 --resolve ${FW_RESOLVE} -u ${FW_KEY}:${FW_SECRET}
+        ${FW_URL}/api/core/backup/download/this -o /run/opnsense-config-backup/config.xml
+      - "/usr/bin/grep -q <opnsense> /run/opnsense-config-backup/config.xml"
+      - >-
+        /bin/bash -c 'umask 077; mkdir -p {{ opnsense_config_backup_dest }}/daily {{ opnsense_config_backup_dest }}/monthly;
+        age -r "$$AGE_RECIPIENT" -o {{ opnsense_config_backup_dest }}/daily/fw-config-$$(date +%%F).xml.age
+        /run/opnsense-config-backup/config.xml'
+      - >-
+        /bin/bash -c '[ "$$(date +%%d)" != 01 ] || cp -p {{ opnsense_config_backup_dest }}/daily/fw-config-$$(date +%%F).xml.age
+        {{ opnsense_config_backup_dest }}/monthly/'
+    host_job_retention:
+      - { path: "{{ opnsense_config_backup_dest }}/daily", age: "{{ opnsense_config_backup_keep_daily }}d" }
+      - { path: "{{ opnsense_config_backup_dest }}/monthly", age: "{{ (opnsense_config_backup_keep_monthly | int) * 31 }}d" }
+    host_job_legacy_script: "{{ opnsense_config_backup_script }}"

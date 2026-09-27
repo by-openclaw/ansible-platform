@@ -1,0 +1,26 @@
+---
+# ==============================================================================
+# Role: host_job — ONE way to run a scheduled job on a host: a oneshot systemd
+# service + timer rendered by Ansible. No script is ever deployed: each step is a
+# single ExecStart line (they run in order); a one-line `sh -c '…'` only where a
+# pipe, redirect or date-stamped name is unavoidable (USER rule, 2026-09-27).
+# Retention is systemd-tmpfiles (age), never `find -delete`. A failed run reaches
+# the alert mail through OnFailure= (roles/systemd_failure_alert).
+# ==============================================================================
+host_job_name: ""                    # REQUIRED — unit name: <name>.service / <name>.timer
+host_job_description: ""
+host_job_exec: []                    # REQUIRED — ExecStart lines, in order
+host_job_on_calendar: "*-*-* 02:00:00"
+host_job_randomized_delay: "0"
+host_job_persistent: true            # catch up a run missed while the host was down
+host_job_workdir: "/"
+host_job_environment_file: ""        # e.g. a 0600 env file the caller renders
+host_job_timeout: "1h"
+host_job_on_failure: true            # OnFailure=systemd-failure-alert@%n.service (installs the notifier)
+host_job_runtime_directory: ""       # private /run/<name> for temp files, removed after each run
+host_job_requires_mounts_for: ""     # e.g. an NFS backup target
+# systemd-tmpfiles age rules: [{path: /var/backups/x, age: 7d}] → files older are removed
+host_job_retention: []
+# The cron job + script this replaces: cron removed, script archived beside it.
+host_job_legacy_cron: ""
+host_job_legacy_script: ""

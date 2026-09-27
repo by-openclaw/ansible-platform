@@ -87,33 +87,37 @@
     state: directory
     mode: "0700"
 
-- name: "vault_backup | Install the snapshot script"
-  ansible.builtin.template:
-    src: vault-snapshot.sh.j2
-    dest: /usr/local/bin/vault-snapshot.sh
-    mode: "0755"
+# The daily raft snapshot (roles/host_job: systemd service + timer, no script). Steps
+# run in order; the token is read from its 0600 file at run time. `-` = a failed
+# renew is tolerated (as before); `%%`/`$$` are systemd's escapes for % and $.
+- name: "vault_backup | Daily raft snapshot (roles/host_job)"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: vault-snapshot
+    host_job_description: "Vault raft snapshot"
+    host_job_on_calendar: "{{ vault_backup_schedule }}"
+    host_job_exec:
+      - >-
+        -/bin/bash -c 'docker exec -e VAULT_TOKEN="$$(cat {{ vault_backup_token_file }})"
+        {{ vault_container_name }} vault token renew >/dev/null'
+      - >-
+        /bin/bash -c 'docker exec -e VAULT_TOKEN="$$(cat {{ vault_backup_token_file }})"
+        {{ vault_container_name }} vault operator raft snapshot save /tmp/vault.snap'
+      - >-
+        /bin/bash -c 'docker cp {{ vault_container_name }}:/tmp/vault.snap
+        {{ vault_backup_dir }}/vault-$$(date -u +%%Y%%m%%dT%%H%%M%%SZ).snap'
+      - "/usr/bin/docker exec {{ vault_container_name }} rm -f /tmp/vault.snap"
+      - >-
+        /bin/bash -c 'chmod 600 {{ vault_backup_dir }}/vault-*.snap;
+        test -s "$$(ls -1t {{ vault_backup_dir }}/vault-*.snap | head -1)"'
+    # vault_backup_keep daily snapshots = that many days of age.
+    host_job_retention:
+      - { path: "{{ vault_backup_dir }}", age: "{{ vault_backup_keep }}d" }
+    host_job_legacy_script: /usr/local/bin/vault-snapshot.sh
 
-- name: "vault_backup | Install the systemd units"
-  ansible.builtin.template:
-    src: "{{ item }}.j2"
-    dest: "/etc/systemd/system/{{ item }}"
-    mode: "0644"
-  loop:
-    - vault-snapshot.service
-    - vault-snapshot.timer
-
-- name: "vault_backup | Enable + start the daily timer"
-  ansible.builtin.systemd:
-    name: vault-snapshot.timer
-    enabled: true
+- name: "vault_backup | Take a snapshot now (verify the chain works)"
+  ansible.builtin.systemd_service:
+    name: vault-snapshot.service
     state: started
-    daemon_reload: true
-
-- name: "vault_backup | Take an initial snapshot now (verify the chain works)"
-  ansible.builtin.command: /usr/local/bin/vault-snapshot.sh
-  register: _firstsnap
-  changed_when: true
-
-- name: "vault_backup | Initial snapshot result"
-  ansible.builtin.debug:
-    msg: "{{ _firstsnap.stdout }}"
+  when: not ansible_check_mode
