@@ -258,19 +258,30 @@
       when: pbs_encryption_enabled | bool
       no_log: true
 
-    - name: "PVE-wire | Back up the encryption key to the controller secret store (0600)"
-      ansible.builtin.copy:
-        dest: "{{ (pbs_secret_dir | expanduser) }}/fabric/pbs-encryption-key.json"
-        mode: "0600"
-        content: |
-          {{ {'fields': {
-               'encryption_key': (pbs_enc_key.content | b64decode),
-               'note': 'PVE->PBS client-side encryption key. LOSS = UNRECOVERABLE BACKUPS. Mirror to Vault ({{ pbs_encryption_vault_path }}).'
-             }} | to_nice_json }}
-      delegate_to: localhost
-      become: false
+    # LOSS OF THIS KEY = UNRECOVERABLE BACKUPS. Vault holds the off-node copy (and
+    # its KV history); it is written only when it differs from the node's key.
+    - name: "PVE-wire | The off-node copy of the encryption key (Vault, optional)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ pbs_encryption_vault_path }}"
+        vault_secret_optional: true
       when: pbs_encryption_enabled | bool
-      no_log: true
+
+    - name: "PVE-wire | Back up the encryption key to Vault (only when it differs)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ pbs_encryption_vault_path }}"
+        vault_secret_init: "{{ _pbs_key_doc }}"
+        vault_secret_force_fields: "{{ _pbs_key_doc }}"
+        _pbs_key_doc:
+          encryption_key: "{{ pbs_enc_key.content | b64decode }}"
+          note: "PVE->PBS client-side encryption key. LOSS = UNRECOVERABLE BACKUPS."
+      when:
+        - pbs_encryption_enabled | bool
+        - pbs_enc_key.content is defined
+        - (vault_secret_result.encryption_key | default('')) != (pbs_enc_key.content | b64decode)
 
     - name: "PVE-wire | Existing backup jobs"
       ansible.builtin.command:

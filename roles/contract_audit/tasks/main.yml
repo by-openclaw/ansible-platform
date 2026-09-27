@@ -3,6 +3,25 @@
 # this role never mutates a host. It scores each check PASS/FAIL/SKIP and, when
 # contract_audit_enforce is true, fails the play if any check FAILs.
 
+# NAM-17-nb needs the NetBird API principal's name, which lives in Vault. Read
+# once for the play, only when a NetBird host is in it; bind the NAME only.
+- name: "Contract-audit | NetBird API principal (Vault, once)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ platform_env }}/netbird/automation"
+    vault_secret_optional: true
+  run_once: true
+  when: (groups['netbird'] | default([]) | intersect(ansible_play_hosts)) | length > 0
+
+- name: "Contract-audit | Bind the principal name on every host"
+  ansible.builtin.set_fact:
+    contract_audit_netbird_principal: "{{ (vault_secret_result | default({})).service_user | default('none') }}"
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  loop: "{{ ansible_play_hosts }}"
+  run_once: true
+
 - name: "Contract-audit | Run each applicable probe (read-only)"
   ansible.builtin.shell: "{{ item.probe }}"
   args:

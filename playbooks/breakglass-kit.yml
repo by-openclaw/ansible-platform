@@ -21,6 +21,13 @@
   gather_facts: false
   vars_files:
     - ../roles/vault/defaults/main.yml
+  vars:
+    # The paper kit must work with Vault sealed, so Vault-held items are exported
+    # into it here (the kit folder is the one place they sit outside Vault).
+    kit_from_vault:
+      - { path: "{{ platform_env }}/break-glass/os", name: "02-os-password-by-research.json" }
+      - { path: "{{ platform_env }}/break-glass/ssh-passphrase", name: "04-ssh-passphrase-by-research.json" }
+      - { path: "{{ platform_env }}/break-glass/opnsense", name: "05-opnsense-password-by-research.json" }
   tasks:
     - name: "Kit | Vault login (ansible-deploy AppRole; root fallback)"
       ansible.builtin.include_role:
@@ -31,24 +38,28 @@
         vault_root_token: "{{ vault_deploy_token }}"
       no_log: true
 
-    - name: "Kit | Read the break-glass ssh passphrase"
+    - name: "Kit | Read each Vault-held kit item"
       ansible.builtin.command:
         argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
-               "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-format=json", "{{ platform_env }}/break-glass/ssh-passphrase"]
-      register: kit_bg_pass
+               "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-format=json", "{{ item.path }}"]
+      loop: "{{ kit_from_vault }}"
+      loop_control: { label: "{{ item.name }}" }
+      register: kit_vault_reads
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
       failed_when: false
       no_log: true
 
-    - name: "Kit | Write it into the print kit (controller, 0600)"
+    - name: "Kit | Write them into the print kit (controller, 0600)"
       ansible.builtin.copy:
-        dest: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/print-kit/04-ssh-passphrase-by-research.json"
+        dest: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/print-kit/{{ item.item.name }}"
         mode: "0600"
-        content: "{{ (kit_bg_pass.stdout | from_json).data.data | to_nice_json }}"  # pragma: allowlist secret
+        content: "{{ (item.stdout | from_json).data.data | to_nice_json }}"  # pragma: allowlist secret
       delegate_to: localhost
       become: false
-      when: kit_bg_pass.rc == 0
+      loop: "{{ kit_vault_reads.results }}"
+      loop_control: { label: "{{ item.item.name }}" }
+      when: item.rc == 0
       no_log: true
 
 - name: "Assemble the break-glass print kit"
@@ -62,7 +73,7 @@
       - src: "{{ secret_root }}/vault-init.json"
         name: "01-vault-unseal-shares.json"
         what: "Vault unseal shares (5, threshold 3) + root token"
-      - src: "{{ secret_root }}/fabric/os-by-research.json"
+      - src: "{{ kit_dir }}/02-os-password-by-research.json"   # exported from Vault above
         name: "02-os-password-by-research.json"
         what: "break-glass password ({org}) — OS SSH AND the PVE WebUI pam realm"
       - src: "{{ ansible_env.HOME }}/.ssh/id_ed25519_{{ platform_org }}"
@@ -76,7 +87,7 @@
         name: "04-ssh-passphrase-by-research.json"
         what: "break-glass SSH key passphrase (exported from Vault by its pass)"
       # Added by the PVE / OPNsense identity passes when those local admins are created:
-      - src: "{{ secret_root }}/fabric/os-opnsense-by-research.json"
+      - src: "{{ kit_dir }}/05-opnsense-password-by-research.json"   # exported from Vault above
         name: "05-opnsense-password-by-research.json"
         what: "OPNsense local {{ platform_org }} WebUI password"
   tasks:

@@ -173,10 +173,8 @@ contract_audit_service_checks:
 
   - id: NAM-17-nb
     desc: "NetBird API principal is a svc-{function}-{env} service user"
-    probe: >-
-      grep -o 'svc-netbird-[a-z]*'
-      {{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric/netbird-automation.json 2>/dev/null
-      | head -1 || echo none
+    # The principal's NAME only (never its token), read from Vault by tasks/main.yml.
+    probe: "echo '{{ contract_audit_netbird_principal | default('none') }}'"
     expect: "svc-netbird-"
     groups: ["netbird"]
     delegate_localhost: true

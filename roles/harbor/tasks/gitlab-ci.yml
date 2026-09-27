@@ -36,12 +36,16 @@
   no_log: true
 
 # --- Robot account ------------------------------------------------------------
-- name: "Ci | Stat the robot secret on the controller"
-  ansible.builtin.stat:
-    path: "{{ harbor_secret_dir }}/{{ harbor_ci_robot_secret_file }}"
-  delegate_to: localhost
-  become: false
-  register: harbor_ci_secret_stat
+- name: "Ci | The robot secret (Vault, optional)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ harbor_ci_robot_vault_path }}"
+    vault_secret_optional: true
+
+- name: "Ci | Do we still hold it?"
+  ansible.builtin.set_fact:
+    harbor_ci_secret_held: "{{ vault_secret_result.token | default('') | length > 0 }}"
 
 - name: "Ci | List existing robot accounts"
   ansible.builtin.uri:
@@ -73,7 +77,7 @@
     status_code: [200]
   when:
     - harbor_ci_robot_existing | length > 0
-    - not harbor_ci_secret_stat.stat.exists
+    - not (harbor_ci_secret_held | bool)
   changed_when: true
   no_log: true
 
@@ -107,25 +111,22 @@
             - { resource: artifact, action: read }
     status_code: [201]
   register: harbor_ci_robot_create
-  when: (harbor_ci_robot_existing | length == 0) or (not harbor_ci_secret_stat.stat.exists)
+  when: (harbor_ci_robot_existing | length == 0) or (not (harbor_ci_secret_held | bool))
   changed_when: true
   no_log: true
 
-- name: "Ci | Persist the robot credentials (fabric, 0600)"
+- name: "Ci | Store the robot credentials (Vault, overwrite)"
+  ansible.builtin.include_role:
+    name: vault_secret
   vars:
-    harbor_ci_robot_record:
-      fields:
-        host: "{{ harbor_fqdn }}"
-        username: "{{ harbor_ci_robot_create.json.name }}"
-        token: "{{ harbor_ci_robot_create.json.secret }}"  # pragma: allowlist secret
-        project: "{{ harbor_ci_project }}"
-  ansible.builtin.copy:
-    dest: "{{ harbor_secret_dir }}/{{ harbor_ci_robot_secret_file }}"
-    mode: "0600"
-    content: "{{ harbor_ci_robot_record | to_nice_json }}"
-  delegate_to: localhost
-  become: false
-  no_log: true
+    vault_secret_path: "{{ harbor_ci_robot_vault_path }}"
+    vault_secret_init: "{{ _robot }}"
+    vault_secret_force_fields: "{{ _robot }}"
+    _robot:
+      host: "{{ harbor_fqdn }}"
+      username: "{{ harbor_ci_robot_create.json.name }}"
+      token: "{{ harbor_ci_robot_create.json.secret }}"  # pragma: allowlist secret
+      project: "{{ harbor_ci_project }}"
   when: harbor_ci_robot_create is defined and harbor_ci_robot_create is changed
 
 - name: "Ci | Report robot state (no secrets)"

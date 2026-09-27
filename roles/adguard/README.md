@@ -43,7 +43,7 @@ AdGuard is the per-client policy layer; recursion/encryption happen on the FW.
 | `adguard_renew_days` | `30` | Renew when cert expires within N days. |
 | `adguard_lego_version` | `4.21.0` | Pinned; bump as needed. Re-installs only if on-disk lego is absent or `< 5.x`. |
 | `adguard_cf_vault_path` | `{env}/cloudflare/{zone}` | Vault KV path of the zone secret (keys `api_token`, `acme_email`); read via the `vault_secret` role. |
-| `adguard_secret` | `~/.openclaw/workspace/infra/secrets/app-adguard-prod.json` | Read-or-generated admin creds. |
+| `adguard_admin_vault_path` | `{env}/adguard/admin` | Admin creds in Vault (generated once). |
 | `adguard_vlan_clients` | 10 VLANs | Per-VLAN persistent clients; parental on `iot`+`cctv`, safe-search on `iot`. |
 
 ## Upstream caveat
