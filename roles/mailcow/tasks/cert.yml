@@ -1,123 +1,32 @@
 ---
 # ==============================================================================
-# Role: mailcow — wildcard TLS for the mail ports via Cloudflare DNS-01 (lego)
-# Mirrors roles/traefik + roles/adguard. mailcow runs SKIP_LETS_ENCRYPT=y (acme
+# Role: mailcow — wildcard TLS for the mail ports via Cloudflare DNS-01 (roles/lego_cert,
+# the same role as traefik + adguard). mailcow runs SKIP_LETS_ENCRYPT=y (acme
 # container off) and serves whatever sits in data/assets/ssl, so we issue the
 # *.{{ platform_domain }} wildcard here and drop it in, then reload the mail daemons.
 # DNS-01 needs only outbound Cloudflare API — independent of WAN/public exposure.
 # ==============================================================================
 
-- name: "cert | Ensure base dependencies present"
-  ansible.builtin.apt:
-    name: [ca-certificates, curl, tar, cron]
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
-
-- name: "cert | Ensure /etc/lego directories exist"
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0700"
-  loop:
-    - /etc/lego
-    - /etc/lego/cert
-
-# --- lego (pinned) ------------------------------------------------------------
-- name: "cert | Detect installed lego version"
-  ansible.builtin.command: /usr/local/bin/lego --version
-  register: mailcow_lego_check
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-  changed_when: false
-  failed_when: false
-
-- name: "cert | Determine whether the pinned lego version needs (re)install"
-  ansible.builtin.set_fact:
-    mailcow_lego_needs_install: >-
-      {{ mailcow_lego_check.rc != 0
-         or mailcow_lego_version not in mailcow_lego_check.stdout }}
-
-- name: "cert | Download + install lego (pinned)"
-  when: mailcow_lego_needs_install | bool
-  block:
-    - name: "cert | Download lego release tarball"
-      ansible.builtin.get_url:
-        url: "{{ mailcow_lego_url }}"
-        dest: /tmp/lego_linux_amd64.tar.gz
-        mode: "0644"
-    - name: "cert | Extract lego to /usr/local/bin"
-      ansible.builtin.unarchive:
-        src: /tmp/lego_linux_amd64.tar.gz
-        dest: /usr/local/bin
-        remote_src: true
-        include: [lego]
-        owner: root
-        group: root
-        mode: "0755"
-
-- name: "cert | Template Cloudflare API credentials (root, 0600)"
-  ansible.builtin.template:
-    src: cloudflare.env.j2
-    dest: /etc/lego/cloudflare.env
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-
-# --- issue / renew the wildcard ----------------------------------------------
-- name: "cert | Check for an existing wildcard certificate"
-  ansible.builtin.stat:
-    path: "{{ mailcow_cert_crt }}"
-  register: mailcow_cert_stat
-
-- name: "cert | Issue wildcard certificate (first run)"
-  ansible.builtin.command:
-    cmd: >-
-      /usr/local/bin/lego
-      --email {{ mailcow_acme_email }}
-      --accept-tos
-      --dns cloudflare
-      --dns.propagation-wait 60s
-      --domains "*.{{ mailcow_domain }}"
-      --domains "{{ mailcow_domain }}"
-      run
-    creates: "{{ mailcow_cert_crt }}"
-  environment:
-    CF_DNS_API_TOKEN: "{{ mailcow_cf_token }}"
-    CF_ZONE_API_TOKEN: "{{ mailcow_cf_token }}"
-    LEGO_PATH: /etc/lego/cert
-  when: not mailcow_cert_stat.stat.exists
-  no_log: true
-
-# `lego renew` needs the account e-mail exactly like `run` does — without it lego
-# exits 1 ("You have to pass an account (email address)"). This task used to hide
-# that behind failed_when: false; the wildcard silently expired on 2026-09-17.
-# Now: same flags as the issue step, a real failure is a real failure, and
-# "changed" means lego actually wrote a new certificate.
-- name: "cert | Renew wildcard certificate (subsequent runs)"
-  ansible.builtin.command:
-    cmd: >-
-      /usr/local/bin/lego
-      --email {{ mailcow_acme_email }}
-      --accept-tos
-      --dns cloudflare
-      --dns.propagation-wait 60s
-      --domains "*.{{ mailcow_domain }}"
-      --domains "{{ mailcow_domain }}"
-      renew
-      --days {{ mailcow_renew_days }}
-    chdir: /etc/lego
-  environment:
-    CF_DNS_API_TOKEN: "{{ mailcow_cf_token }}"
-    CF_ZONE_API_TOKEN: "{{ mailcow_cf_token }}"
-    LEGO_PATH: /etc/lego/cert
-  when: mailcow_cert_stat.stat.exists
-  register: mailcow_renew
-  changed_when: false   # the honest change signal is the cert.pem copy step below
-  failed_when: mailcow_renew.rc != 0
-  no_log: true
+# The certificate (issue once, renew by systemd timer) — roles/lego_cert. A renewal
+# that replaced the cert starts lego-deploy-mailcow: install cert.pem + key.pem into
+# mailcow's ssl dir and restart the three daemons that serve it (no script).
+- name: "cert | Wildcard certificate via roles/lego_cert"
+  ansible.builtin.include_role:
+    name: lego_cert
+  vars:
+    lego_cert_id: mailcow
+    lego_cert_email: "{{ mailcow_acme_email }}"
+    lego_cert_domains: ["*.{{ mailcow_domain }}", "{{ mailcow_domain }}"]
+    lego_cert_cf_token: "{{ mailcow_cf_token }}"
+    lego_cert_renew_days: "{{ mailcow_renew_days }}"
+    lego_cert_on_calendar: "*-*-* 03:41:00"
+    lego_cert_deploy_workdir: "{{ mailcow_install_dir }}"
+    lego_cert_deploy_steps:
+      - "/usr/bin/install -m 0644 {{ mailcow_cert_crt }} {{ mailcow_ssl_dir }}/cert.pem"
+      - "/usr/bin/install -m 0600 {{ mailcow_cert_key }} {{ mailcow_ssl_dir }}/key.pem"
+      - "/usr/bin/docker compose restart postfix-mailcow dovecot-mailcow nginx-mailcow"
+    lego_cert_legacy_cron: lego-renew-mailcow
+    lego_cert_legacy_script: /etc/lego/renew-mailcow-cert.sh
 
 # --- deploy into mailcow's bring-your-own cert path (idempotent on content) ----
 - name: "cert | Ensure mailcow ssl dir exists"
@@ -142,21 +51,3 @@
     mode: "0600"
   no_log: true
   notify: Reload mailcow mail TLS
-
-# --- renewal automation (cron + script) --------------------------------------
-- name: "cert | Deploy the renewal script /etc/lego/renew-mailcow-cert.sh"
-  ansible.builtin.template:
-    src: renew-mailcow-cert.sh.j2
-    dest: /etc/lego/renew-mailcow-cert.sh
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: "cert | Install daily renewal cron (03:41)"
-  ansible.builtin.cron:
-    name: "lego-renew-mailcow"
-    cron_file: lego-renew-mailcow
-    user: root
-    minute: "41"
-    hour: "3"
-    job: "/etc/lego/renew-mailcow-cert.sh >> /var/log/lego-renew.log 2>&1"

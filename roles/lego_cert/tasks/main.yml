@@ -1,0 +1,134 @@
+---
+- name: "lego_cert | Required inputs"
+  ansible.builtin.assert:
+    that:
+      - lego_cert_id | length > 0
+      - lego_cert_email | length > 0
+      - lego_cert_domains | length > 0
+      - lego_cert_cf_token | length > 0
+    fail_msg: "lego_cert needs lego_cert_id, lego_cert_email, lego_cert_domains and lego_cert_cf_token"
+    quiet: true
+
+# The SAME flags for run and renew: account, TOS, DNS provider, propagation, domains.
+- name: "lego_cert | Command line (shared by the first run and every renewal)"
+  ansible.builtin.set_fact:
+    lego_cert_argv: >-
+      {{ ['/usr/local/bin/lego', '--email', lego_cert_email, '--accept-tos', '--dns', 'cloudflare',
+          '--dns.propagation-wait', lego_cert_propagation_wait]
+         + (lego_cert_domains | map('regex_replace', '^', '--domains=') | list) }}
+    lego_cert_hook: >-
+      {{ ('systemctl start lego-deploy-' ~ lego_cert_id ~ '.service')
+         if (lego_cert_deploy_steps | length > 0) else lego_cert_renew_hook }}
+
+# --- lego itself (pinned) --------------------------------------------------------
+- name: "lego_cert | Installed lego version"
+  ansible.builtin.command: /usr/local/bin/lego --version
+  register: lego_cert_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false   # read-only
+
+- name: "lego_cert | Install lego {{ lego_cert_version }} (absent or another version)"
+  when: lego_cert_installed.rc != 0 or lego_cert_version not in lego_cert_installed.stdout
+  block:
+    - name: "lego_cert | What the download + extract need"
+      ansible.builtin.apt:
+        name: [ca-certificates, tar]
+        state: present
+
+    - name: "lego_cert | Download the release"
+      ansible.builtin.get_url:
+        url: "{{ lego_cert_url }}"
+        dest: "/tmp/lego_v{{ lego_cert_version }}_linux_amd64.tar.gz"
+        mode: "0644"
+
+    - name: "lego_cert | Extract the binary"
+      ansible.builtin.unarchive:
+        src: "/tmp/lego_v{{ lego_cert_version }}_linux_amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [lego]
+        owner: root
+        group: root
+        mode: "0755"
+
+# --- layout + credentials ----------------------------------------------------------
+- name: "lego_cert | /etc/lego layout (root, 0700)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - "{{ lego_cert_dir }}"
+    - "{{ lego_cert_path }}"
+
+- name: "lego_cert | Cloudflare credentials (root, 0600)"
+  ansible.builtin.template:
+    src: cloudflare.env.j2
+    dest: "{{ lego_cert_dir }}/cloudflare.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+# --- first issuance ----------------------------------------------------------------
+- name: "lego_cert | Issue the certificate (first run only)"
+  ansible.builtin.command:
+    argv: "{{ lego_cert_argv + ['run'] }}"
+    creates: "{{ lego_cert_crt }}"
+    chdir: "{{ lego_cert_dir }}"
+  environment:
+    CF_DNS_API_TOKEN: "{{ lego_cert_cf_token }}"
+    CF_ZONE_API_TOKEN: "{{ lego_cert_cf_token }}"
+    LEGO_PATH: "{{ lego_cert_path }}"
+  no_log: true
+
+# --- renewal: systemd, no script ---------------------------------------------------
+- name: "lego_cert | Deploy unit (started by the renew hook)"
+  ansible.builtin.template:
+    src: lego-deploy.service.j2
+    dest: "/etc/systemd/system/lego-deploy-{{ lego_cert_id }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  register: lego_cert_deploy_unit
+  when: lego_cert_deploy_steps | length > 0
+
+- name: "lego_cert | Renewal service + timer"
+  ansible.builtin.template:
+    src: "lego-renew.{{ item }}.j2"
+    dest: "/etc/systemd/system/lego-renew-{{ lego_cert_id }}.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [service, timer]
+  register: lego_cert_units
+
+- name: "lego_cert | Reload systemd"
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: (lego_cert_units is changed) or (lego_cert_deploy_unit is changed)
+
+- name: "lego_cert | Timer enabled + running"
+  ansible.builtin.systemd_service:
+    name: "lego-renew-{{ lego_cert_id }}.timer"
+    enabled: true
+    state: started
+  # --check never wrote a NEW unit, so there is nothing to start yet.
+  when: not ansible_check_mode or (lego_cert_units is not changed)
+
+# --- retire the per-role cron + script this replaces -------------------------------
+- name: "lego_cert | Remove the old renewal cron"
+  ansible.builtin.cron:
+    name: "{{ lego_cert_legacy_cron }}"
+    cron_file: "{{ lego_cert_legacy_cron }}"
+    state: absent
+  when: lego_cert_legacy_cron | length > 0
+
+- name: "lego_cert | Archive the old renewal script"
+  ansible.builtin.command:
+    cmd: "mv {{ lego_cert_legacy_script }} {{ lego_cert_dir }}/retired-{{ lego_cert_legacy_script | basename }}"
+    removes: "{{ lego_cert_legacy_script }}"
+  when: lego_cert_legacy_script | length > 0
