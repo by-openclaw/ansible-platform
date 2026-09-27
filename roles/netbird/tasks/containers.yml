@@ -94,6 +94,7 @@
     log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
 
 - name: "containers | Run netbird-management (control plane + API)"
+  no_log: true   # env carries the PostgreSQL DSN passwords
   community.docker.docker_container:
     name: netbird-management
     image: "{{ netbird_management_image }}"
@@ -117,6 +118,8 @@
     volumes:
       - "{{ netbird_mgmt_volume }}:/var/lib/netbird"
       - "{{ netbird_build_dir }}/management.json:/etc/netbird/management.json:ro"
+      # verify-full against the platform CA: the host trust store, read-only.
+      - "{{ netbird_pg_sslrootcert }}:{{ netbird_pg_sslrootcert }}:ro"
     command:
       - "--port"
       - "{{ netbird_mgmt_port }}"
@@ -128,8 +131,16 @@
       - "--single-account-mode-domain={{ netbird_single_account_mode_domain }}"
       - "--dns-domain={{ netbird_mgmt_dns_domain }}"
     env:
-      NETBIRD_STORE_ENGINE_POSTGRES_DSN: ""
+      NETBIRD_STORE_ENGINE_POSTGRES_DSN: >-
+        host={{ netbird_pg_host }} port={{ netbird_pg_port }} user={{ netbird_pg_user }}
+        password={{ netbird_pg_password }} dbname={{ netbird_pg_database }}
+        sslmode=verify-full sslrootcert={{ netbird_pg_sslrootcert }}
       NETBIRD_STORE_ENGINE_MYSQL_DSN: ""
+      NB_ACTIVITY_EVENT_STORE_ENGINE: "postgres"
+      NB_ACTIVITY_EVENT_POSTGRES_DSN: >-
+        host={{ netbird_pg_host }} port={{ netbird_pg_port }} user={{ netbird_events_pg_user }}
+        password={{ netbird_events_pg_password }} dbname={{ netbird_events_pg_database }}
+        sslmode=verify-full sslrootcert={{ netbird_pg_sslrootcert }}
     log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
 
 - name: "containers | Run netbird-signal (peer signalling; gRPC h2c + ws)"
