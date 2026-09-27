@@ -6,26 +6,16 @@
 # ==============================================================================
 
 # --- 1. Runner authentication token (GitLab 17+ instance runner) — Vault store --
-- name: "Runner | Authenticate to Vault (ansible-deploy AppRole; root fallback)"
+- name: "Runner | The auth token from Vault (optional: absent until first minted)"
   ansible.builtin.include_role:
-    name: vault_login
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ gitlab_runner_token_vault_path }}"
+    vault_secret_optional: true
 
-- name: "Runner | Use the deploy token"
+- name: "Runner | Stored token (empty = mint one)"
   ansible.builtin.set_fact:
-    gitlab_runner_vault_token: "{{ vault_deploy_token }}"
-  no_log: true
-
-- name: "Runner | Read the auth token from Vault (if already minted)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ gitlab_runner_vault_token }} vault
-      vault kv get -mount=secret -format=json {{ gitlab_runner_token_vault_path }}
-  delegate_to: "{{ gitlab_runner_vault_host }}"
-  become: true
-  register: gitlab_runner_token_get
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-  changed_when: false
-  failed_when: false
+    gitlab_runner_token_stored: "{{ vault_secret_result.token | default('') }}"
   no_log: true
 
 - name: "Runner | Mint an instance runner + token on the GitLab server (first run)"
@@ -44,26 +34,22 @@
   register: gitlab_runner_mint
   changed_when: true
   no_log: true
-  when: gitlab_runner_token_get.rc != 0
+  when: gitlab_runner_token_stored | length == 0
 
-- name: "Runner | Store the minted auth token in Vault (stdin, no argv)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -i -e VAULT_TOKEN={{ gitlab_runner_vault_token }} vault
-      vault kv put -mount=secret {{ gitlab_runner_token_vault_path }} -
-    stdin: "{{ {'token': (gitlab_runner_mint.stdout_lines | select('match', '^glrt') | first)} | to_json }}"
-  delegate_to: "{{ gitlab_runner_vault_host }}"
-  become: true
-  changed_when: true
-  no_log: true
-  when: gitlab_runner_token_get.rc != 0
+- name: "Runner | Store the minted auth token in Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ gitlab_runner_token_vault_path }}"
+    vault_secret_init: { token: "{{ gitlab_runner_mint.stdout_lines | select('match', '^glrt') | first }}" }
+  when: gitlab_runner_token_stored | length == 0 and gitlab_runner_mint.stdout_lines is defined
 
 - name: "Runner | Resolve the auth token (Vault)"
   ansible.builtin.set_fact:
     gitlab_runner_token: >-
-      {{ (gitlab_runner_mint.stdout_lines | select('match', '^glrt') | first)
-         if (gitlab_runner_token_get.rc != 0)
-         else (gitlab_runner_token_get.stdout | from_json).data.data.token }}
+      {{ gitlab_runner_token_stored
+         if (gitlab_runner_token_stored | length > 0)
+         else (gitlab_runner_mint.stdout_lines | default([]) | select('match', '^glrt') | first | default('')) }}
   no_log: true
 
 # --- 2. Docker (executor spawns clean job containers) --------------------------

@@ -5,21 +5,16 @@
 # env) and kept in Vault (prod/nextcloud/api-token). Binds nextcloud_api_auth
 # {user, token} for the admin HTTP APIs (Mail provisioning, Talk OCS, DAV sharing).
 # ==============================================================================
-- name: "admin-api | Vault deploy token"
+- name: "admin-api | The admin API token from Vault (optional: absent until first minted)"
   ansible.builtin.include_role:
-    name: vault_login
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ nextcloud_vault_api_token_path }}"
+    vault_secret_optional: true
 
-- name: "admin-api | Read the admin API token from Vault (tolerate absent)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} vault
-      vault kv get -mount=secret -format=json {{ nextcloud_vault_api_token_path }}
-  delegate_to: "{{ groups['vault'] | first }}"
-  become: true
-  register: nextcloud_api_token_read
-  failed_when: false
-  changed_when: false
-  check_mode: false
+- name: "admin-api | Stored token (empty = mint one)"
+  ansible.builtin.set_fact:
+    nextcloud_api_token_stored: "{{ vault_secret_result.token | default('') }}"
   no_log: true
 
 - name: "admin-api | Mint the admin app password once (occ, login password via env)"
@@ -28,32 +23,28 @@
   environment:
     NC_PASS: "{{ nextcloud_secrets.admin_password }}"
   register: nextcloud_api_token_mint
-  when: nextcloud_api_token_read.rc != 0
+  when: nextcloud_api_token_stored | length == 0
   changed_when: true
   no_log: true
 
-- name: "admin-api | Store the admin app password in Vault (stdin, no argv)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -i -e VAULT_TOKEN={{ vault_deploy_token }} vault
-      vault kv put -mount=secret {{ nextcloud_vault_api_token_path }} -
-    stdin: >-
-      {{ {'uid': nextcloud_secrets.admin_user,
-          'token': (nextcloud_api_token_mint.stdout | regex_search('[A-Za-z0-9]{40,}')),
-          'name': 'ansible-admin-api',
-          'note': 'Nextcloud admin app password for Ansible admin-API calls (Mail provisioning)'} | to_json }}
-  delegate_to: "{{ groups['vault'] | first }}"
-  become: true
-  when: nextcloud_api_token_read.rc != 0
-  changed_when: true
-  no_log: true
+- name: "admin-api | Store the admin app password in Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ nextcloud_vault_api_token_path }}"
+    vault_secret_init:
+      uid: "{{ nextcloud_secrets.admin_user }}"
+      token: "{{ nextcloud_api_token_mint.stdout | regex_search('[A-Za-z0-9]{40,}') }}"
+      name: ansible-admin-api
+      note: "Nextcloud admin app password for Ansible admin-API calls (Mail provisioning)"
+  when: nextcloud_api_token_stored | length == 0 and nextcloud_api_token_mint.stdout is defined
 
 - name: "admin-api | Bind the admin API credentials"
   ansible.builtin.set_fact:
     nextcloud_api_auth:
       user: "{{ nextcloud_secrets.admin_user }}"
       token: >-
-        {{ (nextcloud_api_token_read.stdout | from_json).data.data.token
-           if nextcloud_api_token_read.rc == 0
-           else (nextcloud_api_token_mint.stdout | regex_search('[A-Za-z0-9]{40,}')) }}
+        {{ nextcloud_api_token_stored
+           if (nextcloud_api_token_stored | length > 0)
+           else (nextcloud_api_token_mint.stdout | default('') | regex_search('[A-Za-z0-9]{40,}')) }}
   no_log: true
