@@ -84,17 +84,16 @@
   no_log: true
   when: (netbird_rp_keys.json | selectattr('name', 'equalto', netbird_router_setup_key_name) | list | length) == 0
 
-# The plaintext key is returned ONLY on create. Persist it on the peer so a later
-# (re)enroll can read it — a key that already existed server-side but has no local
-# file can't be recovered (delete it in the dashboard to regenerate).
-- name: "routing-peer | Persist the freshly-created setup key on the peer (0600)"
-  ansible.builtin.copy:
-    dest: "{{ netbird_router_setup_key_file }}"
-    content: "{{ netbird_rp_key_new.json.key }}"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
+# The plaintext key is returned ONLY on create, so it is kept in Vault for any later
+# (re)enroll. A key that exists server-side but was never stored cannot be recovered
+# (delete it in the dashboard to regenerate).
+- name: "routing-peer | Store the freshly-created setup key (Vault, overwrite)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ netbird_router_setup_key_vault_path }}"
+    vault_secret_init: { key: "{{ netbird_rp_key_new.json.key }}" }
+    vault_secret_force_fields: { key: "{{ netbird_rp_key_new.json.key }}" }
   when: netbird_rp_key_new is defined and netbird_rp_key_new.json is defined
 
 # --- Peer-side: no-hairpin + forwarding + client + enroll -----------------------
@@ -158,18 +157,36 @@
   changed_when: false
   failed_when: false
 
-- name: "routing-peer | Read the setup key for enrollment"
+# Before Vault the key sat in a file on the peer. If Vault has none yet, that copy
+# seeds it once (get-or-create); after that Vault is the only source.
+- name: "routing-peer | Pre-Vault setup key on the peer (migration source)"
   ansible.builtin.slurp:
-    src: "{{ netbird_router_setup_key_file }}"
-  register: netbird_rp_key_slurp
+    src: "{{ netbird_router_setup_key_legacy_file }}"
+  register: netbird_rp_key_legacy
+  check_mode: false  # read-only
+  failed_when: false
   no_log: true
-  when: "'Management: Connected' not in (netbird_rp_status.stdout | default(''))"
+
+- name: "routing-peer | The setup key for enrollment (Vault; seeded from the peer copy once)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ netbird_router_setup_key_vault_path }}"
+    vault_secret_init: >-
+      {{ {'key': netbird_rp_key_legacy.content | b64decode | trim}
+         if (netbird_rp_key_legacy.content | default('') | length > 0) else {} }}
+    vault_secret_optional: true   # no peer copy and nothing in Vault yet → {} (not enrolled)
+
+- name: "routing-peer | Bind it"
+  ansible.builtin.set_fact:
+    netbird_rp_setup_key: "{{ vault_secret_result.key | default('') }}"
+  no_log: true
 
 - name: "routing-peer | Enroll this host as a routing peer (netbird up)"
   ansible.builtin.command: >-
     netbird up
     --management-url {{ netbird_http_protocol }}://{{ netbird_fqdn }}
-    --setup-key {{ netbird_rp_key_slurp.content | b64decode | trim }}
+    --setup-key {{ netbird_rp_setup_key }}
     --wireguard-port {{ netbird_host_peer_wg_port }}
     {{ '--external-ip-map ' ~ (netbird_rp_external_ip_map | join(',')) if netbird_rp_external_ip_map | length else '' }}
   register: netbird_rp_up

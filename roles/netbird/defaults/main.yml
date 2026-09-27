@@ -52,11 +52,11 @@ netbird_relay_port: 33080                        # relay (wss)
 netbird_stun_port: 3478                          # coturn STUN/TURN (host network)
 
 # --- Authentik OIDC (the goauthentik.io doc's setup.env, mapped here) -----------
-# These two secret files already exist (the Authentik side is provisioned):
-#   app-oidc-netbird.json     -> fields.client_id / client_secret (public client)
-#   netbird-authentik-sa.json -> fields.username (NetBird) / password (app token)
-netbird_oidc_secret_file: "fabric/app-oidc-netbird.json"
-netbird_authentik_sa_file: "fabric/netbird-authentik-sa.json"
+# Both live in Vault (the Authentik side provisions them):
+#   {env}/netbird/oidc         -> client_id / client_secret (public client)
+#   {env}/netbird/authentik-sa -> username (NetBird) / password (app token)
+netbird_oidc_vault_path: "{{ platform_env }}/netbird/oidc"
+netbird_sa_vault_path: "{{ platform_env }}/netbird/authentik-sa"
 netbird_oidc_app_slug: "netbird"
 netbird_oidc_base: "https://{{ platform_service_fqdns.authentik }}/application/o/{{ netbird_oidc_app_slug }}"
 netbird_oidc_config_endpoint: "{{ netbird_oidc_base }}/.well-known/openid-configuration"
@@ -105,16 +105,12 @@ netbird_build_dir: "/opt/netbird"
 netbird_mgmt_volume: "netbird-mgmt"
 netbird_signal_volume: "netbird-signal"
 
-# --- Controller secret store ----------------------------------------------------
-netbird_secret_dir: "~/.openclaw/workspace/infra/secrets"
-netbird_core_secret_file: "fabric/netbird-core.json"    # datastore_enc_key / relay_auth_secret / turn_password
+# --- Secrets: Vault only ----------------------------------------------------------
+netbird_core_vault_path: "{{ platform_env }}/netbird/core"   # datastore_enc_key / relay_auth_secret / turn_password
 # NetBird automation token. The role uses a DEDICATED service user (never a human's
-# PAT) for all API automation (routing peer + tiers). Bootstrap (one-time): NetBird
-# has no token-bootstrap, so the first token must come from a human owner — drop it
-# into netbird-setup.json after the first Authentik login. automation-token.yml then
-# mints the service-user token (netbird-automation.json) and the human PAT can be
-# revoked. Once the service token exists, the bootstrap PAT is no longer needed.
-netbird_setup_secret_file: "netbird-setup.json"         # bootstrap PAT (human, one-time)
+# PAT) for all API automation (routing peer + tiers). automation-token.yml bootstraps
+# it non-humanly (Authentik SA client-credentials JWT), mints the service-user token
+# and keeps it in Vault (netbird_automation_vault_path).
 netbird_automation_user: "svc-netbird-{{ platform_env | default('prod') }}"  # naming/0002 §3 svc-{function}-{env}
 # Contract: only the service user may hold a NetBird API token. Any PAT on a
 # non-service user is revoked at the store (the API can't address the legacy
@@ -124,7 +120,7 @@ netbird_enforce_no_human_pat: true
 netbird_pg_container: "postgres"       # shared cluster PG container on the DB host
 netbird_pg_database: "netbird"
 netbird_pg_delegate: "{{ groups['postgresql'] | first }}"    # where the shared postgres runs
-netbird_automation_token_file: "fabric/netbird-automation.json"  # service-user PAT (role-managed)
+netbird_automation_vault_path: "{{ platform_env }}/netbird/automation"   # service-user PAT (role-managed)
 netbird_pat_expire_days: 365
 
 # --- coturn toggle (optional optimisation; relay covers hard-NAT regardless) -----
@@ -139,7 +135,8 @@ netbird_routing_peer_enabled: true
 netbird_api_port: "{{ netbird_mgmt_port }}"      # role API automation hits mgmt:33073
 netbird_routers_group: "routers"
 netbird_router_setup_key_name: "router-key"
-netbird_router_setup_key_file: "/root/.nb_setup_key"
+netbird_router_setup_key_vault_path: "{{ platform_env }}/netbird/router-setup-key"   # plaintext is returned only on create
+netbird_router_setup_key_legacy_file: "/root/.nb_setup_key"   # pre-Vault copy on the peer: migrated once, never written again
 netbird_rp_client_config: "/var/lib/netbird/default.json"   # the client's own settings (WgPort, NATExternalIPs)
 netbird_local_stun_nft: "/etc/netbird/local-stun.nft"          # host-local STUN/TURN redirect (routing-peer.yml)
 netbird_route_network_id: "internal-lan"

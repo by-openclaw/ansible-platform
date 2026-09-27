@@ -11,16 +11,26 @@
 # Notifies once per user (state file), so a frequent timer is not noisy.
 # ==============================================================================
 
-- name: "approval-notify | Load the Resend SMTP credentials"
+- name: "approval-notify | Resend SMTP credentials (Vault, read)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ netbird_approval_smtp_vault_path }}"
+
+- name: "approval-notify | Bind them"
   ansible.builtin.set_fact:
-    netbird_resend: >-
-      {{ (lookup('file', netbird_secret_dir + '/' + netbird_approval_smtp_secret_file)
-          | from_json).fields }}
+    netbird_resend: "{{ vault_secret_result }}"
   no_log: true
+
+- name: "approval-notify | The service-user API token (Vault, read)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ netbird_automation_vault_path }}"
 
 - name: "approval-notify | Ship the API token to the host (0600)"
   ansible.builtin.copy:
-    src: "{{ netbird_secret_dir }}/{{ netbird_automation_token_file }}"
+    content: "{{ {'fields': vault_secret_result} | to_nice_json }}"
     dest: "{{ netbird_approval_token_path }}"
     owner: root
     group: root
