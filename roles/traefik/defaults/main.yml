@@ -73,7 +73,7 @@ traefik_lego_url: "https://github.com/go-acme/lego/releases/download/v{{ traefik
 traefik_renew_days: 30
 
 # Cloudflare zone secret (token + ACME e-mail) — Vault, same path roles/adguard uses
-traefik_cf_vault_path: "{{ platform_env | default('prod') }}/cloudflare/{{ platform_domain | replace('.', '-') }}"
+traefik_cf_vault_path: "{{ platform_env }}/cloudflare/{{ platform_domain | replace('.', '-') }}"
 
 # lego cert output (wildcard) — Traefik reads these via the file provider
 traefik_cert_crt: "/etc/lego/cert/certificates/_.{{ traefik_domain }}.crt"
@@ -96,7 +96,7 @@ traefik_crowdsec_plugin_url: "https://github.com/maxlerebourg/crowdsec-bouncer-t
 traefik_crowdsec_plugin_sha256: "a50cdfe37d67c48be571417a26d8c5a2b28e4b91e5b1ed3b1ea2bcb0e6b4aa38"  # pragma: allowlist secret — release archive checksum, not a secret
 traefik_plugins_dir: "{{ traefik_conf_dir }}/plugins-local"
 traefik_crowdsec_lapi_scheme: "http"
-traefik_crowdsec_lapi_host: "{{ hostvars[groups['crowdsec'] | first].ansible_host }}:8080"        # central LAPI (lxc-crowdsec-01)
+traefik_crowdsec_lapi_host: "{{ hostvars[groups['crowdsec'] | first].ansible_host }}:8080"        # central LAPI (the crowdsec group's host)
 traefik_crowdsec_mode: "stream"                       # cache decisions locally; resilient
 traefik_crowdsec_keyfile: "/etc/traefik/crowdsec-lapi.key"
 traefik_crowdsec_vault_path: "{{ platform_env }}/crowdsec/bouncer-traefik"   # api_key for the Traefik bouncer

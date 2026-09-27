@@ -8,13 +8,13 @@
 portainer_version: "2.45.1"
 portainer_server_image: "portainer/portainer-ce:{{ portainer_version }}-alpine"
 portainer_agent_image: "portainer/agent:{{ portainer_version }}"
-portainer_env: "{{ platform_env | default('prod') }}"
+portainer_env: "{{ platform_env }}"
 portainer_fqdn: "{{ platform_service_fqdns.portainer }}"
 portainer_dir: "/opt/portainer"
 portainer_listen_ip: "{{ ansible_host }}"
 portainer_http_port: 9000                # server UI/API (HTTP; TLS is the platform Traefik's)
 portainer_agent_port: 9001               # Docker agent on each docker_hosts member
-portainer_console_bridge_cidr: "172.17.0.0/16"   # the console container reaches the agent on ITS OWN host from the Docker bridge, not from the SVC address
+portainer_console_bridge_cidr: "{{ platform_docker_bridge_cidr4 }}"   # the console container reaches the agent on ITS OWN host from the Docker bridge, not from the SVC address
 portainer_k8s_agent_nodeport: 30778      # Kubernetes agent, exposed by the cluster
 portainer_k8s_namespace: "portainer-agent"
 portainer_k8s_host: "{{ groups['k3s'] | first }}"

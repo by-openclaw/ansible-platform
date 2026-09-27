@@ -13,11 +13,11 @@
 # (identity/0004 §1) — set state: disabled.
 # ==============================================================================
 identity_orchestrator_people: []          # see the schema in README/new-service docs
-identity_orchestrator_env: "{{ platform_env | default('prod') }}"
+identity_orchestrator_env: "{{ platform_env }}"
 identity_orchestrator_domain: "{{ platform_domain }}"
 identity_orchestrator_ak_host: "{{ hostvars[groups['authentik'] | first].ansible_host }}"
 identity_orchestrator_ak_port: 9000
-identity_orchestrator_ak_vault_path: "{{ platform_env | default('prod') }}/authentik/admin"   # bootstrap_token (Vault, no file)
+identity_orchestrator_ak_vault_path: "{{ platform_env }}/authentik/admin"   # bootstrap_token (Vault, no file)
 
 # --- Person mailboxes (mailcow API) — the mailbox exists BEFORE the first SSO login
 #     so Nextcloud Mail provisioning, aliases and the welcome mail work on day one.
@@ -27,8 +27,8 @@ identity_orchestrator_mailbox_quota_mb: 5120              # = the mailcow OIDC t
 identity_orchestrator_mailbox_authsource: "generic-oidc"  # SSO-bound: the mailbox password is never used
 identity_orchestrator_mailcow_host: "{{ groups['mailcow'] | first }}"
 identity_orchestrator_mailcow_api: "https://{{ mailcow_listen_ip | default(hostvars[groups['mailcow'] | first].ansible_host) }}:{{ mailcow_https_port | default(8443) }}/api/v1"
-identity_orchestrator_mailcow_vault_path: "{{ platform_env | default('prod') }}/mailcow/admin"  # api_key
-identity_orchestrator_mailcow_s3_vault_path: "{{ platform_env | default('prod') }}/mailcow/s3"  # leaver export → bucket mailcow-backups
+identity_orchestrator_mailcow_vault_path: "{{ platform_env }}/mailcow/admin"  # api_key
+identity_orchestrator_mailcow_s3_vault_path: "{{ platform_env }}/mailcow/s3"  # leaver export → bucket mailcow-backups
 identity_orchestrator_mailcow_vmail_dir: "/var/lib/docker/volumes/mailcowdockerized_vmail-vol-1/_data"
 identity_orchestrator_mailcow_mysql_container: "mailcowdockerized-mysql-mailcow-1"
 identity_orchestrator_mailbox_export_dir: "/var/backups/mailcow/leavers"   # staging on the mailcow host, removed after upload

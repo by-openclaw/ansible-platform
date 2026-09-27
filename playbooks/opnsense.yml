@@ -119,7 +119,7 @@
         # The service mailbox lives where Mailcow lives (one Mailcow, on prod): `platform_mail_env`
         # / `platform_mail_domain` (inventories/<env>/group_vars/all/deployment.yml) default to the
         # deployment's own env/domain and are pinned to prod on test. No test/mail/* secret exists.
-        vault_secret_path: "{{ platform_mail_env | default(platform_env | default('prod')) }}/mail/opnsense"
+        vault_secret_path: "{{ platform_mail_env | default(platform_env) }}/mail/opnsense"
         vault_secret_init: {}
       when:
         - "('monit' not in (opn_skip_families | default([])))"
@@ -168,7 +168,7 @@
         # is the deployment's own zone unless the catalog pins another one (opn_acme.zone_secret).
         vault_secret_path: >-
           {{ (hostvars[groups['opnsense'][0]].opn_acme | default({})).zone_secret
-             | default((platform_env | default('prod')) ~ '/cloudflare/'
+             | default((platform_env) ~ '/cloudflare/'
                        ~ (platform_mail_domain | default(platform_domain) | replace('.', '-'))) }}
         vault_secret_init: {}
       tags: [acme, certs, dyndns, dns]

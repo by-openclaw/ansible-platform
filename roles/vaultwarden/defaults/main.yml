@@ -31,21 +31,21 @@ vaultwarden_pg_user: "vaultwarden"
 
 # Controller secret store.
 # Vault KV paths (security/0001 secret/{env}/{service}/{key}) — no controller files.
-vaultwarden_vault_path: "{{ platform_env | default('prod') }}/vaultwarden/admin"        # admin_token
-vaultwarden_pg_vault_path: "{{ platform_env | default('prod') }}/vaultwarden/db-pgsql"  # minted by postgres_db
+vaultwarden_vault_path: "{{ platform_env }}/vaultwarden/admin"        # admin_token
+vaultwarden_pg_vault_path: "{{ platform_env }}/vaultwarden/db-pgsql"  # minted by postgres_db
 
 # --- Authentik OIDC SSO (wired only when the client secret file exists) ---------
 # Vaultwarden's built-in SSO (>=1.33). Access is gated IdP-side by the
 # vaultwarden-admins group (authentik restrict_to_group). The master password
 # still protects the vault (E2EE) — SSO only handles authentication.
-vaultwarden_oidc_vault_path: "{{ platform_env | default('prod') }}/vaultwarden/oidc"    # minted by roles/authentik
+vaultwarden_oidc_vault_path: "{{ platform_env }}/vaultwarden/oidc"    # minted by roles/authentik
 vaultwarden_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 vaultwarden_oidc_app_slug: "vaultwarden"
 
 # SMTP via Resend — required so SSO account email verification (and password
 # hints) actually send. Without it vaultwarden asks for an email confirmation
 # that is never delivered. Wired only when the secret file exists.
-vaultwarden_smtp_vault_path: "{{ platform_env | default('prod') }}/resend/{{ platform_org }}"
+vaultwarden_smtp_vault_path: "{{ platform_env }}/resend/{{ platform_org }}"
 
 # Persistent volume (attachments, RSA keys, icon cache, sends).
 vaultwarden_data_volume: "vaultwarden-data"
