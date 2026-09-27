@@ -6,9 +6,8 @@
 # the admin auth NON-HUMANLY with an OAuth2 client-credentials JWT (Authentik
 # OIDC client app-oidc-netbird + the netbird-authentik-sa service account), then
 # GET-or-CREATE a dedicated NetBird service user (is_service_user=true, admin)
-# and mint its token. The token is persisted (fabric working copy → synced to
-# Vault by secrets-to-vault) and REUSED; it is only (re)minted when absent or no
-# longer valid. No human is ever in the loop.
+# and mint its token. The token is kept in Vault and REUSED; it is only (re)minted
+# when absent or no longer valid. No human is ever in the loop.
 #
 # Sets `netbird_auth_header` = "Token <service-user PAT>", consumed by
 # routing-peer / vpn-tiers / account-settings.
@@ -38,21 +37,20 @@
   no_log: true
 
 # --- 1) Reuse a persisted service-user token when it still authenticates ---------
-- name: "automation-token | Stat the persisted service-user token"
-  ansible.builtin.stat:
-    path: "{{ netbird_secret_dir }}/{{ netbird_automation_token_file }}"
-  delegate_to: localhost
-  become: false
-  register: netbird_at_stat
+- name: "automation-token | The persisted service-user token (Vault, optional)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ netbird_automation_vault_path }}"
+    vault_secret_optional: true
 
-- name: "automation-token | Load the persisted token (only if flagged a service user)"
+- name: "automation-token | Keep it only if flagged a service user"
   ansible.builtin.set_fact:
     netbird_saved_pat: >-
-      {{ (lookup('file', netbird_secret_dir + '/' + netbird_automation_token_file) | from_json).fields.personal_access_token
-         if ((lookup('file', netbird_secret_dir + '/' + netbird_automation_token_file) | from_json).fields.is_service_user | default(false) | bool)
+      {{ vault_secret_result.personal_access_token | default('')
+         if (vault_secret_result.is_service_user | default(false) | bool)
          else '' }}
   no_log: true
-  when: netbird_at_stat.stat.exists
 
 - name: "automation-token | Verify the saved token authenticates"
   ansible.builtin.uri:
@@ -138,21 +136,22 @@
   no_log: true
   when: netbird_auth_header is not defined
 
-- name: "automation-token | Persist the service-user token (0600 working copy → Vault via sync)"
-  ansible.builtin.copy:
-    dest: "{{ netbird_secret_dir }}/{{ netbird_automation_token_file }}"
-    mode: "0600"
-    content: >-
-      {{ {'fields': {'service_user': netbird_automation_user,
-                     'user_id': netbird_su_uid,
-                     'personal_access_token': netbird_su_tok.json.plain_token,
-                     'is_service_user': true,
-                     '_note': 'Dedicated NetBird service user (is_service_user=true); token minted by ansible via the non-human Authentik SA JWT bootstrap.'}}
-         | to_nice_json }}
-  delegate_to: localhost
-  become: false
-  no_log: true
-  when: netbird_auth_header is not defined
+- name: "automation-token | Persist the service-user token (Vault, overwrite)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ netbird_automation_vault_path }}"
+    vault_secret_init: "{{ _nb_tok }}"
+    vault_secret_force_fields: "{{ _nb_tok }}"
+    _nb_tok:
+      service_user: "{{ netbird_automation_user }}"
+      user_id: "{{ netbird_su_uid }}"
+      personal_access_token: "{{ netbird_su_tok.json.plain_token }}"
+      is_service_user: true
+      _note: "Dedicated NetBird service user (is_service_user=true); token minted by ansible via the non-human Authentik SA JWT bootstrap."
+  when:
+    - netbird_auth_header is not defined
+    - netbird_su_tok.json is defined
 
 - name: "automation-token | Adopt the freshly minted service-user token"
   ansible.builtin.set_fact:
