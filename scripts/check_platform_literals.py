@@ -12,7 +12,7 @@ PATTERNS = {
     # roles/hardening's postfix template and a default('ops@by-systems.be') fallback
     # were invisible to the check meant to catch exactly that.
     "domain literal": re.compile(r"by-(research|systems)\.be"),
-    "org literal": re.compile(r"(?<![a-z0-9_-])by-(research|systems)(?![a-z0-9.-])"),
+    "org literal": re.compile(r"(?<![a-zA-Z0-9_-])(?i:by-(research|systems))(?![a-zA-Z0-9.-])"),
     "identity fallback": re.compile(r"default\((['\"])(by-(research|systems)(\.be)?)\1\)"),
     # A missing inventory value must fail, never silently fall back to prod's.
     "env fallback": re.compile(r"platform_env\s*\|\s*default\("),
