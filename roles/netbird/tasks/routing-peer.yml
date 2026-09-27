@@ -105,6 +105,35 @@
     line: "{{ netbird_traefik_ip }} {{ netbird_fqdn }}"
     state: present
 
+# The pin above sends {{ netbird_fqdn }}:{{ netbird_stun_port }} (STUN/TURN) to
+# Traefik, which does not serve it → ICE gathering timed out every few minutes.
+# coturn is on this host: redirect this host's own packets to it (own nft table).
+- name: "routing-peer | Local STUN/TURN redirect — nft table"
+  ansible.builtin.template:
+    src: netbird-local-stun.nft.j2
+    dest: "{{ netbird_local_stun_nft }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: netbird_rp_stun_nft
+
+- name: "routing-peer | Local STUN/TURN redirect — systemd unit"
+  ansible.builtin.template:
+    src: netbird-local-stun.service.j2
+    dest: /etc/systemd/system/netbird-local-stun.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: netbird_rp_stun_unit
+
+- name: "routing-peer | Local STUN/TURN redirect — enable + (re)load"
+  ansible.builtin.systemd_service:
+    name: netbird-local-stun.service
+    enabled: true
+    state: "{{ 'restarted' if (netbird_rp_stun_nft is changed or netbird_rp_stun_unit is changed) else 'started' }}"
+    daemon_reload: "{{ netbird_rp_stun_unit is changed }}"
+  when: not ansible_check_mode or (netbird_rp_stun_unit is not changed)
+
 - name: "routing-peer | Enable IP forwarding (router must forward LAN traffic)"
   ansible.posix.sysctl:
     name: "{{ item }}"
