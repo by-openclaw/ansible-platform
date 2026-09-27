@@ -40,27 +40,11 @@
     mode: "0644"
   register: onlyoffice_compose_file
 
-- name: "ONLYOFFICE | Ensure Compose v2 (Debian standalone docker-compose)"
-  ansible.builtin.apt:
-    name: docker-compose
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
-
-- name: "ONLYOFFICE | Pull the pinned image"
-  community.docker.docker_image:
-    name: "{{ onlyoffice_image }}"
-    source: pull
-
-- name: "ONLYOFFICE | Start / reconcile the stack"
-  ansible.builtin.command:
-    cmd: docker-compose up -d --remove-orphans
-    chdir: "{{ onlyoffice_dir }}"
-  register: onlyoffice_up
-  changed_when: >-
-    'Started' in (onlyoffice_up.stderr | default(''))
-    or 'Created' in (onlyoffice_up.stderr | default(''))
-    or 'Recreat' in (onlyoffice_up.stderr | default(''))
+- name: "ONLYOFFICE | Start / reconcile the stack (roles/compose_stack)"
+  ansible.builtin.include_role:
+    name: compose_stack
+  vars:
+    compose_stack_dir: "{{ onlyoffice_dir }}"
 
 - name: "ONLYOFFICE | Wait for the Document Server health check"
   ansible.builtin.uri:
