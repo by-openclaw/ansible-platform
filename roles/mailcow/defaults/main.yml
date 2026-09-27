@@ -148,7 +148,7 @@ mailcow_oidc_template_attributes:
   acl_quarantine_notification: "1"
   acl_quarantine_category: "1"
   acl_app_passwds: "1"
-mailcow_oidc_secret_file: "fabric/app-oidc-mailcow.json"
+mailcow_oidc_vault_path: "{{ platform_env }}/mailcow/oidc"   # the authentik role mints it
 
 # --- Web UI exposure (Traefik) — public + rate-limited (SOGo webmail needs
 #     roaming access; mailcow's own OIDC login gates it). Matches nextcloud. -----
@@ -193,9 +193,8 @@ mailcow_repo_dir: "{{ lookup('env', 'HOME') }}/repos/ansible-platform"  # contro
 mailcow_backup_ansible_bin: "{{ lookup('env', 'HOME') }}/.local/bin/ansible-playbook"  # cron has no ~/.local/bin in PATH
 mailcow_backup_log_dir: "{{ lookup('env', 'HOME') }}/.local/state/ansible"            # control-node log of the nightly run
 
-# --- Secrets (controller-side, written 0600 to the secret folder) --------------
-mailcow_secret_dir: "~/.openclaw/workspace/infra/secrets"
-mailcow_secret_file: "fabric/mailcow.json" # DBROOT/DBPASS/REDISPASS/API key (generated)
+# --- Secrets (Vault only) ---------------------------------------------------------
+mailcow_vault_path: "{{ platform_env }}/mailcow/admin"   # DBROOT/DBPASS/REDISPASS/API key (get-or-create)
 
 # --- Safety gate: the live `docker compose up` only runs when explicitly enabled.
 #     Standing up a PUBLIC mail server is outward-facing → keep false until the
