@@ -21,10 +21,9 @@
 cloudflare_dns_token: ""   # set by the playbook pre-play from Vault; empty = refuse to run
 cloudflare_dns_zone: "{{ platform_domain }}"
 
-# Telenet static WAN IPs (public; mirror catalog host4/6_wan_pub). Could move to
-# vault (vault_telenet_ipv4/ipv6) — kept inline to match the existing catalog.
-cloudflare_dns_apex_v4: "{{ platform_public_ipv4 | default('213.214.47.222') }}"
-cloudflare_dns_apex_v6: "{{ platform_public_ipv6 | default('2a02:1802:21::5') }}"
+# Public WAN addresses: the inventory is the single source (deployment.yml).
+cloudflare_dns_apex_v4: "{{ platform_public_ipv4 }}"
+cloudflare_dns_apex_v6: "{{ platform_public_ipv6 }}"
 
 # mailcow mail TXT payloads for {{ platform_domain }}. Public DNS data, not secrets. DKIM is
 # sourced from mailcow `GET /api/v1/get/dkim/{{ platform_domain }}` → `dkim_txt` (update here
@@ -64,9 +63,7 @@ cloudflare_dns_records:
   # receive mail → the mail host (single MX)
   - {record: "@", type: MX, value: "{{ platform_service_fqdns.mailcow }}", priority: 10, state: present, solo: true}
   # SPF — STRICT (-all hard-fail). `mx` authorises the MX host's A+AAAA (dual-stack,
-  # Telenet) — exactly one SPF record is allowed (RFC 7208), so remove the older
-  # IPv4-only SPF that pre-dated this and would otherwise cause a permerror.
-  - {record: "@", type: TXT, value: "v=spf1 ip4:213.214.47.222 -all", state: absent}
+  # Telenet). Exactly one SPF record is allowed (RFC 7208).
   - {record: "@", type: TXT, value: "v=spf1 mx -all", state: present}
   # DKIM (selector "dkim", 2048-bit) — value in cloudflare_dns_mailcow_dkim above.
   - {record: "dkim._domainkey", type: TXT, value: "{{ cloudflare_dns_mailcow_dkim }}", state: present, solo: true}

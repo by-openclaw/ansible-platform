@@ -30,14 +30,14 @@ opnsense_provision_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/
 opnsense_provision_vault_secrets: true
 opnsense_provision_vault_host: "{{ vault_secret_host | default(groups['vault'] | first) }}"   # probed before any read
 opnsense_provision_vault_paths:
-  genesis: "{{ platform_env | default('prod') }}/opnsense/oob-admin"
-  pppoe: "{{ platform_env | default('prod') }}/net/isp-proximus-pppoe"
-  wan2: "{{ platform_env | default('prod') }}/net/isp-telenet"
-  domain: "{{ platform_env | default('prod') }}/net/internal-domain"
+  genesis: "{{ platform_env }}/opnsense/oob-admin"
+  pppoe: "{{ platform_env }}/net/isp-proximus-pppoe"
+  wan2: "{{ platform_env }}/net/isp-telenet"
+  domain: "{{ platform_env }}/net/internal-domain"
 
 # Proxmox API credentials: Vault first; the file is the offline copy for a rebuild with
 # Vault unreachable (rewritten from Vault by playbooks/fw-offline-cache.yml). Never the inventory.
-opnsense_provision_pve_vault_path: "{{ platform_env | default('prod') }}/proxmox/admin"
+opnsense_provision_pve_vault_path: "{{ platform_env }}/proxmox/admin"
 opnsense_provision_pve_secret: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/fabric/infra-proxmox-poc.json"
 opnsense_provision_pve_node_host: "{{ groups['proxmox_nodes'] | first }}"     # inventory host, for the ISO upload
 opnsense_provision_validate_certs: false
@@ -67,5 +67,5 @@ opnsense_provision_seed_timeout: 600
 # --- Appliance sshd follows the platform SSH baseline (no API on 26.x → seed-owned) ---------
 # Port from the single source (platform_ssh_port); bound to the management plane only. A profile
 # that sets ssh_port / ssh_interfaces itself wins; these are the defaults every firewall gets.
-opnsense_provision_ssh_port: "{{ platform_ssh_port | default(22222) }}"
+opnsense_provision_ssh_port: "{{ platform_ssh_port }}"
 opnsense_provision_ssh_interfaces: ["lan"]   # seed interface names (lan = the OOB plane)

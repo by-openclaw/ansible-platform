@@ -56,16 +56,16 @@ ciso_assistant_db_user: "{{ ciso_assistant_service }}"
 ciso_assistant_db_host: "{{ groups['postgresql'] | first }}.{{ platform_domain }}"
 ciso_assistant_db_port: 5432
 ciso_assistant_db_sslmode: "verify-full"
-ciso_assistant_db_vault_path: "{{ platform_env | default('prod') }}/{{ ciso_assistant_service }}/db-pgsql"
+ciso_assistant_db_vault_path: "{{ platform_env }}/{{ ciso_assistant_service }}/db-pgsql"
 
 # --- evidence in S3 (SeaweedFS), never on the guest's disk --------------------------------------
 ciso_assistant_s3_bucket: "{{ ciso_assistant_service }}"
 ciso_assistant_s3_endpoint: "https://{{ platform_service_fqdns.seaweedfs }}"
-ciso_assistant_s3_vault_path: "{{ platform_env | default('prod') }}/{{ ciso_assistant_service }}/s3"
+ciso_assistant_s3_vault_path: "{{ platform_env }}/{{ ciso_assistant_service }}/s3"
 
 # --- application secrets + mail -----------------------------------------------------------------
-ciso_assistant_vault_path: "{{ platform_env | default('prod') }}/{{ ciso_assistant_service }}/app"
-ciso_assistant_mail_vault_path: "{{ platform_env | default('prod') }}/mail/{{ ciso_assistant_service }}"
+ciso_assistant_vault_path: "{{ platform_env }}/{{ ciso_assistant_service }}/app"
+ciso_assistant_mail_vault_path: "{{ platform_env }}/mail/{{ ciso_assistant_service }}"
 ciso_assistant_superuser_email: "{{ (platform_people | selectattr('platform_owner', 'defined') | selectattr('platform_owner') | first).email }}"
 
 # --- observability (infra/0006, infra/0007) -----------------------------------------------------
@@ -88,7 +88,7 @@ ciso_assistant_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 # what ends up in logs and in the app's own advertised configuration.
 ciso_assistant_oidc_issuer: "{{ ciso_assistant_authentik_base }}/application/o/{{ ciso_assistant_oidc_slug }}"
 ciso_assistant_oidc_redirect_uri: "https://{{ ciso_assistant_fqdn }}/api/accounts/oidc/{{ ciso_assistant_oidc_provider_id }}/login/callback/"
-ciso_assistant_oidc_vault_path: "{{ platform_env | default('prod') }}/{{ ciso_assistant_service }}/oidc"
+ciso_assistant_oidc_vault_path: "{{ platform_env }}/{{ ciso_assistant_service }}/oidc"
 # Local login stays available alongside SSO: this is the tool that documents the break-glass
 # procedure, so it must not be the one service that locks its own administrators out when the
 # IdP is down. Set force_sso true only once the break-glass path is proven elsewhere.

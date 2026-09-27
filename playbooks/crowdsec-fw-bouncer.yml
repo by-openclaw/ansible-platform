@@ -18,7 +18,7 @@
       ansible.builtin.include_role:
         name: vault_secret
       vars:
-        vault_secret_path: "{{ hostvars[_fw].crowdsec_fw_bouncer_vault_api | default((platform_env | default('prod')) ~ '/opnsense/api') }}"
+        vault_secret_path: "{{ hostvars[_fw].crowdsec_fw_bouncer_vault_api | default((platform_env) ~ '/opnsense/api') }}"
     - name: "Vault | hand the API token over"
       ansible.builtin.set_fact:
         crowdsec_fw_bouncer_api:
@@ -32,7 +32,7 @@
       ansible.builtin.include_role:
         name: vault_secret
       vars:
-        vault_secret_path: "{{ (platform_env | default('prod')) ~ '/crowdsec/bouncer-opnsense' }}"
+        vault_secret_path: "{{ (platform_env) ~ '/crowdsec/bouncer-opnsense' }}"
     - name: "Vault | hand the bouncer api_key over"
       ansible.builtin.set_fact:
         crowdsec_fw_bouncer_key:
@@ -44,7 +44,7 @@
       ansible.builtin.include_role:
         name: vault_secret
       vars:
-        vault_secret_path: "{{ (platform_env | default('prod')) ~ '/crowdsec/registration-token' }}"
+        vault_secret_path: "{{ (platform_env) ~ '/crowdsec/registration-token' }}"
     - name: "Vault | hand the registration token over"
       ansible.builtin.set_fact:
         crowdsec_fw_bouncer_reg_token: "{{ vault_secret_result.token }}"
@@ -55,7 +55,7 @@
       ansible.builtin.include_role:
         name: vault_secret
       vars:
-        vault_secret_path: "{{ (platform_env | default('prod')) ~ '/opnsense/svc-ansible-' ~ (platform_env | default('prod')) }}"
+        vault_secret_path: "{{ (platform_env) ~ '/opnsense/svc-ansible-' ~ (platform_env) }}"
     - name: "Vault | hand the become password over"
       ansible.builtin.set_fact:
         crowdsec_fw_bouncer_become_password: "{{ vault_secret_result.webgui_password }}"
@@ -82,7 +82,7 @@
   hosts: opnsense
   gather_facts: false
   vars:
-    crowdsec_fw_bouncer_ssh_user: "{{ hostvars[inventory_hostname].crowdsec_fw_bouncer_ssh_user | default('svc-ansible-' ~ (platform_env | default('prod'))) }}"
+    crowdsec_fw_bouncer_ssh_user: "{{ hostvars[inventory_hostname].crowdsec_fw_bouncer_ssh_user | default('svc-ansible-' ~ (platform_env)) }}"
     crowdsec_fw_bouncer_ssh_key: "{{ hostvars[inventory_hostname].crowdsec_fw_bouncer_ssh_key | default(lookup('env', 'HOME') ~ '/.ssh/id_ed25519_opnsense') }}"
     ansible_connection: ssh
     ansible_user: "{{ crowdsec_fw_bouncer_ssh_user }}"
@@ -114,7 +114,7 @@
   hosts: opnsense
   gather_facts: false
   vars:
-    crowdsec_fw_bouncer_ssh_user: "{{ hostvars[inventory_hostname].crowdsec_fw_bouncer_ssh_user | default('svc-ansible-' ~ (platform_env | default('prod'))) }}"
+    crowdsec_fw_bouncer_ssh_user: "{{ hostvars[inventory_hostname].crowdsec_fw_bouncer_ssh_user | default('svc-ansible-' ~ (platform_env)) }}"
     crowdsec_fw_bouncer_ssh_key: "{{ hostvars[inventory_hostname].crowdsec_fw_bouncer_ssh_key | default(lookup('env', 'HOME') ~ '/.ssh/id_ed25519_opnsense') }}"
     ansible_connection: ssh
     ansible_user: "{{ crowdsec_fw_bouncer_ssh_user }}"

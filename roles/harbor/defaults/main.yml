@@ -22,7 +22,7 @@ harbor_data_dir: "/data/harbor"        # Harbor's local /data (logs, trivy cache
 
 # --- Secrets (controller fabric store; Vault mirror = follow-up) ---------------
 # Vault KV paths (security/0001 secret/{env}/{service}/{key}) — no controller files.
-harbor_vault_path: "{{ platform_env | default('prod') }}/harbor/admin"         # admin password  # pragma: allowlist secret
+harbor_vault_path: "{{ platform_env }}/harbor/admin"         # admin password  # pragma: allowlist secret
 
 # --- Cluster Postgres (roles/postgres_db creates the DB + role) ----------------
 harbor_pg_name: "harbor"
@@ -35,7 +35,7 @@ harbor_pg_sslmode: "verify-full"
 # service. 20 open / 5 idle covers core + jobservice (10 job workers) with margin.
 harbor_pg_max_open_conns: 20
 harbor_pg_max_idle_conns: 5
-harbor_pg_vault_path: "{{ platform_env | default('prod') }}/harbor/db-pgsql"    # minted by postgres_db
+harbor_pg_vault_path: "{{ platform_env }}/harbor/db-pgsql"    # minted by postgres_db
 
 # Redis: Harbor uses its own bundled instance (internal job-queue/cache), so no
 # cluster-Redis wiring here — see the comment in templates/harbor.yml.j2.
@@ -45,11 +45,11 @@ harbor_s3_identity: "harbor"
 harbor_s3_bucket: "harbor-registry"
 harbor_s3_region: "us-east-1"
 harbor_s3_endpoint: "https://{{ platform_service_fqdns.seaweedfs }}"           # Traefik route (reused, no new split-DNS)
-harbor_s3_vault_path: "{{ platform_env | default('prod') }}/harbor/s3"          # minted by seaweedfs_bucket
+harbor_s3_vault_path: "{{ platform_env }}/harbor/s3"          # minted by seaweedfs_bucket
 
 # --- Authentik OIDC (app declared in roles/authentik authentik_oidc_apps) -------
 harbor_oidc_enabled: true
-harbor_oidc_vault_path: "{{ platform_env | default('prod') }}/harbor/oidc"      # minted by roles/authentik
+harbor_oidc_vault_path: "{{ platform_env }}/harbor/oidc"      # minted by roles/authentik
 harbor_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 harbor_oidc_slug: "harbor"
 harbor_oidc_endpoint: "{{ harbor_authentik_base }}/application/o/{{ harbor_oidc_slug }}/"

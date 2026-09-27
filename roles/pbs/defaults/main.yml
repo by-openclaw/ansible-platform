@@ -24,7 +24,7 @@ pbs_s3_endpoint_port: 443
 pbs_s3_path_style: true
 pbs_s3_bucket: "pbs-datastore"
 pbs_s3_identity: "pbs"                                   # SeaweedFS scoped S3 user
-pbs_s3_vault_path: "{{ platform_env | default('prod') }}/pbs/s3"   # minted by seaweedfs_bucket (Vault mode)
+pbs_s3_vault_path: "{{ platform_env }}/pbs/s3"   # minted by seaweedfs_bucket (Vault mode)
 
 pbs_datastore_name: "pbs-datastore"
 pbs_datastore_cache_path: "/var/lib/proxmox-backup/s3-cache/pbs-datastore"  # local cache/metadata for the S3-backed datastore
@@ -38,7 +38,7 @@ pbs_keep:
 
 # --- Authentik OIDC (SSO) -----------------------------------------------------
 pbs_oidc_enabled: true
-pbs_oidc_vault_path: "{{ platform_env | default('prod') }}/pbs/oidc"   # minted by roles/authentik
+pbs_oidc_vault_path: "{{ platform_env }}/pbs/oidc"   # minted by roles/authentik
 pbs_oidc_realm: "authentik"
 pbs_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 pbs_oidc_slug: "pbs"
@@ -67,7 +67,7 @@ pbs_pve_backup_token: "pve"               # API token name -> pve-backup@pbs!pve
 # the authority for whether the token was held, and Vault a copy something had to
 # remember to refresh. It did not — after the 2026-09-01 rename Vault still held
 # pve-backup@pbs!pve, an auth-id PBS no longer has (#570).
-pbs_token_vault_path: "{{ platform_env | default('prod') }}/pbs/pve-backup-token"
+pbs_token_vault_path: "{{ platform_env }}/pbs/pve-backup-token"
 pbs_backup_schedule: "03:30"              # 2nd job; NFS vzdump is 05:00 — offset to not overlap
 # The PBS VM must NOT be in its OWN S3 job — backing the backup server up into the
 # datastore it serves deadlocks ("http upgrade request timed out") and is pointless

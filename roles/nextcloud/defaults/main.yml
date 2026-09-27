@@ -24,7 +24,7 @@ nextcloud_container_port: 80
 # that range must ALSO be trusted for Nextcloud to read the X-Forwarded-For chain
 # (else "remote address could not be determined" + wrong client IP for bruteforce).
 nextcloud_trusted_proxy: "{{ hostvars[groups['traefik'] | first].ansible_host }}"
-nextcloud_docker_bridge_cidr: "172.17.0.0/16"
+nextcloud_docker_bridge_cidr: "{{ platform_docker_bridge_cidr4 }}"
 
 # Shared PostgreSQL (DB + role created by the postgres_db role). Nextcloud uses
 # libpq; verify-full + CA enforced via config.php dbdriveroptions (the official
@@ -51,11 +51,11 @@ nextcloud_s3_usepath_style: "true"   # Contabo requires path-style addressing
 nextcloud_s3_autocreate: "false"     # we precreate the bucket
 
 # Vault IS the secret store (no controller files). KV v2 paths under mount `secret`:
-nextcloud_vault_admin_path: "{{ platform_env | default('prod') }}/nextcloud/admin"      # admin_user + admin_password (+url); get-or-create
-nextcloud_vault_db_path: "{{ platform_env | default('prod') }}/nextcloud/db-pgsql"      # minted by postgres_db (Vault mode)
-nextcloud_vault_redis_path: "{{ platform_env | default('prod') }}/redis/admin"          # shared Redis requirepass (owner: roles/redis)
-nextcloud_vault_s3_path: "{{ platform_env | default('prod') }}/backup/s3-contabo"       # Contabo primary storage creds (until the SeaweedFS move)
-nextcloud_vault_oidc_path: "{{ platform_env | default('prod') }}/nextcloud/oidc"        # minted by roles/authentik (Vault-native app)
+nextcloud_vault_admin_path: "{{ platform_env }}/nextcloud/admin"      # admin_user + admin_password (+url); get-or-create
+nextcloud_vault_db_path: "{{ platform_env }}/nextcloud/db-pgsql"      # minted by postgres_db (Vault mode)
+nextcloud_vault_redis_path: "{{ platform_env }}/redis/admin"          # shared Redis requirepass (owner: roles/redis)
+nextcloud_vault_s3_path: "{{ platform_env }}/backup/s3-contabo"       # Contabo primary storage creds (until the SeaweedFS move)
+nextcloud_vault_oidc_path: "{{ platform_env }}/nextcloud/oidc"        # minted by roles/authentik (Vault-native app)
 
 # Initial local break-glass admin (kept alongside SSO as the break-glass login).
 nextcloud_admin_user: "admin"
@@ -179,8 +179,8 @@ nextcloud_apps_disabled:
 #     automatically, logging in with the Dovecot master user: no user ever types a
 #     mail password in Nextcloud. Values that are secrets come from Vault.
 nextcloud_mail_provisioning_enabled: true
-nextcloud_vault_master_path: "{{ platform_env | default('prod') }}/mailcow/master-user"   # login + password (roles/mailcow mints it)
-nextcloud_vault_api_token_path: "{{ platform_env | default('prod') }}/nextcloud/api-token" # break-glass admin app password for the admin APIs (minted here once)
+nextcloud_vault_master_path: "{{ platform_env }}/mailcow/master-user"   # login + password (roles/mailcow mints it)
+nextcloud_vault_api_token_path: "{{ platform_env }}/nextcloud/api-token" # break-glass admin app password for the admin APIs (minted here once)
 nextcloud_mail_host: "{{ groups['mailcow'] | first }}.{{ platform_domain }}"   # asset FQDN (split-DNS → DMZ IP; wildcard cert valid)
 nextcloud_mail_provisioning:
   provisioningDomain: "{{ platform_domain }}"
@@ -236,8 +236,8 @@ nextcloud_guides:
 # The backend roles mint the shared secrets in Vault; this role only READS them and
 # wires Talk (HPB, TURN/STUN, recording), the whiteboard and the ONLYOFFICE connector.
 nextcloud_collab_enabled: true
-nextcloud_collab_vault_path: "{{ platform_env | default('prod') }}/collab/secrets"
-nextcloud_onlyoffice_vault_path: "{{ platform_env | default('prod') }}/onlyoffice/secrets"
+nextcloud_collab_vault_path: "{{ platform_env }}/collab/secrets"
+nextcloud_onlyoffice_vault_path: "{{ platform_env }}/onlyoffice/secrets"
 nextcloud_onlyoffice_fqdn: "{{ platform_service_fqdns.collab }}"
 nextcloud_collab_talk_host: "talk.{{ platform_domain }}"   # TURN/STUN — public DNS only (no split-DNS override)
 nextcloud_collab_turn_public_port: 3479                    # 3478 on the WANs is NetBird's coturn (FW alias port_turn_pub)

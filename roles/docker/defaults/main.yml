@@ -36,14 +36,14 @@ docker_compose_from_debian: "{{ docker_engine == 'debian' and ansible_distributi
 # for ip6tables (GA in 27+). The bridge subnet is private and masqueraded to the
 # host's real v6, so a single ULA is safe to share across hosts.
 docker_ipv6: true
-docker_fixed_cidr_v6: "fd00:d0c::/64"
+docker_fixed_cidr_v6: "{{ platform_docker_cidr6 }}"
 
 # Container networks that may reach the HOST (hairpin to a published port — e.g. Vault's own
-# AppRole login, Portainer agent checks — host DNS, node metrics). Docker's default address
-# pools live in 172.16.0.0/12; the v6 bridge is the fixed ULA below. Declared on ufw by
+# AppRole login, Portainer agent checks — host DNS, node metrics): Docker's default address
+# pools and the v6 bridge, both from the address plan (group_vars/all/network.yml). Declared on ufw by
 # roles/host_firewall; without it every host→own-container connection dies once ufw is enabled.
 docker_bridge_cidrs:
-  - "172.16.0.0/12"
+  - "{{ platform_docker_pools_cidr4 }}"
   - "{{ docker_fixed_cidr_v6 }}"
 docker_firewall_rules:
   - { from: "{{ docker_bridge_cidrs }}", comment: "Docker container networks -> host (hairpin, DNS, metrics)" }

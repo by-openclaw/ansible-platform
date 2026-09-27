@@ -24,6 +24,14 @@ platform_internal_cidr4: "10.1.0.0/16"     # every guest zone above (the platfor
 platform_internal_cidr6: "fd01::/16"
 platform_core_cidr4: "10.1.0.0/20"         # the core zones (mgmt, dmz, svc, vpn) — WireGuard client AllowedIPs
 platform_vpn_cidr: "100.64.0.0/10"         # NetBird overlay (CGNAT range): VPN peers
+# Container-side ranges — part of the address plan: they must never overlap a platform
+# network, so they live here, not in the roles that use them.
+platform_docker_pools_cidr4: "172.16.0.0/12"      # Docker's default address pools (every Docker host)
+platform_docker_bridge_cidr4: "172.17.0.0/16"     # the default bridge (docker0)
+platform_docker_bridge_gw4: "172.17.0.1"          # docker0's host address
+platform_docker_cidr6: "fd00:d0c::/64"            # the v6 bridge ULA (masqueraded to the host's v6)
+platform_k3s_cluster_cidr4: "10.42.0.0/16"        # k3s pods
+platform_k3s_service_cidr4: "10.43.0.0/16"        # k3s services
 # The ISP /29 the platform egresses from and the firewalls sit on: office egress
 # (.218), prod FW (.222), test FW (.220). A network fact, so it lives here rather
 # than inline in whatever list happens to need it.

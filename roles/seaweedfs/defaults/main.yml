@@ -38,7 +38,7 @@ seaweedfs_admin_group: "{{ platform_service_groups.seaweedfs.admin }}"   # Authe
 # The credential is minted once in Vault and handed to the unit through a root-only
 # environment file; Authentik forwardAuth stays in front, the local login is the second door.
 seaweedfs_admin_user: "{{ platform_org }}"
-seaweedfs_console_vault_path: "{{ platform_env | default('prod') }}/seaweedfs/console"   # the console login; {env}/seaweedfs/admin is the S3 admin identity
+seaweedfs_console_vault_path: "{{ platform_env }}/seaweedfs/console"   # the console login; {env}/seaweedfs/admin is the S3 admin identity
 seaweedfs_admin_env_file: "/etc/seaweedfs/admin.env"
 seaweedfs_metrics_port: 9327             # Prometheus → Grafana (parked monitoring stack)
 
@@ -50,7 +50,7 @@ seaweedfs_volume_size_mb: 1024
 seaweedfs_volume_max: 0
 
 # Controller-side secret store (S3 identities: access/secret keys).
-seaweedfs_vault_path: "{{ platform_env | default('prod') }}/seaweedfs/admin"   # admin identity + sse_kek — Vault only
+seaweedfs_vault_path: "{{ platform_env }}/seaweedfs/admin"   # admin identity + sse_kek — Vault only
 
 # NOTE: app buckets + scoped access keys are NOT created here (separation of
 # concerns, same as the postgresql role). Each consuming app (GitLab, backups)
@@ -63,7 +63,7 @@ seaweedfs_vault_path: "{{ platform_env | default('prod') }}/seaweedfs/admin"   #
 # pushed to Contabo (survives site loss). NOT tiering — remote is never in the
 # read/write path. Synology (tier 2) is added once SVC->NAS routing exists.
 seaweedfs_offsite_enabled: true
-seaweedfs_offsite_vault_path: "{{ platform_env | default('prod') }}/offsite/s3"   # Contabo replica credentials
+seaweedfs_offsite_vault_path: "{{ platform_env }}/offsite/s3"   # Contabo replica credentials
 seaweedfs_offsite_filer_path: "/buckets"
 seaweedfs_offsite_is_incremental: false
 
