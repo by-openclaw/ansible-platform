@@ -1,0 +1,81 @@
+---
+# ==============================================================================
+# netbird | retired — nothing the role no longer manages stays on the host.
+# Each item is idempotent: once gone, these tasks are no-ops.
+#   * approval notifier (unwired; ran every 5 min with a dead token, #382):
+#     stopped, disabled, its units/script/state moved to the archive directory;
+#     its token copy removed (the live token is in Vault).
+#   * /root/.nb_setup_key: the router setup key lives in Vault.
+#   * SQLite store files in the volume: management runs on PostgreSQL and the
+#     migration archived them under {{ netbird_sqlite_archive_dir }}/sqlite-*.
+# ==============================================================================
+
+- name: "retired | Approval notifier units present?"
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/netbird-approval-notify.{{ item }}"
+  loop: [timer, service]
+  register: netbird_retired_units
+
+- name: "retired | Stop + disable the approval notifier"
+  ansible.builtin.systemd_service:
+    name: "netbird-approval-notify.{{ item.item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ netbird_retired_units.results }}"
+  loop_control: { label: "{{ item.item }}" }
+  when: item.stat.exists
+
+- name: "retired | Archive directory"
+  ansible.builtin.file:
+    path: "{{ netbird_sqlite_archive_dir }}/retired/approval-notify"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: "retired | Move the notifier's units, script and state into the archive"
+  ansible.builtin.command:
+    cmd: "mv {{ item }} {{ netbird_sqlite_archive_dir }}/retired/approval-notify/"
+    removes: "{{ item }}"
+  loop:
+    - /etc/systemd/system/netbird-approval-notify.timer
+    - /etc/systemd/system/netbird-approval-notify.service
+    - /usr/local/bin/netbird-approval-notify
+    - /var/lib/netbird-approval-notified.json
+  register: netbird_retired_moved
+
+- name: "retired | Reload systemd after removing the units"
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: netbird_retired_moved is changed
+
+- name: "retired | Secret copies superseded by Vault"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/netbird/automation-token.json          # dead token of the retired notifier
+    - "{{ netbird_router_setup_key_legacy_file }}" # router setup key → Vault
+
+- name: "retired | Archived copies of the SQLite store"
+  ansible.builtin.find:
+    paths: "{{ netbird_sqlite_archive_dir }}"
+    patterns: [store.db, events.db]
+    recurse: true
+  register: netbird_sqlite_archived
+
+- name: "retired | Is management on PostgreSQL? (live management.json)"
+  ansible.builtin.slurp:
+    src: "{{ netbird_build_dir }}/management.json"
+  register: netbird_retired_mgmt
+  check_mode: false
+
+# Only once management runs on PostgreSQL AND both files have an archived copy.
+- name: "retired | Remove the SQLite store files from the volume"
+  ansible.builtin.file:
+    path: "/var/lib/docker/volumes/{{ netbird_mgmt_volume }}/_data/{{ item }}"
+    state: absent
+  loop: [store.db, store.db-journal, events.db]
+  when:
+    - ((netbird_retired_mgmt.content | b64decode | from_json).StoreConfig.Engine | default('')) == 'postgres'
+    - (netbird_sqlite_archived.files | map(attribute='path') | map('basename') | unique | sort) == ['events.db', 'store.db']

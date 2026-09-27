@@ -157,25 +157,12 @@
   changed_when: false
   failed_when: false
 
-# Before Vault the key sat in a file on the peer. If Vault has none yet, that copy
-# seeds it once (get-or-create); after that Vault is the only source.
-- name: "routing-peer | Pre-Vault setup key on the peer (migration source)"
-  ansible.builtin.slurp:
-    src: "{{ netbird_router_setup_key_legacy_file }}"
-  register: netbird_rp_key_legacy
-  check_mode: false  # read-only
-  failed_when: false
-  no_log: true
-
-- name: "routing-peer | The setup key for enrollment (Vault; seeded from the peer copy once)"
+- name: "routing-peer | The setup key for enrollment (Vault)"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
     vault_secret_path: "{{ netbird_router_setup_key_vault_path }}"
-    vault_secret_init: >-
-      {{ {'key': netbird_rp_key_legacy.content | b64decode | trim}
-         if (netbird_rp_key_legacy.content | default('') | length > 0) else {} }}
-    vault_secret_optional: true   # no peer copy and nothing in Vault yet → {} (not enrolled)
+    vault_secret_optional: true   # absent → {} (not enrolled yet; created with the key above)
 
 - name: "routing-peer | Bind it"
   ansible.builtin.set_fact:
