@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# This host pins {{ netbird_fqdn }} to Traefik ({{ netbird_traefik_ip }}) so its
+# client reaches management/signal/relay on 443 without a public hairpin. Traefik
+# does not serve STUN/TURN, so the client's own ICE gathering to
+# {{ netbird_fqdn }}:{{ netbird_stun_port }} timed out. coturn runs on this host:
+# send that traffic to it. Scope: locally generated packets only (hook output).
+# add + delete + define = idempotent reload of this table alone.
+table ip netbird_local_stun
+delete table ip netbird_local_stun
+table ip netbird_local_stun {
+  chain output {
+    type nat hook output priority -100; policy accept;
+    ip daddr {{ netbird_traefik_ip }} meta l4proto { udp, tcp } th dport {{ netbird_stun_port }} dnat to {{ netbird_listen_ip }}:{{ netbird_stun_port }}
+  }
+}

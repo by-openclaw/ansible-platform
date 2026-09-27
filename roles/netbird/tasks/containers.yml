@@ -43,7 +43,10 @@
     src: turnserver.conf.j2
     dest: "{{ netbird_build_dir }}/turnserver.conf"
     owner: root
-    group: root
+    # coturn runs as {{ netbird_coturn_gid }} (nobody:nogroup) in the image. With
+    # group root it could not read this file and ran on built-in defaults: no
+    # realm, no user → every TURN allocate failed and peers' ICE gathering timed out.
+    group: "{{ netbird_coturn_gid }}"
     mode: "0640"
   no_log: true
   notify: "Restart netbird coturn"

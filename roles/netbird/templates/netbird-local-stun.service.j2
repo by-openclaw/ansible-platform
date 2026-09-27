@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+# Loads the host-local STUN/TURN redirect (see {{ netbird_local_stun_nft }}).
+# Own table, own unit: never touches the docker/ufw/netbird tables.
+[Unit]
+Description=NetBird routing peer: local STUN/TURN redirect to coturn
+After=nftables.service network-online.target
+Wants=network-online.target
+Before=netbird.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f {{ netbird_local_stun_nft }}
+ExecStop=/usr/sbin/nft delete table ip netbird_local_stun
+
+[Install]
+WantedBy=multi-user.target
