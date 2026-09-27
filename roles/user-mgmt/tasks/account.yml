@@ -18,37 +18,10 @@
         name: "{{ acct.primary_group }}"
         state: present
 
-    # --- password (sudo / break-glass): fabric stat -> generate-if-absent -> load ---
-    - name: "User-mgmt | Stat the password secret — {{ acct.name }}"
-      ansible.builtin.stat:
-        path: "{{ user_mgmt_secret_dir }}/fabric/os-{{ acct.name }}.json"
-      delegate_to: localhost
-      become: false
-      check_mode: false
-      register: um_pw_stat
-      when: acct.password | default(false)
-
-    - name: "User-mgmt | Generate + persist the password (fabric 0600) — {{ acct.name }}"
-      vars:
-        um_pw_record:
-          fields:
-            username: "{{ acct.name }}"
-            password: "{{ lookup('community.general.random_string', length=28, special=false) }}"  # pragma: allowlist secret
-      ansible.builtin.copy:
-        dest: "{{ user_mgmt_secret_dir }}/fabric/os-{{ acct.name }}.json"
-        mode: "0600"
-        content: "{{ um_pw_record | to_nice_json }}"
-      delegate_to: localhost
-      become: false
-      no_log: true
-      check_mode: false          # controller-local secret; generate even in --check so the load below works
-      when:
-        - acct.password | default(false)
-        - not (um_pw_stat.stat.exists | default(false))
-
-    - name: "User-mgmt | Load the password — {{ acct.name }}"
+    # --- password (sudo / break-glass): from Vault, bound in main.yml -------------
+    - name: "User-mgmt | The password — {{ acct.name }}"
       ansible.builtin.set_fact:
-        um_acct_pw: "{{ (lookup('file', user_mgmt_secret_dir + '/fabric/os-' + acct.name + '.json') | from_json).fields.password }}"
+        um_acct_pw: "{{ user_mgmt_passwords[acct.vault_path].password }}"
       no_log: true
       when: acct.password | default(false)
 
