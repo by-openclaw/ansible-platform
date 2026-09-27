@@ -42,9 +42,9 @@
         argv:
           - ssh
           - -i
-          - "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_rune_automation"
+          - "{{ platform_pve_root_key }}"
           - -p
-          - "22222"
+          - "{{ platform_ssh_port }}"
           - -o
           - StrictHostKeyChecking=no
           - -o
@@ -54,7 +54,7 @@
           - -N
           - -L
           - "8443:{{ opnsense_gui_tunnel_host }}:443"
-          - root@{{ hostvars[groups['proxmox_nodes'] | first].ansible_host }}
+          - "{{ platform_pve_root_user }}@{{ hostvars[groups['proxmox_nodes'] | first].ansible_host }}"
       async: 3600
       poll: 0
       changed_when: false

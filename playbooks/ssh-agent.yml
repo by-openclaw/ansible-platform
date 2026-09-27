@@ -113,9 +113,10 @@
 
     - name: "Agent | Expose to the localhost play (in-memory only)"
       ansible.builtin.set_fact:
-        agent_passphrases:
-          svc-ansible-prod: "{{ _pass_reads.results[0].stdout }}"
-          svc-rune-prod: "{{ _pass_reads.results[1].stdout }}"
+        # An expression, not a mapping: Ansible does not template mapping KEYS.
+        agent_passphrases: >-
+          {{ {'svc-ansible-' ~ platform_env: _pass_reads.results[0].stdout,
+              'svc-rune-' ~ platform_env: _pass_reads.results[1].stdout} }}
       no_log: true
 
 - name: "Load the agent (controller)"
@@ -124,7 +125,7 @@
   become: false
   vars:
     agent_sock: "{{ ansible_env.HOME }}/.ssh/rune-agent.sock"
-    agent_keys: [svc-ansible-prod, svc-rune-prod]
+    agent_keys: ["svc-ansible-{{ platform_env }}", "svc-rune-{{ platform_env }}"]
   tasks:
     # A socket file outlives its agent (desktop restart, logout): test the agent, not the file.
     - name: "Agent | Is an agent alive behind the fixed socket?"

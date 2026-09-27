@@ -18,11 +18,11 @@ ansible_become_password: >-
 # --- Platform jump path (single source — was hardcoded 20x in hosts.yml) ------
 # SVC/DMZ guests are reached through the prod FW. During the by-rune ->
 # svc-ansible-prod migration (naming/0002 §3) flip ONLY these two vars.
-platform_jump_user: "svc-ansible-prod"
+platform_jump_user: "svc-ansible-{{ platform_env }}"
 # extra ssh options for the hop (legacy keyed jump; emptied when the
 # svc-ansible agent key takes over)
 platform_jump_identity: ""
-platform_jump_host: "10.6.239.196"
+platform_jump_host: "{{ hostvars[groups['opnsense'] | first].ansible_host }}"   # the prod FW is the hop
 # The appliance's sshd follows the hardening baseline since the #379 re-seed (seed ssh_port =
 # platform_ssh_port): the hop must name the port, or every SVC/DMZ host is UNREACHABLE.
 platform_jump_port: "{{ platform_ssh_port }}"
@@ -89,3 +89,10 @@ platform_service_mail_delegates:
              | selectattr('platform_owner', 'defined') | selectattr('platform_owner')
              | first).username)
          | first).email }}"
+
+# Controller keys for the two direct-login paths that bypass the svc-ansible identity
+# (single source; plays and roles reference these, never a path of their own):
+#   the PVE node as root (ZFS datasets, bind mounts, the API tunnel) and the firewall.
+platform_pve_root_user: root
+platform_pve_root_key: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_rune_automation"
+platform_fw_ssh_key: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_opnsense"
