@@ -27,6 +27,33 @@
     state: present
   when: um_dockerd.rc == 0
 
+# Account passwords from Vault — ONCE for the play, then bound on every host. A
+# per-host read is one delegated SSH session per host to the Vault host at once
+# (31 hosts took it UNREACHABLE on the mail-relay rollout).
+- name: "User-mgmt | Account passwords (Vault, get-or-create, once for the play)"
+  ansible.builtin.include_role:
+    name: vault_secret
+    tasks_from: many
+  vars:
+    vault_secret_paths: >-
+      {{ user_mgmt_accounts | selectattr('state', 'equalto', 'present')
+         | selectattr('password', 'defined') | selectattr('password')
+         | map(attribute='vault_path')
+         | map('community.general.dict_kv', 'path') | list }}
+    vault_secret_init_default:
+      password: "{{ lookup('community.general.random_string', length=28, special=false) }}"  # pragma: allowlist secret
+  run_once: true
+
+# No `when:` — under run_once a condition is evaluated in one host's context.
+- name: "User-mgmt | Bind them on every host in the play"
+  ansible.builtin.set_fact:
+    user_mgmt_passwords: "{{ vault_secret_results }}"
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  loop: "{{ ansible_play_hosts }}"
+  run_once: true
+  no_log: true
+
 - name: "User-mgmt | Provision each account"
   ansible.builtin.include_tasks: account.yml
   loop: "{{ user_mgmt_accounts }}"

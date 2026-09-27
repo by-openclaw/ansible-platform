@@ -17,9 +17,8 @@ user_mgmt_env: "{{ platform_env | default('prod') }}"
 user_mgmt_key_dir: "{{ role_path }}/files/keys"
 
 # Account passwords (sudo/become + break-glass — NOPASSWD is forbidden,
-# identity/0004 §4): generated once -> controller fabric os-<account>.json (0600)
-# -> Vault secret/{env}/... via secrets-to-vault (mapping in vars/vault_kv_map.yml).
-user_mgmt_secret_dir: "~/.openclaw/workspace/infra/secrets"
+# identity/0004 §4): each password: true account carries its Vault path; the
+# password is generated once there (get-or-create) and never lands on disk.
 
 # Role groups (naming/0002 §5.2) — capabilities, not users.
 user_mgmt_role_groups:
@@ -41,6 +40,7 @@ user_mgmt_accounts:
     pubkey: "id_ed25519_by-research.pub"
     sudo: true
     password: true
+    vault_path: "{{ user_mgmt_env }}/break-glass/os"
     docker: false
     state: present
 
@@ -52,6 +52,7 @@ user_mgmt_accounts:
     pubkey: "id_ed25519_svc-rune-prod.pub"
     sudo: true
     password: true
+    vault_path: "{{ user_mgmt_env }}/svc-rune/os"
     docker: true
     state: present
 
@@ -63,6 +64,7 @@ user_mgmt_accounts:
     pubkey: "id_ed25519_svc-ansible-prod.pub"
     sudo: true
     password: true
+    vault_path: "{{ user_mgmt_env }}/svc-ansible/os"
     docker: false
     state: present
 
