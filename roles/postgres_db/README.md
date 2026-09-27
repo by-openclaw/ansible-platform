@@ -24,7 +24,6 @@ as `db-pgsql-<name>.json` (consumed by the app, `sslmode=verify-full`).
 | `postgres_db_user` | — (required) | owner role |
 | `postgres_db_host` | `lxc-pgsql-01` | Postgres host (delegate target) |
 | `postgres_db_container` | `postgres` | container name |
-| `postgres_db_secret_dir` | controller secret store | where the password is written |
 
 > NetBox/Authentik run their own schema migrations into the (empty) database on
 > first start — this role only creates the empty DB + role.

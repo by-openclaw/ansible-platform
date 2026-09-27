@@ -8,7 +8,7 @@
 #     vars:
 #       seaweedfs_bucket_identity: gitlab
 #       seaweedfs_bucket_names: [gitlab-artifacts, gitlab-lfs, gitlab-registry, gitlab-backups]
-#       seaweedfs_bucket_secret_file: fabric/infra-seaweedfs-gitlab.json
+#       seaweedfs_bucket_vault_path: "{{ platform_env }}/gitlab/s3"
 #
 # Creates the buckets + a dedicated S3 identity whose access is SCOPED to exactly
 # those buckets (Read/Write/List/Tagging), via `weed shell` (dynamic, no restart).
@@ -26,9 +26,4 @@ seaweedfs_bucket_actions: ["Read", "Write", "List", "Tagging"]
 # Vault IS the store. Set seaweedfs_bucket_vault_path (e.g.
 # "fabric/infra-seaweedfs-gitlab") to go Vault-native: the access/secret key is
 # read from Vault, or minted INTO Vault on first run (get-or-create).
-seaweedfs_bucket_vault_path: ""                 # set to go Vault-native; empty = legacy file mode
-
-# Legacy file store (fallback while a consumer is not yet migrated to Vault).
-# Ignored when seaweedfs_bucket_vault_path is set.
-seaweedfs_bucket_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
-seaweedfs_bucket_secret_file: ""               # e.g. fabric/infra-seaweedfs-<svc>.json (file mode)
+seaweedfs_bucket_vault_path: ""                 # REQUIRED — the role asserts it (no file mode any more)

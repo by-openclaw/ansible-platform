@@ -89,7 +89,7 @@ authentik_oidc_apps:
     name: "Nextcloud"
     group: "{{ platform_service_groups.nextcloud.access }}"    # ACCESS group — any member may log into Nextcloud
     admin_source_group: "{{ platform_service_groups.nextcloud.admin }}"  # members of THIS group also get NC admin
-    vault_path: "prod/nextcloud/oidc"   # Vault-native client creds (like GitLab); roles/nextcloud reads the same path
+    vault_path: "{{ platform_env }}/nextcloud/oidc"   # Vault-native client creds (like GitLab); roles/nextcloud reads the same path
     restrict_to_group: true     # IdP-enforced: only nextcloud-users can log in
     admin_group_alias: "admin"  # admin_source_group members → NC "admin" group
     redirect_uris:
@@ -158,7 +158,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/portainer.svg"
     name: "Portainer (containers)"
     group: "{{ platform_admins_group }}"            # ACCESS group — the console can restart and exec into containers
-    vault_path: "prod/portainer/oidc"   # Vault-native client creds; roles/portainer configures Portainer with them
+    vault_path: "{{ platform_env }}/portainer/oidc"   # Vault-native client creds; roles/portainer configures Portainer with them
     restrict_to_group: true             # IdP-enforced: only platform-admins may sign in
     redirect_uris:
       - "https://{{ platform_service_fqdns.portainer }}/"
@@ -169,7 +169,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/wazuh.svg"
     name: "Wazuh (security monitoring)"
     group: "{{ platform_admins_group }}"            # ACCESS group — the dashboard shows every host's security state
-    vault_path: "prod/wazuh/oidc"       # Vault-native client creds; roles/wazuh renders the dashboard + indexer config
+    vault_path: "{{ platform_env }}/wazuh/oidc"       # Vault-native client creds; roles/wazuh renders the dashboard + indexer config
     restrict_to_group: true
     redirect_uris:
       - "https://{{ platform_service_fqdns.wazuh }}/auth/openid/login"
@@ -180,7 +180,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/proxmox.svg"
     name: "Proxmox VE (hypervisor)"
     group: "{{ platform_service_groups.proxmox.admin }}"             # ACCESS group; PVE maps it to proxmox-admins-authentik → Administrator (roles/pve_host)
-    vault_path: "prod/pve/oidc"         # roles/pve_host reads it for the OIDC realm
+    vault_path: "{{ platform_env }}/pve/oidc"         # roles/pve_host reads it for the OIDC realm
     restrict_to_group: true
     redirect_uris:
       - "https://{{ platform_service_fqdns.proxmox }}"
@@ -203,7 +203,7 @@ authentik_oidc_apps:
     group: "{{ platform_service_groups.gitlab.access }}"           # ACCESS group — only members may authenticate
     # Vault-native (GitLab chain): client creds read from Vault, not a local file.
     # Other apps still carry secret_file until their own Phase-2 migration.
-    vault_path: "prod/gitlab/oidc"   # post-migration KV convention (security/0001)
+    vault_path: "{{ platform_env }}/gitlab/oidc"   # post-migration KV convention (security/0001)
     restrict_to_group: true         # IdP-enforced: only gitlab-users can log in
     offline_access: true            # GitLab omniauth requests refresh tokens
     # GitLab CE reads the `groups` claim natively (emitted by scope-groups-<slug>):
@@ -217,7 +217,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/jumpserver.svg"
     name: "JumpServer"
     group: "{{ platform_service_groups.jumpserver.access }}"        # ACCESS group — only members may SSO into the bastion
-    vault_path: "prod/jumpserver/oidc"   # Vault-native client creds (like GitLab)
+    vault_path: "{{ platform_env }}/jumpserver/oidc"   # Vault-native client creds (like GitLab)
     restrict_to_group: true          # IdP-enforced: only jumpserver-users can log in
     offline_access: true             # JumpServer requests refresh tokens
     # JumpServer's OIDC backend (apps/authentication/backends/oidc) does NOT
@@ -231,7 +231,7 @@ authentik_oidc_apps:
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/verdaccio.svg"
     name: "npm registry (Verdaccio)"
     group: "{{ platform_service_groups.verdaccio.access }}"         # ACCESS group — only members may SSO into the registry
-    vault_path: "prod/verdaccio/oidc"   # Vault-native client creds (like GitLab)
+    vault_path: "{{ platform_env }}/verdaccio/oidc"   # Vault-native client creds (like GitLab)
     restrict_to_group: true          # IdP-enforced; verdaccio-openid also checks authorized-groups
     # verdaccio-openid callbacks: web UI, WebAuthn (npm >=9 `npm login`), CLI fallback.
     redirect_uris:
