@@ -1,14 +1,10 @@
 ---
 # ==============================================================================
 # Role: mailcow — oidc.yml — wire Generic-OIDC to Authentik + the 5 GB template.
-# Included by config.yml only when app-oidc-mailcow.json exists (authentik role
-# created the provider). DB-driven: mailcow exposes no REST endpoint for the IdP.
+# Included by config.yml only when the OIDC client is in Vault (the authentik role
+# created the provider); config.yml binds mailcow_oidc_client.
+# DB-driven: mailcow exposes no REST endpoint for the IdP.
 # ==============================================================================
-
-- name: "oidc | Load the Authentik OIDC client (id + secret)"
-  ansible.builtin.set_fact:
-    mailcow_oidc_client: "{{ (lookup('file', mailcow_secret_dir + '/' + mailcow_oidc_secret_file) | from_json).fields }}"
-  no_log: true
 
 - name: "oidc | Generic-OIDC identity_provider settings"
   ansible.builtin.set_fact:

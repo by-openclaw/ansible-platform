@@ -9,9 +9,15 @@
 # playbook never computes hashes inline.
 # ==============================================================================
 
-- name: "config | Load mailcow secrets"
+- name: "config | Mailcow secrets (Vault, read)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ mailcow_vault_path }}"
+
+- name: "config | Bind them"
   ansible.builtin.set_fact:
-    mailcow_sec: "{{ (lookup('file', mailcow_secret_dir + '/' + mailcow_secret_file) | from_json).fields }}"
+    mailcow_sec: "{{ vault_secret_result }}"
   no_log: true
 
 - name: "config | Build the mailbox provisioning list (from the secret)"
@@ -209,15 +215,22 @@
   no_log: true
 
 # --- Authentik OIDC (only once the authentik role wrote the client secret) -----
-- name: "config | Stat the OIDC client secret"
-  ansible.builtin.stat:
-    path: "{{ mailcow_secret_dir }}/{{ mailcow_oidc_secret_file }}"
-  delegate_to: localhost
-  become: false
-  register: mailcow_oidc_stat
+- name: "config | The OIDC client (Vault, optional — absent until Authentik mints it)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ mailcow_oidc_vault_path }}"
+    vault_secret_optional: true
+  when: mailcow_oidc_enabled | bool
+
+- name: "config | Bind it"
+  ansible.builtin.set_fact:
+    mailcow_oidc_client: "{{ vault_secret_result }}"
+  no_log: true
+  when: mailcow_oidc_enabled | bool
 
 - name: "config | Wire Authentik OIDC IdP + 5 GB template"
   ansible.builtin.include_tasks: oidc.yml
   when:
     - mailcow_oidc_enabled | bool
-    - mailcow_oidc_stat.stat.exists
+    - mailcow_oidc_client | default({}) | length > 0
