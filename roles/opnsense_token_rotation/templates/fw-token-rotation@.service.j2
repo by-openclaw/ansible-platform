@@ -1,4 +1,7 @@
-# Managed by Ansible role `opnsense_token_rotation`. Do not edit by hand.
+# {{ ansible_managed }}
+# Rotate the FW API token for %i (SEC-09), then gate: the catalog must still converge
+# with the new token (opnsense.yml --tags dns --check → changed=0 failed=0). Two steps,
+# in order, no script; output goes to the journal (journalctl --user -u fw-token-rotation@%i).
 [Unit]
 Description=Rotate the OPNsense Ansible API token for %i (SEC-09) and gate on a catalog check
 After=network-online.target
@@ -7,4 +10,6 @@ After=network-online.target
 Type=oneshot
 WorkingDirectory={{ opnsense_token_rotation_repo }}
 Environment=PATH={{ opnsense_token_rotation_ansible_bin }}:/usr/local/bin:/usr/bin:/bin
-ExecStart={{ opnsense_token_rotation_bin_dir }}/fw-token-rotate.sh %i
+Environment=PYTHONUNBUFFERED=1 ANSIBLE_FORCE_COLOR=0 ANSIBLE_NOCOLOR=1
+ExecStart={{ opnsense_token_rotation_ansible_bin }}/ansible-playbook -i inventories/%i playbooks/opnsense-api-bootstrap.yml -e opnsense_api_bootstrap_force_rotate=true
+ExecStart=/bin/bash -c 'set -o pipefail; ansible-playbook -i inventories/%i playbooks/opnsense.yml --tags dns --check 2>&1 | tee /dev/stderr | grep -qE "^vm-opns[^ ]* +: ok=[0-9]+ +changed=0 +unreachable=0 +failed=0"'

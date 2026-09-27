@@ -1,0 +1,65 @@
+---
+- name: "host_job | Required inputs"
+  ansible.builtin.assert:
+    that:
+      - host_job_name | length > 0
+      - host_job_exec | length > 0
+    fail_msg: "host_job needs host_job_name and host_job_exec"
+    quiet: true
+
+- name: "host_job | The failure notifier (OnFailure= target)"
+  ansible.builtin.include_role:
+    name: systemd_failure_alert
+  when: host_job_on_failure | bool
+
+# OnFailure now lives in the unit itself; a drop-in from the old attach step would repeat it.
+- name: "host_job | Old OnFailure drop-in (superseded)"
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ host_job_name }}.service.d/onfailure.conf"
+    state: absent
+  register: host_job_old_dropin
+
+- name: "host_job | Service + timer — {{ host_job_name }}"
+  ansible.builtin.template:
+    src: "job.{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ host_job_name }}.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [service, timer]
+  register: host_job_units
+
+- name: "host_job | Retention (systemd-tmpfiles) — {{ host_job_name }}"
+  ansible.builtin.template:
+    src: tmpfiles.conf.j2
+    dest: "/etc/tmpfiles.d/{{ host_job_name }}.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  when: host_job_retention | length > 0
+
+- name: "host_job | Reload systemd"
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: (host_job_units is changed) or (host_job_old_dropin is changed)
+
+- name: "host_job | Timer enabled + running — {{ host_job_name }}"
+  ansible.builtin.systemd_service:
+    name: "{{ host_job_name }}.timer"
+    enabled: true
+    state: started
+  # --check never wrote a NEW unit, so there is nothing to start yet.
+  when: not ansible_check_mode or (host_job_units is not changed)
+
+- name: "host_job | Remove the old cron job"
+  ansible.builtin.cron:
+    name: "{{ host_job_legacy_cron }}"
+    cron_file: "{{ host_job_legacy_cron }}"
+    state: absent
+  when: host_job_legacy_cron | length > 0
+
+- name: "host_job | Archive the old script"
+  ansible.builtin.command:
+    cmd: "mv {{ host_job_legacy_script }} {{ host_job_legacy_script }}.retired"
+    removes: "{{ host_job_legacy_script }}"
+  when: host_job_legacy_script | length > 0

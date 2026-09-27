@@ -9,11 +9,10 @@
     - "{{ opnsense_token_rotation_unit_dir }}"
     - "{{ opnsense_token_rotation_state_dir }}"
 
-- name: "Token rotation | Wrapper (rotate + gate, logs under the state dir)"
-  ansible.builtin.template:
-    src: fw-token-rotate.sh.j2
-    dest: "{{ opnsense_token_rotation_bin_dir }}/fw-token-rotate.sh"
-    mode: "0700"
+- name: "Token rotation | The wrapper script the unit used to call (superseded)"
+  ansible.builtin.command:
+    cmd: "mv {{ opnsense_token_rotation_bin_dir }}/fw-token-rotate.sh {{ opnsense_token_rotation_bin_dir }}/fw-token-rotate.sh.retired"
+    removes: "{{ opnsense_token_rotation_bin_dir }}/fw-token-rotate.sh"
 
 - name: "Token rotation | systemd user units (template instance per env)"
   ansible.builtin.template:
