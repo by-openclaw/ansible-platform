@@ -1,45 +1,30 @@
 ---
 # ==============================================================================
-# Role: opnsense_pppoe — vault.yml: the store of record. Runs on the Vault host (docker exec with
-# the deploy AppRole). Decides between "unchanged", "normalised from base64" and "rotated", writes
+# Role: opnsense_pppoe — vault.yml: the store of record, through roles/vault_secret (data +
+# custom metadata). Decides between "unchanged", "normalised from base64" and "rotated", writes
 # one new KV version at most, marks the store with custom metadata, and hands the RAW password to
 # the firewall host(s) and the controller through delegate_facts. Nothing is printed.
 # ==============================================================================
-- name: "PPPoE vault | Vault login (ansible-deploy AppRole)"
+- name: "PPPoE vault | Read the credential and its metadata ({{ opnsense_pppoe_vault_path }})"
   ansible.builtin.include_role:
-    name: vault_login
-
-- name: "PPPoE vault | Read the credential ({{ opnsense_pppoe_vault_path }})"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_pppoe_vault_container }}
-      vault kv get -mount={{ opnsense_pppoe_vault_mount }} -format=json {{ opnsense_pppoe_vault_path }}
-  register: opnsense_pppoe_get
-  changed_when: false
-  check_mode: false
-  no_log: true
-
-- name: "PPPoE vault | Read its custom metadata (format marker + rotation trail)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_pppoe_vault_container }}
-      vault kv metadata get -mount={{ opnsense_pppoe_vault_mount }} -format=json {{ opnsense_pppoe_vault_path }}
-  register: opnsense_pppoe_meta
-  changed_when: false
-  check_mode: false
-  no_log: true
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ opnsense_pppoe_vault_path }}"
+    vault_secret_read_metadata: true
+    vault_secret_mount: "{{ opnsense_pppoe_vault_mount }}"
+    vault_secret_container: "{{ opnsense_pppoe_vault_container }}"
 
 - name: "PPPoE vault | Bind what Vault holds"
   ansible.builtin.set_fact:
-    opnsense_pppoe_fields: "{{ (opnsense_pppoe_get.stdout | from_json).data.data }}"
+    opnsense_pppoe_fields: "{{ vault_secret_result }}"
     opnsense_pppoe_format: >-
-      {{ ((opnsense_pppoe_meta.stdout | from_json).data.custom_metadata | default({}, true)).format | default('') }}
-    opnsense_pppoe_version: "{{ (opnsense_pppoe_meta.stdout | from_json).data.current_version }}"
+      {{ (vault_secret_metadata.custom | default({}, true)).format | default('') }}
+    opnsense_pppoe_version: "{{ vault_secret_metadata.current_version }}"
     # A version written outside this role (the Vault UI on rotation day) carries no trail: the
     # stamped version lags the current one, and the trail is completed below as 'rotation-external'.
     opnsense_pppoe_unstamped: >-
-      {{ (((opnsense_pppoe_meta.stdout | from_json).data.custom_metadata | default({}, true)).version_stamped | default('0')) | string
-         != ((opnsense_pppoe_meta.stdout | from_json).data.current_version | string) }}
+      {{ ((vault_secret_metadata.custom | default({}, true)).version_stamped | default('0')) | string
+         != (vault_secret_metadata.current_version | string) }}
   no_log: true
 
 # The value stored until 2026-09-21 was copied from a live config, i.e. the base64 form OPNsense
@@ -85,39 +70,29 @@
     _unmarked: "{{ opnsense_pppoe_format | trim != 'raw' }}"
   no_log: true
 
-- name: "PPPoE vault | Write the new KV version (raw password; every other field kept)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -i -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_pppoe_vault_container }}
-      vault kv put -mount={{ opnsense_pppoe_vault_mount }} {{ opnsense_pppoe_vault_path }} -
-    stdin: "{{ _payload }}"
-    stdin_add_newline: false
+# One step: a new KV version when the value changes (every other field kept) and the
+# rotation trail in custom metadata — also on its own when a version was written
+# outside this role (the Vault UI on rotation day). The version this run leaves current
+# is the one it writes (current + 1) or the one it found. Never under --check.
+- name: "PPPoE vault | Write the new version and/or complete the rotation trail"
+  ansible.builtin.include_role:
+    name: vault_secret
   vars:
-    _note: "{{ opnsense_pppoe_store_note | trim }}"
-    _payload: "{{ opnsense_pppoe_fields | combine({'pppoe_password': opnsense_pppoe_raw, '_note': _note}) | to_json }}"  # pragma: allowlist secret
-  when:
-    - opnsense_pppoe_write | bool
-    - not ansible_check_mode
-  changed_when: true
-  no_log: true
-
-# The version this run leaves current: the one it writes (current + 1) or the one it found.
-- name: "PPPoE vault | Record the format marker and the rotation trail (custom metadata)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_pppoe_vault_container }}
-      vault kv metadata put -mount={{ opnsense_pppoe_vault_mount }}
-      -custom-metadata=format=raw
-      -custom-metadata=rotated_at={{ '%Y-%m-%dT%H:%M:%SZ' | strftime(utc=true) }}
-      -custom-metadata=rotated_by={{ 'ansible-deploy' if (opnsense_pppoe_write | bool) else 'external-write' }}
-      -custom-metadata=reason={{ (opnsense_pppoe_reason_effective | trim) if (opnsense_pppoe_write | bool) else 'rotation-external' }}
-      -custom-metadata=version_stamped={{ (opnsense_pppoe_version | int + 1) if (opnsense_pppoe_write | bool) else opnsense_pppoe_version }}
-      {{ opnsense_pppoe_vault_path }}
+    vault_secret_path: "{{ opnsense_pppoe_vault_path }}"
+    vault_secret_mount: "{{ opnsense_pppoe_vault_mount }}"
+    vault_secret_container: "{{ opnsense_pppoe_vault_container }}"
+    vault_secret_force_fields: >-  # pragma: allowlist secret
+      {{ opnsense_pppoe_fields | combine({'pppoe_password': opnsense_pppoe_raw, '_note': opnsense_pppoe_store_note | trim})
+         if (opnsense_pppoe_write | bool) else {} }}
+    vault_secret_metadata_put:
+      format: raw
+      rotated_at: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(utc=true) }}"
+      rotated_by: "{{ 'ansible-deploy' if (opnsense_pppoe_write | bool) else 'external-write' }}"
+      reason: "{{ (opnsense_pppoe_reason_effective | trim) if (opnsense_pppoe_write | bool) else 'rotation-external' }}"
+      version_stamped: "{{ (opnsense_pppoe_version | int + 1) if (opnsense_pppoe_write | bool) else opnsense_pppoe_version }}"
   when:
     - (opnsense_pppoe_write | bool) or (opnsense_pppoe_unstamped | bool)
     - not ansible_check_mode
-  changed_when: true
-  no_log: true   # the command line carries the deploy token
 
 - name: "PPPoE vault | Report (no value)"
   ansible.builtin.debug:
@@ -139,22 +114,18 @@
 
 # The appliance's sudo asks the automation user's GUI password. Absent in an environment (the test
 # firewall today) → the apply play fails at become, which is the honest outcome; read is tolerant.
-- name: "PPPoE vault | The automation user's password (wheel sudo on the appliance)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ opnsense_pppoe_vault_container }}
-      vault kv get -mount={{ opnsense_pppoe_vault_mount }} -format=json {{ opnsense_pppoe_vault_become }}
-  register: opnsense_pppoe_become_get
-  changed_when: false
-  failed_when: false
-  check_mode: false
-  no_log: true
+- name: "PPPoE vault | The automation user's password (wheel sudo on the appliance; optional)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ opnsense_pppoe_vault_become }}"
+    vault_secret_optional: true
+    vault_secret_mount: "{{ opnsense_pppoe_vault_mount }}"
+    vault_secret_container: "{{ opnsense_pppoe_vault_container }}"
 
 - name: "PPPoE vault | Hand the become password over"
   ansible.builtin.set_fact:
-    opnsense_pppoe_become_password: "{{ _become.data.data.webgui_password | default('') }}"  # pragma: allowlist secret
-  vars:
-    _become: "{{ (opnsense_pppoe_become_get.stdout | from_json) if opnsense_pppoe_become_get.rc == 0 else {} }}"
+    opnsense_pppoe_become_password: "{{ vault_secret_result.webgui_password | default('') }}"  # pragma: allowlist secret
   delegate_to: "{{ item }}"
   delegate_facts: true
   loop: "{{ groups['opnsense'] }}"
