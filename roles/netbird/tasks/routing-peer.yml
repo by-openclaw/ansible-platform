@@ -144,11 +144,41 @@
     - net.ipv4.ip_forward
     - net.ipv6.conf.all.forwarding
 
-- name: "routing-peer | Install the NetBird client (official repo; idempotent)"
-  ansible.builtin.shell: "set -o pipefail; curl -fsSL https://pkgs.netbird.io/install.sh | sh"
-  args:
-    executable: /bin/bash
-    creates: /usr/bin/netbird
+- name: "routing-peer | NetBird apt signing key"
+  ansible.builtin.get_url:
+    url: "{{ netbird_client_key_url }}"
+    dest: "{{ netbird_client_keyring }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+# install.sh wrote the same source with its own keyring. apt refuses one source with
+# two Signed-By values ("Conflicting values set for option Signed-By"), so the old line
+# goes BEFORE the new one is added.
+- name: "routing-peer | The source line install.sh wrote (other keyring)"
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by={{ netbird_client_legacy_keyring }}] {{ netbird_client_repo_url }} stable main"
+    filename: netbird
+    state: absent
+    update_cache: false
+
+- name: "routing-peer | NetBird apt repository"
+  ansible.builtin.apt_repository:
+    repo: "{{ netbird_client_repo }}"
+    filename: netbird
+    state: present
+
+- name: "routing-peer | The keyring install.sh left behind (superseded)"
+  ansible.builtin.file:
+    path: "{{ netbird_client_legacy_keyring }}"
+    state: absent
+
+- name: "routing-peer | NetBird client, pinned"
+  ansible.builtin.apt:
+    name: "netbird={{ netbird_client_version }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
 
 - name: "routing-peer | Current client status"
   ansible.builtin.command: netbird status

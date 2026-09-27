@@ -32,6 +32,13 @@ netbird_management_image: "netbirdio/management:0.72.3"
 netbird_signal_image: "netbirdio/signal:0.72.3"
 netbird_relay_image: "netbirdio/relay:0.72.3"
 netbird_coturn_image: "coturn/coturn:4.6.2"
+# Routing-peer client: NetBird's apt repo, PINNED (never a curl | sh "latest").
+netbird_client_version: "0.79.0"
+netbird_client_key_url: "https://pkgs.netbird.io/debian/public.key"   # public apt signing key  # pragma: allowlist secret
+netbird_client_keyring: "/etc/apt/keyrings/netbird.asc"
+netbird_client_repo_url: "https://pkgs.netbird.io/debian"
+netbird_client_repo: "deb [signed-by={{ netbird_client_keyring }}] {{ netbird_client_repo_url }} stable main"
+netbird_client_legacy_keyring: "/usr/share/keyrings/netbird-archive-keyring.gpg"   # left by install.sh; removed
 netbird_coturn_gid: 65534                          # the image's runtime group (nogroup); reads turnserver.conf
 
 # --- Identity / addressing ------------------------------------------------------
@@ -75,7 +82,7 @@ netbird_pkce_disable_prompt_login: true
 netbird_idp_signkey_refresh: false
 netbird_mgmt_idp: "authentik"
 # IdP-manager service account extra config (NETBIRD_IDP_MGMT_EXTRA_* -> ExtraConfig).
-netbird_idp_extra_username: "svc-netbird-prod"   # = SA username (naming/0002 §3; renamed 2026-09-01)
+netbird_idp_extra_username: "svc-netbird-{{ platform_env }}"   # = SA username (naming/0002 §3; renamed 2026-09-01)
 
 # --- Management server knobs ----------------------------------------------------
 # single-account mode: every @{{ platform_domain }} user joins ONE NetBird org (prevents

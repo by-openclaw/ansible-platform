@@ -18,6 +18,7 @@ PATTERNS = {
     "env fallback": re.compile(r"platform_env\s*\|\s*default\("),
     "ssh port literal": re.compile(r"(?<![0-9])22222(?![0-9])"),
     "prod Vault path literal": re.compile(r"(?<!inventories)[\"'/ ]prod/[a-z{]"),   # inventories/prod = a folder
+    "env-suffixed account literal": re.compile(r"\bsvc-[a-z0-9]+-(prod|test|dev|acc|staging)\b"),
     "machine name": re.compile(r"\b(lxc|vm|srv)-[a-z0-9-]+-[0-9]{2}\b"),
     "IPv4 literal": re.compile(r"\b(10|172|213)\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\b"),
     # 10.6.x covers OOB and the switch fabric. They were missing from this pattern,
@@ -53,7 +54,7 @@ PATTERNS = {
 # Documented exceptions, per file and kind. vault_kv_map names two Vault PATHS that
 # happen to contain the firewall's name (see the comment there), not host references.
 EXEMPT = {
-    "playbooks/vars/vault_kv_map.yml": ("machine name",),
+    "playbooks/vars/vault_kv_map.yml": ("machine name", "env-suffixed account literal"),   # legacy secret-file names
 }
 
 ROOTS = ("roles", "playbooks")
