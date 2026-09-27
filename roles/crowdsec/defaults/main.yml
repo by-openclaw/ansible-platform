@@ -68,23 +68,17 @@ crowdsec_local_namespace: "{{ platform_org }}"
 
 # --- Bouncers that pull decisions from this LAPI (API keys generated here) -----
 # The OPNsense firewall bouncer is the minimum enforcer. Add the Traefik bouncer
-# in the Traefik phase. Each entry → `cscli bouncers add` → key saved to the
-# secret store (consumed by the OPNsense crowdsec/general MVC config + Traefik).
+# in the Traefik phase. Each entry → `cscli bouncers add` → key saved to Vault
+# (consumed by the OPNsense crowdsec/general MVC config + Traefik).
 crowdsec_bouncers:
   - name: "opnsense-firewall"
-    secret_file: "fabric/app-crowdsec-bouncer-opnsense.json"  # pragma: allowlist secret
+    vault_path: "{{ platform_env }}/crowdsec/bouncer-opnsense"
 
 # --- Agent auto-enrollment token (so every LXC/VM/Windows agent can register to
-#     this LAPI non-interactively in the agent phase). Generated + persisted. ---
-crowdsec_registration_token_file: "fabric/app-crowdsec-registration-token.json"
-# Resolved straight from the secret file: config.yml runs BEFORE secrets.yml in
-# the dispatcher, so a set_fact there would be too late.
-crowdsec_registration_token: >-
-  {{ (lookup('file', crowdsec_secret_dir + '/' + crowdsec_registration_token_file)
-      | from_json).fields.token }}
-
-# --- Controller secret store --------------------------------------------------
-crowdsec_secret_dir: "~/.openclaw/workspace/infra/secrets"
+#     this LAPI non-interactively in the agent phase). Vault, get-or-create. ---
+crowdsec_registration_token_vault_path: "{{ platform_env }}/crowdsec/registration-token"
+# Bound by tasks/token.yml, which the dispatcher runs BEFORE config.yml.
+crowdsec_registration_token: ""
 
 # --- Console / CAPI enrollment (community blocklist) — optional, off by default
 #     (enroll later with a console key if desired). -----------------------------

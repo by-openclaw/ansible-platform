@@ -1,0 +1,15 @@
+---
+# The shared token every log processor registers with (crowdsec_agent reads the
+# same Vault path). Get-or-create: minted on first run, reused after.
+- name: "token | Agent registration token (Vault, get-or-create)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ crowdsec_registration_token_vault_path }}"
+    vault_secret_init:
+      token: "{{ lookup('community.general.random_string', length=48, special=false) }}"
+
+- name: "token | Bind it"
+  ansible.builtin.set_fact:
+    crowdsec_registration_token: "{{ vault_secret_result.token }}"
+  no_log: true

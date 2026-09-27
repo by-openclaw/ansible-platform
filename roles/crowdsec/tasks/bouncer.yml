@@ -1,0 +1,27 @@
+---
+- name: "bouncer | {{ crowdsec_bouncer.name }} — key in Vault? (optional read)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ crowdsec_bouncer.vault_path }}"
+    vault_secret_optional: true
+
+- name: "bouncer | {{ crowdsec_bouncer.name }} — add it and capture the key (absent only)"
+  ansible.builtin.command: "cscli bouncers add {{ crowdsec_bouncer.name }} -o raw"
+  register: crowdsec_bouncer_add
+  changed_when: true
+  no_log: true
+  when: vault_secret_result | length == 0
+
+- name: "bouncer | {{ crowdsec_bouncer.name }} — store the new key (Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ crowdsec_bouncer.vault_path }}"
+    vault_secret_init:
+      api_key: "{{ crowdsec_bouncer_add.stdout | trim }}"
+      lapi_url: "http://{{ crowdsec_lapi_host }}:{{ crowdsec_lapi_port }}"
+      bouncer: "{{ crowdsec_bouncer.name }}"
+  when:
+    - crowdsec_bouncer_add.stdout is defined
+    - (crowdsec_bouncer_add.stdout | trim | length) > 0
