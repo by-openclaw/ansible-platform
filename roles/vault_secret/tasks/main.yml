@@ -45,7 +45,11 @@
     stdin: "{{ vault_secret_init | to_json }}"
   delegate_to: "{{ vault_secret_host }}"
   become: true
-  when: vault_secret_get.rc != 0
+  # Nothing to write means nothing is written: without the init guard an optional
+  # read of an absent path created an EMPTY secret there (and reported changed).
+  when:
+    - vault_secret_get.rc != 0
+    - vault_secret_init | length > 0
   changed_when: true
   no_log: true
 
@@ -59,8 +63,13 @@
   register: vault_secret_get2
   changed_when: false
   check_mode: false   # read-only `kv get`
+  # Under --check the init write above was skipped, so there is nothing to re-read.
+  failed_when: vault_secret_get2.rc != 0 and not ansible_check_mode
   no_log: true
-  when: vault_secret_get.rc != 0
+  # Only when something was written: an optional read of an absent path has no init.
+  when:
+    - vault_secret_get.rc != 0
+    - vault_secret_init | length > 0
 
 # Rotation mode (SEC-09): when vault_secret_force_fields is set, OVERWRITE the
 # secret with exactly those fields (a new KV v2 version — old versions retained).
@@ -78,13 +87,14 @@
 
 - name: "Vault secret | Publish the secret fields as `vault_secret_result`"
   ansible.builtin.set_fact:
+    # force_fields > the stored secret > the freshly initialised one > under --check,
+    # the init that WOULD have been written > {} (optional and absent).
     vault_secret_result: >-
       {{ vault_secret_force_fields
          if (vault_secret_force_fields | default({}) | length > 0)
-         else ({}
-               if (vault_secret_optional | bool
-                   and vault_secret_get.rc != 0
-                   and (vault_secret_get2.rc | default(1)) != 0)
-               else ((vault_secret_get2 if (vault_secret_get.rc != 0) else vault_secret_get).stdout
-                     | from_json).data.data) }}
+         else ((vault_secret_get.stdout | from_json).data.data
+               if vault_secret_get.rc == 0
+               else ((vault_secret_get2.stdout | from_json).data.data
+                     if (vault_secret_get2.rc | default(1)) == 0
+                     else (vault_secret_init if ansible_check_mode else {}))) }}
   no_log: true
