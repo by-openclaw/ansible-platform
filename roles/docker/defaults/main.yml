@@ -1,17 +1,29 @@
 ---
 # ==============================================================================
-# Role: docker — container runtime for nested service LXCs (Debian)
-# Uses Debian's distro packages (docker.io) — reproducible/pinned by the release,
-# no external apt repo. python3-docker provides the SDK for community.docker.
+# Role: docker — THE owner of the container engine on every Docker host.
+# docker_engine (inventory) picks Debian's docker.io or Docker CE; nothing else
+# installs docker*/containerd* packages. python3-docker = SDK for community.docker.
 # Requires the LXC to have features.nesting=true (set in terraform).
 # ==============================================================================
-docker_packages:
-  - docker.io
-  - python3-docker   # SDK for community.docker modules
+# Engine flavour — set per host/group in the INVENTORY, never in a service role
+# (two owners of one engine is how vm-mailcow-01 ended on docker.io, 2026-09-19):
+#   debian  Debian's docker.io (the service LXCs; pinned by the release)
+#   ce      Docker CE from Docker's apt repo (mailcow requires >= 24)
+docker_engine: "debian"
+docker_engine_packages:
+  debian: [docker.io]
+  ce: [docker-ce, docker-ce-cli, containerd.io, docker-buildx-plugin, docker-compose-plugin]
+docker_packages: "{{ docker_engine_packages[docker_engine] + ['python3-docker'] }}"   # python3-docker = SDK for community.docker
+# Debian packages that conflict with Docker CE. Removed (never purged: /var/lib/docker,
+# images and volumes stay) before Docker CE is installed.
+docker_ce_conflicting_packages: [docker.io, docker-compose, containerd, runc]
+docker_ce_key_url: "https://download.docker.com/linux/debian/gpg"
+docker_ce_keyring: "/etc/apt/keyrings/docker.asc"
+docker_ce_repo: "deb [arch=amd64 signed-by={{ docker_ce_keyring }}] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
 # Compose v2: Debian 13's `docker-compose` package IS Compose v2 (2.26); exposing the
 # binary as the CLI plugin makes `docker compose` and community.docker.docker_compose_v2
 # work. Only where this role owns the engine (docker.io) — never next to docker-ce (#454).
-docker_compose_from_debian: "{{ ansible_distribution_release | default('') in ['trixie', 'forky'] }}"
+docker_compose_from_debian: "{{ docker_engine == 'debian' and ansible_distribution_release | default('') in ['trixie', 'forky'] }}"
 
 # json-file log rotation (containers default to unbounded logs otherwise).
 # journald is the log driver now (caps live in hardening journald.conf.d)
