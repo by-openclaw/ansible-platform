@@ -6,7 +6,7 @@
 {% for r in docker_user_allow %}
 {% for src in r.from %}
 {% if (family == 4 and ':' not in src) or (family == 6 and ':' in src) %}
--A DOCKER-USER -i {{ docker_user_uplink }} -p {{ r.proto | default('tcp') }} -s {{ src }} -m conntrack --ctorigdstport {{ r.port }} --ctdir ORIGINAL -j RETURN
+-A DOCKER-USER -i {{ docker_user_uplink }} -p {{ r.proto | default('tcp') }} -s {{ src }} -m conntrack --ctorigdstport {{ r.port }} --ctdir ORIGINAL -m comment --comment "{{ r.comment | default('') | regex_replace('[^A-Za-z0-9 ()._/-]', '') | truncate(60, true, '') }}" -j RETURN
 {% endif %}
 {% endfor %}
 {% endfor %}

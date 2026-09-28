@@ -8,6 +8,57 @@
   changed_when: false
   check_mode: false   # read-only
 
+# The allow rules come from the inventory catalog (group_vars/all/docker_firewall.yml):
+# the fleet-wide entries plus those of the services platform_services puts here.
+- name: "Docker | This host's published-port rules, from the catalog"
+  ansible.builtin.set_fact:
+    docker_user_declared: >-
+      {%- set out = [] -%}
+      {%- for r in platform_docker_firewall_common -%}{%- set _ = out.append(r) -%}{%- endfor -%}
+      {%- for s in platform_services | selectattr('host', 'equalto', inventory_hostname) | map(attribute='name') -%}
+        {%- for r in platform_docker_firewall.get(s, []) -%}{%- set _ = out.append(r) -%}{%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: "Docker | Every source names something the inventory knows (a typo must fail, not allow nothing)"
+  ansible.builtin.assert:
+    that: >-
+      item in ['any', 'trusted']
+      or (item is match('^db:') and (platform_services | selectattr('db', 'equalto', item[3:]) | list | length) > 0)
+      or (platform_services | selectattr('name', 'equalto', item) | list | length) > 0
+    fail_msg: "docker_firewall source '{{ item }}' is not a service name, db:<value>, trusted or any"
+    quiet: true
+  loop: "{{ docker_user_declared | map(attribute='from') | flatten | unique }}"
+
+# IPv4 = the source host itself; IPv6 = its zone (hosts source v6 from SLAAC, see the catalog).
+- name: "Docker | Resolve the sources to addresses"
+  ansible.builtin.set_fact:
+    docker_user_allow: >-
+      {%- set out = [] -%}
+      {%- for r in docker_user_declared -%}
+        {%- set cidrs = [] -%}
+        {%- for ref in r.from -%}
+          {%- if ref == 'any' -%}
+            {%- set _ = cidrs.extend(['0.0.0.0/0', '::/0']) -%}
+          {%- elif ref == 'trusted' -%}
+            {%- set _ = cidrs.extend(platform_trusted_cidrs) -%}
+          {%- else -%}
+            {%- set svcs = (platform_services | selectattr('db', 'equalto', ref[3:])) if ref.startswith('db:')
+                           else (platform_services | selectattr('name', 'equalto', ref)) -%}
+            {%- for h in svcs | map(attribute='host') -%}
+              {%- set a4 = hostvars[h].ansible_host -%}
+              {%- set _ = cidrs.append(a4 ~ '/32') -%}
+              {%- for z in platform_zones.values() if z.cidr6 is defined and (a4 | ansible.utils.ipaddr(z.cidr4)) -%}
+                {%- set _ = cidrs.append(z.cidr6) -%}
+              {%- endfor -%}
+            {%- endfor -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- set _ = out.append({'port': r.port, 'proto': r.proto | default('tcp'), 'from': cidrs | unique | list,
+                                'comment': r.comment | default('')}) -%}
+      {%- endfor -%}
+      {{ out }}
+
 - name: "Docker | DOCKER-USER rules — {{ docker_user_firewall }} (IPv4 / IPv6)"
   ansible.builtin.blockinfile:
     path: "/etc/ufw/{{ item.file }}"
