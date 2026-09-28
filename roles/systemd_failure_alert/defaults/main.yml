@@ -26,7 +26,11 @@ systemd_failure_alert_from: "{{ platform_alert_email }}"
 # Enough to see the cause without mailing a whole run.
 systemd_failure_alert_journal_lines: 40
 systemd_failure_alert_script: "/usr/local/sbin/systemd-failure-alert.sh"
-systemd_failure_alert_sendmail: "/usr/sbin/sendmail"      # postfix provides it
+# The command that submits the report: a full message on stdin, recipients from its
+# headers. postfix's sendmail on every relay host. A host with no local postfix binary
+# (vm-mailcow-01 — mailcow's postfix runs in containers) submits over SMTP to
+# 127.0.0.1:25 with s-nail instead (group_vars/mailcow.yml).
+systemd_failure_alert_submit: "/usr/sbin/sendmail -t"
 # The unit to attach to; required by tasks/attach.yml, unset here on purpose so a
 # caller that forgets it fails loudly instead of stamping a drop-in onto nothing.
 systemd_failure_alert_unit: ""
