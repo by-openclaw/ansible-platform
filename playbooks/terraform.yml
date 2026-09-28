@@ -1,0 +1,148 @@
+---
+# ==============================================================================
+# Terraform (infra-terraform-proxmox) through Ansible. The Proxmox API token comes
+# from Vault (<node env>/proxmox/admin: terraform_token_id / terraform_token_secret —
+# platform_proxmox_env: a tier on another tier's node uses that node's token)
+# into the ENVIRONMENT of the terraform process only — no terraform.tfvars on
+# disk, nothing on argv, no wrapper script (scripts/tf.sh). After an apply the
+# state is backed up to the NAS with the repo's own backup-state.py, as tf.sh did.
+#
+#   plan (default):  ansible-playbook playbooks/terraform.yml [-e '{"tf_targets": ["module.x"]}']
+#   apply the plan:  ansible-playbook playbooks/terraform.yml -e tf_apply=true [-e ...]
+#
+# Read the plan before applying: a plan that touches a guest's `initialization`,
+# `network` or `disk` restarts that guest (2026-09-18).
+# ==============================================================================
+
+# One-time migration, a no-op once done: the old terraform.tfvars held the API
+# token (already in Vault, identical — asserted) and the node's root SSH password
+# (declared but unused by Terraform). The password moves to Vault, is read back,
+# and only then the file is removed.
+- name: "Terraform | Legacy terraform.tfvars -> Vault, then remove it"
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  vars:
+    tf_legacy_vars_file: "{{ platform_terraform_repo }}/environments/{{ platform_env }}/terraform.tfvars"
+  tasks:
+    - name: "Terraform | Is the legacy terraform.tfvars still there?"
+      ansible.builtin.stat:
+        path: "{{ tf_legacy_vars_file }}"
+      register: tf_legacy
+
+    - name: "Terraform | Migrate it"
+      when: tf_legacy.stat.exists
+      block:
+        - name: "Terraform | Read the legacy values (no_log)"
+          ansible.builtin.set_fact:
+            tf_legacy_token: "{{ lookup('ansible.builtin.file', tf_legacy_vars_file) | regex_search('proxmox_api_token\\s*=\\s*\"([^\"]*)\"', '\\1') | first | default('') }}"
+            tf_legacy_root_pw: "{{ lookup('ansible.builtin.file', tf_legacy_vars_file) | regex_search('proxmox_ssh_password\\s*=\\s*\"([^\"]*)\"', '\\1') | first | default('') }}"  # pragma: allowlist secret
+          no_log: true
+
+        - name: "Terraform | The API token in Vault"
+          ansible.builtin.include_role:
+            name: vault_secret
+          vars:
+            vault_secret_path: "{{ platform_proxmox_env }}/proxmox/admin"
+
+        - name: "Terraform | The file's token is the one Vault holds (else stop: two truths)"
+          ansible.builtin.assert:
+            that: >-
+              tf_legacy_token | length == 0
+              or tf_legacy_token == vault_secret_result.terraform_token_id ~ '=' ~ vault_secret_result.terraform_token_secret
+            fail_msg: "terraform.tfvars holds a DIFFERENT API token than Vault {{ platform_proxmox_env }}/proxmox/admin — reconcile by hand"
+            quiet: true
+          no_log: true
+
+        - name: "Terraform | The root SSH password into Vault (written only if the path is absent)"
+          ansible.builtin.include_role:
+            name: vault_secret
+          vars:
+            vault_secret_path: "{{ platform_proxmox_env }}/proxmox/root"
+            vault_secret_init: {password: "{{ tf_legacy_root_pw }}"}  # pragma: allowlist secret
+            vault_secret_metadata_put:
+              origin: "infra-terraform-proxmox terraform.tfvars (proxmox_ssh_password), migrated 2026-09-28"
+          when:
+            - tf_legacy_root_pw | length > 0
+            - not ansible_check_mode
+
+        - name: "Terraform | Vault holds it now (read back)"
+          ansible.builtin.assert:
+            that: vault_secret_result.password == tf_legacy_root_pw  # pragma: allowlist secret
+            fail_msg: "Vault {{ platform_proxmox_env }}/proxmox/root does not hold the tfvars password — the file is kept"
+            quiet: true
+          no_log: true
+          when:
+            - tf_legacy_root_pw | length > 0
+            - not ansible_check_mode
+
+        - name: "Terraform | Remove the legacy terraform.tfvars (every value is in Vault)"
+          ansible.builtin.file:
+            path: "{{ tf_legacy_vars_file }}"
+            state: absent
+
+- name: "Terraform | Plan (and apply on request) with the token from Vault"
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  vars:
+    tf_dir: "{{ platform_terraform_repo }}/environments/{{ platform_env }}"
+    tf_plan_file: "{{ tf_dir }}/ansible.tfplan"
+    tf_apply: false
+    tf_targets: []
+  tasks:
+    - name: "Terraform | The Proxmox API token (Vault)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ platform_proxmox_env }}/proxmox/admin"
+
+    - name: "Terraform | The environment of the terraform process (never a file, never argv)"
+      ansible.builtin.set_fact:
+        tf_process_env:
+          TF_VAR_proxmox_endpoint: "https://{{ hostvars[groups['proxmox_nodes'] | first].ansible_host }}:8006"
+          TF_VAR_proxmox_api_token: "{{ vault_secret_result.terraform_token_id }}={{ vault_secret_result.terraform_token_secret }}"
+      no_log: true
+
+    - name: "Terraform | Plan"
+      community.general.terraform:
+        project_path: "{{ tf_dir }}"
+        state: planned
+        plan_file: "{{ tf_plan_file }}"
+        targets: "{{ tf_targets }}"
+      environment: "{{ tf_process_env }}"
+      register: tf_plan
+      check_mode: false   # a plan changes nothing
+
+    - name: "Terraform | What the plan would do"
+      ansible.builtin.debug:
+        msg: "{{ tf_plan.stdout_lines | select('search', '^\\s+[~+-] |^Plan:|No changes|must be replaced|will be (created|destroyed|updated)') | list }}"
+
+    - name: "Terraform | Apply that plan"
+      community.general.terraform:
+        project_path: "{{ tf_dir }}"
+        state: present
+        plan_file: "{{ tf_plan_file }}"
+      environment: "{{ tf_process_env }}"
+      register: tf_applied
+      when: tf_apply | bool
+
+    - name: "Terraform | Back the state up to the NAS (the repo's backup-state.py)"
+      ansible.builtin.command:
+        argv:
+          - "{{ platform_terraform_state_backup_python }}"
+          - "{{ platform_terraform_repo }}/scripts/backup-state.py"
+          - --env
+          - "{{ platform_env }}"
+      when:
+        - tf_apply | bool
+        - tf_applied is changed
+      changed_when: true
+
+    - name: "Terraform | Remove the plan file"
+      ansible.builtin.file:
+        path: "{{ tf_plan_file }}"
+        state: absent
+      check_mode: false

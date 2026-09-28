@@ -31,6 +31,12 @@ platform_system_mail_enabled: true
 # it was written out in 8 places across 7 roles and a playbook.
 platform_alert_email: "alerts@{{ platform_domain }}"
 platform_env: "prod"                 # environment tier (infra/0005)
+# The Terraform repo on the controller and the Python that backs its state up to
+# the NAS — playbooks/terraform.yml runs Terraform with the API token from Vault.
+platform_terraform_repo: "{{ lookup('env', 'HOME') }}/repos/infra-terraform-proxmox"
+# Whose Vault paths hold the Proxmox node's credentials (API token, root): this tier's own.
+platform_proxmox_env: "{{ platform_env }}"
+platform_terraform_state_backup_python: "{{ lookup('env', 'HOME') }}/repos/lib-synology-dsm/.venv/bin/python"
 
 # --- Connection default -------------------------------------------------------
 # Every host is reached over SSH. The FW (vm-opns-01) overrides this with a host
