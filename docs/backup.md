@@ -29,7 +29,7 @@ Guest images capture everything on the rootfs and named docker volumes.
 
 | Service | Class | What is stateful · where | Mechanism | Restore |
 |---|---|---|---|---|
-| **postgresql** (cluster, 8 svc DBs) | **B** | `postgres:17` volume | `pg-backup` cron **02:00** → `pg_dumpall` → `/var/lib/postgresql/backups/all-DATE.sql.gz` (in guest → PBS) | `psql -U postgres < all-DATE.sql` on a restored/fresh guest; per-DB via `pg_restore` |
+| **postgresql** (cluster: every `db: shared-pg` service) | **B** | `postgres:17` volume | `pg-backup` cron **02:00** → `pg_dumpall` → `/var/lib/postgresql/backups/all-DATE.sql.gz` (in guest → PBS) | `psql -U postgres < all-DATE.sql` on a restored/fresh guest; per-DB via `pg_restore` |
 | **vault** | **B** | raft data volume | `vault_backup`: raft snapshot **02:15** → `/var/lib/vault/snapshots` (14 kept) + NFS + S3 | `vault operator raft snapshot restore` — **needs unseal keys** (print-kit); see `roles/vault_backup/README.md` |
 | **mailcow** | **B** | vmail, MariaDB, redis, conf | `mailcow-backup.timer` **01:00** → helper `backup all` → `/var/backups/mailcow` (→ PBS 01:30); control-node cron **03:30** `--tags backup` → SeaweedFS `mailcow-backups` (Vault key) → Contabo; 7-day retention local + S3 | `helper-scripts/backup_and_restore.sh restore` |
 | **gitlab** | **B + C** | PG DB (cluster), repos/uploads | `gitlab-backup create` cron → **S3** (`gitlab-backup-to-s3`); secrets in Vault `prod/gitlab/secrets`; `gitlab_archive`/restore role | `gitlab-backup restore` + Vault secrets; proven by the archive/restore role |
