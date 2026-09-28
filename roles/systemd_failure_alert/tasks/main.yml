@@ -16,16 +16,16 @@
 
 # A notifier nobody has proven is the same as no notifier — this is the third time
 # a silent failure went unnoticed, so the delivery path is asserted, not assumed.
-- name: "FailureAlert | sendmail must exist, or the unit cannot report anything"
+- name: "FailureAlert | The submit command must exist, or the unit cannot report anything"
   ansible.builtin.stat:
-    path: "{{ systemd_failure_alert_sendmail }}"
-  register: systemd_failure_alert_sendmail_stat
+    path: "{{ systemd_failure_alert_submit.split() | first }}"
+  register: systemd_failure_alert_submit_stat
 
 - name: "FailureAlert | Fail loudly rather than install a notifier that cannot send"
   ansible.builtin.assert:
-    that: systemd_failure_alert_sendmail_stat.stat.exists
+    that: systemd_failure_alert_submit_stat.stat.exists
     fail_msg: >-
-      {{ systemd_failure_alert_sendmail }} is missing on {{ inventory_hostname }} —
+      {{ systemd_failure_alert_submit.split() | first }} is missing on {{ inventory_hostname }} —
       roles/hardening installs the postfix satellite that provides it. Without it a
       failing timer would still fail silently, which is the whole point of this role.
     quiet: true

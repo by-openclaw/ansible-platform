@@ -8,4 +8,4 @@ Description=Report %i failing
 [Service]
 Type=oneshot
 TimeoutStartSec=60
-ExecStart=-/bin/bash -c '{ printf "From: {{ systemd_failure_alert_from }}\nTo: {{ systemd_failure_alert_to }}\nSubject: [$$(hostname -f)] unit failed: %i\nAuto-Submitted: auto-generated\n\n%i failed on $$(hostname -f).\n\n"; systemctl show %i --no-pager -p Result -p ExecMainStatus -p ExecMainExitTimestamp -p NRestarts; printf "\nLast {{ systemd_failure_alert_journal_lines }} journal lines:\n"; journalctl -u %i -n {{ systemd_failure_alert_journal_lines }} --no-pager --output=short-iso; } | {{ systemd_failure_alert_sendmail }} -t'
+ExecStart=-/bin/bash -c '{ printf "From: {{ systemd_failure_alert_from }}\nTo: {{ systemd_failure_alert_to }}\nSubject: [$$(hostname -f)] unit failed: %i\nAuto-Submitted: auto-generated\n\n%i failed on $$(hostname -f).\n\n"; systemctl show %i --no-pager -p Result -p ExecMainStatus -p ExecMainExitTimestamp -p NRestarts; printf "\nLast {{ systemd_failure_alert_journal_lines }} journal lines:\n"; journalctl -u %i -n {{ systemd_failure_alert_journal_lines }} --no-pager --output=short-iso; } | {{ systemd_failure_alert_submit }}'

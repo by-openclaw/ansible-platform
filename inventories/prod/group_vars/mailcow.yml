@@ -14,3 +14,8 @@ docker_engine: ce
 # The stack is live in production: every run converges it (compose up is
 # idempotent — unchanged containers are left alone).
 mailcow_deploy_stack: true
+
+# No host postfix here (see above), so no /usr/sbin/sendmail: the failure notifier
+# (roles/systemd_failure_alert — lego-renew-mailcow, …) submits over SMTP to mailcow's
+# own postfix on 127.0.0.1:25 with s-nail (installed by the hardening baseline).
+systemd_failure_alert_submit: "/usr/bin/s-nail -Sv15-compat -Smta=smtp://127.0.0.1:25 -Ssmtp-auth=none -t"
