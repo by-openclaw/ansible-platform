@@ -88,24 +88,51 @@ nextcloud_apps:
   - twofactor_webauthn  # security keys / passkeys next to TOTP
   - files_external      # core app (disabled by default): mounts the Jitsi recordings bucket later
   # --- phase 2 (collab backend on lxc-collab-01, roles/onlyoffice + roles/nextcloud_collab) ---
-  - onlyoffice          # Word/Excel/PowerPoint editor (ONLYOFFICE Docs connector, JWT) — pinned tarball below
+  - onlyoffice          # Word/Excel/PowerPoint editor (ONLYOFFICE Docs connector, JWT)
   - whiteboard          # real-time whiteboard (needs the whiteboard server)
 
-# Apps installed from a PINNED release tarball instead of the store's latest: occ
-# app:install has no version switch and takes whatever the store lists — on
-# 2026-09-19 the store's onlyoffice 10.2.0 pointed at a GitHub asset that 404s.
-# The tarball is fetched on the host, copied into the container and unpacked into
-# custom_apps as www-data; re-run = no-op while the installed version matches.
-# Store apps follow their latest release for the RUNNING major on every play
-# (roles/nextcloud/tasks/apps-update.yml, drift-gated via --showonly). Pinned
-# apps are excluded there and move only through nextcloud_apps_pinned.
-nextcloud_apps_autoupdate: true
-
+# Every store app is installed from a PINNED release tarball, checksum-verified:
+# occ app:install has no version switch and takes whatever the store lists (on
+# 2026-09-19 the store's onlyoffice 10.2.0 pointed at a GitHub asset that 404s),
+# and the old "latest for the running major on every play" (apps-update.yml) let
+# versions move with no change in git. A version moves only by editing its pin:
+# roles/nextcloud/tasks/app-pinned.yml installs it and runs the migrations. The
+# pins are the versions running on 2026-09-28 (Nextcloud 34.0.4); URLs are the
+# app store's own download links for that release. Apps shipped inside the image
+# (sharebymail, twofactor_totp, files_external) move with nextcloud_image.
 nextcloud_apps_pinned:
-  - id: onlyoffice
-    version: "10.1.2"
-    url: "https://github.com/ONLYOFFICE/onlyoffice-nextcloud/releases/download/v10.1.2/onlyoffice.tar.gz"
-
+  - {id: calendar, version: "6.6.1", checksum: "sha256:fd6630deec568368784c569ef01c7d9ed8acca1ab6833cf12a2bff5984a3fa7b",
+     url: "https://github.com/nextcloud-releases/calendar/releases/download/v6.6.1/calendar-v6.6.1.tar.gz"}
+  - {id: contacts, version: "8.9.0", checksum: "sha256:06f5da48d70884cef60faaf8bb36a8b2ec22a7bcdb0aecf4970a693614562854",
+     url: "https://github.com/nextcloud-releases/contacts/releases/download/v8.9.0/contacts-v8.9.0.tar.gz"}
+  - {id: deck, version: "1.18.5", checksum: "sha256:dafec6635ff3af50fb6f73330064ef6153910be2fa434d2edbf8043263122253",
+     url: "https://github.com/nextcloud-releases/deck/releases/download/v1.18.5/deck-v1.18.5.tar.gz"}
+  - {id: drawio, version: "4.3.9", checksum: "sha256:3ac34d75ad538d067c4d119d464281b424c1958a2c7ef114de1d1d52fea8981c",
+     url: "https://github.com/arnowelzel/drawio-nextcloud/releases/download/v4.3.9/drawio-v4.3.9.tar.gz"}
+  - {id: forms, version: "5.4.0", checksum: "sha256:fdf8d4b175623411e4c5c47f0e97e54eb70fd97ba2bf8e3f82ef8f2944378a19",
+     url: "https://github.com/nextcloud-releases/forms/releases/download/v5.4.0/forms-v5.4.0.tar.gz"}
+  - {id: groupfolders, version: "22.0.6", checksum: "sha256:bfff357b12bbd24257d8d127cf30e83a72256e7659f1cc3e32bd09fe647d2f9b",
+     url: "https://github.com/nextcloud-releases/groupfolders/releases/download/v22.0.6/groupfolders-v22.0.6.tar.gz"}
+  - {id: mail, version: "5.12.2", checksum: "sha256:8985836fa1f6d7f846a523fbf0d096165ce4b21b6ebc0780842b59d6e40b2bcf",
+     url: "https://github.com/nextcloud-releases/mail/releases/download/v5.12.2/mail-v5.12.2.tar.gz"}
+  - {id: notes, version: "6.1.0", checksum: "sha256:03c493f45cb17a5005a0dce91c4e59b294ef91d4520c3ef44a21d5e61e419526",
+     url: "https://github.com/nextcloud-releases/notes/releases/download/v6.1.0/notes-v6.1.0.tar.gz"}
+  - {id: onlyoffice, version: "10.1.2", checksum: "sha256:41aa2168c6f0edb9dc06aade6f95bc5e7833aaac2a00b9ec1a04f8f78c5faff1",
+     url: "https://github.com/ONLYOFFICE/onlyoffice-nextcloud/releases/download/v10.1.2/onlyoffice.tar.gz"}
+  - {id: polls, version: "9.3.0", checksum: "sha256:e61ba33ed5f239a07b977fd45aae00da5661c58096b36fed1006f6194c9854a6",
+     url: "https://github.com/nextcloud-releases/polls/releases/download/v9.3.0/polls-v9.3.0.tar.gz"}
+  - {id: spreed, version: "24.0.5", checksum: "sha256:7228913aa7051b9b4fe3d2312bdc0c0bace6c96f43085556748dc2910af9a584",
+     url: "https://github.com/nextcloud-releases/spreed/releases/download/v24.0.5/spreed-v24.0.5.tar.gz"}
+  - {id: tables, version: "2.3.1", checksum: "sha256:135d80c7607be0b11f8b0453175fdb9056011f98a4b2f731adee59ab30b54fc3",
+     url: "https://github.com/nextcloud-releases/tables/releases/download/v2.3.1/tables-v2.3.1.tar.gz"}
+  - {id: tasks, version: "0.18.1", checksum: "sha256:0c988d50531c9bfa246e6c31f3f95369adde1629ba70d15194915ab56e24687b",
+     url: "https://github.com/nextcloud/tasks/releases/download/v0.18.1/tasks.tar.gz"}
+  - {id: twofactor_webauthn, version: "2.7.1", checksum: "sha256:7ea341f60b4902e5b82e342167b11237a64cc9b6bf958447c0d30eb557f46af8",
+     url: "https://github.com/nextcloud-releases/twofactor_webauthn/releases/download/v2.7.1/twofactor_webauthn-v2.7.1.tar.gz"}
+  - {id: user_oidc, version: "8.11.0", checksum: "sha256:887920504c2f0e0d055abd66225ee7b66d756f50fe5a3739779d6b2ce108633f",
+     url: "https://github.com/nextcloud-releases/user_oidc/releases/download/v8.11.0/user_oidc-v8.11.0.tar.gz"}
+  - {id: whiteboard, version: "2.0.0", checksum: "sha256:3824738896faddf7eb9dce4759c2b3f7f8a95b88c1a40f5b6bbdf8dce7a252ab",
+     url: "https://github.com/nextcloud-releases/whiteboard/releases/download/v2.0.0/whiteboard-v2.0.0.tar.gz"}
 # --- Authentik OIDC SSO (wired only when the client secret file exists) ---------
 # Official user_oidc app, configured idempotently via occ. Access is gated
 # IdP-side by the nextcloud-admins group (authentik restrict_to_group); groups
