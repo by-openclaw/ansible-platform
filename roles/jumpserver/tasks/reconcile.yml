@@ -139,43 +139,20 @@
   ansible.builtin.debug:
     msg: "{{ jumpserver_reconcile_out.stdout_lines | select('match', '^  -') | list }}"
 
-- name: "JumpServer reconcile | Probe: the vaulted identity must log in to EVERY inherited asset (built-in integration test)"
-  ansible.builtin.command:
-    argv:
-      - ssh
-      - -o
-      - BatchMode=yes
-      - -o
-      - ConnectTimeout=8
-      - -o
-      - StrictHostKeyChecking=no
-      - -o
-      - UserKnownHostsFile=/dev/null
-      - -i
-      - /tmp/jms_key_asset
-      - -p
-      - "{{ item.port | default(jumpserver_asset_default_port) }}"
-      - "{{ item.account | default(jumpserver_asset_default_account) }}@{{ item.address }}"
-      - "true"
-  loop: "{{ jumpserver_assets | rejectattr('key_file', 'defined') | list }}"
-  loop_control:
-    label: "{{ item.name }}"
-  register: jumpserver_probe
-  changed_when: false
-  failed_when: false
-  # The key this probe uses is staged and unlocked by tasks --check skips (they write files on the
-  # bastion), so under --check it would test a key that is not there and call every asset broken.
-  # A dry-run cannot verify logins; it skips instead of inventing a failure.
-  when: not ansible_check_mode
-
 - name: "JumpServer reconcile | Every probe must have logged in"
+  # reconcile.py probes every default-key asset with the in-memory key (paramiko) and
+  # prints one PROBE_OK / PROBE_FAIL line per asset.
   ansible.builtin.assert:
-    that: jumpserver_probe.results | rejectattr('rc', 'equalto', 0) | list | length == 0
+    that:
+      - jumpserver_reconcile_out.stdout_lines | select('match', '^PROBE_FAIL') | list | length == 0
+      - >-
+        jumpserver_reconcile_out.stdout_lines | select('match', '^PROBE_OK') | list | length
+        == jumpserver_assets | rejectattr('key_file', 'defined') | list | length
     fail_msg: >-
-      bastion login failed for:
-      {{ jumpserver_probe.results | rejectattr('rc', 'equalto', 0) | map(attribute='item.name') | list }}
+      bastion login failed:
+      {{ jumpserver_reconcile_out.stdout_lines | select('match', '^PROBE_(FAIL|OK)') | reject('match', '^PROBE_OK') | list }}
       (port/account/key per the hardening baseline — see roles/jumpserver/defaults)
-    success_msg: "bastion login OK on {{ jumpserver_probe.results | length }} assets"
+    success_msg: "bastion login OK on {{ jumpserver_reconcile_out.stdout_lines | select('match', '^PROBE_OK') | list | length }} assets"
   when: not ansible_check_mode
 - name: "JumpServer reconcile | Shred the staged secrets (LXC + container)"
   ansible.builtin.command:
