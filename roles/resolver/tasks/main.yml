@@ -106,6 +106,22 @@
   when: resolver_netbird_backup.stat.exists
   tags: [resolver, dns]
 
+# Proxmox rewrites a container's /etc/resolv.conf from the CT config at every start
+# ("# --- BEGIN PVE ---"), so the file had two owners: after each restart it held
+# PVE's list (lxc-jitsi-01: the firewall's v6 instead of AdGuard) until this role ran
+# again. PVE's documented opt-out is /etc/.pve-ignore.<file>; this role owns the file.
+- name: "Resolver | Proxmox leaves this container's resolv.conf to this role"
+  ansible.builtin.file:
+    path: /etc/.pve-ignore.resolv.conf
+    state: touch
+    mode: "0644"
+    modification_time: preserve
+    access_time: preserve
+  when:
+    - resolver_manage_resolv_conf | bool
+    - ansible_virtualization_type | default('') == 'lxc'
+  tags: [resolver, dns]
+
 # resolv.conf on a host running systemd-resolved is its stub symlink — leave it alone there.
 - name: "Resolver | Write /etc/resolv.conf directly (no systemd-resolved here)"
   ansible.builtin.template:
