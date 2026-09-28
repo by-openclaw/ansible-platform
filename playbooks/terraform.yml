@@ -9,6 +9,8 @@
 #
 #   plan (default):  ansible-playbook playbooks/terraform.yml [-e '{"tf_targets": ["module.x"]}']
 #   apply the plan:  ansible-playbook playbooks/terraform.yml -e tf_apply=true [-e ...]
+#   another Terraform environment of the same node: -e tf_env=test (NOT platform_env:
+#   that also renames the SSH identities the play connects with)
 #
 # Read the plan before applying: a plan that touches a guest's `initialization`,
 # `network` or `disk` restarts that guest (2026-09-18).
@@ -24,7 +26,8 @@
   become: false
   gather_facts: false
   vars:
-    tf_legacy_vars_file: "{{ platform_terraform_repo }}/environments/{{ platform_env }}/terraform.tfvars"
+    tf_env: "{{ platform_env }}"
+    tf_legacy_vars_file: "{{ platform_terraform_repo }}/environments/{{ tf_env }}/terraform.tfvars"
   tasks:
     - name: "Terraform | Is the legacy terraform.tfvars still there?"
       ansible.builtin.stat:
@@ -88,7 +91,8 @@
   become: false
   gather_facts: false
   vars:
-    tf_dir: "{{ platform_terraform_repo }}/environments/{{ platform_env }}"
+    tf_env: "{{ platform_env }}"
+    tf_dir: "{{ platform_terraform_repo }}/environments/{{ tf_env }}"
     tf_plan_file: "{{ tf_dir }}/ansible.tfplan"
     tf_apply: false
     tf_targets: []
@@ -112,6 +116,7 @@
         state: planned
         plan_file: "{{ tf_plan_file }}"
         targets: "{{ tf_targets }}"
+        force_init: true   # idempotent (local backend); a never-initialised environment gets its providers
       environment: "{{ tf_process_env }}"
       register: tf_plan
       check_mode: false   # a plan changes nothing
@@ -135,7 +140,7 @@
           - "{{ platform_terraform_state_backup_python }}"
           - "{{ platform_terraform_repo }}/scripts/backup-state.py"
           - --env
-          - "{{ platform_env }}"
+          - "{{ tf_env }}"
       when:
         - tf_apply | bool
         - tf_applied is changed
