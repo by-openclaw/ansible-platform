@@ -43,3 +43,13 @@
     masked: true
   loop: "{{ pve_host_ceph_units.stdout_lines }}"
   when: not ansible_check_mode
+
+# Masking keeps the daemons' last "failed" state; clear it (they were restart-looping).
+- name: "PVE host | Clear the Ceph daemons' old failed state"
+  ansible.builtin.command:
+    argv: "{{ ['systemctl', 'reset-failed'] + (pve_host_ceph_units.stdout_lines | map('split') | map('first') | list) }}"
+  changed_when: false   # clears a stale status flag only
+  failed_when: false
+  when:
+    - pve_host_ceph_units.stdout_lines | length > 0
+    - not ansible_check_mode

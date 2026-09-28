@@ -51,6 +51,17 @@
     name: [aide, s-nail]
     state: present
 
+# s-nail's default transport is the sendmail binary — exactly the path the _aide unit
+# cannot use ("s-nail: ... message not sent"). Point it at the local MTA over SMTP:
+# postfix listens on loopback :25 on every host (mailcow's own on its VM).
+- name: "Baseline | s-nail submits over SMTP to the local MTA (not the sendmail binary)"
+  ansible.builtin.lineinfile:
+    path: /etc/s-nail.rc
+    regexp: "^set mta="
+    line: "set mta=smtp://127.0.0.1:25"
+    create: true
+    mode: "0644"
+
 - name: "Baseline | AIDE reports go to the alert mailbox, and only when something changed"
   ansible.builtin.lineinfile:
     path: /etc/default/aide
@@ -253,14 +264,15 @@
     state: restarted
   when: hardening_journald_caps is changed
 
-# A unit whose file is gone (package removed, service retired by a role) keeps its
-# "failed" state until reset — e.g. wtmpdb-rotate.timer after wtmpdb left, the
-# retired netbird-approval-notify.service. Only NOT-FOUND units are reset: a real
-# failure of an existing unit stays visible.
-- name: "Baseline | Failed units whose unit file no longer exists"
+# A unit whose file is gone (package removed, service retired by a role) or that is
+# masked (switched off for good) keeps its "failed" state until reset — e.g.
+# wtmpdb-rotate.timer after wtmpdb left, the retired netbird-approval-notify, the
+# masked ipmitool collector. Only NOT-FOUND and MASKED units are reset: a real
+# failure of a unit that can still run stays visible.
+- name: "Baseline | Failed units that are gone or masked"
   ansible.builtin.shell: >-
     set -o pipefail;
-    systemctl list-units --all --failed --plain --no-legend | awk '$2 == "not-found" {print $1}'
+    systemctl list-units --all --failed --plain --no-legend | awk '$2 == "not-found" || $2 == "masked" {print $1}'
   args:
     executable: /bin/bash
   register: hardening_vanished_failed
