@@ -1,0 +1,46 @@
+---
+# ==============================================================================
+# base | root_fs — a VM's root filesystem fills its virtual disk
+# Terraform owns the disk size (infra-terraform-proxmox `disk_size`). A grown disk
+# is invisible to the guest until the partition and the filesystem follow, and
+# Debian cloud images only do that at boot (cloud-init growpart) — so without
+# this every resize needs a reboot (for the resolver: a DNS outage). Online and
+# idempotent: growpart exits 1 (NOCHANGE) when the partition already ends at the
+# end of the disk. LXCs are skipped — `pct resize` grows their filesystem itself;
+# so are LVM/other layouts (only a plain /dev/sdXN or /dev/vdXN root is grown).
+# ==============================================================================
+
+- name: "base | root_fs | The root mount"
+  ansible.builtin.set_fact:
+    _base_root: "{{ ansible_facts.mounts | default([]) | selectattr('mount', 'equalto', '/') | first | default({}) }}"
+
+- name: "base | root_fs | Grow a plain-partition root on a VM"
+  when:
+    - ansible_virtualization_role | default('') == 'guest'
+    - ansible_virtualization_type | default('') == 'kvm'
+    - _base_root.device | default('') is match('^/dev/[sv]d[a-z]+[0-9]+$')
+  block:
+    - name: "base | root_fs | growpart (cloud-guest-utils)"
+      ansible.builtin.apt:
+        name: cloud-guest-utils
+        state: present
+      register: _base_growpart_pkg
+
+    # In --check this runs `growpart --dry-run`, so a dry-run shows the grow it would do.
+    - name: "base | root_fs | Grow the root partition to the end of the disk"
+      ansible.builtin.command:
+        argv: "{{ ['growpart'] + (['--dry-run'] if ansible_check_mode else []) + [_base_root.device | regex_replace('[0-9]+$', ''), _base_root.device | regex_search('[0-9]+$')] }}"
+      check_mode: false
+      register: _base_growpart
+      changed_when: _base_growpart.rc == 0
+      failed_when: _base_growpart.rc not in [0, 1]
+      when: not (ansible_check_mode and _base_growpart_pkg is changed)
+
+    - name: "base | root_fs | Grow the root filesystem into the partition"
+      community.general.filesystem:
+        dev: "{{ _base_root.device }}"
+        fstype: "{{ _base_root.fstype }}"
+        resizefs: true
+      when:
+        - _base_growpart is changed
+        - not ansible_check_mode
