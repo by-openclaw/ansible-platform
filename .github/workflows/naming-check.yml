@@ -7,11 +7,16 @@ on:
       - 'inventories/**/group_vars/**'
       - 'inventories/**/host_vars/**'
       - '**/vars/**'
+      # a change to the check itself must run it
+      - 'scripts/check_image_pins.py'
+      - '.github/workflows/naming-check.yml'
   pull_request:
     paths:
       - 'inventories/**/group_vars/**'
       - 'inventories/**/host_vars/**'
       - '**/vars/**'
+      - 'scripts/check_image_pins.py'
+      - '.github/workflows/naming-check.yml'
 
 jobs:
   naming-check:
@@ -59,4 +64,4 @@ jobs:
 
           exit $EXIT_CODE
       - name: "Image pins: no :latest, no untagged image"
-        run: ./scripts/check_image_pins.sh
+        run: ./scripts/check_image_pins.py
