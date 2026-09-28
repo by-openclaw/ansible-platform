@@ -52,7 +52,7 @@ for r in D.get("roles", []):
 chans = api("GET", f"/guilds/{GID}/channels")
 by_name_type = {(c["name"], c["type"]): c for c in chans}
 bot_role = roles.get(D.get("bot_role", ""))
-admin_role = roles.get("platform-admins")
+admin_role = roles.get(D["admin_role"])   # platform_admins_group (identity catalog)
 
 
 def overwrites_for(ch):

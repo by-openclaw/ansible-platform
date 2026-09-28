@@ -118,6 +118,8 @@
     - name: "decommission | Archive the secrets in Vault (-> fabric/archive/)"
       ansible.builtin.command:
         argv: "{{ ['python3', '/tmp/vault_archive_secret.py'] + _svc.secrets }}"
+      environment:
+        VAULT_ADDR: "{{ platform_vault_addr }}"
       delegate_to: "{{ groups['vault'][0] }}"
       register: _secarch
       changed_when: "'CHANGED=0' not in _secarch.stdout"
