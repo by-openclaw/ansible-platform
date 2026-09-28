@@ -1,0 +1,11 @@
+---
+# AdGuard Home retention — a policy of this deployment, not of the role (the
+# template used to carry both values as literals).
+#
+# The query log is the ONLY copy of who resolved what: it is not shipped to Loki.
+# AdGuard rotates it every `interval` and keeps one previous file, so the disk
+# holds up to 2 x this: ~55 MB/day (measured 2026-09-28) -> ~10 GB at 90 d.
+# vm-adguard-01's disk (infra-terraform-proxmox `disk_size`, 20G) is sized for it;
+# raise one, re-check the other.
+adguard_querylog_retention: "2160h"    # 90 d — maps to querylog.interval
+adguard_statistics_retention: "24h"    # dashboard statistics — maps to statistics.interval
