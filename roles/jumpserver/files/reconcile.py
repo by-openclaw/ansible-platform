@@ -281,6 +281,51 @@ if email and email.get("smtp_host"):
             pass
     summary.append(f"email: SMTP -> {email['smtp_host']}:{email['smtp_port']} as {email['smtp_user']}")
 
+# --- probe: the vaulted identity must log in to every default-key asset -------
+# Built-in integration test, run here so the key never leaves memory unencrypted:
+# the same decrypted key the accounts hold, over the bastion's own network path.
+# One line per asset: PROBE_OK <name> | PROBE_FAIL <name>: <reason>.
+def _pkey(text):
+    import io
+
+    import paramiko
+
+    for cls in (paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.RSAKey):
+        try:
+            return cls.from_private_key(io.StringIO(text))
+        except Exception:  # noqa: BLE001 — try the next key type
+            continue
+    raise ValueError("unsupported private key type")
+
+
+def _probe(address, port, username, pkey):
+    import paramiko
+
+    c = paramiko.SSHClient()
+    c.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # known_hosts=/dev/null, as before
+    try:
+        c.connect(address, port=port, username=username, pkey=pkey, timeout=8, banner_timeout=8,
+                  auth_timeout=8, allow_agent=False, look_for_keys=False)
+        _in, out, _err = c.exec_command("true", timeout=8)
+        return out.channel.recv_exit_status()
+    finally:
+        c.close()
+
+
+_D = CFG.get("asset_defaults", {})
+_default_kp = _D.get("key_file", "/tmp/jms_key_asset")
+if _default_kp in key_cache:
+    _pk = _pkey(key_cache[_default_kp])
+    for a in CFG.get("assets", []):
+        if "key_file" in a:
+            continue
+        try:
+            rc = _probe(a["address"], int(a.get("port", _D.get("port", 22))),
+                        a.get("account", _D.get("account", "root")), _pk)
+            print(("PROBE_OK %s" % a["name"]) if rc == 0 else ("PROBE_FAIL %s: exit %s" % (a["name"], rc)))
+        except Exception as e:  # noqa: BLE001 — reported per asset, never fatal here
+            print("PROBE_FAIL %s: %s" % (a["name"], type(e).__name__))
+
 _changed = ("created=True" in "\n".join(summary)) or ("updated=True" in "\n".join(summary))
 if _changed:
     print("RECONCILE_CHANGED")
