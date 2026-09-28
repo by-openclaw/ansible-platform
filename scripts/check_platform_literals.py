@@ -58,7 +58,7 @@ EXEMPT = {
 }
 
 ROOTS = ("roles", "playbooks")
-SUFFIXES = (".yml", ".yaml", ".j2")
+SUFFIXES = (".yml", ".yaml", ".j2", ".py")   # .py: scripts roles ship (files/) hardcoded a Vault URL
 
 def main() -> int:
     bad = []

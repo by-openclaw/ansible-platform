@@ -5,7 +5,7 @@ import urllib.request, json, ssl, sys
 
 TOKEN = open("/tmp/.vt").read().strip()
 import os
-BASE = os.environ.get("VAULT_ADDR", "https://lxc-vault-01.by-research.be:8200") + "/v1/secret"
+BASE = os.environ["VAULT_ADDR"] + "/v1/secret"   # set by the task (platform_vault_addr)
 ctx = ssl.create_default_context()   # verified TLS — skip-verify banned
 
 
