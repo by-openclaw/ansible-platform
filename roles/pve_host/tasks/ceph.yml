@@ -1,0 +1,45 @@
+---
+# Ceph is not part of this node's storage design (ZFS + PBS + NFS; no rbd/cephfs
+# storage). A monitor and a manager from an earlier install, named after the
+# node's old hostname, stayed enabled and restart-looped at every boot (`ceph -s`
+# times out, no quorum). Their daemons are stopped, disabled and masked. The
+# packages stay (pve-manager depends on ceph-common / ceph-fuse), and so does the
+# on-disk state under /var/lib/ceph: unmask + enable reverses this.
+- name: "PVE host | Storage that uses Ceph (rbd / cephfs)"
+  ansible.builtin.command: grep -cE '^(rbd|cephfs):' /etc/pve/storage.cfg
+  register: pve_host_ceph_storage
+  changed_when: false
+  failed_when: pve_host_ceph_storage.rc > 1
+  check_mode: false   # read-only probe
+
+- name: "PVE host | Ceph daemons are only switched off while no storage uses Ceph"
+  ansible.builtin.assert:
+    that: pve_host_ceph_storage.stdout | int == 0
+    fail_msg: "pve_host_ceph_enabled is false but /etc/pve/storage.cfg has rbd/cephfs storage"
+    quiet: true
+
+- name: "PVE host | Ceph daemon units on this node"
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    systemctl list-units --all --plain --no-legend 'ceph-mon@*' 'ceph-mgr@*' 'ceph-mds@*' 'ceph-osd@*'
+    | awk '{print $1, $2}'
+  args:
+    executable: /bin/bash
+  register: pve_host_ceph_units
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "PVE host | Ceph daemons stopped and disabled"
+  ansible.builtin.systemd_service:
+    name: "{{ item.split()[0] }}"
+    state: stopped
+    enabled: false
+  loop: "{{ pve_host_ceph_units.stdout_lines | reject('search', ' masked$') | list }}"
+  when: not ansible_check_mode
+
+- name: "PVE host | Ceph daemons masked (a reboot must not start them again)"
+  ansible.builtin.systemd_service:
+    name: "{{ item.split()[0] }}"
+    masked: true
+  loop: "{{ pve_host_ceph_units.stdout_lines }}"
+  when: not ansible_check_mode
