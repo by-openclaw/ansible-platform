@@ -135,7 +135,62 @@
         cmd: "mv {{ (vault_secret_dir | expanduser) }}/fabric/{{ item }}.json {{ decommission_stale_dir }}/{{ item }}.json"
         removes: "{{ (vault_secret_dir | expanduser) }}/fabric/{{ item }}.json"
       delegate_to: localhost
-      loop: "{{ _svc.secrets }}"
+      loop: "{{ _svc.secrets | reject('search', '/') | list }}"   # a KV path has no fabric file
+
+# ============================ S3 (SeaweedFS) =================================
+# The identity goes with its keys; the bucket only when it holds nothing — archiving
+# data is a decision this role does not make for anyone.
+- name: "decommission | S3 — identity + (empty) bucket"
+  when: _svc.s3_identity is defined or _svc.s3_bucket is defined
+  delegate_to: "{{ decommission_seaweedfs_host }}"
+  become: true
+  block:
+    - name: "decommission | S3 identities and buckets now"
+      ansible.builtin.shell: >-
+        set -o pipefail; printf 's3.configure\ns3.bucket.list\n'
+        | {{ decommission_weed_bin }} shell -master {{ decommission_weed_master }} 2>/dev/null
+      args:
+        executable: /bin/bash
+      register: _s3now
+      changed_when: false
+      check_mode: false   # read-only probe
+      no_log: true        # the identity config carries keys
+
+    - name: "decommission | Remove the S3 identity (and its keys)"
+      ansible.builtin.shell: >-
+        set -o pipefail; echo 's3.configure -user {{ _svc.s3_identity }} -delete -apply'
+        | {{ decommission_weed_bin }} shell -master {{ decommission_weed_master }}
+      args:
+        executable: /bin/bash
+      when:
+        - _svc.s3_identity is defined
+        - >-
+          ('"name": "' ~ _svc.s3_identity ~ '"') in _s3now.stdout
+      changed_when: true
+
+    - name: "decommission | The bucket as listed"
+      ansible.builtin.set_fact:
+        _s3_bucket_line: "{{ _s3now.stdout_lines | select('match', '^\\s*' ~ _svc.s3_bucket ~ '\\s') | first | default('') }}"
+      when: _svc.s3_bucket is defined
+      no_log: true
+
+    - name: "decommission | A bucket is removed only when empty"
+      ansible.builtin.assert:
+        that: _s3_bucket_line | length == 0 or 'size:0' in _s3_bucket_line
+        fail_msg: "bucket {{ _svc.s3_bucket }} holds data — archive it first; nothing was removed"
+        quiet: true
+      when: _svc.s3_bucket is defined
+
+    - name: "decommission | Remove the empty bucket"
+      ansible.builtin.shell: >-
+        set -o pipefail; echo 's3.bucket.delete -name {{ _svc.s3_bucket }}'
+        | {{ decommission_weed_bin }} shell -master {{ decommission_weed_master }}
+      args:
+        executable: /bin/bash
+      when:
+        - _svc.s3_bucket is defined
+        - _s3_bucket_line | length > 0
+      changed_when: true
 
 # ============================ Traefik route =================================
 # roles/traefik_route owns route files in both directions. Deleting one by path here meant

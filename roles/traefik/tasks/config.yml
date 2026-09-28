@@ -46,3 +46,21 @@
     enabled: true
     state: started
     daemon_reload: true
+
+# A route retired by renaming it `<name>.yml.retired-<date>` is ignored by Traefik but
+# stays on disk forever. Its content is in git (the role renders every route); remove it.
+- name: "Traefik | Retired route files"
+  ansible.builtin.find:
+    paths: "{{ traefik_dynamic_dir }}"
+    patterns: "*.retired-*"
+  register: traefik_retired_routes
+  tags: [traefik, config]
+
+- name: "Traefik | Remove them"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ traefik_retired_routes.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  tags: [traefik, config]
