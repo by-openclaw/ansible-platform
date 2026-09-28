@@ -26,8 +26,9 @@ Config management: OS hardening, service deployment, user provisioning.
 | File | Why |
 |---|---|
 | `ansible.cfg` | Default inventory, key, become settings |
-| `inventories/poc/hosts.yml` | All hosts on srv-proxmox-poc-01 node (folder = node, not env) |
-| `inventories/poc/group_vars/all.yml` | Global vars |
+| `inventories/prod/hosts.yml` | The live platform — the default inventory in `ansible.cfg` |
+| `inventories/prod/group_vars/all/` | Single sources: deployment, services, people, identity, network |
+| `inventories/test/` | Test tier: same code, its own values |
 | `roles/hardening/defaults/main.yml` | All hardening defaults — check before overriding |
 | `roles/hardening/templates/sshd_config.j2` | Full sshd_config — port 22222 ONLY |
 | `playbooks/hardening.yml` | Main hardening entry point |
@@ -57,7 +58,7 @@ The template replaces sshd_config entirely — .d/ fragments are insufficient.
 > Commit conventions, agent permissions, and operational guardrails → see [`AGENTS.md`](AGENTS.md).
 
 - Every host/group MUST declare `env:` with the explicit tier per VM (ADR-0012). `env` is per-VM, not per-inventory. No label = non-compliant.
-- `inventories/poc/` = hosts on node `srv-proxmox-poc-01`. Folder name is node-based. All current hosts = `env: prod`.
+- `inventories/prod/` = the live platform (default); `inventories/test/` = the test tier. There is no other inventory.
 - Never hardcode IPs in tasks — use inventory or vars
 - All tasks must be idempotent (safe to run twice)
 - `ansible-lint` clean before merge

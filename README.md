@@ -92,7 +92,7 @@ sudo usermod -aG break-glass by-research
 | `hardening_ufw_allowed_ports` | SSH/22222 from OOB | Firewall open rules |
 | `hardening_email_relay_enabled` | `false` | Enable postfix relay |
 
-Override per group or host in `inventories/poc/group_vars/` or `host_vars/`.
+Override per group or host in `inventories/prod/group_vars/` or `host_vars/`.
 
 ### Proxmox-specific
 
@@ -104,15 +104,9 @@ Override per group or host in `inventories/poc/group_vars/` or `host_vars/`.
 
 ## Inventory
 
-```yaml
-# inventories/poc/hosts.yml
-proxmox_nodes:
-  srv-proxmox-poc-01:    # 10.6.224.105
-vms:
-  vm-debian-bootstrap-test-01:  # 10.6.225.11
-```
-
-Add new hosts here. Group vars apply automatically.
+`inventories/prod/hosts.yml` is the live platform and the default in `ansible.cfg`;
+`inventories/test/` is the test tier (same code, its own values). Add a host to its
+group in the inventory of its tier; group vars apply automatically.
 
 ---
 
