@@ -1,7 +1,8 @@
 ---
 # ==============================================================================
 # Terraform (infra-terraform-proxmox) through Ansible. The Proxmox API token comes
-# from Vault ({env}/proxmox/admin: terraform_token_id / terraform_token_secret)
+# from Vault (<node env>/proxmox/admin: terraform_token_id / terraform_token_secret —
+# platform_proxmox_env: a tier on another tier's node uses that node's token)
 # into the ENVIRONMENT of the terraform process only — no terraform.tfvars on
 # disk, nothing on argv, no wrapper script (scripts/tf.sh). After an apply the
 # state is backed up to the NAS with the repo's own backup-state.py, as tf.sh did.
@@ -43,14 +44,14 @@
           ansible.builtin.include_role:
             name: vault_secret
           vars:
-            vault_secret_path: "{{ platform_env }}/proxmox/admin"
+            vault_secret_path: "{{ platform_proxmox_env }}/proxmox/admin"
 
         - name: "Terraform | The file's token is the one Vault holds (else stop: two truths)"
           ansible.builtin.assert:
             that: >-
               tf_legacy_token | length == 0
               or tf_legacy_token == vault_secret_result.terraform_token_id ~ '=' ~ vault_secret_result.terraform_token_secret
-            fail_msg: "terraform.tfvars holds a DIFFERENT API token than Vault {{ platform_env }}/proxmox/admin — reconcile by hand"
+            fail_msg: "terraform.tfvars holds a DIFFERENT API token than Vault {{ platform_proxmox_env }}/proxmox/admin — reconcile by hand"
             quiet: true
           no_log: true
 
@@ -58,7 +59,7 @@
           ansible.builtin.include_role:
             name: vault_secret
           vars:
-            vault_secret_path: "{{ platform_env }}/proxmox/root"
+            vault_secret_path: "{{ platform_proxmox_env }}/proxmox/root"
             vault_secret_init: {password: "{{ tf_legacy_root_pw }}"}  # pragma: allowlist secret
             vault_secret_metadata_put:
               origin: "infra-terraform-proxmox terraform.tfvars (proxmox_ssh_password), migrated 2026-09-28"
@@ -69,7 +70,7 @@
         - name: "Terraform | Vault holds it now (read back)"
           ansible.builtin.assert:
             that: vault_secret_result.password == tf_legacy_root_pw  # pragma: allowlist secret
-            fail_msg: "Vault {{ platform_env }}/proxmox/root does not hold the tfvars password — the file is kept"
+            fail_msg: "Vault {{ platform_proxmox_env }}/proxmox/root does not hold the tfvars password — the file is kept"
             quiet: true
           no_log: true
           when:
@@ -96,7 +97,7 @@
       ansible.builtin.include_role:
         name: vault_secret
       vars:
-        vault_secret_path: "{{ platform_env }}/proxmox/admin"
+        vault_secret_path: "{{ platform_proxmox_env }}/proxmox/admin"
 
     - name: "Terraform | The environment of the terraform process (never a file, never argv)"
       ansible.builtin.set_fact:
