@@ -31,6 +31,7 @@
   ansible.builtin.apt:
     name: [ipmitool, openipmi]
     state: absent
+    purge: true   # openipmi's LSB init script is a conffile: a plain remove leaves the unit behind
   when: ansible_virtualization_role | default('') == 'guest'
 
 - name: "Node-exporter | The ipmitool-sensor collector off on guests"
@@ -41,6 +42,17 @@
   loop:
     - prometheus-node-exporter-ipmitool-sensor.timer
     - prometheus-node-exporter-ipmitool-sensor.service
+  when:
+    - ansible_virtualization_role | default('') == 'guest'
+    - not ansible_check_mode
+
+# Masking stops a unit from running again but keeps its last "failed" state.
+- name: "Node-exporter | Clear the collector's old failed state on guests"
+  ansible.builtin.command:
+    argv: [systemctl, reset-failed, prometheus-node-exporter-ipmitool-sensor.timer, prometheus-node-exporter-ipmitool-sensor.service]
+  register: node_exporter_ipmi_reset
+  changed_when: false   # clears a stale status flag only
+  failed_when: false    # nothing to reset is fine
   when:
     - ansible_virtualization_role | default('') == 'guest'
     - not ansible_check_mode

@@ -31,3 +31,11 @@ sender_canonical_maps = static:{{ hardening_email_from }}
 inet_interfaces = loopback-only
 inet_protocols  = all
 smtpd_banner = $myhostname ESMTP
+# Local SMTP submission (loopback :25) for submitters that cannot use the sendmail
+# binary — AIDE's _aide unit via s-nail. Without an explicit relay policy smtpd
+# refused to start ("specify at least one working instance of ...
+# reject_unauth_destination"), so this listener never worked: loopback clients
+# relay, anything else is refused (and nothing else can reach a loopback socket).
+mynetworks = 127.0.0.0/8 [::1]/128
+smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination
+smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination
