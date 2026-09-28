@@ -83,6 +83,11 @@
   vars:
     vault_secret_path: "{{ jumpserver_asset_key_passphrase_vault_path }}"
 
+- name: "JumpServer reconcile | Keep the passphrase for the reconcile config (no_log)"
+  ansible.builtin.set_fact:
+    jumpserver_key_unlock: {key_passphrase: "{{ vault_secret_result.passphrase }}"}  # pragma: allowlist secret
+  no_log: true
+
 - name: "JumpServer reconcile | Stage the (still encrypted) key on the LXC (0600)"
   ansible.builtin.copy:
     content: "{{ jumpserver_asset_key_b64 | b64decode }}"
@@ -91,35 +96,15 @@
   no_log: true
   changed_when: false  # transient scaffolding, shredded below
 
-- name: "JumpServer reconcile | Stage the passphrase + askpass helper (0600/0700, never argv)"
-  ansible.builtin.copy:
-    content: "{{ item.content }}"
-    dest: "{{ item.dest }}"
-    owner: root
-    group: root
-    mode: "{{ item.mode }}"
-  loop:
-    - { content: "{{ vault_secret_result.passphrase }}", dest: /tmp/jms_pf, mode: "0600" }
-    - { content: "#!/bin/sh\ncat /tmp/jms_pf\n", dest: /tmp/jms_askpass.sh, mode: "0700" }
-  loop_control:
-    label: "{{ item.dest }}"
-  no_log: true
-  changed_when: false   # transient scaffolding, shredded before the play ends
-
-- name: "JumpServer reconcile | Unlock the staged key for the bastion (passphrase via askpass, not argv)"
-  ansible.builtin.command:
-    argv: [setsid, -w, env, SSH_ASKPASS=/tmp/jms_askpass.sh, SSH_ASKPASS_REQUIRE=force, DISPLAY=:0, ssh-keygen, -p, -f, /tmp/jms_key_asset, -N, ""]
-  changed_when: false   # transient scaffolding, no lasting state
-  no_log: true
-
-- name: "JumpServer reconcile | Shred the passphrase + helper"
-  ansible.builtin.command: shred -u /tmp/jms_pf /tmp/jms_askpass.sh
-  changed_when: false   # transient scaffolding, no lasting state
-  no_log: true
-
 - name: "JumpServer reconcile | Stage the desired-state config on the LXC (0600)"
   ansible.builtin.copy:
-    content: "{{ jumpserver_reconcile_cfg | to_json }}"
+    # The key's passphrase rides in this 0600 file: reconcile.py decrypts the key in
+    # memory (cryptography, already in jms_core). No askpass helper, no ssh-keygen,
+    # nothing on argv; the file is shredded at the end.
+    content: >-
+      {{ jumpserver_reconcile_cfg
+         | combine({'asset_defaults': jumpserver_key_unlock}, recursive=True)
+         | to_json }}
     dest: /tmp/jms_reconcile.json
     mode: "0600"
   no_log: true
@@ -198,5 +183,6 @@
   loop:
     - "docker exec jms_core rm -f /tmp/jms_key_asset /tmp/jms_reconcile.json"
     - "shred -u /tmp/jms_key_asset"
-    - "rm -f /tmp/jms_reconcile.json /tmp/jms_reconcile.py"
+    - "shred -u /tmp/jms_reconcile.json"
+    - "rm -f /tmp/jms_reconcile.py"
   changed_when: false  # transient scaffolding, shredded below

@@ -52,9 +52,21 @@ def _pubkey(private_pem):
         return None
 
 
-def load_key(path):
-    with open(path) as f:
-        return f.read()
+def load_key(path, passphrase=""):
+    """The account's private key, unencrypted, as JumpServer stores it. A key vaulted with a
+    passphrase is decrypted here, in memory — the passphrase comes in the 0600 config."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if not passphrase:
+        return data.decode()
+    from cryptography.hazmat.primitives import serialization
+
+    key = serialization.load_ssh_private_key(data, password=passphrase.encode())
+    return key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.OpenSSH,
+        serialization.NoEncryption(),
+    ).decode()
 
 
 # --- (1) bastion admin user -> System Admin + bastion group ------------------
@@ -119,7 +131,9 @@ for a in CFG["assets"]:
         n_hosts += 1
     # account (SSH key vaulted into JumpServer)
     if kp not in key_cache:
-        key_cache[kp] = load_key(kp)
+        # the passphrase belongs to the default (vaulted) key; an asset's own key_file brings its own
+        pp = a.get("key_passphrase", D.get("key_passphrase", "") if kp == D.get("key_file") else "")
+        key_cache[kp] = load_key(kp, pp)
     acct, a_created = Account.objects.get_or_create(
         asset=host,
         username=account,
