@@ -52,6 +52,17 @@ groups:
           summary: "{{ '{{' }} $labels.instance {{ '}}' }} {{ '{{' }} $labels.mountpoint {{ '}}' }} has {{ '{{' }} $value | humanizePercentage {{ '}}' }} free"
           description: "The filesystem {{ '{{' }} $labels.mountpoint {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} has been below {{ (prometheus_alert_disk_free_ratio * 100) | int }} % free for 15 min. Services on it will fail to write once it is full (databases, logs, backups)."
           runbook: "Find what grows (journal, docker images, backups, a runaway log) with du on that mount; prune or grow the disk through the infra repo, not by hand."
+      - alert: SeaweedFSVolumeSlotsLow
+        expr: >-
+          max by (instance) (SeaweedFS_volumeServer_max_volumes)
+          - sum by (instance) (SeaweedFS_volumeServer_volumes{type="volume"})
+          < {{ prometheus_alert_seaweedfs_free_slots }}
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "SeaweedFS on {{ '{{' }} $labels.instance {{ '}}' }} has {{ '{{' }} $value {{ '}}' }} free volume slots"
+          description: "When no volume slot is free every S3 write fails with HTTP 500 — PBS backups, GitLab artifacts, Loki, Harbor. Slots run out before the disk does (partly filled per-bucket volumes)."
+          runbook: "Raise seaweedfs_volume_max in roles/seaweedfs (the disk quota is the real ceiling — check HostDiskAlmostFull on /data), run playbooks/seaweedfs.yml, then re-run any failed backups."
       - alert: HostOutOfMemory
         expr: (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < {{ prometheus_alert_mem_free_ratio }}
         for: 10m
