@@ -28,6 +28,9 @@ decommission_traefik_host: "{{ groups['traefik'] | first }}"
 decommission_traefik_dynamic_dir: "/etc/traefik/dynamic"
 decommission_authentik_host: "{{ groups['authentik'] | first }}"
 decommission_crowdsec_host: "{{ groups['crowdsec'] | first }}"
+decommission_seaweedfs_host: "{{ groups['seaweedfs'] | first }}"
+decommission_weed_bin: "/usr/local/bin/weed"        # as roles/seaweedfs_bucket
+decommission_weed_master: "localhost:9333"
 
 # The catalog of decommissionable services + their FULL footprint. Every field is
 # OPTIONAL — declare only the components a service actually has; each is removed
@@ -40,6 +43,8 @@ decommission_crowdsec_host: "{{ groups['crowdsec'] | first }}"
 #     authentik_app:  <oidc-slug>                         # delete app + provider
 #     authentik_group: <group-name>                       #   (optional) + delete this group
 #     crowdsec_machine: <machine-id>                       # cscli machines delete
+#     s3_identity:    <identity>                           # SeaweedFS S3 identity + its keys deleted
+#     s3_bucket:      <bucket>                             # removed ONLY when empty (else the run fails)
 #     guest:          <vm-or-lxc-name>                     # ⚠️ Terraform-managed → logged, NOT auto-destroyed
 #     split_dns:      <fqdn>                               # ⚠️ remove from opn_unbound.host_overrides → logged
 #
@@ -56,4 +61,14 @@ decommission_catalog:
   #
   # What remains here is the legacy path for a service whose role has already been deleted, where
   # there is no contract left to read. Anything still installed declares its own teardown.
-  {}
+  #
+  # ciso-assistant: the identity CISO Assistant had before it took its platform name, grc
+  # (#526). The database moved; its Vault paths, S3 identity (with a live key) and empty
+  # bucket were left behind.
+  ciso-assistant:
+    secrets:
+      - "{{ platform_env }}/ciso-assistant/app"
+      - "{{ platform_env }}/ciso-assistant/db-pgsql"
+      - "{{ platform_env }}/ciso-assistant/s3"
+    s3_identity: ciso-assistant
+    s3_bucket: ciso-assistant
