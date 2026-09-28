@@ -88,5 +88,10 @@ platform_docker_firewall:
     - {port: 80, from: [traefik], comment: "Vaultwarden"}
   verdaccio:
     - {port: 4873, from: [traefik], comment: "Verdaccio"}
+  # Every platform host runs a Wazuh agent. Their connections are long-lived, so the
+  # audit window saw one reconnect in 23 h (the manager publishes 1514-1515 as a range,
+  # which the first port survey missed).
   wazuh:
     - {port: 5601, from: [traefik], comment: "Wazuh dashboard"}
+    - {port: 1514, from: [trusted], comment: "Wazuh agents (events)"}
+    - {port: 1515, from: [trusted], comment: "Wazuh agents (enrolment)"}
