@@ -1,6 +1,7 @@
 ---
 # ==============================================================================
-# Role: base — baseline packages + sshd for every cluster LXC
+# Role: base — baseline packages + sshd for every guest; on VMs the root
+#   filesystem follows the Terraform disk size (root_fs.yml)
 # ==============================================================================
 
 - name: "base | Install baseline packages"
@@ -31,3 +32,6 @@
     - ansible_virtualization_role | default('') == 'guest'
     - ansible_virtualization_type | default('') == 'kvm'
     - not ansible_check_mode
+
+- name: "base | Root filesystem follows the disk size on VMs"
+  ansible.builtin.import_tasks: root_fs.yml
