@@ -9,7 +9,7 @@ back to it. 3-2-1 = local (NFS) + PBS (SeaweedFS S3, encrypted) + offsite
 
 | Job | When | Mechanism | Proof |
 |---|---|---|---|
-| **PBS** (2nd copy) | 01:30 nightly | `vzdump` → PBS S3 datastore, **client-side encrypted** (key in Vault `prod/pbs/encryption-key`), verify weekly, prune 3/14/8/6, GC daily | 26/26 nightly ✓ · file restore drill ✓ (`ct/501`) |
+| **PBS** (2nd copy) | 01:30 nightly | `vzdump` → PBS S3 datastore, **client-side encrypted** (key in Vault `prod/pbs/encryption-key`), verify daily 21:00 UTC (failures mailed to the alert mailbox), prune 3/14/8/6, GC daily | 26/26 nightly ✓ · file restore drill ✓ (`ct/501`) |
 | **NFS** (1st copy) | 05:00 nightly | `vzdump` → Synology NFS | PBS's own DR copy lives here (PBS excluded from its S3 job) |
 | **Offsite** (3rd copy) | continuous | SeaweedFS `filer.backup` → Contabo S3 (`/buckets`) | `seaweedfs-backup.service` active |
 

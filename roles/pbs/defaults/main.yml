@@ -28,13 +28,15 @@ pbs_s3_vault_path: "{{ platform_env }}/pbs/s3"   # minted by seaweedfs_bucket (V
 
 pbs_datastore_name: "pbs-datastore"
 pbs_datastore_cache_path: "/var/lib/proxmox-backup/s3-cache/pbs-datastore"  # local cache/metadata for the S3-backed datastore
-pbs_gc_schedule: "daily"
-pbs_prune_schedule: "daily"
-# Retention on the PBS datastore (independent of the NFS job's retention).
-pbs_keep:
-  keep-daily: 7
-  keep-weekly: 4
-  keep-monthly: 6
+# Schedules run on the PBS clock (UTC). The backup job itself is PVE-side (CEST),
+# see pbs_backup_schedule below.
+pbs_gc_schedule: "daily"                    # 00:00 UTC
+pbs_prune_schedule: "daily"                 # 00:00 UTC
+# Daily, so a broken backup is proven within a day (it was weekly: 7 days blind).
+# 21:00 UTC = 23:00 CEST: a full run takes 72-97 min (measured 09-21/09-28), so it
+# ends before GC/prune (00:00 UTC) and the 03:30 CEST backup job, and never
+# overlaps the 05:00 CEST NFS job that keeps the node's disks busy until ~08:15.
+pbs_verify_schedule: "21:00"
 
 # --- Authentik OIDC (SSO) -----------------------------------------------------
 pbs_oidc_enabled: true
@@ -96,6 +98,33 @@ pbs_keep_daily: 14
 pbs_keep_weekly: 8
 pbs_keep_monthly: 6
 pbs_reverify_days: 30
+
+# The two datastore jobs, declared once; tasks/jobs.yml makes the live jobs match
+# (create, update drift, retire superseded ids). Ids carry no cadence: the old ones
+# (verify-weekly, prune-daily) would lie as soon as a schedule changed.
+pbs_jobs:
+  prune:
+    id: prune
+    legacy: [prune-daily]
+    settings:
+      schedule: "{{ pbs_prune_schedule }}"
+      keep-last: "{{ pbs_keep_last }}"
+      keep-daily: "{{ pbs_keep_daily }}"
+      keep-weekly: "{{ pbs_keep_weekly }}"
+      keep-monthly: "{{ pbs_keep_monthly }}"
+  verify:
+    id: verify
+    legacy: [verify-weekly]
+    settings:
+      schedule: "{{ pbs_verify_schedule }}"
+      ignore-verified: true
+      outdated-after: "{{ pbs_reverify_days }}"
+
+# Where PBS's notifications go. The built-in mail-to-root target mails root@pam's
+# address and the built-in matcher routes everything but successful prunes — but
+# root@pam had NO address, so PBS dropped every notice ("no recipients provided"):
+# the 09-14 verify failure and the 09-22 GC failure reached nobody.
+pbs_notify_email: "{{ platform_alert_email }}"
 
 # Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
 pbs_firewall_rules:

@@ -1,35 +1,49 @@
 ---
 # Retention + integrity (infra/0008): a prune job (bounded growth) and a verify
-# job (bit-rot detection — chunks live on S3) — both were MISSING (walk step 7).
-- name: "jobs | Current prune jobs"
-  ansible.builtin.command: proxmox-backup-manager prune-job list --output-format json
-  register: pbs_prune_list
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+# job (bit-rot detection — chunks live on S3), both declared in pbs_jobs. The
+# live jobs are made to match: created when missing, updated when a setting
+# drifted (they used to be create-only, so a changed value never reached PBS),
+# and superseded ids retired once the new job exists.
+- name: "jobs | Current prune and verify jobs"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, "{{ item }}-job", list, --output-format, json]
+  loop: "{{ pbs_jobs.keys() | list }}"
+  register: pbs_job_lists
+  check_mode: false  # read-only probe: must run under --check too (later tasks read it)
   changed_when: false
-  failed_when: false
 
-- name: "jobs | Create the daily prune job"
-  ansible.builtin.command: >-
-    proxmox-backup-manager prune-job create prune-daily
-    --store {{ pbs_datastore_name }} --schedule 'daily'
-    --keep-last {{ pbs_keep_last }} --keep-daily {{ pbs_keep_daily }}
-    --keep-weekly {{ pbs_keep_weekly }} --keep-monthly {{ pbs_keep_monthly }}
-  when: "'prune-daily' not in (pbs_prune_list.stdout | default(''))"
-  register: pbs_prune_create
-  changed_when: pbs_prune_create is not skipped
+- name: "jobs | Index the live jobs by kind"
+  ansible.builtin.set_fact:
+    pbs_jobs_live: "{{ dict(pbs_job_lists.results | map(attribute='item') | zip(pbs_job_lists.results | map(attribute='stdout') | map('from_json'))) }}"
 
-- name: "jobs | Current verify jobs"
-  ansible.builtin.command: proxmox-backup-manager verify-job list --output-format json
-  register: pbs_verify_list
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-  changed_when: false
-  failed_when: false
+# One argv for both cases: create (with the store) or update, every declared
+# setting passed. Compared as lower-case strings: PBS returns 3 / true, the
+# declaration renders "3" / True.
+- name: "jobs | Create or converge each declared job"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['proxmox-backup-manager', item.key ~ '-job', _present | ternary('update', 'create'), item.value.id]
+         + ([] if _present else ['--store', pbs_datastore_name])
+         + (_keys | map('regex_replace', '^', '--') | zip(_want) | flatten) }}
+  loop: "{{ pbs_jobs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}/{{ item.value.id }}"
+  vars:
+    _keys: "{{ item.value.settings.keys() | list }}"
+    _present: "{{ item.value.id in (pbs_jobs_live[item.key] | map(attribute='id') | list) }}"
+    _live: >-
+      {{ dict(_keys | zip(_keys | map('regex_replace', '^.*$', '')))
+         | combine(pbs_jobs_live[item.key] | selectattr('id', 'equalto', item.value.id) | first | default({})) }}
+    _want: "{{ _keys | map('extract', item.value.settings) | map('string') | map('lower') | list }}"
+    _have: "{{ _keys | map('extract', _live) | map('string') | map('lower') | list }}"
+  when: not _present or _want != _have
+  changed_when: true
 
-- name: "jobs | Create the weekly verify job"
-  ansible.builtin.command: >-
-    proxmox-backup-manager verify-job create verify-weekly
-    --store {{ pbs_datastore_name }} --schedule 'weekly'
-    --ignore-verified true --outdated-after {{ pbs_reverify_days }}
-  when: "'verify-weekly' not in (pbs_verify_list.stdout | default(''))"
-  register: pbs_verify_create
-  changed_when: pbs_verify_create is not skipped
+- name: "jobs | Retire the superseded job ids"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, "{{ item.0.key }}-job", remove, "{{ item.1 }}"]
+  loop: "{{ pbs_jobs | dict2items | subelements('value.legacy') }}"
+  loop_control:
+    label: "{{ item.0.key }}/{{ item.1 }}"
+  when: item.1 in (pbs_jobs_live[item.0.key] | map(attribute='id') | list)
+  changed_when: true
