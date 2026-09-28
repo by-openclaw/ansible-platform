@@ -10,3 +10,9 @@
 #     - { from: "{{ docker_bridge_cidrs }}", comment: "containers -> host" }          # no port = everything from there
 # ==============================================================================
 host_firewall_rules: []
+# A Proxmox node's host firewall is the PVE firewall (roles/pve_host, which also
+# purges ufw there): this role is a no-op on it. Before, a role that included it on
+# the node (node_exporter admitting Prometheus) installed ufw, and pve_host removed
+# it again — two owners of one package, a change on every run. The node's scrape
+# rule lives in pve_host_metrics_ports.
+host_firewall_managed: "{{ inventory_hostname not in (groups['proxmox_nodes'] | default([])) }}"
