@@ -43,11 +43,16 @@ seaweedfs_admin_env_file: "/etc/seaweedfs/admin.env"
 seaweedfs_metrics_port: 9327             # Prometheus → Grafana (parked monitoring stack)
 
 # Volume sizing: one SeaweedFS "collection" per S3 bucket, each needing writable
-# volumes. Small volumes + auto-max (0 = free disk / volume size) so every bucket
-# can grow independently within the 250G /data quota (default 30G volumes exhausted
-# the slots after the first bucket → "No writable volumes").
+# volumes. Small (1 GB) volumes so every bucket can grow independently.
+# The slot count is NOT disk / volume size: a bucket holds several partly filled
+# volumes, so the auto limit (250 GB / 1 GB = 249) ran out with 76 GB still free and
+# every write failed with HTTP 500 (2026-09-28 04:42: 9 guests' PBS backups lost).
+# Slots are cheap; the disk quota is the real ceiling (watched by monitoring).
 seaweedfs_volume_size_mb: 1024
-seaweedfs_volume_max: 0
+seaweedfs_volume_max: 500
+# How many volumes a collection reserves each time it grows (SeaweedFS default 7).
+# 2 keeps growth possible without parking slots in half-empty volumes.
+seaweedfs_volume_growth_count: 2
 
 # Controller-side secret store (S3 identities: access/secret keys).
 seaweedfs_vault_path: "{{ platform_env }}/seaweedfs/admin"   # admin identity + sse_kek — Vault only
