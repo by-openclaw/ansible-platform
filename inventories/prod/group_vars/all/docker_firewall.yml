@@ -1,0 +1,92 @@
+---
+# ==============================================================================
+# Published container ports and who may reach them — the DOCKER-USER catalog.
+# Docker DNATs published ports ahead of ufw's INPUT chain, so ufw never filters
+# them (verified 2026-09-27). roles/docker renders this catalog into the
+# DOCKER-USER chain of every Docker host: the fleet-wide entries plus the entries
+# of the services that platform_services places on that host.
+#
+#   port  the HOST side of the mapping (`docker ps`: left of ->)
+#   proto tcp (default) or udp
+#   from  a service name (-> that service's host), db:<value> (every service
+#         whose platform_services `db` is that value), trusted
+#         (platform_trusted_cidrs) or any. A name that resolves to nothing fails
+#         the run. IPv4 resolves to the host (/32), IPv6 to the host's zone (/64):
+#         hosts source IPv6 from their SLAAC address, not the static one, so a
+#         /128 misses them (every PostgreSQL and Redis client did, 2026-09-28).
+#
+# Mode per host: docker_user_firewall = audit (log what is not declared, accept
+# it) or enforce (drop it). Entries come from the 2026-09-27/28 audit AND the
+# service design (e.g. pgAdmin never connected in the window but is a db user).
+# ==============================================================================
+platform_docker_firewall_common:
+  - {port: 9001, from: [portainer], comment: "Portainer agent"}
+  - {port: 9180, from: [monitoring], comment: "cAdvisor metrics"}
+
+platform_docker_firewall:
+  authentik:
+    - {port: 9000, from: [traefik], comment: "Authentik web"}
+    - {port: 636, from: [trusted], comment: "Authentik LDAP outpost (LDAPS)"}
+  collab:
+    - {port: 8000, from: [traefik], comment: "ONLYOFFICE"}
+    - {port: 8081, from: [traefik], comment: "Talk signaling backend"}
+    - {port: 1234, from: [traefik], comment: "Talk recording"}
+    - {port: 3002, from: [traefik], comment: "Whiteboard"}
+    - {port: 3478, proto: tcp, from: [any], comment: "Talk TURN"}
+    - {port: 3478, proto: udp, from: [any], comment: "Talk TURN"}
+  diagrams:
+    - {port: 8000, from: [traefik], comment: "Kroki"}
+    - {port: 8004, from: [traefik], comment: "PlantUML"}
+    - {port: 8080, from: [traefik], comment: "draw.io"}
+  grc:
+    - {port: 3000, from: [traefik], comment: "CISO Assistant app"}
+    - {port: 8000, from: [traefik], comment: "CISO Assistant API"}
+  harbor:
+    - {port: 8080, from: [traefik], comment: "Harbor"}
+  jitsi:
+    - {port: 8000, from: [traefik], comment: "Jitsi web"}
+    - {port: 10000, proto: udp, from: [any], comment: "Jitsi video bridge media"}
+  jumpserver:
+    - {port: 8090, from: [traefik], comment: "JumpServer web"}
+  # Mail is reached from everywhere: MX senders, every host's relay (587), mail
+  # clients. The OPNsense catalog decides what the internet may reach.
+  mailcow:
+    - {port: 25, from: [any], comment: "SMTP"}
+    - {port: 465, from: [any], comment: "SMTPS"}
+    - {port: 587, from: [any], comment: "Submission"}
+    - {port: 110, from: [any], comment: "POP3"}
+    - {port: 995, from: [any], comment: "POP3S"}
+    - {port: 143, from: [any], comment: "IMAP"}
+    - {port: 993, from: [any], comment: "IMAPS"}
+    - {port: 4190, from: [any], comment: "ManageSieve"}
+    - {port: 8080, from: [traefik], comment: "mailcow web"}
+    - {port: 8443, from: [traefik, monitoring], comment: "mailcow web (TLS)"}
+  netbird:
+    - {port: 80, from: [traefik], comment: "NetBird dashboard"}
+    - {port: 8081, from: [traefik], comment: "NetBird signal (HTTP)"}
+    - {port: 10000, from: [traefik], comment: "NetBird signal"}
+    - {port: 33073, from: [traefik, monitoring], comment: "NetBird management"}
+    - {port: 33080, from: [traefik], comment: "NetBird relay"}
+  netbox:
+    - {port: 8080, from: [traefik], comment: "NetBox"}
+  nextcloud:
+    - {port: 80, from: [traefik], comment: "Nextcloud"}
+  pgadmin:
+    - {port: 8080, from: [traefik], comment: "pgAdmin"}
+  portainer:
+    - {port: 9000, from: [traefik], comment: "Portainer"}
+  postgresql:
+    - {port: 5432, from: ["db:shared-pg"], comment: "PostgreSQL"}
+  redis:
+    - {port: 6379, from: [authentik, gitlab, netbox, nextcloud], comment: "Redis"}
+  # Every host fetches the CA roots straight from step-ca (roles/platform_ca).
+  step-ca:
+    - {port: 9000, from: [trusted], comment: "step-ca"}
+  vault:
+    - {port: 8200, from: [traefik, warden], comment: "Vault API"}
+  vaultwarden:
+    - {port: 80, from: [traefik], comment: "Vaultwarden"}
+  verdaccio:
+    - {port: 4873, from: [traefik], comment: "Verdaccio"}
+  wazuh:
+    - {port: 5601, from: [traefik], comment: "Wazuh dashboard"}
