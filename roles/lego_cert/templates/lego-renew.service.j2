@@ -3,6 +3,9 @@
 Description=Renew the ACME certificate for {{ lego_cert_domains | join(', ') }} (lego, {{ lego_cert_id }})
 Wants=network-online.target
 After=network-online.target
+{% if lego_cert_on_failure | bool %}
+OnFailure=systemd-failure-alert@%n.service
+{% endif %}
 
 [Service]
 Type=oneshot

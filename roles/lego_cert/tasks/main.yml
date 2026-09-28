@@ -86,6 +86,11 @@
   no_log: true
 
 # --- renewal: systemd, no script ---------------------------------------------------
+- name: "lego_cert | The failure notifier (OnFailure= target)"
+  ansible.builtin.include_role:
+    name: systemd_failure_alert
+  when: lego_cert_on_failure | bool
+
 - name: "lego_cert | Deploy unit (started by the renew hook)"
   ansible.builtin.template:
     src: lego-deploy.service.j2

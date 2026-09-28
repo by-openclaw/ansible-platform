@@ -3,6 +3,9 @@
 # where {{ lego_cert_id }} reads it and reload it. Steps run in order; none is a script.
 [Unit]
 Description=Deploy the renewed certificate into {{ lego_cert_id }}
+{% if lego_cert_on_failure | bool %}
+OnFailure=systemd-failure-alert@%n.service
+{% endif %}
 
 [Service]
 Type=oneshot
