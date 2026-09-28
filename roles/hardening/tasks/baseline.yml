@@ -44,10 +44,29 @@
 
 - name: "Baseline | File-integrity tool (FINT-4350: AIDE)"
   ansible.builtin.apt:
-    name: aide
+    # s-nail: since aide 0.18 the daily check runs as _aide under systemd, which
+    # cannot use the setgid sendmail path — every report failed to send and
+    # dailyaidecheck.service went failed. s-nail submits over SMTP to the local
+    # postfix (loopback :25) instead (aide-common README.Debian).
+    name: [aide, s-nail]
     state: present
 
-- name: "Baseline | Hide the postfix banner (MAIL-8818) — only where postfix exists"
+- name: "Baseline | AIDE reports go to the alert mailbox, and only when something changed"
+  ansible.builtin.lineinfile:
+    path: /etc/default/aide
+    regexp: "^#?\\s*{{ item.key }}="
+    line: "{{ item.key }}={{ item.value }}"
+    create: true
+    mode: "0644"
+  loop:
+    - { key: MAILTO, value: "{{ hardening_email_alert_dest }}" }
+    - { key: QUIETREPORTS, value: "yes" }
+  loop_control: { label: "{{ item.key }}" }
+
+# Where the relay template owns main.cf the banner is in the template; a second
+# writer here made every run change main.cf twice (the template dropped the line,
+# this task added it back). This task covers only a postfix the template does not own.
+- name: "Baseline | Hide the postfix banner (MAIL-8818) — only where postfix exists outside the relay template"
   ansible.builtin.lineinfile:
     path: /etc/postfix/main.cf
     regexp: "^smtpd_banner"
@@ -56,6 +75,7 @@
   failed_when:
     - hardening_postfix_banner is failed
     - "'does not exist' not in (hardening_postfix_banner.msg | default(''))"
+  when: not (hardening_email_relay_enabled | bool)
   notify: Restart postfix
 
 - name: "Baseline | Password aging policy (AUTH-9286) — key-only accounts, aging is inert but audited"
@@ -109,10 +129,18 @@
     - { key: SHA_CRYPT_MAX_ROUNDS, value: "640000" }
   loop_control: { label: "{{ item.key }}" }
 
-- name: "Baseline | Accounting + password-strength tooling (ACCT-9622/9626, AUTH-9262)"
+- name: "Baseline | Accounting + password-strength tooling (ACCT-9626, AUTH-9262)"
   ansible.builtin.apt:
-    name: [acct, sysstat, libpam-pwquality, needrestart]
+    name: [sysstat, libpam-pwquality, needrestart]
     state: present
+
+# Kernel process accounting is host-scoped like the audit subsystem: in an LXC
+# accton gets "Operation not permitted" and acct.service sits failed on every
+# container. VMs and nodes keep it (ACCT-9622); containers do not carry it.
+- name: "Baseline | Process accounting (ACCT-9622) on VMs and nodes, not in LXCs"
+  ansible.builtin.apt:
+    name: acct
+    state: "{{ 'absent' if ansible_virtualization_type | default('') == 'lxc' else 'present' }}"
 
 - name: "Baseline | Enable sysstat collection"
   ansible.builtin.lineinfile:
@@ -224,3 +252,24 @@
     name: systemd-journald
     state: restarted
   when: hardening_journald_caps is changed
+
+# A unit whose file is gone (package removed, service retired by a role) keeps its
+# "failed" state until reset — e.g. wtmpdb-rotate.timer after wtmpdb left, the
+# retired netbird-approval-notify.service. Only NOT-FOUND units are reset: a real
+# failure of an existing unit stays visible.
+- name: "Baseline | Failed units whose unit file no longer exists"
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    systemctl list-units --all --failed --plain --no-legend | awk '$2 == "not-found" {print $1}'
+  args:
+    executable: /bin/bash
+  register: hardening_vanished_failed
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "Baseline | Clear their failed state"
+  ansible.builtin.command:
+    argv: [systemctl, reset-failed, "{{ item }}"]
+  loop: "{{ hardening_vanished_failed.stdout_lines }}"
+  changed_when: true
+  when: not ansible_check_mode

@@ -14,7 +14,11 @@ pve_host_debian_suite: "{{ ansible_distribution_release }}"
 pve_host_repo_keyring: /usr/share/keyrings/proxmox-archive-keyring.gpg
 pve_host_repo_pve_uri: "http://download.proxmox.com/debian/pve"
 pve_host_repo_pve_component: pve-no-subscription
-pve_host_repo_ceph_enabled: true
+pve_host_repo_ceph_enabled: true         # the repo stays: pve-manager needs ceph-common / ceph-fuse updates
+# Ceph daemons (mon/mgr/mds/osd) on this node. Storage is ZFS + PBS + NFS; a
+# leftover mon + mgr restart-looped at boot. tasks/ceph.yml masks them while no
+# storage uses Ceph (asserted).
+pve_host_ceph_enabled: false
 pve_host_repo_ceph_uri: "http://download.proxmox.com/debian/ceph-squid"
 pve_host_repo_ceph_component: no-subscription
 pve_host_repo_files_absent:            # install-time leftovers

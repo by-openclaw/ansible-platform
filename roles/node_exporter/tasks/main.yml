@@ -18,6 +18,33 @@
       ARGS="--web.listen-address={{ node_exporter_listen }}:{{ node_exporter_port }}"
   notify: Restart node-exporter
 
+# The Debian package pulls in the collectors, ipmitool and openipmi (Recommends).
+# A guest has no BMC: the ipmitool-sensor collector fails on every LXC ("Could
+# not open device at /dev/ipmi0") and the openipmi init script on every VM.
+# Only a physical node keeps them.
+- name: "Node-exporter | Virtualisation facts (the fleet play skips fact gathering)"
+  ansible.builtin.setup:
+    gather_subset: ["!all", "!min", virtual]
+  when: ansible_virtualization_role is not defined
+
+- name: "Node-exporter | No IPMI tooling on guests (no BMC to talk to)"
+  ansible.builtin.apt:
+    name: [ipmitool, openipmi]
+    state: absent
+  when: ansible_virtualization_role | default('') == 'guest'
+
+- name: "Node-exporter | The ipmitool-sensor collector off on guests"
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: false
+    masked: true
+  loop:
+    - prometheus-node-exporter-ipmitool-sensor.timer
+    - prometheus-node-exporter-ipmitool-sensor.service
+  when:
+    - ansible_virtualization_role | default('') == 'guest'
+    - not ansible_check_mode
+
 - name: "Node-exporter | Enabled + running"
   ansible.builtin.systemd_service:
     name: prometheus-node-exporter
