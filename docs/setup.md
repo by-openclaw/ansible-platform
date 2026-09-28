@@ -49,7 +49,7 @@ Host opnsense-poc
 
 ```ini
 [defaults]
-inventory           = inventories/poc/hosts.yml   ; per-env: -i inventories/prod | -i inventories/test
+inventory           = inventories/prod/hosts.yml  ; test tier: -i inventories/test
 remote_user         = by-research
 private_key_file    = ~/.ssh/id_ed25519_rune
 host_key_checking   = False
