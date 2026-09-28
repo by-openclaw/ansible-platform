@@ -30,6 +30,25 @@ pve_host_legacy_sources_regex: 'download\.proxmox\.com/debian/(pve|ceph)'   # le
 # --- datacenter options -------------------------------------------------------
 pve_host_email_from: "{{ platform_alert_email }}"
 pve_host_keyboard: fr-be
+# root@pam's address: PVE's mail-to-root notifications (e.g. a failed backup job).
+pve_host_root_email: "{{ platform_ops_email }}"
+
+# The NAS (NFS) backup job: every guest, nightly, reports mailed to the ops mailbox.
+# Matched by its storage (one job per target storage); tasks/backup_jobs.yml creates
+# it when missing and `pvesh set`s any drifted setting. The PBS job (second copy)
+# belongs to playbooks/pbs-pve-storage.yml, with the PBS storage it targets.
+pve_host_nfs_backup_job:
+  storage: "{{ platform_nfs_backup_storage }}"
+  schedule: "05:00"
+  comment: "Daily backup all VMs and LXCs - {{ pve_host_node }}"
+  all: 1
+  mode: snapshot
+  compress: zstd
+  enabled: 1
+  mailnotification: always
+  mailto: "{{ platform_ops_email }}"
+  node: "{{ pve_host_node }}"
+  notes-template: "Backup of {{ '{{' }}guestname{{ '}}' }} (VMID {{ '{{' }}vmid{{ '}}' }}) on node {{ '{{' }}node{{ '}}' }} - {{ platform_company | upper }} automated backup"
 
 # --- Proxmox firewall (datacenter + host) ------------------------------------
 pve_host_firewall_enabled: true

@@ -10,6 +10,19 @@
   ansible.builtin.set_fact:
     pve_host_opts_now: "{{ pve_host_opts.stdout | from_json }}"
 
+- name: "PVE host | root@pam today"
+  ansible.builtin.command:
+    argv: [pvesh, get, /access/users/root@pam, --output-format, json]
+  register: pve_host_root_user
+  changed_when: false
+  check_mode: false
+
+- name: "PVE host | root@pam's address = the ops mailbox (only on drift)"
+  ansible.builtin.command:
+    argv: [pvesh, set, /access/users/root@pam, --email, "{{ pve_host_root_email }}"]
+  when: (pve_host_root_user.stdout | from_json).email | default('') != pve_host_root_email
+  changed_when: true
+
 - name: "PVE host | Set the datacenter options (only on drift): email_from, keyboard"
   ansible.builtin.command:
     argv: [pvesh, set, /cluster/options, --email_from, "{{ pve_host_email_from }}", --keyboard, "{{ pve_host_keyboard }}"]
