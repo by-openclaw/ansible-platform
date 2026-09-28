@@ -1,0 +1,20 @@
+---
+# PBS mails its notifications (job results, failures) through the built-in
+# mail-to-root target to root@pam's address. Without one, PBS logs "no recipients
+# provided" and sends nothing — which is how the 09-14 verify failure and the
+# 09-22 GC failure went unseen. The host's postfix already relays via mailcow
+# (roles/hardening), so the address is the only missing piece.
+- name: "notify | root@pam's current address"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, user, list, --output-format, json]
+  register: pbs_users
+  check_mode: false  # read-only probe: must run under --check too (the next task reads it)
+  changed_when: false
+
+- name: "notify | root@pam's address = the platform alert mailbox"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, user, update, root@pam, --email, "{{ pbs_notify_email }}"]
+  when: >-
+    (pbs_users.stdout | from_json | selectattr('userid', 'equalto', 'root@pam') | first).email | default('')
+    != pbs_notify_email
+  changed_when: true
