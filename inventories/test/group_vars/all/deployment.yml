@@ -13,6 +13,10 @@ platform_env: "test"
 # in the sender's subject/FQDN, never a second mailbox. Consumers: playbooks/opnsense.yml (Monit).
 platform_mail_env: "prod"
 platform_mail_domain: "by-research.be"
+# The alert mailbox is that prod mailbox too. Every role reads platform_alert_email (the ONE
+# source); before it, only the Monit play used platform_mail_domain and every other consumer
+# built alerts@<test zone> — a mailbox that does not exist.
+platform_alert_email: "alerts@{{ platform_mail_domain }}"
 
 # SSH baseline port (hardening/sshd roles + FW seed). Same as prod; was a role fallback.
 platform_ssh_port: 22222
