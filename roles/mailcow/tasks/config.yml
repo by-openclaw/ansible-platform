@@ -3,7 +3,7 @@
 # Role: mailcow — config (post-deploy). Idempotent. Runs against the live stack.
 # - admin password (DB, mailcow {SSHA256} hash from the secret)
 # - mailcow REST API key seeded so the uri tasks can authenticate
-# - domains + DKIM + mailboxes (postmaster/abuse + the personal user) via the API
+# - domains + DKIM + the bootstrap mailbox (postmaster@) via the API
 # - Authentik OIDC IdP + 5 GB template (DB) — only when the OIDC secret exists
 # Secrets are READ from the controller secret store (generated out-of-band); the
 # playbook never computes hashes inline.
@@ -20,7 +20,12 @@
     mailcow_sec: "{{ vault_secret_result }}"
   no_log: true
 
-- name: "config | Build the mailbox provisioning list (from the secret)"
+# Bootstrap ONLY postmaster@: RFC 2142, the catch-all target, and needed before the
+# domain is useful — at a first install this role mints the API key roles/mailbox
+# needs, so it cannot call roles/mailbox here. Every other box has ONE writer
+# through roles/mailbox: a person via platform_people (roles/identity_orchestrator),
+# a service via playbooks/mailboxes.yml.
+- name: "config | The bootstrap mailbox (postmaster@)"
   ansible.builtin.set_fact:
     mailcow_provision_mailboxes:
       - local_part: "postmaster"
@@ -28,41 +33,6 @@
         name: "Postmaster"
         password: "{{ mailcow_sec.postmaster_password }}"
         quota: 5120
-      - local_part: "{{ mailcow_sec.user_local_part }}"
-        domain: "{{ platform_domain }}"
-        name: "Youssef Boujraf"
-        password: "{{ mailcow_sec.user_password }}"
-        quota: 5120
-      # example.com inbox (separate, internal-only domain — dev/tutorials/docs, so the
-      # real @{{ platform_domain }} address is never exposed). SSO via its OWN Authentik
-      # identity yboujraf_example (email == mailbox; mailcow OIDC maps email->mailbox).
-      - local_part: "yboujraf"
-        domain: "example.com"
-        name: "Youssef Boujraf (example.com)"
-        password: "{{ mailcow_sec.example_user_password }}"
-        quota: 5120
-      # Service mailboxes: alerts@ = single recipient inbox for ALL platform/service
-      # notifications (FW/GitLab/etc.); gitlab@ = GitLab's authenticated submission
-      # sender + reply-by-email address. No SSO (local mailbox creds only).
-      - local_part: "alerts"
-        domain: "{{ platform_domain }}"
-        name: "Platform Alerts"
-        password: "{{ mailcow_sec.alerts_password }}"
-        quota: 2048
-      - local_part: "gitlab"
-        domain: "{{ platform_domain }}"
-        name: "GitLab"
-        password: "{{ mailcow_sec.gitlab_password }}"
-        quota: 1024
-      - local_part: "jumpserver"
-        domain: "{{ platform_domain }}"
-        name: "JumpServer"
-        password: "{{ mailcow_sec.jumpserver_password }}"
-        quota: 1024
-  # NOTE: adm_yboujraf is ADMIN-ONLY and has NO mailbox (on either domain). mailcow
-  # SSO can only log in MAILBOX users (role 'user'); there is no SSO-admin path, so
-  # mailcow administration is done via the local admin account (the `admin` super-
-  # admin). adm_yboujraf is therefore NOT in mailcow-users and is never provisioned.
   no_log: true
 
 - name: "config | Read DBROOT from mailcow.conf"
@@ -187,8 +157,8 @@
     not (mailcow_catchall.json | string is search('object_exists|is_alias_or_mailbox'))
   no_log: true
 
-# --- mailboxes: postmaster/abuse (RFC) + the personal user --------------------
-- name: "config | Create mailboxes (postmaster/abuse + personal user)"
+# --- the bootstrap mailbox: postmaster@ (RFC) -----------------------------------
+- name: "config | Create the bootstrap mailbox (postmaster@)"
   ansible.builtin.uri:
     url: "{{ mailcow_api }}/add/mailbox"
     method: POST
