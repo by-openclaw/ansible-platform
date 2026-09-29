@@ -43,6 +43,10 @@
     mode: "0600"
   notify: Restart warden-coldstart
 
+# Not a roles/host_job job: a watchdog that runs at boot and retries every minute
+# (Restart=on-failure), so it never reaches "failed" and OnFailure= could not fire —
+# a mail per retry would be the wrong signal anyway. Its failure is a Vault that
+# stays sealed: the /v1/sys/health probe (roles/prometheus) alerts on that.
 - name: "Warden | Systemd unit (runs on every boot, retries until success)"
   ansible.builtin.copy:
     dest: /etc/systemd/system/warden-coldstart.service

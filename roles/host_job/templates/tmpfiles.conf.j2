@@ -1,4 +1,7 @@
 # {{ ansible_managed }} — retention for {{ host_job_name }} (systemd-tmpfiles; e = age out contents)
+# Age = mtime: a job writes its output once. A daily scan (atime) or a chmod pass (ctime)
+# does not make it younger; the default check counts both (the Vault snapshots, chmod-ed
+# on every run, never expired).
 {% for r in host_job_retention %}
-e {{ r.path }} - - - {{ r.age }}
+e {{ r.path }} - - - mM:{{ r.age }}
 {% endfor %}
