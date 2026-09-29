@@ -11,6 +11,23 @@
     group: root
     mode: "0755"
 
+# Only this role writes the directory; a stray copy (e.g. a hand-made *.bak of an old
+# blueprint) is mounted into the worker too. Remove anything that is not a rendered
+# blueprint — git holds every version.
+- name: "Blueprints | Stray copies in the blueprint directory"
+  ansible.builtin.find:
+    paths: "{{ authentik_blueprints_dir }}"
+    patterns: ["*.bak", "*.orig", "*~", "*.retired*"]
+  register: authentik_blueprint_strays
+
+- name: "Blueprints | Remove them"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ authentik_blueprint_strays.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
 - name: "blueprints | Render the per-service OIDC blueprints"
   ansible.builtin.template:
     src: oidc-app.yaml.j2

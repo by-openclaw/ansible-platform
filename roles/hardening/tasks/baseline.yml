@@ -322,3 +322,35 @@
   loop: "{{ hardening_vanished_failed.stdout_lines }}"
   changed_when: true
   when: not ansible_check_mode
+
+# Retirement archives (a retired account's home, a one-off transfer) are kept a week,
+# then removed: they are rollback material, not records — and one of them was a
+# plaintext firewall config. systemd-tmpfiles-clean enforces it daily; a change
+# applies at once. Age is the ctime (when the file was moved or written here): the
+# daily scans refresh atime, which would keep every file forever.
+- name: "Baseline | Retirement archives in /var/backups expire after {{ hardening_retired_retention }}"
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/retired-backups.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/hardening)
+      e /var/backups/retired-* - - - cM:{{ hardening_retired_retention }}
+  register: hardening_retired_tmpfiles
+
+- name: "Baseline | Apply the retention now"
+  ansible.builtin.command:
+    argv: [systemd-tmpfiles, --clean, /etc/tmpfiles.d/retired-backups.conf]
+  when:
+    - hardening_retired_tmpfiles is changed
+    - not ansible_check_mode
+  changed_when: true
+
+# tmpfiles empties a retirement directory but keeps it; the role that retires
+# something next creates its own again.
+- name: "Baseline | Emptied retirement directories"
+  ansible.builtin.command:
+    argv: [find, /var/backups, -mindepth, "1", -maxdepth, "1", -name, "retired-*", -type, d, -empty, -print, -delete]
+  register: hardening_retired_empty
+  changed_when: hardening_retired_empty.stdout | length > 0

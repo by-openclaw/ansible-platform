@@ -58,8 +58,12 @@
     state: absent
   when: host_job_legacy_cron | length > 0
 
-- name: "host_job | Archive the old script"
-  ansible.builtin.command:
-    cmd: "mv {{ host_job_legacy_script }} {{ host_job_legacy_script }}.retired"
-    removes: "{{ host_job_legacy_script }}"
+# The unit's inline command replaced it; git holds its history — no copy stays.
+- name: "host_job | The old script (and the copy an earlier run archived)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ host_job_legacy_script }}"
+    - "{{ host_job_legacy_script }}.retired"
   when: host_job_legacy_script | length > 0
