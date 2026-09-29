@@ -1,0 +1,36 @@
+---
+# Only a database's owner may connect to it (superusers aside). PostgreSQL grants
+# CONNECT + TEMPORARY to PUBLIC on every new database, so any service role could open
+# any other service's database — it could not read the tables (no grants) but could
+# list them. ADR services/0004 requires isolation at the database layer: every
+# database except the maintenance one ("postgres", used by the exporter) is owner-only.
+- name: "access | Databases still open to PUBLIC"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ pg_container_name }}"
+      - psql
+      - -U
+      - postgres
+      - -Atc
+      - >-
+        select datname from pg_database where not datistemplate and datname <> 'postgres'
+        and (datacl is null or datacl::text ~ '(^|[{,])=[A-Za-z*]*[cT]')
+  register: pg_public_databases
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "access | Owner-only: revoke CONNECT and TEMPORARY from PUBLIC"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ pg_container_name }}"
+      - psql
+      - -U
+      - postgres
+      - -c
+      - REVOKE CONNECT, TEMPORARY ON DATABASE "{{ item }}" FROM PUBLIC
+  loop: "{{ pg_public_databases.stdout_lines }}"
+  changed_when: true
