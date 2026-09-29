@@ -50,6 +50,9 @@ prometheus_blackbox_http_exclude:
 # (a list, not a dict: Ansible does not template dict KEYS, so "mail.{{ domain }}" as a key never matched)
 prometheus_blackbox_http_overrides:
   - { host: "{{ platform_service_fqdns.mailcow }}", url: "https://{{ platform_service_fqdns.mailcow }}:8443/" }
+  # 503 while sealed; the UI at / answers 200 either way. A Vault that stays sealed is how
+  # the warden watchdog (roles/warden) failing shows.
+  - { host: "{{ platform_service_fqdns.vault }}", url: "https://{{ platform_service_fqdns.vault }}/v1/sys/health" }
 prometheus_blackbox_http_extra:
   - "https://{{ platform_service_fqdns.nextcloud }}/status.php"
   - "https://{{ platform_service_fqdns.nextcloud }}/standalone-signaling/api/v1/welcome"
