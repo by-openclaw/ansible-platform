@@ -164,8 +164,9 @@
         executable: /bin/bash
       when:
         - _svc.s3_identity is defined
+        # weed prints `"name":  "<id>"` (two spaces); match the JSON, not one spacing
         - >-
-          ('"name": "' ~ _svc.s3_identity ~ '"') in _s3now.stdout
+          _s3now.stdout is search('"name":\\s*"' ~ (_svc.s3_identity | regex_escape) ~ '"')
       changed_when: true
 
     - name: "decommission | The bucket as listed"
