@@ -72,6 +72,10 @@
   loop:
     - { key: MAILTO, value: "{{ hardening_email_alert_dest }}" }
     - { key: QUIETREPORTS, value: "yes" }
+    # Report each change once: the next day's baseline includes it. With "no" the
+    # baseline never moved and every host mailed the same, growing diff every day —
+    # alert fatigue that hides the change that matters.
+    - { key: COPYNEWDB, value: "yes" }
   loop_control: { label: "{{ item.key }}" }
 
 # Where the relay template owns main.cf the banner is in the template; a second
@@ -107,6 +111,25 @@
 # aideinit runs in the background (10+ min on a busy host). An async launch with poll: 0
 # always reports "changed" — so gate it on the database file and on a build already running,
 # otherwise every hardening pass re-launched a full AIDE build (and reported a change).
+- name: "Baseline | AIDE scope: the host's files, not container or guest storage"
+  ansible.builtin.copy:
+    dest: /etc/aide/aide.conf.d/99_platform_scope
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/hardening, hardening_aide_excludes): host files only.
+      {% for p in _aide_excludes %}
+      !{{ p }}($|/)
+      {% endfor %}
+  vars:
+    _aide_excludes: >-
+      {{ hardening_aide_excludes
+         + ((ansible_facts.mounts | default([]) | selectattr('fstype', 'equalto', 'zfs')
+             | selectattr('device', 'match', '^[^/]+$') | map(attribute='mount') | list)
+            if inventory_hostname in (groups['proxmox_nodes'] | default([])) else []) }}
+  register: hardening_aide_scope
+
 - name: "Baseline | AIDE database present?"
   ansible.builtin.stat:
     path: /var/lib/aide/aide.db
@@ -119,15 +142,17 @@
   failed_when: false
   check_mode: false
 
-- name: "Baseline | Initialise the AIDE database (FINT-4402 — once, in the background)"
+# Built once, and rebuilt when the scope changes (a baseline taken with the old scope
+# would report every newly excluded file as removed). 3600 s: the first build on the
+# node ran past the old 900 s limit and left an empty aide.db.new.
+- name: "Baseline | Build the AIDE database (FINT-4402 — first run or new scope, in the background)"
   ansible.builtin.command: aideinit -y -f
-  args:
-    creates: /var/lib/aide/aide.db
-  async: 900
+  async: 3600
   poll: 0
   when:
-    - not hardening_aide_db.stat.exists
+    - not hardening_aide_db.stat.exists or hardening_aide_scope is changed
     - hardening_aide_running.rc != 0
+    - not ansible_check_mode
   changed_when: true
 
 - name: "Baseline | Password hashing rounds (AUTH-9230)"
