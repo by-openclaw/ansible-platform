@@ -1,8 +1,16 @@
 ---
-# Configure PROD NetBox (lxc-nbox-01, SVC) — Docker IPAM/source-of-truth.
-- name: Configure PROD NetBox
+# ==============================================================================
+# NetBox — IPAM / source of truth (lxc-nbox-01, VPN-only, Authentik SSO).
+# One play, composition explicit: OS baseline, container engine, the service.
+# The service's platform concerns (database, mailbox, containers, Traefik route)
+# are declared to roles/service_scaffold inside roles/netbox.
+#   ansible-playbook playbooks/netbox.yml
+# ==============================================================================
+- name: "Configure NetBox"
   hosts: netbox
   become: true
   gather_facts: true
   roles:
+    - base
+    - docker
     - netbox

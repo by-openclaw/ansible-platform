@@ -1,32 +1,49 @@
 ---
 # ==============================================================================
-# Role: netbox — dispatcher
+# Role: netbox — what is specific to NetBox. The platform concerns are declared
+# to roles/service_scaffold: database (postgres_db), mailbox, the three
+# containers, the internal Traefik route, and the SSO registration it asserts.
 # ==============================================================================
-- name: Provision the NetBox database
-  ansible.builtin.include_role:
-    name: postgres_db
-  vars:
-    postgres_db_vault_path: "{{ platform_env }}/netbox/db-pgsql"
-    postgres_db_name: "{{ netbox_pg_name }}"
-    postgres_db_user: "{{ netbox_pg_user }}"
-  tags: [netbox, database]
-
-- name: Resolve / generate NetBox secrets
+- name: "Secrets and OIDC pipeline config for NetBox"
   ansible.builtin.import_tasks: secrets.yml
   tags: [netbox, secrets]
 
-- name: Run the NetBox containers (web + worker + housekeeping)
-  ansible.builtin.import_tasks: containers.yml
-  tags: [netbox, container]
-
-- name: Publish NetBox via Traefik (internal-only)
+- name: "Platform concerns of NetBox (roles/service_scaffold)"
   ansible.builtin.include_role:
-    name: traefik_route
+    name: service_scaffold
     apply:
-      tags: [route]   # include_role tags do not propagate; --tags route must reach the render
+      tags: [netbox, database, container, route]
   vars:
-    traefik_route_name: netbox
-    traefik_route_fqdn: "{{ netbox_fqdn }}"
-    traefik_route_backend_url: "http://{{ netbox_listen_ip }}:{{ netbox_host_port }}"
-    traefik_route_internal_only: true
-  tags: [netbox, route]
+    service_scaffold_def:
+      name: netbox
+      fqdn: "{{ netbox_fqdn }}"
+      backend_url: "http://{{ netbox_listen_ip }}:{{ netbox_host_port }}"
+      exposure: internal
+      db: postgres               # netbox / netbox / {env}/netbox/db-pgsql — the live DB
+      mailbox: true
+      sso_slug: "{{ netbox_oidc_app_slug }}"
+      containers:
+        - name: netbox
+          image: "{{ netbox_image }}"
+          published: ["{{ netbox_listen_ip }}:{{ netbox_host_port }}:{{ netbox_container_port }}"]
+          volumes: "{{ [netbox_media_volume ~ ':/opt/netbox/netbox/media', '/etc/ssl/certs:/etc/ssl/certs:ro'] + netbox_extra_mounts }}"
+          env: "{{ netbox_env }}"
+        - name: netbox-worker
+          image: "{{ netbox_image }}"
+          command: /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py rqworker high default low
+          volumes: "{{ ['/etc/ssl/certs:/etc/ssl/certs:ro'] + netbox_extra_mounts }}"
+          env: "{{ netbox_env }}"
+        - name: netbox-housekeeping
+          image: "{{ netbox_image }}"
+          # v4.6 ships no housekeeping.sh wrapper: the management command on a daily loop.
+          command:
+            - /bin/sh
+            - "-c"
+            - "while true; do /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py housekeeping; sleep 86400; done"
+          volumes: "{{ ['/etc/ssl/certs:/etc/ssl/certs:ro'] + netbox_extra_mounts }}"
+          env: "{{ netbox_env }}"
+  tags: [netbox, database, container, route]
+
+- name: "NetBox answers, and all three containers are Up"
+  ansible.builtin.import_tasks: verify.yml
+  tags: [netbox, container]
