@@ -50,14 +50,18 @@ updates_unattended_origins:
   - "origin=Debian,codename=${distro_codename},label=Debian-Security"
   - "origin=Debian,codename=${distro_codename}-security,label=Debian-Security"
 
-updates_unattended_auto_reboot: false
+updates_unattended_auto_reboot: false            # a controlled platform: alert, never reboot unattended
+updates_unattended_auto_reboot_time: "03:30"      # only if auto_reboot is ever turned on
 updates_unattended_remove_unused_deps: true
-# Mail is handled by the postfix relay the hardening role configures.
-updates_unattended_mail: ""
+# The report (on change) goes through the postfix relay the hardening role configures.
+updates_unattended_mail: "{{ platform_alert_email }}"
 
 # Never touch these unattended — a surprise restart of the container runtime
 # would bounce every service on the host.
+# Regexes, so both engines roles/docker installs are covered: Debian's docker.io
+# (the service LXCs) and Docker CE (docker-ce*, containerd.io), plus the runtime.
 updates_unattended_blacklist:
-  - docker-ce
-  - docker-ce-cli
-  - containerd.io
+  - "^docker.io$"
+  - "^docker-ce"
+  - "^containerd"
+  - "^runc$"
