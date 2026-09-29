@@ -1,0 +1,76 @@
+---
+# ==============================================================================
+# pgAdmin's container environment and volumes: implementation, not settings (those
+# are defaults/main.yml). Lazily templated: the scaffold's db step sets
+# postgres_db_password before its containers step reads pgadmin_env. Carried over
+# verbatim from the former set_facts in tasks/secrets.yml.
+# ==============================================================================
+pgadmin_pg_endpoint: "{{ pgadmin_pg_host }}:{{ pgadmin_pg_port }}"
+pgadmin_state_db_tls: "sslmode=verify-full&sslrootcert={{ pgadmin_pg_root_cert_path }}"
+
+pgadmin_env_base:
+  PGADMIN_DEFAULT_EMAIL: "{{ pgadmin_default_email }}"
+  PGADMIN_DEFAULT_PASSWORD: "{{ pgadmin_admin_password }}"
+  PGADMIN_LISTEN_PORT: "{{ pgadmin_container_port | string }}"
+  # Honor Traefik's X-Forwarded-* so pgAdmin builds correct https URLs.
+  PGADMIN_CONFIG_PROXY_X_FOR_COUNT: "1"
+  PGADMIN_CONFIG_PROXY_X_PROTO_COUNT: "1"
+  PGADMIN_CONFIG_PROXY_X_HOST_COUNT: "1"
+  PGADMIN_CONFIG_PROXY_X_PORT_COUNT: "1"
+  PGADMIN_CONFIG_PROXY_X_PREFIX_COUNT: "1"
+  # No per-user master password: the shared server's password is supplied by a
+  # PasswordExecCommand (see below), not stored/encrypted in a pgAdmin profile.
+  # Avoids the master-password prompt AND the master-key-decrypt fragility.
+  PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"  # pragma: allowlist secret
+  # Allow servers to source their password from a command (PasswordExecCommand).
+  # Off by default in pgAdmin; required for the passexec connect flow.
+  PGADMIN_CONFIG_ENABLE_SERVER_PASS_EXEC_CMD: "True"
+  # Disable pgAdmin's OWN MFA — Authentik provides MFA for the SSO login, so
+  # pgAdmin's internal MFA would force a redundant second authenticator.
+  PGADMIN_CONFIG_MFA_ENABLED: "False"
+  # State on the shared PostgreSQL. pgAdmin reads PGADMIN_CONFIG_* as Python, so
+  # the URI is a quoted string literal.
+  PGADMIN_CONFIG_CONFIG_DATABASE_URI: >-
+    'postgresql://{{ pgadmin_state_user }}:{{ postgres_db_password }}@{{ pgadmin_pg_endpoint }}/{{ pgadmin_state_db }}?{{ pgadmin_state_db_tls }}'
+
+# Authentik OIDC, only once roles/authentik has minted the client (pgadmin_oidc_held).
+# ENHANCED_COOKIE_PROTECTION must be off behind a reverse proxy or the OAuth2
+# round-trip drops the session and pgAdmin reports 'CSRF token is missing'.
+pgadmin_env_oauth:
+  PGADMIN_CONFIG_AUTHENTICATION_SOURCES: "['oauth2', 'internal']"
+  PGADMIN_CONFIG_OAUTH2_AUTO_CREATE_USER: "True"
+  PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "False"
+  # Restrict pgAdmin login to members of the pgadmin-admins group — without
+  # this, ANY Authentik user could log in and see the shared server.
+  PGADMIN_CONFIG_OAUTH2_ADDITIONAL_CLAIMS: "{'groups': ['{{ pgadmin_oidc_access_group }}']}"
+  PGADMIN_CONFIG_OAUTH2_CONFIG: >-
+    [{'OAUTH2_NAME': 'authentik',
+    'OAUTH2_DISPLAY_NAME': '{{ pgadmin_oidc_display_name }}',
+    'OAUTH2_CLIENT_ID': '{{ pgadmin_oidc.client_id }}',
+    'OAUTH2_CLIENT_SECRET': '{{ pgadmin_oidc.client_secret }}',
+    'OAUTH2_TOKEN_URL': '{{ pgadmin_authentik_base }}/application/o/token/',
+    'OAUTH2_AUTHORIZATION_URL': '{{ pgadmin_authentik_base }}/application/o/authorize/',
+    'OAUTH2_API_BASE_URL': '{{ pgadmin_authentik_base }}/',
+    'OAUTH2_USERINFO_ENDPOINT': '{{ pgadmin_authentik_base }}/application/o/userinfo/',
+    'OAUTH2_SERVER_METADATA_URL': '{{ pgadmin_authentik_base }}/application/o/{{ pgadmin_oidc_app_slug }}/.well-known/openid-configuration',
+    'OAUTH2_SCOPE': 'openid email profile groups',
+    'OAUTH2_USERNAME_CLAIM': 'email',
+    'OAUTH2_ICON': 'fa-key',
+    'OAUTH2_BUTTON_COLOR': '#fd4b2d'}]
+
+pgadmin_env: >-
+  {{ pgadmin_env_base
+     | combine(pgadmin_env_oauth if pgadmin_oidc_held | default(false) | bool else {})
+     | combine({'PGADMIN_SERVER_JSON_FILE': '/pgadmin4/servers.json'} if pgadmin_register_pg_server | bool else {}) }}
+
+pgadmin_volumes_base:
+  - "{{ pgadmin_data_volume }}:/var/lib/pgadmin"
+  # Host CA store — verify TLS (pgAdmin → Postgres verify-full) via the LE chain.
+  - "/etc/ssl/certs:/etc/ssl/certs:ro"
+  # libpq's verify-full reads the CA from ~/.postgresql/root.crt — mount the
+  # system bundle there so the Postgres connection validates without errors.
+  - "/etc/ssl/certs/ca-certificates.crt:{{ pgadmin_pg_root_cert_path }}:ro"
+
+pgadmin_volumes: >-
+  {{ pgadmin_volumes_base
+     + ([pgadmin_servers_host_path ~ ':/pgadmin4/servers.json:ro'] if pgadmin_register_pg_server | bool else []) }}
