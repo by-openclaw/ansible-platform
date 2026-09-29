@@ -111,6 +111,16 @@
 # aideinit runs in the background (10+ min on a busy host). An async launch with poll: 0
 # always reports "changed" — so gate it on the database file and on a build already running,
 # otherwise every hardening pass re-launched a full AIDE build (and reported a change).
+# Mount facts are unreliable for this: on the node they listed 4 mounts and none of the
+# ZFS datasets. Ask findmnt; a pool root is a dataset whose source has no "/".
+- name: "Baseline | ZFS datasets on a Proxmox node (guest storage lives under the pool roots)"
+  ansible.builtin.command: findmnt -rn -t zfs -o TARGET,SOURCE
+  register: hardening_zfs_mounts
+  changed_when: false
+  failed_when: false
+  check_mode: false   # read-only probe
+  when: inventory_hostname in (groups['proxmox_nodes'] | default([]))
+
 - name: "Baseline | AIDE scope: the host's files, not container or guest storage"
   ansible.builtin.copy:
     dest: /etc/aide/aide.conf.d/99_platform_scope
@@ -124,10 +134,12 @@
       {% endfor %}
   vars:
     _aide_excludes: >-
-      {{ hardening_aide_excludes
-         + ((ansible_facts.mounts | default([]) | selectattr('fstype', 'equalto', 'zfs')
-             | selectattr('device', 'match', '^[^/]+$') | map(attribute='mount') | list)
-            if inventory_hostname in (groups['proxmox_nodes'] | default([])) else []) }}
+      {%- set roots = [] -%}
+      {%- for l in (hardening_zfs_mounts.stdout_lines | default([])) -%}
+        {%- set f = l.split() -%}
+        {%- if f | length == 2 and '/' not in f[1] -%}{%- set _ = roots.append(f[0]) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ hardening_aide_excludes + roots }}
   register: hardening_aide_scope
 
 - name: "Baseline | AIDE database present?"
