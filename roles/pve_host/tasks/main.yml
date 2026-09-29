@@ -53,6 +53,11 @@
   ansible.builtin.import_tasks: netfilter_log.yml
   tags: [pve_host, netfilter]
 
+- name: Stale labels of dead ZFS pools (declared, proven, cleared)
+  ansible.builtin.import_tasks: zfs_stale_labels.yml
+  when: pve_host_zfs_stale_labels | length > 0
+  tags: [pve_host, zfs]
+
 - name: Ceph daemons off (Ceph is not used on this node)
   ansible.builtin.import_tasks: ceph.yml
   when: not pve_host_ceph_enabled | bool

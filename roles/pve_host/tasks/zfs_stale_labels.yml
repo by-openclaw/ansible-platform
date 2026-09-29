@@ -1,0 +1,94 @@
+---
+# Clears the labels a DEAD ZFS pool left on a device that is no longer in use — declared
+# per node in the inventory (pve_host_zfs_stale_labels: device + that dead pool's guid).
+# Irreversible, so each device is proven first: its own on-disk label must name exactly
+# that pool guid (zdb -l), it must not be a member of any imported pool, and nothing on
+# it may be mounted. Once cleared the label no longer matches, so the task is a no-op.
+- name: "PVE host | On-disk label of each declared device (zdb -l, read-only)"
+  ansible.builtin.command:
+    argv: [zdb, -l, "{{ item.device }}"]
+  loop: "{{ pve_host_zfs_stale_labels }}"
+  loop_control:
+    label: "{{ item.device | basename }}"
+  register: pve_host_zfs_stale_zdb
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "PVE host | Kernel name and mounts of each declared device (read-only)"
+  ansible.builtin.shell: >-
+    set -o pipefail; d=$(readlink -f {{ item.device | quote }});
+    echo "$d $(findmnt -rn -S "$d" | wc -l)"
+  args:
+    executable: /bin/bash
+  loop: "{{ pve_host_zfs_stale_labels }}"
+  loop_control:
+    label: "{{ item.device | basename }}"
+  register: pve_host_zfs_stale_dev
+  changed_when: false
+  check_mode: false
+
+- name: "PVE host | Members of every imported pool (read-only)"
+  ansible.builtin.command: zpool status -P
+  register: pve_host_zpool_members
+  changed_when: false
+  check_mode: false
+
+- name: "PVE host | Which declared devices are proven stale"
+  ansible.builtin.set_fact:
+    pve_host_zfs_stale_proven: >-
+      {%- set out = [] -%}
+      {%- for z, d in pve_host_zfs_stale_zdb.results | zip(pve_host_zfs_stale_dev.results) -%}
+        {%- set kname, mounts = d.stdout.split() -%}
+        {%- set disk_id = z.item.device | basename | regex_replace('-part[0-9]+$', '') -%}
+        {%- if ('pool_guid: ' ~ z.item.pool_guid) in z.stdout
+              and (kname ~ ' ') not in (pve_host_zpool_members.stdout ~ ' ')
+              and (kname ~ '\n') not in (pve_host_zpool_members.stdout ~ '\n')
+              and disk_id not in pve_host_zpool_members.stdout
+              and mounts | int == 0 -%}
+          {%- set _ = out.append(z.item.device) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: "PVE host | Stale devices to clear"
+  ansible.builtin.debug:
+    msg: "{{ pve_host_zfs_stale_proven if pve_host_zfs_stale_proven | length > 0 else 'none (already clear, or a guard failed)' }}"
+
+- name: "PVE host | Clear the dead pool's labels"
+  ansible.builtin.command:
+    argv: [zpool, labelclear, -f, "{{ item }}"]
+  loop: "{{ pve_host_zfs_stale_proven }}"
+  changed_when: true
+  when: not ansible_check_mode
+
+- name: "PVE host | The dead pools are no longer importable"
+  ansible.builtin.command: zpool import
+  register: pve_host_zpool_importable
+  changed_when: false
+  failed_when: false   # rc 1 = nothing to import
+  check_mode: false
+  when: pve_host_zfs_stale_proven | length > 0
+
+- name: "PVE host | Assert it"
+  ansible.builtin.assert:
+    that: >-
+      pve_host_zfs_stale_labels | map(attribute='pool_guid') | select('in', pve_host_zpool_importable.stdout | default('')) | list | length == 0
+    fail_msg: "a declared dead pool is still importable after labelclear: {{ pve_host_zpool_importable.stdout | default('') }}"
+    quiet: true
+  when:
+    - pve_host_zfs_stale_proven | length > 0
+    - not ansible_check_mode
+
+# zfs-import@<pool> failed at every boot on "more than one matching pool"; with the
+# ambiguity gone its old failure is history.
+- name: "PVE host | Clear the old import failure"
+  ansible.builtin.shell: >-
+    set -o pipefail; systemctl list-units --failed --plain --no-legend 'zfs-import@*'
+    | awk '{print $1}' | xargs -r systemctl reset-failed
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when:
+    - pve_host_zfs_stale_proven | length > 0
+    - not ansible_check_mode
