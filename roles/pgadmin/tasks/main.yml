@@ -15,10 +15,13 @@
   ansible.builtin.import_tasks: container.yml
   tags: [pgadmin, container]
 
-- name: Archive the pre-PostgreSQL SQLite store (never read again)
-  ansible.builtin.command:
-    cmd: "mv {{ pgadmin_state_sqlite }} {{ pgadmin_state_sqlite }}.retired-sqlite"
-    removes: "{{ pgadmin_state_sqlite }}"
+- name: The pre-PostgreSQL SQLite store and its archived copy (never read again)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ pgadmin_state_sqlite }}"
+    - "{{ pgadmin_state_sqlite }}.retired-sqlite"
   tags: [pgadmin, container]
 
 - name: Import the shared PostgreSQL connection (existing setups)

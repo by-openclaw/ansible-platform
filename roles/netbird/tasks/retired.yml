@@ -25,18 +25,10 @@
   loop_control: { label: "{{ item.item }}" }
   when: item.stat.exists
 
-- name: "retired | Archive directory"
+- name: "retired | The notifier's units, script and state (git holds the code)"
   ansible.builtin.file:
-    path: "{{ netbird_sqlite_archive_dir }}/retired/approval-notify"
-    state: directory
-    owner: root
-    group: root
-    mode: "0700"
-
-- name: "retired | Move the notifier's units, script and state into the archive"
-  ansible.builtin.command:
-    cmd: "mv {{ item }} {{ netbird_sqlite_archive_dir }}/retired/approval-notify/"
-    removes: "{{ item }}"
+    path: "{{ item }}"
+    state: absent
   loop:
     - /etc/systemd/system/netbird-approval-notify.timer
     - /etc/systemd/system/netbird-approval-notify.service
@@ -79,3 +71,45 @@
   when:
     - ((netbird_retired_mgmt.content | b64decode | from_json).StoreConfig.Engine | default('')) == 'postgres'
     - (netbird_sqlite_archived.files | map(attribute='path') | map('basename') | unique | sort) == ['events.db', 'store.db']
+
+# The migration's rollback material: SQLite copies on this host and the renamed stale
+# databases (<db>_archive_<stamp>). Once management runs on PostgreSQL and the live
+# SQLite files are gone it is not needed; the last copies live in the nightly
+# pg_dumpall and the PBS backups of both hosts.
+- name: "retired | Live SQLite files still on the volume?"
+  ansible.builtin.stat:
+    path: "/var/lib/docker/volumes/{{ netbird_mgmt_volume }}/_data/store.db"
+  register: netbird_live_sqlite
+
+- name: "retired | Migration archives removed (PostgreSQL store proven)"
+  when:
+    - ((netbird_retired_mgmt.content | b64decode | from_json).StoreConfig.Engine | default('')) == 'postgres'
+    - not netbird_live_sqlite.stat.exists
+  block:
+    - name: "retired | The archive directory (SQLite copies, the retired notifier)"
+      ansible.builtin.file:
+        path: "{{ netbird_sqlite_archive_dir }}"
+        state: absent
+
+    - name: "retired | Archived databases on the shared PostgreSQL"
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ netbird_pg_container }}"
+          - psql
+          - -U
+          - postgres
+          - -Atc
+          - "select datname from pg_database where datname like '{{ netbird_pg_database }}\\_archive\\_%'"
+      delegate_to: "{{ netbird_pg_delegate }}"
+      register: netbird_archived_dbs
+      changed_when: false
+      check_mode: false   # read-only probe
+
+    - name: "retired | Drop them"
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ netbird_pg_container }}", psql, -U, postgres, -c, 'DROP DATABASE "{{ item }}"']
+      loop: "{{ netbird_archived_dbs.stdout_lines }}"
+      delegate_to: "{{ netbird_pg_delegate }}"
+      changed_when: true

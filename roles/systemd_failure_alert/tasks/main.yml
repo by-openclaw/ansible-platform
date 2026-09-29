@@ -1,9 +1,12 @@
 ---
 # Install the notifier. Idempotent; safe to include from every role that owns a timer.
-- name: "FailureAlert | The script this unit used to call (superseded)"
-  ansible.builtin.command:
-    cmd: "mv {{ systemd_failure_alert_script }} {{ systemd_failure_alert_script }}.retired"
-    removes: "{{ systemd_failure_alert_script }}"
+- name: "FailureAlert | The script this unit used to call (superseded; git holds its history)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ systemd_failure_alert_script }}"
+    - "{{ systemd_failure_alert_script }}.retired"
 
 - name: "FailureAlert | The templated notifier unit"
   ansible.builtin.template:

@@ -132,8 +132,12 @@
     state: absent
   when: lego_cert_legacy_cron | length > 0
 
-- name: "lego_cert | Archive the old renewal script"
-  ansible.builtin.command:
-    cmd: "mv {{ lego_cert_legacy_script }} {{ lego_cert_dir }}/retired-{{ lego_cert_legacy_script | basename }}"
-    removes: "{{ lego_cert_legacy_script }}"
+# The systemd units replaced it; git holds its history — no copy stays on the host.
+- name: "lego_cert | The old renewal script (and the copy an earlier run archived)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ lego_cert_legacy_script }}"
+    - "{{ lego_cert_dir }}/retired-{{ lego_cert_legacy_script | basename }}"
   when: lego_cert_legacy_script | length > 0
