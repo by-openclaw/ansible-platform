@@ -19,6 +19,18 @@
 # it) or enforce (drop it). Entries come from the 2026-09-27/28 audit AND the
 # service design (e.g. pgAdmin never connected in the window but is a db user).
 # ==============================================================================
+# Hosts whose DOCKER-USER chain DROPS what the catalog does not declare (the rest audit:
+# log and accept). Rolled out in waves after the audit stayed at zero undeclared flows
+# for 16 h across the nightly cycle (2026-09-29) and a synthetic undeclared connection
+# was logged — so zero meant "complete", not "not logging". Rollback = remove the host.
+platform_docker_firewall_enforce:
+  # wave 1 — internal tools, Traefik-only or common ports
+  - lxc-verdaccio-01
+  - lxc-seaweedfs-01
+  - lxc-portainer-01
+  - lxc-diagrams-01
+  - lxc-wazuh-01
+
 platform_docker_firewall_common:
   - {port: 9001, from: [portainer], comment: "Portainer agent"}
   - {port: 9180, from: [monitoring], comment: "cAdvisor metrics"}
