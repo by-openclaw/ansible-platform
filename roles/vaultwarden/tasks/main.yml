@@ -1,32 +1,37 @@
 ---
 # ==============================================================================
-# Role: vaultwarden — dispatcher
+# Role: vaultwarden — what is specific to Vaultwarden. The platform concerns are
+# declared to roles/service_scaffold: database (postgres_db), mailbox, the
+# container, the public Traefik route, and the SSO registration it asserts.
 # ==============================================================================
-- name: Provision the Vaultwarden database
-  ansible.builtin.include_role:
-    name: postgres_db
-  vars:
-    postgres_db_vault_path: "{{ platform_env }}/vaultwarden/db-pgsql"
-    postgres_db_name: "{{ vaultwarden_pg_name }}"
-    postgres_db_user: "{{ vaultwarden_pg_user }}"
-  tags: [vaultwarden, database]
-
-- name: Resolve / generate Vaultwarden secrets
+- name: "Secrets for Vaultwarden (admin token, OIDC client)"
   ansible.builtin.import_tasks: secrets.yml
   tags: [vaultwarden, secrets]
 
-- name: Run the Vaultwarden container
-  ansible.builtin.import_tasks: containers.yml
-  tags: [vaultwarden, container]
-
-- name: Publish Vaultwarden via Traefik (public + rate-limit)
+- name: "Platform concerns of Vaultwarden (roles/service_scaffold)"
   ansible.builtin.include_role:
-    name: traefik_route
+    name: service_scaffold
     apply:
-      tags: [route]
+      tags: [vaultwarden, database, container, route]
   vars:
-    traefik_route_name: vaultwarden
-    traefik_route_fqdn: "{{ vaultwarden_fqdn }}"
-    traefik_route_backend_url: "http://{{ vaultwarden_listen_ip }}:{{ vaultwarden_host_port }}"
-    traefik_route_internal_only: false
-  tags: [vaultwarden, route]
+    service_scaffold_def:
+      name: vaultwarden
+      fqdn: "{{ vaultwarden_fqdn }}"
+      backend_url: "http://{{ vaultwarden_listen_ip }}:{{ vaultwarden_host_port }}"
+      exposure: public
+      db: postgres               # vaultwarden / vaultwarden / {env}/vaultwarden/db-pgsql — the live DB
+      mailbox: true
+      sso_slug: "{{ vaultwarden_oidc_app_slug }}"
+      containers:
+        - name: "{{ vaultwarden_container_name }}"
+          image: "{{ vaultwarden_image }}"
+          published: ["{{ vaultwarden_listen_ip }}:{{ vaultwarden_host_port }}:80"]
+          volumes:
+            - "{{ vaultwarden_data_volume }}:/data"
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"
+          env: "{{ vaultwarden_env }}"   # vars/main.yml; reads postgres_db_password set by the db step
+          # First start runs the DB migrations before /alive answers: retry generously.
+          health: "http://{{ vaultwarden_listen_ip }}:{{ vaultwarden_host_port }}/alive"
+          health_retries: 30
+          health_delay: 5
+  tags: [vaultwarden, database, container, route]

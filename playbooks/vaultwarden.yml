@@ -1,8 +1,16 @@
 ---
-# Configure PROD Vaultwarden (lxc-vaultwarden-01, SVC) — Docker password manager.
-- name: Configure PROD Vaultwarden
+# ==============================================================================
+# Vaultwarden — password manager (lxc-vaultwarden-01, public, Authentik SSO).
+# One play, composition explicit: OS baseline, container engine, the service.
+# The service's platform concerns (database, mailbox, container, Traefik route)
+# are declared to roles/service_scaffold inside roles/vaultwarden.
+#   ansible-playbook playbooks/vaultwarden.yml
+# ==============================================================================
+- name: "Configure Vaultwarden"
   hosts: vaultwarden
   become: true
   gather_facts: true
   roles:
+    - base
+    - docker
     - vaultwarden

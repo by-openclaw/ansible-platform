@@ -1,0 +1,42 @@
+---
+# ==============================================================================
+# Vaultwarden's container environment: implementation, not settings (those are
+# defaults/main.yml). Lazily templated: the scaffold's db step sets
+# postgres_db_password before its containers step reads vaultwarden_env. Carried
+# over from the former set_facts in tasks/secrets.yml.
+# ==============================================================================
+# verify-full forces the client to validate the server cert chain (LE wildcard)
+# AND that the hostname matches the postgresql host's FQDN (covered by the
+# wildcard). The CA bundle is mounted into the container at /etc/ssl/certs.
+vaultwarden_env_base:
+  DOMAIN: "https://{{ vaultwarden_fqdn }}"
+  DATABASE_URL: >-
+    postgresql://{{ vaultwarden_pg_user }}:{{ postgres_db_password }}@{{ vaultwarden_pg_host }}:{{ vaultwarden_pg_port }}/{{
+    vaultwarden_pg_name }}?sslmode=verify-full&sslrootcert=/etc/ssl/certs/ca-certificates.crt
+  SIGNUPS_ALLOWED: "false"
+  ADMIN_TOKEN: "{{ vaultwarden_secrets.admin_token }}"
+  ROCKET_PORT: "80"
+
+# Authentik OIDC SSO, once roles/authentik has minted the client (vaultwarden_oidc_held).
+vaultwarden_env_sso:
+  # Built-in OIDC SSO — values per the official Authentik integration guide.
+  # SSO_AUTHORITY is the Authentik per-app issuer WITH a trailing slash
+  # (authentik's issuer has one; discovery = SSO_AUTHORITY/.well-known/...).
+  # Access is gated IdP-side by the vaultwarden-admins group (restrict_to_group).
+  SSO_ENABLED: "true"
+  SSO_AUTHORITY: "{{ vaultwarden_authentik_base }}/application/o/{{ vaultwarden_oidc_app_slug }}/"
+  SSO_CLIENT_ID: "{{ vaultwarden_oidc.client_id }}"
+  SSO_CLIENT_SECRET: "{{ vaultwarden_oidc.client_secret }}"
+  SSO_SCOPES: "email profile offline_access"
+  # The FW blocks outbound SMTP from SVC, so vaultwarden cannot send its own
+  # email verification. Authentik is the trusted verifier and already gates
+  # access via the vaultwarden-admins group, so accept its verified email
+  # instead of requiring a (never-delivered) confirmation mail.
+  SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION: "true"
+  SSO_CLIENT_CACHE_EXPIRATION: "0"
+  SSO_ONLY: "false"
+  SSO_SIGNUPS_MATCH_EMAIL: "true"
+
+vaultwarden_env: >-
+  {{ vaultwarden_env_base
+     | combine(vaultwarden_env_sso if vaultwarden_oidc_held | default(false) | bool else {}) }}
