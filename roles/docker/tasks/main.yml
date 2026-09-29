@@ -1,4 +1,12 @@
 ---
+# The role reads facts (the CE repo's release, the DOCKER-USER uplink interface), and
+# it also runs as a dependency of plays that skip fact gathering (certs-sync.yml
+# includes postgresql/redis tls tasks, whose meta pulls this role in).
+- name: "Docker | Facts this role reads (a play may skip fact gathering)"
+  ansible.builtin.setup:
+    gather_subset: ["!all", network]
+  when: ansible_default_ipv4 is not defined or ansible_distribution_release is not defined
+
 - name: "Docker | Docker CE apt repo (docker_engine=ce)"
   when: docker_engine == 'ce'
   block:
