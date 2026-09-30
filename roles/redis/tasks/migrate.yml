@@ -1,15 +1,8 @@
 ---
-# One-time: retire the native Redis so the container can bind :6379.
-# Cache/broker had no persistent data yet → nothing to migrate.
-- name: "migrate | Stop + disable native redis-server (if present)"
-  ansible.builtin.systemd_service:
-    name: "redis-server"
-    state: stopped
-    enabled: false
-  failed_when: false
-
-- name: "migrate | Mask the native redis-server unit"
-  ansible.builtin.systemd_service:
-    name: "redis-server"
-    masked: true
-  failed_when: false
+# The container is the Redis. The native package of the first install was stopped and
+# masked long ago (the cache/broker held no data); it goes now, so there is one Redis
+# on the host. Remove, not purge: its config and data directories stay on disk.
+- name: "migrate | The native redis-server package (retired)"
+  ansible.builtin.apt:
+    name: redis-server
+    state: absent
