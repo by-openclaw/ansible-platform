@@ -1,0 +1,32 @@
+---
+# NetBox's own readiness: /login/ with the served Host header (ALLOWED_HOSTS), then
+# all three containers Up. The scaffold's health step has no request headers.
+- name: "verify | Wait for NetBox to be ready (first start runs migrations)"
+  ansible.builtin.uri:
+    url: "http://{{ netbox_listen_ip }}:{{ netbox_host_port }}/login/"
+    # NetBox enforces ALLOWED_HOSTS — probe with the served vhost Host header.
+    headers:
+      Host: "{{ netbox_fqdn }}"
+    status_code: 200
+  register: netbox_ready
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  retries: 40
+  delay: 5
+  until: netbox_ready.status == 200
+  changed_when: false
+
+- name: "verify | Gather running NetBox containers"
+  community.docker.docker_host_info:
+    containers: true
+    containers_filters:
+      status: running
+  register: netbox_running
+
+- name: "verify | Assert all three containers are Up"
+  ansible.builtin.assert:
+    that:
+      - "'/netbox' in (netbox_running.containers | map(attribute='Names') | flatten)"
+      - "'/netbox-worker' in (netbox_running.containers | map(attribute='Names') | flatten)"
+      - "'/netbox-housekeeping' in (netbox_running.containers | map(attribute='Names') | flatten)"
+    fail_msg: "One or more NetBox containers are not running"
+    success_msg: "netbox, netbox-worker and netbox-housekeeping are all Up"
