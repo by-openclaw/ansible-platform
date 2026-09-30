@@ -4,6 +4,10 @@ Description={{ host_job_description or host_job_name }}
 {% if host_job_on_failure | bool %}
 OnFailure=systemd-failure-alert@%n.service
 {% endif %}
+{% if host_job_wants_network | bool %}
+After=network-online.target
+Wants=network-online.target
+{% endif %}
 {% if host_job_requires_mounts_for | length > 0 %}
 RequiresMountsFor={{ host_job_requires_mounts_for }}
 {% endif %}
@@ -25,3 +29,7 @@ Environment="{{ name }}={{ value }}"
 {% for line in host_job_exec %}
 ExecStart={{ line }}
 {% endfor %}
+{% if host_job_restart | length > 0 %}
+Restart={{ host_job_restart }}
+RestartSec={{ host_job_restart_sec }}
+{% endif %}

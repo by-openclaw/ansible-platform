@@ -10,7 +10,15 @@
 host_job_name: ""                    # REQUIRED — unit name: <name>.service / <name>.timer
 host_job_description: ""
 host_job_exec: []                    # REQUIRED — ExecStart lines, in order
-host_job_on_calendar: "*-*-* 02:00:00"
+host_job_on_calendar: "*-*-* 02:00:00"   # "" for a job on the monotonic schedule below only
+# Monotonic schedule (a watchdog): after boot, then every interval since the last run.
+host_job_on_boot_sec: ""             # e.g. "30"
+host_job_on_unit_active_sec: ""      # e.g. "5min"
+# Retry a failed run in place (Restart= on the oneshot). A job that retries never reaches
+# "failed", so OnFailure= cannot fire: its failure must show somewhere else (a probe).
+host_job_restart: ""                 # e.g. "on-failure"
+host_job_restart_sec: "60"
+host_job_wants_network: false       # After= + Wants=network-online.target (a job that talks to the network at boot)
 host_job_randomized_delay: "0"
 host_job_persistent: true            # catch up a run missed while the host was down
 host_job_workdir: "/"
