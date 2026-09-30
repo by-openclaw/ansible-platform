@@ -1,38 +1,29 @@
 ---
-- name: "containers | Pull the pinned Nextcloud image"
-  community.docker.docker_image:
-    name: "{{ nextcloud_image }}"
-    source: pull
-    state: present
-
-- name: "containers | Run nextcloud (web)"
-  community.docker.docker_container:
-    name: nextcloud
-    image: "{{ nextcloud_image }}"
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    published_ports:
-      - "{{ nextcloud_listen_ip }}:{{ nextcloud_host_port }}:80"
-    volumes:
-      - "{{ nextcloud_app_volume }}:/var/www/html"
-      - "/etc/ssl/certs:/etc/ssl/certs:ro"
-    env: "{{ nextcloud_env }}"
-  no_log: true
-
-- name: "containers | Run nextcloud-cron (background jobs)"
-  community.docker.docker_container:
-    name: nextcloud-cron
-    image: "{{ nextcloud_image }}"
-    entrypoint: /cron.sh
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    volumes:
-      - "{{ nextcloud_app_volume }}:/var/www/html"
-      - "/etc/ssl/certs:/etc/ssl/certs:ro"
-    env: "{{ nextcloud_env }}"
-  no_log: true
+# The web and cron containers through the scaffold's containers step (the one owner of
+# "run a pinned container"); the install wait and the Up assertion stay below.
+- name: "containers | Nextcloud web + cron (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: nextcloud
+      containers:
+        - name: nextcloud
+          image: "{{ nextcloud_image }}"
+          published:
+            - "{{ nextcloud_listen_ip }}:{{ nextcloud_host_port }}:80"
+          volumes:
+            - "{{ nextcloud_app_volume }}:/var/www/html"
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"
+          env: "{{ nextcloud_env }}"
+        - name: nextcloud-cron
+          image: "{{ nextcloud_image }}"
+          entrypoint: /cron.sh
+          volumes:
+            - "{{ nextcloud_app_volume }}:/var/www/html"
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"
+          env: "{{ nextcloud_env }}"
 
 # First start runs the automated install (creates the schema in the empty
 # Postgres DB over libpq TLS + S3 primary wiring) before status.php reports
