@@ -1,11 +1,11 @@
 ---
 # ==============================================================================
 # Role: traefik — main dispatcher
-#   install (traefik binary + lego + systemd) -> secrets (Cloudflare token)
-#   -> cert (wildcard DNS-01) -> config (static + dynamic) -> renew (cron)
+#   install (directories) -> plugin (vendored) -> secrets (Cloudflare token)
+#   -> cert (wildcard DNS-01) -> config (static + dynamic) -> container
 # ==============================================================================
 
-- name: Install Traefik + lego + systemd unit
+- name: Prerequisites and directories
   ansible.builtin.import_tasks: install.yml
   tags: [traefik, install]
 
@@ -27,6 +27,9 @@
   ansible.builtin.import_tasks: config.yml
   tags: [traefik, config]
 
+- name: Traefik runs as a container (pinned image, host network)
+  ansible.builtin.import_tasks: container.yml
+  tags: [traefik, container]
 - name: Rotate the edge logs (logrotate concern-role)
   ansible.builtin.include_role:
     name: logrotate
@@ -37,7 +40,7 @@
       - name: traefik
         paths: ["/var/log/traefik/*.log"]
         rotate: 14
-        postrotate: "systemctl kill -s USR1 traefik.service 2>/dev/null || true"
+        postrotate: "docker kill -s USR1 traefik 2>/dev/null || true"   # Traefik reopens its logs on USR1
   tags: [traefik, logs]
 
 
