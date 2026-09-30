@@ -70,11 +70,6 @@
     mode: "0750"
   become: true
 
-- name: "CISO Assistant | Private network for the containers (IPv4-only by design)"
-  community.docker.docker_network:
-    name: "{{ ciso_assistant_network }}"
-    state: present
-
 # The backend serves the API and the Huey worker runs the same image with another entrypoint;
 # both need the identical environment, so it is built once.
 - name: "CISO Assistant | Compose the backend environment"
@@ -107,60 +102,50 @@
       AUDITLOG_RETENTION_DAYS: "{{ ciso_assistant_auditlog_retention_days | string }}"
   no_log: true
 
-- name: "CISO Assistant | Backend (API + migrations on start)"
-  community.docker.docker_container:
-    name: "{{ ciso_assistant_backend_container }}"
-    image: "{{ ciso_assistant_backend_image }}"
-    state: started
-    restart_policy: unless-stopped
-    networks: [{name: "{{ ciso_assistant_network }}"}]
-    network_mode: "{{ ciso_assistant_network }}"
-    user: "1001:1001"
-    published_ports:
-      # the browser talks to the API directly (upstream's design), so Traefik must reach it
-      - "{{ ciso_assistant_listen_ip }}:{{ ciso_assistant_backend_port }}:{{ ciso_assistant_backend_container_port }}"
-    volumes:
-      - "{{ ciso_assistant_data_dir }}:/code/db"
-      - "{{ ciso_assistant_ca_bundle }}:{{ ciso_assistant_container_ca_path }}:ro"
-    env: "{{ ciso_assistant_backend_env }}"
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:{{ ciso_assistant_backend_container_port }}/api/health/"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 90s
-  no_log: true
-
-- name: "CISO Assistant | Task worker (same image, Huey)"
-  community.docker.docker_container:
-    name: "{{ ciso_assistant_worker_container }}"
-    image: "{{ ciso_assistant_backend_image }}"
-    state: started
-    restart_policy: unless-stopped
-    networks: [{name: "{{ ciso_assistant_network }}"}]
-    network_mode: "{{ ciso_assistant_network }}"
-    user: "1001:1001"
-    volumes:
-      - "{{ ciso_assistant_data_dir }}:/code/db"
-      - "{{ ciso_assistant_ca_bundle }}:{{ ciso_assistant_container_ca_path }}:ro"
-    env: "{{ ciso_assistant_backend_env }}"
-    entrypoint: ["python", "manage.py", "run_huey", "-w", "2", "--scheduler-interval", "60"]
-  no_log: true
-
-- name: "CISO Assistant | Frontend"
-  community.docker.docker_container:
-    name: "{{ ciso_assistant_frontend_container }}"
-    image: "{{ ciso_assistant_frontend_image }}"
-    state: started
-    restart_policy: unless-stopped
-    networks: [{name: "{{ ciso_assistant_network }}"}]
-    network_mode: "{{ ciso_assistant_network }}"
-    published_ports:
-      - "{{ ciso_assistant_listen_ip }}:{{ ciso_assistant_frontend_port }}:{{ ciso_assistant_frontend_container_port }}"
-    env:
-      PUBLIC_BACKEND_API_URL: "http://{{ ciso_assistant_backend_container }}:{{ ciso_assistant_backend_container_port }}/api"
-      PUBLIC_BACKEND_API_EXPOSED_URL: "https://{{ ciso_assistant_fqdn }}/api"
-      ORIGIN: "https://{{ ciso_assistant_fqdn }}"
+# The network and the three containers are the scaffold's containers step (the one
+# owner of "run a pinned container"), called on its own because their environment
+# needs the credentials read above, after the scaffold's main run.
+- name: "CISO Assistant | Network and containers (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: "{{ ciso_assistant_service }}"
+      network: "{{ ciso_assistant_network }}"    # private, IPv4-only by design
+      containers:
+        - name: "{{ ciso_assistant_backend_container }}"   # API + migrations on start
+          image: "{{ ciso_assistant_backend_image }}"
+          user: "1001:1001"
+          published:
+            # the browser talks to the API directly (upstream's design), so Traefik must reach it
+            - "{{ ciso_assistant_listen_ip }}:{{ ciso_assistant_backend_port }}:{{ ciso_assistant_backend_container_port }}"
+          volumes:
+            - "{{ ciso_assistant_data_dir }}:/code/db"
+            - "{{ ciso_assistant_ca_bundle }}:{{ ciso_assistant_container_ca_path }}:ro"
+          env: "{{ ciso_assistant_backend_env }}"
+          healthcheck:
+            test: ["CMD", "curl", "-fsS", "http://localhost:{{ ciso_assistant_backend_container_port }}/api/health/"]
+            interval: 15s
+            timeout: 5s
+            retries: 10
+            start_period: 90s
+        - name: "{{ ciso_assistant_worker_container }}"    # task worker: same image, Huey
+          image: "{{ ciso_assistant_backend_image }}"
+          user: "1001:1001"
+          volumes:
+            - "{{ ciso_assistant_data_dir }}:/code/db"
+            - "{{ ciso_assistant_ca_bundle }}:{{ ciso_assistant_container_ca_path }}:ro"
+          env: "{{ ciso_assistant_backend_env }}"
+          entrypoint: ["python", "manage.py", "run_huey", "-w", "2", "--scheduler-interval", "60"]
+        - name: "{{ ciso_assistant_frontend_container }}"
+          image: "{{ ciso_assistant_frontend_image }}"
+          published:
+            - "{{ ciso_assistant_listen_ip }}:{{ ciso_assistant_frontend_port }}:{{ ciso_assistant_frontend_container_port }}"
+          env:
+            PUBLIC_BACKEND_API_URL: "http://{{ ciso_assistant_backend_container }}:{{ ciso_assistant_backend_container_port }}/api"
+            PUBLIC_BACKEND_API_EXPOSED_URL: "https://{{ ciso_assistant_fqdn }}/api"
+            ORIGIN: "https://{{ ciso_assistant_fqdn }}"
 
 - name: "CISO Assistant | Host firewall: only Traefik reaches the frontend"
   ansible.builtin.include_role:
