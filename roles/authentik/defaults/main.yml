@@ -295,23 +295,20 @@ authentik_groups: >-
 # platform-admins = top-level platform operators.
 authentik_superuser_groups:
   - platform-admins
-# Admin-account separation (EntraID-style): the daily-driver account (yboujraf)
-# holds NO admin groups — it is a regular user. A SEPARATE privileged account
-# (adm_yboujraf) holds the *-admins groups and is the Authentik superuser. Manage
-# admin things only from adm_yboujraf. Break-glass beyond these: Authentik akadmin
-# (bootstrap) + each app's local admin.
-authentik_users:
-  - username: yboujraf
-    vault_path: "{{ platform_env }}/authentik/user-yboujraf"      # regular user (nextcloud-users)
-  - username: adm_yboujraf
-    vault_path: "{{ platform_env }}/authentik/user-adm-yboujraf"  # PRIVILEGED admin account
-  # Dedicated example.com mail identity. mailcow OIDC maps email->mailbox, so this
-  # carries the @example.com email (in mailcow-users) to SSO into the example.com
-  # inbox — the @{{ platform_domain }} account above can't reach a second-domain mailbox.
-  # NOTE: there is no adm_*_example identity — adm_yboujraf is ADMIN-ONLY (no mailbox
-  # on any domain); mailcow admin = the local admin account (no SSO-admin in mailcow).
-  - username: yboujraf_example
-    vault_path: "{{ platform_env }}/authentik/user-yboujraf-example"      # -> yboujraf@example.com mailbox
+# Admin-account separation (EntraID-style): a daily-driver account holds NO admin
+# groups — it is a regular user. A SEPARATE privileged account (adm_<name>) holds the
+# *-admins groups and is the Authentik superuser; admin things are managed only from
+# it. Break-glass beyond these: Authentik akadmin (bootstrap) + each app's local admin.
+# Every person in platform_people (group_vars/all/people.yml) is an Authentik user; the
+# user secret sits at {env}/authentik/user-<username, _ as -> (a convention, not a list).
+# People are added, renamed or disabled in people.yml only — never here.
+authentik_users: >-
+  {%- set out = [] -%}
+  {%- for p in platform_people -%}
+    {%- set _ = out.append({'username': p.username,
+                            'vault_path': platform_env ~ '/authentik/user-' ~ (p.username | replace('_', '-'))}) -%}
+  {%- endfor -%}
+  {{ out }}
 
 # Outbound email (password resets / MFA / notifications) via Resend (by-research).
 # RETIRED (2026-09-01): Resend replaced by the authentik@ service mailbox

@@ -173,8 +173,12 @@ netbird_vpn_full_group: "vpn-full"
 netbird_vpn_web_routes:
   - { network_id: "web-traefik", network: "{{ hostvars[groups['traefik'] | first].ansible_host }}/32" }   # Traefik -> web apps
   - { network_id: "web-dns", network: "{{ hostvars[groups['adguard'] | first].ansible_host }}/32" }       # AdGuard -> DNS
-netbird_vpn_full_users:
-  - "adm_yboujraf@{{ platform_domain }}"                 # admin -> full internal reach
+# Full internal reach: every active member of NetBird's admin group in people.yml.
+netbird_vpn_full_users: >-
+  {{ platform_people
+     | selectattr('state', 'equalto', 'active')
+     | selectattr('groups', 'contains', platform_service_groups.netbird.admin)
+     | map(attribute='email') | list }}
 
 # --- Account session policy (NIS2) ----------------------------------------------
 # Force a fresh interactive Authentik login (+TOTP) after this long. NIS2 is
