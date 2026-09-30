@@ -52,63 +52,43 @@
          else (gitlab_runner_mint.stdout_lines | default([]) | select('match', '^glrt') | first | default('')) }}
   no_log: true
 
-# --- 2. Docker (executor spawns clean job containers) --------------------------
-# A freshly-booted cloud VM still has cloud-init / apt-daily holding the dpkg lock
-# for the first minute or two → apt fails with "Unable to acquire the dpkg
-# frontend lock". Wait for cloud-init to finish and the lock to clear first, so a
-# rebuild needs no manual retry.
-- name: "Runner | Wait for cloud-init + apt/dpkg locks to settle (fresh boot)"
-  ansible.builtin.shell: |
-    command -v cloud-init >/dev/null 2>&1 && cloud-init status --wait >/dev/null 2>&1 || true
-    for _ in $(seq 1 60); do
-      fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1 || exit 0
-      sleep 5
-    done
-    exit 0
-  args:
-    executable: /bin/bash
-  changed_when: false
+# --- 2. The runner is a container (the platform runs services as containers) ----
+# The engine is roles/docker, composed by playbooks/gitlab-runner.yml. The native
+# package of the first install stops first: two runners with the same token would both
+# take jobs. Its config dir and system id stay — the container mounts them, so GitLab
+# sees the same runner.
+- name: "Runner | Services on this host"
+  ansible.builtin.service_facts:
 
-- name: "Runner | Install Docker + prereqs"
-  ansible.builtin.apt:
-    name: [docker.io, ca-certificates, curl, gnupg]
-    state: present
-    update_cache: true
-  register: gitlab_runner_docker_apt
-  retries: 5
-  delay: 15
-  until: gitlab_runner_docker_apt is succeeded
-
-- name: "Runner | Docker service enabled + started"
+- name: "Runner | The native gitlab-runner service stops (retired)"
   ansible.builtin.systemd_service:
-    name: docker
-    state: started
-    enabled: true
+    name: gitlab-runner
+    state: stopped
+    enabled: false
+  when: "'gitlab-runner.service' in ansible_facts.services"
 
-# --- 3. gitlab-runner package -------------------------------------------------
-- name: "Runner | Add gitlab-runner apt signing key"
-  ansible.builtin.get_url:
-    url: "{{ gitlab_runner_apt_repo_url }}/gpgkey"
-    dest: /etc/apt/keyrings/gitlab-runner.asc
-    mode: "0644"
-
-- name: "Runner | Add gitlab-runner apt repository"
-  ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/gitlab-runner.asc] {{ gitlab_runner_apt_repo_url }}/debian/ {{ ansible_distribution_release }} main"
-    filename: gitlab-runner
-    state: present
-    update_cache: true
-
-- name: "Runner | Install gitlab-runner"
+- name: "Runner | The native package and its apt source (retired)"
   ansible.builtin.apt:
-    name: "gitlab-runner{{ ('=' + gitlab_runner_version) if gitlab_runner_version else '' }}"
-    state: present
-  register: gitlab_runner_pkg_apt
-  retries: 5
-  delay: 15
-  until: gitlab_runner_pkg_apt is succeeded
+    name: gitlab-runner
+    state: absent
 
-# --- 4. config.toml (declarative; no repeated register) -----------------------
+- name: "Runner | Its apt source and signing key (retired)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/gitlab-runner.list
+    - /etc/apt/keyrings/gitlab-runner.asc
+
+- name: "Runner | Config directory"
+  ansible.builtin.file:
+    path: /etc/gitlab-runner
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# --- 3. config.toml (declarative; no repeated register) -----------------------
 - name: "Runner | Render /etc/gitlab-runner/config.toml"
   ansible.builtin.template:
     src: config.toml.j2
@@ -116,21 +96,30 @@
     owner: root
     group: root
     mode: "0600"
-  notify: Restart gitlab-runner
+  register: gitlab_runner_config
 
-- name: "Runner | Apply config now (flush handlers)"
-  ansible.builtin.meta: flush_handlers
-
-# --- 5. Service + verify it registered/online --------------------------------
-- name: "Runner | gitlab-runner enabled + started"
-  ansible.builtin.systemd_service:
-    name: gitlab-runner
-    state: started
-    enabled: true
+# --- 4. The runner container + verify it registered/online ---------------------
+- name: "Runner | The runner container (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: gitlab-runner
+      containers:
+        - name: gitlab-runner
+          image: "{{ gitlab_runner_image }}"
+          volumes:
+            - /etc/gitlab-runner:/etc/gitlab-runner
+            - /var/run/docker.sock:/var/run/docker.sock   # the docker executor runs jobs on this host's engine
+          restart: "{{ gitlab_runner_config.changed | default(false) }}"   # the runner re-reads config.toml, a restart is certain
 
 - name: "Runner | Verify the runner is registered/verified against GitLab"
-  ansible.builtin.command: gitlab-runner verify
+  ansible.builtin.command: docker exec gitlab-runner gitlab-runner verify
   register: gitlab_runner_verify
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  failed_when: "'is alive' not in gitlab_runner_verify.stdout and 'Verifying' not in gitlab_runner_verify.stdout and gitlab_runner_verify.rc != 0"
+  failed_when:
+    - "'is alive' not in gitlab_runner_verify.stdout and 'Verifying' not in gitlab_runner_verify.stdout and gitlab_runner_verify.rc != 0"
+    # a dry-run of the switch-over: the container it would create does not exist yet
+    - not (ansible_check_mode and 'No such container' in (gitlab_runner_verify.stderr | default('')))
