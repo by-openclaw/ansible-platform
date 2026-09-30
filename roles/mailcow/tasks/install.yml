@@ -1,6 +1,6 @@
 ---
 # ==============================================================================
-# Role: mailcow — install (engine via roles/docker + clone + mailcow.conf)
+# Role: mailcow — install (clone + mailcow.conf; the engine is roles/docker, composed by the playbook)
 # mailcow requires Docker CE >= 24 + compose v2 (Debian's docker.io is too old):
 # the inventory sets docker_engine: ce for this host and roles/docker installs it. vmail stays on the local
 # 60 GB disk via mailcow's default volumes — no NFS, no extra disk.
@@ -20,15 +20,12 @@
     update_cache: true
     cache_valid_time: 3600
 
-# The engine (Docker CE, daemon.json, IPv6 bridge, journald) belongs to roles/docker;
-# this host's inventory sets docker_engine: ce. mailcow never installs docker*
-# packages itself — a second owner is what swapped this host to docker.io.
-- name: "install | Container engine (roles/docker, docker_engine from the inventory)"
-  ansible.builtin.include_role:
-    name: docker
-
-# Apply the docker restart NOW (before clone/compose) rather than at play end,
-# so the stack's network is created dual-stack on first `compose up`.
+# The engine (Docker CE, daemon.json, IPv6 bridge, journald) belongs to roles/docker,
+# which playbooks/mailcow.yml runs before this role (docker_engine: ce from the
+# inventory). mailcow never installs docker* packages itself — a second owner is
+# what swapped this host to docker.io. Apply its pending restart NOW (before
+# clone/compose) rather than at play end, so the stack's network is created
+# dual-stack on first `compose up`.
 - name: "install | Apply pending docker restart before the stack starts"
   ansible.builtin.meta: flush_handlers
 
