@@ -2,7 +2,7 @@
 
 GitLab Runner on `vm-gitlab-runner-01` (VM, not LXC — docker executor). Registered with a token from Vault `prod/gitlab/runner-token`; **privileged=false**, builds via Kaniko; default job image pinned.
 
-- `gitlab_runner_version` empty = repo latest at install; pin to lock.
+- `gitlab_runner_image` is the pinned runner image (the runner runs as a container; roles/docker owns the engine).
 - Container logs ride journald (fleet default); job containers are transient.
 
 Run: `ansible-playbook -i inventories/prod/hosts.yml playbooks/gitlab-runner.yml`
