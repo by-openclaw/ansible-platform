@@ -3,9 +3,19 @@
 Description=Schedule for {{ host_job_description or host_job_name }}
 
 [Timer]
+{% if host_job_on_calendar | length > 0 %}
 OnCalendar={{ host_job_on_calendar }}
+{% endif %}
+{% if host_job_on_boot_sec | length > 0 %}
+OnBootSec={{ host_job_on_boot_sec }}
+{% endif %}
+{% if host_job_on_unit_active_sec | length > 0 %}
+OnUnitActiveSec={{ host_job_on_unit_active_sec }}
+{% endif %}
 RandomizedDelaySec={{ host_job_randomized_delay }}
+{% if host_job_on_calendar | length > 0 %}
 Persistent={{ 'true' if host_job_persistent | bool else 'false' }}
+{% endif %}
 
 [Install]
 WantedBy=timers.target

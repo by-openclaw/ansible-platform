@@ -4,7 +4,8 @@
     that:
       - host_job_name | length > 0
       - host_job_exec | length > 0
-    fail_msg: "host_job needs host_job_name and host_job_exec"
+      - (host_job_on_calendar | length > 0) or (host_job_on_boot_sec | length > 0) or (host_job_on_unit_active_sec | length > 0)
+    fail_msg: "host_job needs host_job_name, host_job_exec and a schedule (OnCalendar or a monotonic one)"
     quiet: true
 
 - name: "host_job | The failure notifier (OnFailure= target)"

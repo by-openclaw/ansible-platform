@@ -43,63 +43,29 @@
     mode: "0600"
   notify: Restart warden-coldstart
 
-# Not a roles/host_job job: a watchdog that runs at boot and retries every minute
-# (Restart=on-failure), so it never reaches "failed" and OnFailure= could not fire —
-# a mail per retry would be the wrong signal anyway. Its failure is a Vault that
-# stays sealed: the /v1/sys/health probe (roles/prometheus) alerts on that.
-- name: "Warden | Systemd unit (runs on every boot, retries until success)"
-  ansible.builtin.copy:
-    dest: /etc/systemd/system/warden-coldstart.service
-    owner: root
-    group: root
-    mode: "0644"
-    content: |
-      # Managed by Ansible (roles/warden)
-      [Unit]
-      Description=Warden platform cold-start reconciliation (vault unseal + verify)
-      After=network-online.target
-      Wants=network-online.target
+# The cold-start watchdog is a roles/host_job job on a monotonic schedule: 30 s after
+# boot, then every 5 min; a failed run retries every minute in place (Restart=), so it
+# never reaches "failed" and OnFailure= could not fire — a mail per retry would be the
+# wrong signal anyway. Its failure is a Vault that stays sealed: the /v1/sys/health
+# probe (roles/prometheus) alerts on that.
+- name: "Warden | Boot runs come from the timer (OnBootSec), not an enabled service"
+  ansible.builtin.file:
+    path: /etc/systemd/system/multi-user.target.wants/warden-coldstart.service
+    state: absent
 
-      [Service]
-      Type=oneshot
-      ExecStart=/usr/bin/ansible-playbook -c local {{ warden_dir }}/coldstart.yml
-      Restart=on-failure
-      RestartSec=60
-      TimeoutStartSec=30min
-
-      [Install]
-      WantedBy=multi-user.target
-  notify: Restart warden-coldstart
-
-- name: "Warden | Watchdog timer (heals a re-sealed Vault anytime, not just boot)"
-  ansible.builtin.copy:
-    dest: /etc/systemd/system/warden-coldstart.timer
-    owner: root
-    group: root
-    mode: "0644"
-    content: |
-      # Managed by Ansible (roles/warden)
-      [Unit]
-      Description=Warden reconciliation watchdog (5-min cadence, idempotent)
-
-      [Timer]
-      OnBootSec=30
-      OnUnitActiveSec=5min
-
-      [Install]
-      WantedBy=timers.target
-  notify: Restart warden-coldstart
-
-- name: "Warden | Enable the service (runs via boot + timer)"
-  ansible.builtin.systemd_service:
-    name: warden-coldstart.service
-    enabled: true
-    daemon_reload: true
-
-- name: "Warden | Enable AND start the watchdog timer (enabled alone arms only next boot)"
-  ansible.builtin.systemd_service:
-    name: warden-coldstart.timer
-    enabled: true
-    state: started
-    daemon_reload: true
-  when: not ansible_check_mode
+- name: "Warden | The cold-start watchdog (roles/host_job)"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: warden-coldstart
+    host_job_description: "Warden platform cold-start reconciliation (vault unseal + verify)"
+    host_job_exec:
+      - "/usr/bin/ansible-playbook -c local {{ warden_dir }}/coldstart.yml"
+    host_job_on_calendar: ""
+    host_job_on_boot_sec: "30"
+    host_job_on_unit_active_sec: "5min"
+    host_job_restart: on-failure
+    host_job_restart_sec: "60"
+    host_job_timeout: 30min
+    host_job_wants_network: true
+    host_job_on_failure: false        # retries in place; a sealed Vault is the alert (probe)
