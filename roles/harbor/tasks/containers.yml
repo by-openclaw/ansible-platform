@@ -35,13 +35,13 @@
       {{ (harbor_installed_raw.content | default('') | b64decode | trim) != harbor_version }}
 
 # Harbor's own upgrade order: stop the stack, THEN swap the tree, then prepare + up.
-- name: "Container | Stop the stack before swapping the tree ({{ harbor_version }})"
-  ansible.builtin.command:
-    cmd: docker-compose down
-    chdir: "{{ harbor_install_dir }}"
+- name: "Container | Stop the stack before swapping the tree ({{ harbor_version }}) — roles/compose_stack"
+  ansible.builtin.include_role:
+    name: compose_stack
+  vars:
+    compose_stack_dir: "{{ harbor_install_dir }}"
+    compose_stack_state: absent       # down, volumes kept; no project yet = nothing to stop
   when: harbor_tree_stale and not ansible_check_mode
-  failed_when: false
-  changed_when: true
 
 - name: "Container | Extract the installer"
   ansible.builtin.unarchive:
