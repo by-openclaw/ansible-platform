@@ -23,7 +23,7 @@
   community.docker.docker_container:
     name: "{{ scaffold_ctr.name }}"
     image: "{{ scaffold_ctr.image }}"
-    state: started
+    state: "{{ scaffold_ctr.state | default('started') }}"   # absent: e.g. a host opted out
     restart_policy: "{{ scaffold_ctr.restart_policy | default('unless-stopped') }}"
     networks: "{{ [{'name': service_scaffold_def.network}] if (service_scaffold_def.network | default('')) | length > 0 else omit }}"
     network_mode: "{{ service_scaffold_def.network | default(omit, true) }}"
@@ -36,6 +36,8 @@
     log_driver: "{{ scaffold_ctr.log_driver | default(omit) }}"
     healthcheck: "{{ scaffold_ctr.healthcheck | default(omit) }}"
     restart: "{{ scaffold_ctr.restart | default(omit) }}"   # e.g. a config the app does not hot-reload changed
+    recreate: "{{ scaffold_ctr.recreate | default(omit) }}"
+    security_opts: "{{ scaffold_ctr.security_opts | default(omit) }}"
   loop: "{{ service_scaffold_def.containers | default([]) }}"
   loop_control:
     loop_var: scaffold_ctr

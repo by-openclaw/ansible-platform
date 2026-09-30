@@ -1,18 +1,17 @@
 ---
-# Decommission (-e portainer_state=absent): the console holds no platform data, so
-# nothing is archived; the guest itself is removed by Terraform. Agents are removed
-# by the agent play with the same flag. Vault paths are left in place (archive rule).
-- name: "Portainer | Remove the server container"
-  community.docker.docker_container:
-    name: portainer
-    state: absent
-
-- name: "Portainer | Remove its data volume (console state only; rebuilt from Vault + inventory)"
-  community.docker.docker_volume:
-    name: portainer-data
-    state: absent
-
-- name: "Portainer | Remove the layout directory"
+# Decommission (-e portainer_state=absent): the layout directory (it held the admin
+# password file) goes first; then roles/service_scaffold takes the server container and
+# the route away and ends the play for this host. Its named volume and the Vault paths
+# stay — the platform rule for every service; releasing storage is
+# roles/service_decommission's archive-before-destroy. Agents are removed by the agent
+# play (portainer_agent: false on a host); the guest itself is removed by Terraform.
+- name: "Portainer | Remove the layout directory (held the admin password file)"
   ansible.builtin.file:
     path: "{{ portainer_dir }}"
     state: absent
+
+- name: "Portainer | Server container and route (roles/service_scaffold, state absent)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+  vars:
+    service_scaffold_def: "{{ portainer_service_def }}"   # state: absent via portainer_state

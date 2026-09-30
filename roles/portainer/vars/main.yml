@@ -1,0 +1,37 @@
+---
+# ==============================================================================
+# Portainer's service contract, declared once: the console's platform concerns and
+# its server container, given to roles/service_scaffold by tasks/main.yml (present)
+# and tasks/absent.yml (portainer_state=absent). Implementation, not settings (those
+# are defaults/main.yml).
+# ==============================================================================
+portainer_service_def:
+  name: portainer
+  state: "{{ portainer_state }}"
+  fqdn: "{{ portainer_fqdn }}"
+  backend_url: "http://{{ portainer_listen_ip }}:{{ portainer_http_port }}"
+  exposure: internal              # VPN / LAN only
+  forward_auth: false             # native OIDC; Portainer authenticates people itself
+  mailbox: true                   # portainer@<domain> for notifications
+  sso_slug: "{{ portainer_oidc_slug }}"
+  teardown:
+    # Keeping the Vault paths and the named volume is the platform rule, not a Portainer
+    # exception. What is worth recording is that the volume holds console state only —
+    # environments, users, settings — and the platform can rebuild all of it from the role.
+    note: "console state only (environments, users, settings); the role rebuilds it"
+  vault_secrets:
+    - path: "{{ portainer_admin_vault_path }}"
+    - path: "{{ portainer_agent_vault_path }}"
+  containers:
+    - name: portainer
+      image: "{{ portainer_server_image }}"
+      command: ["--http-enabled", "--admin-password-file=/run/secrets/admin"]
+      env:
+        AGENT_SECRET: "{{ portainer_agent_secret }}"   # without it the agents answer 403 "Invalid request signature" (shown as "already paired")
+      published:
+        - "{{ portainer_listen_ip }}:{{ portainer_http_port }}:9000"
+      volumes:
+        - "portainer-data:/data"
+        - "{{ portainer_dir }}/admin-password:/run/secrets/admin:ro"
+      security_opts: ["no-new-privileges:true"]
+      log_driver: journald
