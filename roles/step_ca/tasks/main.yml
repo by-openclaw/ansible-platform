@@ -35,40 +35,43 @@
   community.docker.docker_volume:
     name: step-ca-data
 
-- name: "Step-ca | Pull the pinned image"
-  community.docker.docker_image:
-    name: "{{ step_ca_image }}"
-    source: pull
-    state: present
-
+# --- the platform concerns via the golden-path scaffold: the container, the route
+# (Traefik verifies the CA's own certificate with the internal root, #383), the mailbox.
 # The smallstep image auto-inits on FIRST boot when the volume is empty, from
 # DOCKER_STEPCA_INIT_* — idempotent (a populated volume is left untouched).
-- name: "Step-ca | Run the container (auto-init on empty volume)"
-  community.docker.docker_container:
-    name: step-ca
-    image: "{{ step_ca_image }}"
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    log_driver: journald
-    published_ports:
-      - "{{ step_ca_listen_ip }}:{{ step_ca_port }}:9000"
-      - "127.0.0.1:{{ step_ca_port }}:9000"
-    volumes:
-      - "step-ca-data:/home/step"
-      - "{{ step_ca_build_dir }}/init/password:/run/init-pw:ro"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsk https://127.0.0.1:9000/health >/dev/null || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    env:
-      DOCKER_STEPCA_INIT_NAME: "{{ step_ca_name }}"
-      DOCKER_STEPCA_INIT_DNS_NAMES: "{{ step_ca_dns_names }}"
-      DOCKER_STEPCA_INIT_PROVISIONER_NAME: "{{ step_ca_provisioner }}"
-      DOCKER_STEPCA_INIT_ACME: "true"
-      DOCKER_STEPCA_INIT_PASSWORD_FILE: "/run/init-pw"
+- name: "Step-ca | Scaffold the platform concerns (container, route, mailbox)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+  vars:
+    service_scaffold_def:
+      name: step-ca
+      fqdn: "{{ step_ca_fqdn }}"
+      backend_url: "https://{{ step_ca_listen_ip }}:{{ step_ca_port }}"
+      backend_root_ca_file: "{{ step_ca_root_ca_file }}"
+      exposure: internal
+      mailbox: true
+      containers:
+        - name: step-ca
+          image: "{{ step_ca_image }}"
+          log_driver: journald
+          published:
+            - "{{ step_ca_listen_ip }}:{{ step_ca_port }}:9000"
+            - "127.0.0.1:{{ step_ca_port }}:9000"
+          volumes:
+            - "step-ca-data:/home/step"
+            - "{{ step_ca_build_dir }}/init/password:/run/init-pw:ro"
+          healthcheck:
+            test: ["CMD-SHELL", "curl -fsk https://127.0.0.1:9000/health >/dev/null || exit 1"]
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 20s
+          env:
+            DOCKER_STEPCA_INIT_NAME: "{{ step_ca_name }}"
+            DOCKER_STEPCA_INIT_DNS_NAMES: "{{ step_ca_dns_names }}"
+            DOCKER_STEPCA_INIT_PROVISIONER_NAME: "{{ step_ca_provisioner }}"
+            DOCKER_STEPCA_INIT_ACME: "true"
+            DOCKER_STEPCA_INIT_PASSWORD_FILE: "/run/init-pw"
 
 - name: "Step-ca | Wait for the CA health endpoint"
   ansible.builtin.uri:
@@ -114,16 +117,3 @@
       url: "https://{{ step_ca_fqdn }}"
       ca_dns: "{{ step_ca_dns_names }}"
   when: (vault_secret_result.fingerprint | default('')) != (step_ca_fp.stdout | trim)
-
-# --- compose the platform concerns via the golden-path scaffold --------------
-- name: "Step-ca | Scaffold the platform concerns"
-  ansible.builtin.include_role:
-    name: service_scaffold
-  vars:
-    service_scaffold_def:
-      name: step-ca
-      fqdn: "{{ step_ca_fqdn }}"
-      backend_url: "https://{{ step_ca_listen_ip }}:{{ step_ca_port }}"
-      backend_root_ca_file: "{{ step_ca_root_ca_file }}"    # Traefik verifies the CA's own certificate with the internal root (#383)
-      exposure: internal
-      mailbox: true
