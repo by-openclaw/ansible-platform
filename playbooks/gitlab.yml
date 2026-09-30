@@ -22,14 +22,7 @@
     ansible_user: "{{ platform_pve_root_user }}"
     ansible_ssh_private_key_file: "{{ platform_pve_root_key }}"
     ansible_become: false
-    pve_zfs_mount_items:
-      - dataset: "tank/data/gitlab"
-        quota: "100G"
-        vmid: 560
-        mp_index: 0
-        mount_path: "/var/opt/gitlab/git-data"
-        uid: 100000
-        gid: 100000
+    pve_zfs_mount_items: "{{ hostvars[groups['gitlab'] | first].gitlab_zfs_mounts | map('combine', {'guest': groups['gitlab'] | first}) | list }}"
   roles:
     - role: pve_zfs_mount
 
