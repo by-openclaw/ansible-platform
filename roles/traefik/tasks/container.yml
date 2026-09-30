@@ -48,6 +48,9 @@
             - "{{ traefik_conf_dir }}:{{ traefik_conf_dir }}:ro"
             - "{{ traefik_plugins_dir }}:/plugins-local:ro"
             - "/etc/lego:/etc/lego:ro"
+            # the platform CA store: a route that verifies its backend with the internal
+            # root (serversTransport rootCAs, e.g. step-ca #383) reads it from here
+            - "/usr/local/share/ca-certificates:/usr/local/share/ca-certificates:ro"
             - "{{ traefik_log_dir }}:{{ traefik_log_dir }}"
 
 - name: "container | Traefik answers on :443"
