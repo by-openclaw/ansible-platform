@@ -78,17 +78,21 @@ platform_standalone_groups:
   - "{{ platform_ldap_search_group }}"
   - "{{ platform_dev_group }}"
 
+# The platform owner's admin account (naming/0002 §2) — the person record of the
+# owner's adm_ identity. Derived, never typed: a role or playbook that spells a person
+# out is a second place a person can be renamed.
+platform_owner_admin: >-
+  {{ platform_people
+     | selectattr('username', 'equalto', 'adm_' ~ (platform_people
+         | selectattr('platform_owner', 'defined') | selectattr('platform_owner')
+         | first).username)
+     | first }}
+
 # The admin identity every service mailbox delegates to: it receives a copy of all
 # incoming mail (bcc map) and may send as the service address (sender_acl), so a
 # human can answer as netbird@ or alerts@ without anyone sharing those passwords.
-# Derived, never typed: the platform owner's adm_ account (naming/0002 §2). A
-# playbook that spells the address out is a second place a person can be renamed.
 platform_service_mail_delegates:
-  - "{{ (platform_people
-         | selectattr('username', 'equalto', 'adm_' ~ (platform_people
-             | selectattr('platform_owner', 'defined') | selectattr('platform_owner')
-             | first).username)
-         | first).email }}"
+  - "{{ platform_owner_admin.email }}"
 
 # Controller keys for the two direct-login paths that bypass the svc-ansible identity
 # (single source; plays and roles reference these, never a path of their own):

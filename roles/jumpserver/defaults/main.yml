@@ -70,13 +70,14 @@ jumpserver_tz: "Europe/Brussels"
 jumpserver_log_level: "ERROR"
 
 # --- RBAC / assets reconcile (idempotent Django reconcile; like gitlab_rbac) --
-# adm_yboujraf = System Admin (reaches all) + member of the bastion-admins group.
-# Regular users get NO grant here (least-privilege; added per-need later).
+# The platform owner's admin account (platform_owner_admin, derived from people.yml) is
+# System Admin (reaches all) + member of the bastion-admins group. Regular users get NO
+# grant here (least-privilege; added per-need later).
 jumpserver_reconcile_enabled: true
 jumpserver_bastion_admin:
-  username: adm_yboujraf
-  name: "adm_yboujraf"
-  email: "adm_yboujraf@{{ platform_domain }}"
+  username: "{{ platform_owner_admin.username }}"
+  name: "{{ platform_owner_admin.username }}"
+  email: "{{ platform_owner_admin.email }}"
 # NOT an Authentik group: JumpServer creates and owns this one internally (reconcile.yml), so it
 # is deliberately absent from platform_service_groups and stays a literal here.
 jumpserver_bastion_group: "bastion-admins"
