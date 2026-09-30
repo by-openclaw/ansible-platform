@@ -45,9 +45,12 @@
   changed_when: true
   when: pbs_oidc_realm not in (pbs_oidc_list.stdout | from_json | map(attribute='realm') | list)
 
-- name: "OIDC | Pre-create the privileged admin account ({{ pbs_admin_auth_id }})"
+- name: "OIDC | Pre-create the privileged admin accounts (the admin group in people.yml)"
   ansible.builtin.command:
-    argv: [proxmox-backup-manager, user, create, "{{ pbs_admin_auth_id }}"]
+    argv: [proxmox-backup-manager, user, create, "{{ pbs_admin }}"]
+  loop: "{{ pbs_admin_auth_ids }}"
+  loop_control:
+    loop_var: pbs_admin
   register: pbs_user_create
   changed_when: pbs_user_create.rc == 0
   failed_when:
@@ -61,14 +64,17 @@
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
-- name: "OIDC | Grant Admin ACL to the privileged account"
+- name: "OIDC | Grant the Admin ACL to the privileged accounts"
   ansible.builtin.command:
-    argv: [proxmox-backup-manager, acl, update, /, Admin, "--auth-id", "{{ pbs_admin_auth_id }}"]
+    argv: [proxmox-backup-manager, acl, update, /, Admin, "--auth-id", "{{ pbs_admin }}"]
+  loop: "{{ pbs_admin_auth_ids }}"
+  loop_control:
+    loop_var: pbs_admin
   register: pbs_acl
   changed_when: pbs_acl.rc == 0
   when: >-
     (pbs_acl_list.stdout | from_json
-     | selectattr('ugid', 'equalto', pbs_admin_auth_id)
+     | selectattr('ugid', 'equalto', pbs_admin)
      | selectattr('roleid', 'equalto', 'Admin')
      | selectattr('path', 'equalto', '/')
      | list | length) == 0

@@ -47,9 +47,17 @@ pbs_oidc_slug: "pbs"
 pbs_oidc_issuer: "{{ pbs_authentik_base }}/application/o/{{ pbs_oidc_slug }}/"
 pbs_oidc_username_claim: "preferred_username"           # Authentik emits this (profile scope)
 pbs_oidc_scopes: ["openid", "email", "profile"]
-# Privileged account that gets the PBS Admin ACL after autocreation (EntraID-style
-# separation — the daily driver is a plain user). username-claim value + @realm.
-pbs_admin_auth_id: "adm_yboujraf@authentik"
+# Privileged accounts that get the PBS Admin ACL after autocreation (EntraID-style
+# separation — the daily driver is a plain user): every active member of PBS's
+# admin group in platform_people, as <username-claim value>@<realm>. Group-based —
+# a person is added or removed in people.yml, never here.
+pbs_admin_auth_ids: >-
+  {{ platform_people
+     | selectattr('state', 'equalto', 'active')
+     | selectattr('groups', 'contains', platform_service_groups.pbs.admin)
+     | map(attribute='username')
+     | map('regex_replace', '$', '@' ~ pbs_oidc_realm)
+     | list }}
 
 # --- Traefik edge (VPN-only) --------------------------------------------------
 pbs_traefik_enabled: true
