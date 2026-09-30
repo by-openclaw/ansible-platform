@@ -63,20 +63,6 @@
     group: "65533"
     mode: "0640"
 
-# --- compose the platform concerns via the golden-path scaffold --------------
-- name: "Verdaccio | Scaffold the platform concerns"
-  ansible.builtin.include_role:
-    name: service_scaffold
-  vars:
-    service_scaffold_def:
-      name: verdaccio
-      fqdn: "{{ verdaccio_fqdn }}"
-      backend_url: "http://{{ verdaccio_listen_ip }}:{{ verdaccio_port }}"
-      exposure: internal
-      mailbox: true
-      s3_bucket: "{{ verdaccio_s3_bucket }}"   # packages + package db in SeaweedFS (Vault prod/verdaccio/s3)
-      sso_slug: verdaccio                       # Authentik OIDC app (roles/authentik authentik_oidc_apps)
-
 # --- SSO client creds: written to Vault by roles/authentik (app slug 'verdaccio') --
 - name: "Verdaccio | Read the OIDC client creds from Vault"
   ansible.builtin.include_role:
@@ -88,12 +74,6 @@
   ansible.builtin.set_fact:
     verdaccio_oidc: "{{ vault_secret_result }}"
   no_log: true
-
-- name: "Verdaccio | S3 identity present (from the scaffold's bucket step)"
-  ansible.builtin.assert:
-    that: seaweedfs_bucket_key.access_key is defined
-    fail_msg: "service_scaffold did not yield an S3 identity — check s3_bucket in the contract"
-    quiet: true
 
 # --- platform image = official base + supported plugins ------------------------
 - name: "Verdaccio | Pull the official base image"
@@ -121,29 +101,45 @@
       pull: false
     force_source: "{{ verdaccio_dockerfile.changed }}"
 
-- name: "Verdaccio | Run the container"
-  community.docker.docker_container:
-    name: verdaccio
-    image: "{{ verdaccio_platform_image }}:{{ verdaccio_image.split(':')[1] }}-p{{ verdaccio_platform_rev }}"
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    recreate: false
-    restart: "{{ verdaccio_config.changed | default(false) }}"   # verdaccio does not hot-reload config.yaml
-    log_driver: journald
-    published_ports:
-      - "{{ verdaccio_listen_ip }}:{{ verdaccio_port }}:4873"
-      - "127.0.0.1:{{ verdaccio_port }}:4873"
-    volumes:
-      - "{{ verdaccio_storage_dir }}:/verdaccio/storage"
-      - "{{ verdaccio_conf_dir }}:/verdaccio/conf"
-    env:
-      AWS_S3_ENDPOINT: "{{ seaweedfs_bucket_key.endpoint }}"
-      AWS_ACCESS_KEY_ID: "{{ seaweedfs_bucket_key.access_key }}"
-      AWS_SECRET_ACCESS_KEY: "{{ seaweedfs_bucket_key.secret_key }}"
-      OIDC_CLIENT_ID: "{{ verdaccio_oidc.client_id }}"
-      OIDC_CLIENT_SECRET: "{{ verdaccio_oidc.client_secret }}"
-  no_log: true
+# --- the platform concerns via the golden-path scaffold: S3 bucket + identity,
+# mailbox, the container, the Traefik route, the SSO app. The container's S3 keys
+# come from the scaffold's bucket step (seaweedfs_bucket_key, read when the
+# containers step runs).
+- name: "Verdaccio | Scaffold the platform concerns"
+  ansible.builtin.include_role:
+    name: service_scaffold
+  vars:
+    service_scaffold_def:
+      name: verdaccio
+      fqdn: "{{ verdaccio_fqdn }}"
+      backend_url: "http://{{ verdaccio_listen_ip }}:{{ verdaccio_port }}"
+      exposure: internal
+      mailbox: true
+      s3_bucket: "{{ verdaccio_s3_bucket }}"   # packages + package db in SeaweedFS (Vault {env}/verdaccio/s3)
+      sso_slug: verdaccio                       # Authentik OIDC app (roles/authentik authentik_oidc_apps)
+      containers:
+        - name: verdaccio
+          image: "{{ verdaccio_platform_image }}:{{ verdaccio_image.split(':')[1] }}-p{{ verdaccio_platform_rev }}"
+          log_driver: journald
+          restart: "{{ verdaccio_config.changed | default(false) }}"   # verdaccio does not hot-reload config.yaml
+          published:
+            - "{{ verdaccio_listen_ip }}:{{ verdaccio_port }}:4873"
+            - "127.0.0.1:{{ verdaccio_port }}:4873"
+          volumes:
+            - "{{ verdaccio_storage_dir }}:/verdaccio/storage"
+            - "{{ verdaccio_conf_dir }}:/verdaccio/conf"
+          env:
+            AWS_S3_ENDPOINT: "{{ seaweedfs_bucket_key.endpoint }}"
+            AWS_ACCESS_KEY_ID: "{{ seaweedfs_bucket_key.access_key }}"
+            AWS_SECRET_ACCESS_KEY: "{{ seaweedfs_bucket_key.secret_key }}"
+            OIDC_CLIENT_ID: "{{ verdaccio_oidc.client_id }}"
+            OIDC_CLIENT_SECRET: "{{ verdaccio_oidc.client_secret }}"
+
+- name: "Verdaccio | S3 identity present (from the scaffold's bucket step)"
+  ansible.builtin.assert:
+    that: seaweedfs_bucket_key.access_key is defined
+    fail_msg: "service_scaffold did not yield an S3 identity — check s3_bucket in the contract"
+    quiet: true
 
 - name: "Verdaccio | Wait for the registry to answer"
   ansible.builtin.uri:
