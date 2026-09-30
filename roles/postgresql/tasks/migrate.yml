@@ -1,15 +1,11 @@
 ---
-# One-time: retire the native PostgreSQL so the container can bind :5432.
-# The app DBs were empty (no apps yet), so there is no data to migrate.
-- name: "migrate | Stop + disable native postgresql (if present)"
-  ansible.builtin.systemd_service:
-    name: "postgresql@17-main"
-    state: stopped
-    enabled: false
-  failed_when: false
-
-- name: "migrate | Mask the native postgresql cluster unit"
-  ansible.builtin.systemd_service:
-    name: "postgresql@17-main"
-    masked: true
-  failed_when: false
+# The container is the PostgreSQL. The native packages of the first install were
+# stopped and masked long ago (their cluster held no data); they go now, so there is one
+# PostgreSQL on the host — the platform runs its services as containers. Remove, NOT
+# purge: /var/lib/postgresql stays, and it also holds the pg-backup dumps. The mask on
+# the old cluster unit stays too, so a stray reinstall cannot start a second server.
+- name: "migrate | The native PostgreSQL packages (retired)"
+  ansible.builtin.apt:
+    name: "postgresql*"
+    state: absent
+    purge: false
