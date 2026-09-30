@@ -1,0 +1,84 @@
+---
+# ==============================================================================
+# Traefik runs as a container (the platform runs its services as containers): the
+# pinned image, the host network (it binds :80/:443 on the host, as the binary did),
+# the same static + dynamic config, certificates and logs. The vendored CrowdSec
+# plugin is mounted at /plugins-local — the image works from /, and Traefik reads
+# local plugins from ./plugins-local.
+# The switch-over keeps the gap to seconds: the image is pulled first, then the
+# native unit stops (it holds :80/:443), then the container starts.
+# ==============================================================================
+# A dry-run of the first engine install has no daemon to talk to: the Docker steps are
+# skipped then (roles/docker registered docker_engine_install earlier in the play).
+- name: "container | Is there an engine to talk to? (only a first-install dry-run has none)"
+  ansible.builtin.set_fact:
+    traefik_engine_ready: "{{ not (ansible_check_mode and (docker_engine_install | default({})) is changed) }}"
+
+- name: "container | Pull the pinned image first (the gap is the start, not the pull)"
+  community.docker.docker_image:
+    name: "{{ traefik_image }}"
+    source: pull
+  when: traefik_engine_ready | bool
+
+- name: "container | Services on this host"
+  ansible.builtin.service_facts:
+
+- name: "container | The native Traefik stops (retired; it holds :80/:443)"
+  ansible.builtin.systemd_service:
+    name: traefik
+    state: stopped
+    enabled: false
+  when: "'traefik.service' in ansible_facts.services"
+
+- name: "container | Its unit, binary and the config backup of the first install (retired)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/traefik.service
+    - /usr/local/bin/traefik
+    - "{{ traefik_conf_dir }}/traefik.yml.pre-crowdsec"
+  register: traefik_native_removed
+
+- name: "container | systemd forgets the retired unit"
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: traefik_native_removed is changed
+
+- name: "container | Traefik (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  when: traefik_engine_ready | bool
+  vars:
+    service_scaffold_def:
+      name: traefik
+      containers:
+        - name: traefik
+          image: "{{ traefik_image }}"
+          network_mode: host
+          command: ["--configFile={{ traefik_conf_dir }}/traefik.yml"]
+          volumes:
+            - "{{ traefik_conf_dir }}:{{ traefik_conf_dir }}:ro"
+            - "{{ traefik_plugins_dir }}:/plugins-local:ro"
+            - "/etc/lego:/etc/lego:ro"
+            - "{{ traefik_log_dir }}:{{ traefik_log_dir }}"
+
+- name: "container | Traefik answers on :443"
+  ansible.builtin.wait_for:
+    port: 443
+    host: 127.0.0.1
+    timeout: 60
+  when: not ansible_check_mode
+
+# The native unit failed its start when the plugin did not load (a failed plugin
+# disables every router). Same guard, on the container's log.
+- name: "container | The CrowdSec plugin loaded"
+  ansible.builtin.command:
+    argv: [grep, -c, "Plugins are disabled", "{{ traefik_log_dir }}/traefik.log"]
+  register: traefik_plugin_failed
+  changed_when: false
+  failed_when: traefik_plugin_failed.stdout | int > 0
+  when:
+    - not ansible_check_mode
+    - traefik_crowdsec_enabled | default(false)
