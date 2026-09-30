@@ -61,135 +61,105 @@
   notify: "Restart netbird dashboard"
 
 # --- Network + images -----------------------------------------------------------
-- name: "containers | Create the netbird docker network"
-  community.docker.docker_network:
-    name: netbird
-    state: present
+# The containers run through the scaffold's containers step (the one owner of "run a
+# pinned container"): the four on the netbird network in one call, coturn on the host
+# network in its own. Each call pulls its pinned images and ensures its network.
+- name: "containers | dashboard, management, signal, relay (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: netbird
+      network: netbird
+      containers:
+        - name: netbird-dashboard
+          image: "{{ netbird_dashboard_image }}"
+          restart_policy: unless-stopped
+          published:
+            - "{{ netbird_listen_ip }}:{{ netbird_dashboard_port }}:80"
+          env_file: "{{ netbird_build_dir }}/dashboard.env"
+          log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
+        - name: netbird-management
+          image: "{{ netbird_management_image }}"
+          restart_policy: unless-stopped
+          published:
+            - "{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}:{{ netbird_mgmt_port }}"
+          # Resolve Authentik internally via our Traefik (no public hairpin; survives the
+          # NetBird client rewriting host resolv.conf once the routing peer is up — #408).
+          #
+          # Built from an EXPRESSION, not a YAML mapping: Ansible does not template mapping
+          # KEYS. It was written as `authentik.{{ platform_domain }}: "<ip>"`, and the live
+          # container carried that literally —
+          #     "ExtraHosts": ["authentik.{{ platform_domain }}:10.1.2.110"]
+          # — so the pin never existed and management resolved Authentik through whatever
+          # resolv.conf said, which is exactly the failure this entry was added to prevent.
+          etc_hosts: "{{ {platform_service_fqdns.authentik: netbird_traefik_ip} }}"
+          volumes:
+            - "{{ netbird_mgmt_volume }}:/var/lib/netbird"
+            - "{{ netbird_build_dir }}/management.json:/etc/netbird/management.json:ro"
+            # verify-full against the platform CA: the host trust store, read-only.
+            - "{{ netbird_pg_sslrootcert }}:{{ netbird_pg_sslrootcert }}:ro"
+          command:
+            - "--port"
+            - "{{ netbird_mgmt_port }}"
+            - "--log-file"
+            - "console"
+            - "--log-level"
+            - "info"
+            - "--disable-anonymous-metrics={{ netbird_disable_anonymous_metrics | bool | lower }}"
+            - "--single-account-mode-domain={{ netbird_single_account_mode_domain }}"
+            - "--dns-domain={{ netbird_mgmt_dns_domain }}"
+          env:
+            NETBIRD_STORE_ENGINE_POSTGRES_DSN: >-
+              host={{ netbird_pg_host }} port={{ netbird_pg_port }} user={{ netbird_pg_user }}
+              password={{ netbird_pg_password }} dbname={{ netbird_pg_database }}
+              sslmode=verify-full sslrootcert={{ netbird_pg_sslrootcert }}
+            NETBIRD_STORE_ENGINE_MYSQL_DSN: ""
+            NB_ACTIVITY_EVENT_STORE_ENGINE: "postgres"
+            NB_ACTIVITY_EVENT_POSTGRES_DSN: >-
+              host={{ netbird_pg_host }} port={{ netbird_pg_port }} user={{ netbird_events_pg_user }}
+              password={{ netbird_events_pg_password }} dbname={{ netbird_events_pg_database }}
+              sslmode=verify-full sslrootcert={{ netbird_pg_sslrootcert }}
+          log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
+        - name: netbird-signal
+          image: "{{ netbird_signal_image }}"
+          restart_policy: unless-stopped
+          published:
+            - "{{ netbird_listen_ip }}:{{ netbird_signal_grpc_port }}:{{ netbird_signal_grpc_port }}"
+            - "{{ netbird_listen_ip }}:{{ netbird_signal_ws_host_port }}:{{ netbird_signal_ws_port }}"
+          volumes:
+            - "{{ netbird_signal_volume }}:/var/lib/netbird"
+          log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
+        - name: netbird-relay
+          image: "{{ netbird_relay_image }}"
+          restart_policy: unless-stopped
+          published:
+            - "{{ netbird_listen_ip }}:{{ netbird_relay_port }}:{{ netbird_relay_port }}"
+          env:
+            NB_LOG_LEVEL: "info"
+            NB_LISTEN_ADDRESS: ":{{ netbird_relay_port }}"
+            NB_EXPOSED_ADDRESS: "rels://{{ netbird_fqdn }}:{{ netbird_public_port }}/relay"
+            NB_AUTH_SECRET: "{{ netbird_core.relay_auth_secret }}"
+          log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
 
-- name: "containers | Pull the pinned netbird images"
-  community.docker.docker_image:
-    name: "{{ item }}"
-    source: pull
-    state: present
-  loop:
-    - "{{ netbird_dashboard_image }}"
-    - "{{ netbird_management_image }}"
-    - "{{ netbird_signal_image }}"
-    - "{{ netbird_relay_image }}"
-    - "{{ netbird_coturn_image }}"
-
-# --- Containers -----------------------------------------------------------------
-- name: "containers | Run netbird-dashboard (web UI / SPA)"
-  community.docker.docker_container:
-    name: netbird-dashboard
-    image: "{{ netbird_dashboard_image }}"
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    networks:
-      - name: netbird
-    published_ports:
-      - "{{ netbird_listen_ip }}:{{ netbird_dashboard_port }}:80"
-    env_file: "{{ netbird_build_dir }}/dashboard.env"
-    log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
-
-- name: "containers | Run netbird-management (control plane + API)"
-  no_log: true   # env carries the PostgreSQL DSN passwords
-  community.docker.docker_container:
-    name: netbird-management
-    image: "{{ netbird_management_image }}"
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    networks:
-      - name: netbird
-    published_ports:
-      - "{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}:{{ netbird_mgmt_port }}"
-    # Resolve Authentik internally via our Traefik (no public hairpin; survives the
-    # NetBird client rewriting host resolv.conf once the routing peer is up — #408).
-    #
-    # Built from an EXPRESSION, not a YAML mapping: Ansible does not template mapping
-    # KEYS. It was written as `authentik.{{ platform_domain }}: "<ip>"`, and the live
-    # container carried that literally —
-    #     "ExtraHosts": ["authentik.{{ platform_domain }}:10.1.2.110"]
-    # — so the pin never existed and management resolved Authentik through whatever
-    # resolv.conf said, which is exactly the failure this entry was added to prevent.
-    etc_hosts: "{{ {platform_service_fqdns.authentik: netbird_traefik_ip} }}"
-    volumes:
-      - "{{ netbird_mgmt_volume }}:/var/lib/netbird"
-      - "{{ netbird_build_dir }}/management.json:/etc/netbird/management.json:ro"
-      # verify-full against the platform CA: the host trust store, read-only.
-      - "{{ netbird_pg_sslrootcert }}:{{ netbird_pg_sslrootcert }}:ro"
-    command:
-      - "--port"
-      - "{{ netbird_mgmt_port }}"
-      - "--log-file"
-      - "console"
-      - "--log-level"
-      - "info"
-      - "--disable-anonymous-metrics={{ netbird_disable_anonymous_metrics | bool | lower }}"
-      - "--single-account-mode-domain={{ netbird_single_account_mode_domain }}"
-      - "--dns-domain={{ netbird_mgmt_dns_domain }}"
-    env:
-      NETBIRD_STORE_ENGINE_POSTGRES_DSN: >-
-        host={{ netbird_pg_host }} port={{ netbird_pg_port }} user={{ netbird_pg_user }}
-        password={{ netbird_pg_password }} dbname={{ netbird_pg_database }}
-        sslmode=verify-full sslrootcert={{ netbird_pg_sslrootcert }}
-      NETBIRD_STORE_ENGINE_MYSQL_DSN: ""
-      NB_ACTIVITY_EVENT_STORE_ENGINE: "postgres"
-      NB_ACTIVITY_EVENT_POSTGRES_DSN: >-
-        host={{ netbird_pg_host }} port={{ netbird_pg_port }} user={{ netbird_events_pg_user }}
-        password={{ netbird_events_pg_password }} dbname={{ netbird_events_pg_database }}
-        sslmode=verify-full sslrootcert={{ netbird_pg_sslrootcert }}
-    log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
-
-- name: "containers | Run netbird-signal (peer signalling; gRPC h2c + ws)"
-  community.docker.docker_container:
-    name: netbird-signal
-    image: "{{ netbird_signal_image }}"
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    networks:
-      - name: netbird
-    published_ports:
-      - "{{ netbird_listen_ip }}:{{ netbird_signal_grpc_port }}:{{ netbird_signal_grpc_port }}"
-      - "{{ netbird_listen_ip }}:{{ netbird_signal_ws_host_port }}:{{ netbird_signal_ws_port }}"
-    volumes:
-      - "{{ netbird_signal_volume }}:/var/lib/netbird"
-    log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
-
-- name: "containers | Run netbird-relay (relayed data path; wss)"
-  community.docker.docker_container:
-    name: netbird-relay
-    image: "{{ netbird_relay_image }}"
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    networks:
-      - name: netbird
-    published_ports:
-      - "{{ netbird_listen_ip }}:{{ netbird_relay_port }}:{{ netbird_relay_port }}"
-    env:
-      NB_LOG_LEVEL: "info"
-      NB_LISTEN_ADDRESS: ":{{ netbird_relay_port }}"
-      NB_EXPOSED_ADDRESS: "rels://{{ netbird_fqdn }}:{{ netbird_public_port }}/relay"
-      NB_AUTH_SECRET: "{{ netbird_core.relay_auth_secret }}"
-    log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
-  no_log: true
-
-- name: "containers | Run netbird-coturn (STUN/TURN; host network)"
-  community.docker.docker_container:
-    name: netbird-coturn
-    image: "{{ netbird_coturn_image }}"
-    state: "{{ 'started' if netbird_coturn_enabled | bool else 'absent' }}"
-    restart_policy: unless-stopped
-    pull: false
-    network_mode: host
-    volumes:
-      - "{{ netbird_build_dir }}/turnserver.conf:/etc/turnserver.conf:ro"
-    command: ["-c", "/etc/turnserver.conf"]
-    log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
+- name: "containers | coturn — STUN/TURN on the host network (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: netbird-coturn
+      containers:
+        - name: netbird-coturn
+          image: "{{ netbird_coturn_image }}"
+          state: "{{ 'started' if netbird_coturn_enabled | bool else 'absent' }}"
+          restart_policy: unless-stopped
+          network_mode: host
+          volumes:
+            - "{{ netbird_build_dir }}/turnserver.conf:/etc/turnserver.conf:ro"
+          command: ["-c", "/etc/turnserver.conf"]
+          log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
 
 - name: "containers | Flush handlers (apply config restarts before readiness)"
   ansible.builtin.meta: flush_handlers

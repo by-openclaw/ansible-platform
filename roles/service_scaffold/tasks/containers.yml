@@ -28,7 +28,7 @@
     networks: >-
       {{ [{'name': service_scaffold_def.network} | combine({'aliases': scaffold_ctr.aliases} if scaffold_ctr.aliases is defined else {})]
          if (service_scaffold_def.network | default('')) | length > 0 else omit }}
-    network_mode: "{{ service_scaffold_def.network | default(omit, true) }}"
+    network_mode: "{{ scaffold_ctr.network_mode | default(service_scaffold_def.network | default(omit, true)) }}"
     published_ports: "{{ scaffold_ctr.published | default([]) }}"
     volumes: "{{ scaffold_ctr.volumes | default([]) }}"
     env: "{{ scaffold_ctr.env | default({}) }}"
@@ -43,6 +43,7 @@
     hostname: "{{ scaffold_ctr.hostname | default(omit) }}"
     ulimits: "{{ scaffold_ctr.ulimits | default(omit) }}"
     etc_hosts: "{{ scaffold_ctr.etc_hosts | default(omit) }}"
+    env_file: "{{ scaffold_ctr.env_file | default(omit) }}"
   loop: "{{ service_scaffold_def.containers | default([]) }}"
   loop_control:
     loop_var: scaffold_ctr
