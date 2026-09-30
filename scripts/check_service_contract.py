@@ -3,8 +3,11 @@
 one progress number ("N of 32 on the contract"). For every entry of platform_services
 (group_vars/all/services.yml), its `role` and `playbook` must satisfy:
 
-  facts       every play in the playbook that runs a role gathers facts — a role that reads
-              facts met a play that skipped them, and certs-sync broke (#670)
+  facts       a play that skips fact gathering reaches no role that reads facts without
+              gathering them itself (through includes and meta dependencies) — certs-sync
+              broke exactly so (#670)
+  data        the playbook carries no literal data in play vars (only connection settings
+              and references) — values live in the inventory, never in a playbook
   meta        the service role has no meta dependencies — composition belongs in the
               playbook, where it is seen; a hidden one ran the docker firewall inside a
               certificate copy
@@ -47,13 +50,52 @@ def role_files(role, parts):
         yield from sorted((base / part).rglob("*")) if (base / part).is_dir() else []
 
 
-def runs_a_role(play):
-    if play.get("roles"):
-        return True
+FACT = re.compile(r"\bansible_(facts|default_ipv[46]|distribution\w*|os_family|virtualization_\w+|mounts|memtotal_mb"
+                  r"|processor\w*|hostname|fqdn|nodename|lsb|kernel\w*|architecture|interfaces|all_ipv[46]_addresses"
+                  r"|machine\w*|pkg_mgr|service_mgr|date_time|devices|product_\w+|system_vendor|dns)\b")
+ROLE_REF = re.compile(r"(?:include_role|import_role):\s*\n\s+name:\s*([\w.-]+)")
+_facts_cache = {}
+
+
+def play_roles(play):
+    names = [r if isinstance(r, str) else r.get("role", "") for r in play.get("roles") or []]
     for key in ("tasks", "pre_tasks", "post_tasks"):
         for task in play.get(key) or []:
-            if any(k.endswith(("include_role", "import_role")) for k in task):
-                return True
+            for k, v in task.items():
+                if k.endswith(("include_role", "import_role")) and isinstance(v, dict):
+                    names.append(v.get("name", ""))
+    return [n for n in names if n and "{" not in n]
+
+
+def needs_facts(role, seen=()):
+    """A role reads facts and does not gather them itself — directly, or through a role it
+    includes or depends on."""
+    if role in _facts_cache or role in seen:
+        return _facts_cache.get(role, False)
+    base = ROOT / "roles" / role
+    text = "\n".join(strip_comments(f.read_text()) for f in role_files(role, ["tasks", "defaults", "vars", "templates", "handlers"])
+                     if f.is_file() and f.suffix in (".yml", ".yaml", ".j2"))
+    gathers = "ansible.builtin.setup" in text or re.search(r"^\s+setup:\s*$", text, re.M)
+    result = bool(FACT.search(text)) and not gathers
+    meta = base / "meta/main.yml"
+    deps = ((yaml.safe_load(meta.read_text()) or {}).get("dependencies") or []) if meta.exists() else []
+    refs = [d["role"] if isinstance(d, dict) else str(d) for d in deps] + ROLE_REF.findall(text)
+    result = result or any(needs_facts(r, seen + (role,)) for r in refs if r != role and (ROOT / "roles" / r).is_dir())
+    _facts_cache[role] = result
+    return result
+
+
+def literal_data(value):
+    """True when a play var holds data rather than a reference: a plain scalar, or any
+    literal inside a list/dict. A string with a template in it is a reference."""
+    if isinstance(value, str):
+        return "{{" not in value
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, list):
+        return any(literal_data(v) for v in value)
+    if isinstance(value, dict):
+        return any(literal_data(v) for v in value.values())
     return False
 
 
@@ -63,11 +105,15 @@ def check(svc, people):
     if not playbook.exists():
         failures.append(f"playbook missing ({svc['playbook']})")
     else:
-        plays = yaml.safe_load(playbook.read_text()) or []
-        no_facts = [p.get("name", "?") for p in plays if isinstance(p, dict) and "hosts" in p
-                    and p.get("gather_facts", True) in (False, "false", "no") and runs_a_role(p)]
+        plays = [p for p in (yaml.safe_load(playbook.read_text()) or []) if isinstance(p, dict) and "hosts" in p]
+        no_facts = sorted({r for p in plays if p.get("gather_facts", True) in (False, "false", "no")
+                           for r in play_roles(p) if needs_facts(r)})
         if no_facts:
-            failures.append(f"facts({len(no_facts)} play(s) run roles without facts)")
+            failures.append("facts(" + ",".join(no_facts) + " in a play without facts)")
+        data = sorted({k for p in plays for k, v in (p.get("vars") or {}).items()
+                       if not k.startswith("ansible_") and literal_data(v)})
+        if data:
+            failures.append("data(" + ",".join(data) + ")")
     meta = ROOT / "roles" / role / "meta/main.yml"
     deps = ((yaml.safe_load(meta.read_text()) or {}).get("dependencies") or []) if meta.exists() else []
     if deps:
