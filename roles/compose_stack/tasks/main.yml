@@ -14,4 +14,22 @@
     pull: "{{ compose_stack_pull }}"
     remove_orphans: "{{ compose_stack_remove_orphans | bool }}"
     env_files: "{{ compose_stack_env_files if compose_stack_env_files | length > 0 else omit }}"
+    recreate: "{{ compose_stack_recreate }}"
   register: compose_stack_result
+  when: compose_stack_state == 'present'
+
+# Absent: stop the project if there is one. Volumes stay (archive-before-destroy);
+# a directory without a compose file means there is nothing left to stop.
+- name: "Compose stack | Is there a project? — {{ compose_stack_dir }}"
+  ansible.builtin.stat:
+    path: "{{ compose_stack_dir }}/docker-compose.yml"
+  register: compose_stack_file
+  when: compose_stack_state == 'absent'
+
+- name: "Compose stack | Down, volumes kept — {{ compose_stack_dir }}"
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_stack_dir }}"
+    state: absent
+  when:
+    - compose_stack_state == 'absent'
+    - compose_stack_file.stat.exists
