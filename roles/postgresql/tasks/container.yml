@@ -1,71 +1,69 @@
 ---
-- name: "container | Pull the pinned PostgreSQL image"
-  community.docker.docker_image:
-    name: "{{ pg_image }}"
-    source: pull
-    state: present
-
-- name: "container | Run PostgreSQL"
-  community.docker.docker_container:
-    name: "{{ pg_container_name }}"
-    image: "{{ pg_image }}"
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    published_ports:
-      - "{{ pg_listen_ip }}:{{ pg_port }}:5432"
-      - "127.0.0.1:{{ pg_port }}:5432"
-      # Dual-stack: publish on the SVC IPv6 + v6 loopback (ip6tables DNAT).
-      - "[{{ pg_listen_ip6 }}]:{{ pg_port }}:5432"
-      - "[::1]:{{ pg_port }}:5432"
-    volumes:
-      - "{{ pg_data_volume }}:/var/lib/postgresql/data"
-      - "{{ pg_conf_host_dir }}:{{ pg_conf_host_dir }}:ro"
-      - "{{ pg_cert_host_dir }}:{{ pg_cert_host_dir }}:ro"
-      # Host CA store (base installs ca-certificates) — standard on every
-      # container so in-container tools verify TLS against the public LE chain.
-      - "/etc/ssl/certs:/etc/ssl/certs:ro"
-    env:
-      POSTGRES_PASSWORD: "{{ pg_superuser_password }}"
-      POSTGRES_USER: "postgres"
-      POSTGRES_DB: "postgres"
-      PGDATA: "/var/lib/postgresql/data/pgdata"
-    # HA-adoptable settings + TLS + our pg_hba, passed as server flags so we don't
-    # manage a full postgresql.conf. listen_addresses=* is safe: only the bound
-    # published ports are reachable.
-    command:
-      - "postgres"
-      - "-c"
-      - "listen_addresses=*"
-      - "-c"
-      - "password_encryption=scram-sha-256"
-      - "-c"
-      - "hba_file={{ pg_conf_host_dir }}/pg_hba.conf"
-      - "-c"
-      - "ssl={{ 'on' if pg_ssl | bool else 'off' }}"
-      - "-c"
-      - "ssl_cert_file={{ pg_ssl_cert }}"
-      - "-c"
-      - "ssl_key_file={{ pg_ssl_key }}"
-      - "-c"
-      - "ssl_min_protocol_version={{ pg_ssl_min_version }}"
-      - "-c"
-      - "wal_level=replica"
-      - "-c"
-      - "max_wal_senders=10"
-      - "-c"
-      - "max_replication_slots=10"
-      - "-c"
-      - "hot_standby=on"
-      - "-c"
-      - "wal_keep_size=512MB"
-      - "-c"
-      - "max_locks_per_transaction={{ pg_max_locks_per_transaction }}"
-      - "-c"
-      - "max_connections={{ pg_max_connections }}"
-      - "-c"
-      - "log_connections={{ 'on' if pg_log_connections | bool else 'off' }}"
-  no_log: true
+# The container through the scaffold's containers step (the one owner of "run a pinned
+# container"); PostgreSQL has no HTTP route, so only that step of the contract applies.
+- name: "container | PostgreSQL (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: postgresql
+      containers:
+        - name: "{{ pg_container_name }}"
+          image: "{{ pg_image }}"
+          published:
+            - "{{ pg_listen_ip }}:{{ pg_port }}:5432"
+            - "127.0.0.1:{{ pg_port }}:5432"
+            # Dual-stack: publish on the SVC IPv6 + v6 loopback (ip6tables DNAT).
+            - "[{{ pg_listen_ip6 }}]:{{ pg_port }}:5432"
+            - "[::1]:{{ pg_port }}:5432"
+          volumes:
+            - "{{ pg_data_volume }}:/var/lib/postgresql/data"
+            - "{{ pg_conf_host_dir }}:{{ pg_conf_host_dir }}:ro"
+            - "{{ pg_cert_host_dir }}:{{ pg_cert_host_dir }}:ro"
+            # Host CA store (base installs ca-certificates) — standard on every
+            # container so in-container tools verify TLS against the public LE chain.
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"
+          env:
+            POSTGRES_PASSWORD: "{{ pg_superuser_password }}"
+            POSTGRES_USER: "postgres"
+            POSTGRES_DB: "postgres"
+            PGDATA: "/var/lib/postgresql/data/pgdata"
+          # HA-adoptable settings + TLS + our pg_hba, passed as server flags so we don't
+          # manage a full postgresql.conf. listen_addresses=* is safe: only the bound
+          # published ports are reachable.
+          command:
+            - "postgres"
+            - "-c"
+            - "listen_addresses=*"
+            - "-c"
+            - "password_encryption=scram-sha-256"
+            - "-c"
+            - "hba_file={{ pg_conf_host_dir }}/pg_hba.conf"
+            - "-c"
+            - "ssl={{ 'on' if pg_ssl | bool else 'off' }}"
+            - "-c"
+            - "ssl_cert_file={{ pg_ssl_cert }}"
+            - "-c"
+            - "ssl_key_file={{ pg_ssl_key }}"
+            - "-c"
+            - "ssl_min_protocol_version={{ pg_ssl_min_version }}"
+            - "-c"
+            - "wal_level=replica"
+            - "-c"
+            - "max_wal_senders=10"
+            - "-c"
+            - "max_replication_slots=10"
+            - "-c"
+            - "hot_standby=on"
+            - "-c"
+            - "wal_keep_size=512MB"
+            - "-c"
+            - "max_locks_per_transaction={{ pg_max_locks_per_transaction }}"
+            - "-c"
+            - "max_connections={{ pg_max_connections }}"
+            - "-c"
+            - "log_connections={{ 'on' if pg_log_connections | bool else 'off' }}"
 
 - name: "container | Wait for PostgreSQL to accept connections"
   ansible.builtin.command:
