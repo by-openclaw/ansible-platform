@@ -1,4 +1,33 @@
 ---
+# Items name their guest (the inventory hostname); its VMID comes from the node itself
+# — Terraform owns VMIDs, so no copy of one is kept in this repo (the same lookup
+# playbooks/pbs-pve-storage.yml does with qm list).
+- name: "PVE ZFS | Guests on this node (VMID by name)"
+  ansible.builtin.command:
+    cmd: pct list
+  register: pve_zfs_mount_pct
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+
+- name: "PVE ZFS | Resolve each item's VMID from its guest name"
+  ansible.builtin.set_fact:
+    pve_zfs_mount_resolved: >-
+      {%- set ids = {} -%}
+      {%- for line in pve_zfs_mount_pct.stdout_lines[1:] -%}
+        {%- set f = line.split() -%}{%- set _ = ids.update({f[-1]: f[0]}) -%}
+      {%- endfor -%}
+      {%- set out = [] -%}
+      {%- for i in pve_zfs_mount_items -%}
+        {%- set _ = out.append(i | combine({'vmid': ids.get(i.guest, '')})) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: "PVE ZFS | Every guest runs on this node"
+  ansible.builtin.assert:
+    that: pve_zfs_mount_resolved | selectattr('vmid', 'equalto', '') | list | length == 0
+    fail_msg: "no container on this node for: {{ pve_zfs_mount_resolved | selectattr('vmid', 'equalto', '') | map(attribute='guest') | list }}"
+    quiet: true
+
 - name: "PVE ZFS | Check which datasets already exist"
   ansible.builtin.command:
     cmd: "zfs list -H -o name {{ item.dataset }}"
@@ -6,7 +35,7 @@
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
-  loop: "{{ pve_zfs_mount_items }}"
+  loop: "{{ pve_zfs_mount_resolved }}"
   loop_control:
     label: "{{ item.dataset }}"
 
@@ -15,7 +44,7 @@
     cmd: "zfs create -p -o quota={{ item.quota }} {{ item.dataset }}"
   changed_when: true
   when: pve_zfs_mount_exists.results[idx].rc != 0
-  loop: "{{ pve_zfs_mount_items }}"
+  loop: "{{ pve_zfs_mount_resolved }}"
   loop_control:
     label: "{{ item.dataset }}"
     index_var: idx
@@ -24,7 +53,7 @@
   ansible.builtin.command:
     cmd: "zfs set quota={{ item.quota }} {{ item.dataset }}"
   changed_when: false
-  loop: "{{ pve_zfs_mount_items }}"
+  loop: "{{ pve_zfs_mount_resolved }}"
   loop_control:
     label: "{{ item.dataset }}"
 
@@ -34,7 +63,7 @@
   register: pve_zfs_mount_mp
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  loop: "{{ pve_zfs_mount_items }}"
+  loop: "{{ pve_zfs_mount_resolved }}"
   loop_control:
     label: "{{ item.dataset }}"
 
@@ -49,7 +78,7 @@
     group: "{{ item.gid | default(100000) }}"
     mode: "0750"
   when: pve_zfs_mount_exists.results[idx].rc != 0
-  loop: "{{ pve_zfs_mount_items }}"
+  loop: "{{ pve_zfs_mount_resolved }}"
   loop_control:
     label: "{{ item.dataset }}"
     index_var: idx
@@ -60,7 +89,7 @@
   register: pve_zfs_mount_cfg
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  loop: "{{ pve_zfs_mount_items }}"
+  loop: "{{ pve_zfs_mount_resolved }}"
   loop_control:
     label: "ct {{ item.vmid }}"
 
@@ -70,7 +99,7 @@
   register: pve_zfs_mount_set
   changed_when: pve_zfs_mount_set.rc == 0
   when: "('mp=' ~ item.mount_path) not in pve_zfs_mount_cfg.results[idx].stdout"
-  loop: "{{ pve_zfs_mount_items }}"
+  loop: "{{ pve_zfs_mount_resolved }}"
   loop_control:
     label: "ct {{ item.vmid }} -> {{ item.mount_path }}"
     index_var: idx
