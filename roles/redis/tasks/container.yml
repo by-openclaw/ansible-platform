@@ -1,31 +1,30 @@
 ---
-- name: "container | Pull the pinned Redis image"
-  community.docker.docker_image:
-    name: "{{ redis_image }}"
-    source: pull
-    state: present
-
-- name: "container | Run Redis"
-  community.docker.docker_container:
-    name: "{{ redis_container_name }}"
-    image: "{{ redis_image }}"
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    command: "redis-server {{ redis_conf_file }}"
-    published_ports:
-      - "{{ redis_listen_ip }}:{{ redis_port }}:6379"
-      - "[{{ redis_listen_ip6 }}]:{{ redis_port }}:6379"
-      - "127.0.0.1:{{ redis_port }}:6379"
-      - "[::1]:{{ redis_port }}:6379"
-    volumes:
-      - "{{ redis_data_volume }}:/data"
-      - "{{ redis_conf_host_dir }}:{{ redis_conf_host_dir }}:ro"
-      - "{{ redis_cert_host_dir }}:{{ redis_cert_host_dir }}:ro"
-      # Host CA store (base installs ca-certificates) — the stock redis image
-      # ships none, so this lets the in-container redis-cli verify with --cacert
-      # (not just --insecure) and backs tls-ca-cert-dir.
-      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+# The container through the scaffold's containers step (the one owner of "run a pinned
+# container"); Redis has no HTTP route, so only that step of the contract applies.
+- name: "container | Redis (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: redis
+      containers:
+        - name: "{{ redis_container_name }}"
+          image: "{{ redis_image }}"
+          command: "redis-server {{ redis_conf_file }}"
+          published:
+            - "{{ redis_listen_ip }}:{{ redis_port }}:6379"
+            - "[{{ redis_listen_ip6 }}]:{{ redis_port }}:6379"
+            - "127.0.0.1:{{ redis_port }}:6379"
+            - "[::1]:{{ redis_port }}:6379"
+          volumes:
+            - "{{ redis_data_volume }}:/data"
+            - "{{ redis_conf_host_dir }}:{{ redis_conf_host_dir }}:ro"
+            - "{{ redis_cert_host_dir }}:{{ redis_cert_host_dir }}:ro"
+            # Host CA store (base installs ca-certificates) — the stock redis image
+            # ships none, so this lets the in-container redis-cli verify with --cacert
+            # (not just --insecure) and backs tls-ca-cert-dir.
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"
 
 - name: "container | Wait for Redis to accept verified TLS connections"
   ansible.builtin.command:
