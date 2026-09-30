@@ -1,45 +1,36 @@
 ---
-- name: "containers | Pull the pinned Authentik image"
-  community.docker.docker_image:
-    name: "{{ authentik_image }}"
-    source: pull
-    state: present
-
-- name: "containers | Run authentik-server"
-  community.docker.docker_container:
-    name: authentik-server
-    image: "{{ authentik_image }}"
-    command: server
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    published_ports:
-      - "{{ authentik_listen_ip }}:{{ authentik_host_port }}:9000"
-    volumes:
-      - "{{ authentik_media_volume }}:/media"
-      - "{{ authentik_templates_volume }}:/templates"
-      - "/etc/ssl/certs:/etc/ssl/certs:ro"
-      - "{{ authentik_blueprints_dir }}:/blueprints/custom:ro"
-    env: "{{ authentik_env }}"
-  no_log: true
-
-- name: "containers | Run authentik-worker"
-  community.docker.docker_container:
-    name: authentik-worker
-    image: "{{ authentik_image }}"
-    command: worker
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    volumes:
-      - "{{ authentik_media_volume }}:/media"
-      - "{{ authentik_templates_volume }}:/templates"
-      - "/etc/ssl/certs:/etc/ssl/certs:ro"
-      - "{{ authentik_blueprints_dir }}:/blueprints/custom:ro"
-      # Worker manages embedded/Docker outposts via the Docker socket.
-      - "/var/run/docker.sock:/var/run/docker.sock"
-    env: "{{ authentik_env }}"
-  no_log: true
+# Server and worker through the scaffold's containers step (the one owner of "run a pinned
+# container").
+- name: "containers | authentik server + worker (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: authentik
+      containers:
+        - name: authentik-server
+          image: "{{ authentik_image }}"
+          command: server
+          published:
+            - "{{ authentik_listen_ip }}:{{ authentik_host_port }}:9000"
+          volumes:
+            - "{{ authentik_media_volume }}:/media"
+            - "{{ authentik_templates_volume }}:/templates"
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"
+            - "{{ authentik_blueprints_dir }}:/blueprints/custom:ro"
+          env: "{{ authentik_env }}"
+        - name: authentik-worker
+          image: "{{ authentik_image }}"
+          command: worker
+          volumes:
+            - "{{ authentik_media_volume }}:/media"
+            - "{{ authentik_templates_volume }}:/templates"
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"
+            - "{{ authentik_blueprints_dir }}:/blueprints/custom:ro"
+            # Worker manages embedded/Docker outposts via the Docker socket.
+            - "/var/run/docker.sock:/var/run/docker.sock"
+          env: "{{ authentik_env }}"
 
 - name: "containers | Wait for Authentik to be ready"
   ansible.builtin.uri:
