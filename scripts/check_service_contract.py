@@ -19,6 +19,10 @@ one progress number ("N of 32 on the contract"). For every entry of platform_ser
   mailbox     no Mailcow mailbox write — the one writer is roles/mailbox
   database    no CREATE DATABASE / ROLE / USER — the one writer is roles/postgres_db
   people      no platform_people username in the role — people come from people.yml
+  runtime     the service runs as containers (its role hands them to roles/service_scaffold's
+              containers step or to roles/compose_stack) — every service is container-ready
+              for Docker today and k3s/k8s tomorrow. APPLIANCES names the exceptions, each with
+              its reason; nothing else is exempt.
 
 Usage: scripts/check_service_contract.py [--strict | --ratchet] [service ...]
 One line per service. --strict: exit 1 when any named (or any) service fails.
@@ -57,6 +61,13 @@ FACT = re.compile(r"\bansible_(facts|default_ipv[46]|distribution\w*|os_family|v
                   r"|machine\w*|pkg_mgr|service_mgr|date_time|devices|product_\w+|system_vendor|dns)\b")
 ROLE_REF = re.compile(r"(?:include_role|import_role):\s*\n\s+name:\s*([\w.-]+)")
 _facts_cache = {}
+# Services that are not containers by nature: named, with the reason. Nothing else is exempt.
+APPLIANCES = {
+    "proxmox": "the hypervisor itself",
+    "pbs": "Proxmox Backup Server appliance (a VM of its own)",
+    "opnsense": "the firewall appliance (FreeBSD, API-managed)",
+    "k3s": "the Kubernetes runtime the containers will move to",
+}
 
 
 def play_roles(play):
@@ -124,6 +135,14 @@ def _tasks(items):
             yield from _tasks(t.get(k))
 
 
+def runs_in_containers(role):
+    """The role hands its containers to the scaffold's containers step or to compose_stack."""
+    text = "\n".join(strip_comments(f.read_text()) for f in role_files(role, ["tasks"])
+                     if f.suffix in (".yml", ".yaml"))
+    via_scaffold = re.search(r"name:\s*service_scaffold\b", text) and re.search(r"\bcontainers:", text)
+    return bool(via_scaffold or re.search(r"name:\s*compose_stack\b", text))
+
+
 def check(svc, people):
     role, failures = svc["role"], []
     playbook = ROOT / svc["playbook"] if "/" in svc["playbook"] else ROOT / "playbooks" / svc["playbook"]
@@ -159,6 +178,8 @@ def check(svc, people):
     named = sorted(u for u in people if re.search(rf"(?<![\w-]){re.escape(u)}(?![\w-])", body))
     if named:
         failures.append("people(" + ",".join(named) + ")")
+    if svc["name"] not in APPLIANCES and not runs_in_containers(role):
+        failures.append("runtime(native)")
     return failures
 
 
