@@ -25,7 +25,9 @@
     image: "{{ scaffold_ctr.image }}"
     state: "{{ scaffold_ctr.state | default('started') }}"   # absent: e.g. a host opted out
     restart_policy: "{{ scaffold_ctr.restart_policy | default('unless-stopped') }}"
-    networks: "{{ [{'name': service_scaffold_def.network}] if (service_scaffold_def.network | default('')) | length > 0 else omit }}"
+    networks: >-
+      {{ [{'name': service_scaffold_def.network} | combine({'aliases': scaffold_ctr.aliases} if scaffold_ctr.aliases is defined else {})]
+         if (service_scaffold_def.network | default('')) | length > 0 else omit }}
     network_mode: "{{ service_scaffold_def.network | default(omit, true) }}"
     published_ports: "{{ scaffold_ctr.published | default([]) }}"
     volumes: "{{ scaffold_ctr.volumes | default([]) }}"
@@ -38,6 +40,9 @@
     restart: "{{ scaffold_ctr.restart | default(omit) }}"   # e.g. a config the app does not hot-reload changed
     recreate: "{{ scaffold_ctr.recreate | default(omit) }}"
     security_opts: "{{ scaffold_ctr.security_opts | default(omit) }}"
+    hostname: "{{ scaffold_ctr.hostname | default(omit) }}"
+    ulimits: "{{ scaffold_ctr.ulimits | default(omit) }}"
+    etc_hosts: "{{ scaffold_ctr.etc_hosts | default(omit) }}"
   loop: "{{ service_scaffold_def.containers | default([]) }}"
   loop_control:
     loop_var: scaffold_ctr
