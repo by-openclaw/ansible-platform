@@ -1,8 +1,16 @@
 ---
-# Configure PROD pgAdmin (lxc-pgadmin-01, SVC) — Docker + Traefik route.
-- name: Configure PROD pgAdmin
+# ==============================================================================
+# pgAdmin — PostgreSQL admin UI (lxc-pgadmin-01, VPN-only, Authentik SSO).
+# One play, composition explicit: OS baseline, container engine, the service.
+# The service's platform concerns (state database, mailbox, container, Traefik
+# route) are declared to roles/service_scaffold inside roles/pgadmin.
+#   ansible-playbook playbooks/pgadmin.yml
+# ==============================================================================
+- name: "Configure pgAdmin"
   hosts: pgadmin
   become: true
   gather_facts: true
   roles:
+    - base
+    - docker
     - pgadmin

@@ -1,45 +1,41 @@
 ---
 # ==============================================================================
-# Role: pgadmin — dispatcher
+# Role: pgadmin — what is specific to pgAdmin. The platform concerns are declared
+# to roles/service_scaffold: state database (postgres_db), mailbox, the container,
+# the Traefik route (internal-only), and the SSO registration it asserts.
 # ==============================================================================
-- name: Resolve / generate the admin password
+- name: "Secrets for pgAdmin (admin login, OIDC client, PG superuser)"
   ansible.builtin.import_tasks: secrets.yml
   tags: [pgadmin, secrets]
 
-- name: Provision the shared PostgreSQL connection (servers.json)
+- name: "Shared PostgreSQL connection for pgAdmin (servers.json, mounted)"
   ansible.builtin.import_tasks: servers.yml
   when: pgadmin_register_pg_server | bool
   tags: [pgadmin, servers]
 
-- name: Run the pgAdmin container
-  ansible.builtin.import_tasks: container.yml
-  tags: [pgadmin, container]
+- name: "Platform concerns of pgAdmin (roles/service_scaffold)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    apply:
+      tags: [pgadmin, container, route]
+  vars:
+    service_scaffold_def:
+      name: pgadmin
+      fqdn: "{{ pgadmin_fqdn }}"
+      backend_url: "{{ pgadmin_traefik_backend }}"
+      exposure: internal
+      db: postgres                 # pgadmin / pgadmin / {env}/pgadmin/db-pgsql — the live state DB
+      mailbox: true
+      sso_slug: "{{ pgadmin_oidc_app_slug }}"
+      containers:
+        - name: pgadmin
+          image: "{{ pgadmin_image }}"
+          published: ["{{ pgadmin_listen_ip }}:{{ pgadmin_host_port }}:{{ pgadmin_container_port }}"]
+          volumes: "{{ pgadmin_volumes }}"
+          env: "{{ pgadmin_env }}"   # vars/main.yml; reads postgres_db_password set by the db step
+  tags: [pgadmin, container, route]
 
-- name: The pre-PostgreSQL SQLite store and its archived copy (never read again)
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - "{{ pgadmin_state_sqlite }}"
-    - "{{ pgadmin_state_sqlite }}.retired-sqlite"
-  tags: [pgadmin, container]
-
-- name: Import the shared PostgreSQL connection (existing setups)
+- name: "Import the shared PostgreSQL connection into pgAdmin"
   ansible.builtin.import_tasks: servers_import.yml
   when: pgadmin_register_pg_server | bool
   tags: [pgadmin, servers]
-
-- name: Publish pgAdmin via Traefik (internal-only)
-  ansible.builtin.include_role:
-    name: traefik_route
-    # apply tags to the INCLUDED tasks too — without this, `--tags route` runs
-    # the include but skips the route's file-write (dynamic include_role does not
-    # propagate tags to inner tasks), so the route is never re-rendered.
-    apply:
-      tags: [pgadmin, route]
-  vars:
-    traefik_route_name: pgadmin
-    traefik_route_fqdn: "{{ pgadmin_fqdn }}"
-    traefik_route_backend_url: "{{ pgadmin_traefik_backend }}"
-    traefik_route_internal_only: true
-  tags: [pgadmin, route]
