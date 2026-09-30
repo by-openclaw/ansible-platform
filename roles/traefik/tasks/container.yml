@@ -6,7 +6,8 @@
 # plugin is mounted at /plugins-local — the image works from /, and Traefik reads
 # local plugins from ./plugins-local.
 # The switch-over keeps the gap to seconds: the image is pulled first, then the
-# native unit stops (it holds :80/:443), then the container starts.
+# native unit stops (it holds :80/:443), then the container starts and is verified;
+# the native unit and binary are removed last.
 # ==============================================================================
 # A dry-run of the first engine install has no daemon to talk to: the Docker steps are
 # skipped then (roles/docker registered docker_engine_install earlier in the play).
@@ -29,21 +30,6 @@
     state: stopped
     enabled: false
   when: "'traefik.service' in ansible_facts.services"
-
-- name: "container | Its unit, binary and the config backup of the first install (retired)"
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - /etc/systemd/system/traefik.service
-    - /usr/local/bin/traefik
-    - "{{ traefik_conf_dir }}/traefik.yml.pre-crowdsec"
-  register: traefik_native_removed
-
-- name: "container | systemd forgets the retired unit"
-  ansible.builtin.systemd_service:
-    daemon_reload: true
-  when: traefik_native_removed is changed
 
 - name: "container | Traefik (roles/service_scaffold containers)"
   ansible.builtin.include_role:
@@ -82,3 +68,20 @@
   when:
     - not ansible_check_mode
     - traefik_crowdsec_enabled | default(false)
+
+# Only once the container answers and its plugin loaded: the native install goes. Until
+# then it stays on disk, so a failed start can be rolled back by reverting this change.
+- name: "container | Its unit, binary and the config backup of the first install (retired)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/traefik.service
+    - /usr/local/bin/traefik
+    - "{{ traefik_conf_dir }}/traefik.yml.pre-crowdsec"
+  register: traefik_native_removed
+
+- name: "container | systemd forgets the retired unit"
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: traefik_native_removed is changed
