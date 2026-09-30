@@ -11,9 +11,11 @@ one progress number ("N of 32 on the contract"). For every entry of platform_ser
   meta        the service role has no meta dependencies — composition belongs in the
               playbook, where it is seen; a hidden one ran the docker firewall inside a
               certificate copy
-  containers  no docker_container / docker compose in the role's tasks — containers go
-              through roles/service_scaffold (containers:) or roles/compose_stack
-  timers      no systemd timer written by the role — scheduled work is roles/host_job
+  containers  no container DEFINITION in the role's tasks (docker_container with an image, or
+              docker compose up/pull) — they go through roles/service_scaffold (containers:)
+              or roles/compose_stack. Lifecycle by name (stop/start/restart/absent) is not one.
+  timers      no systemd timer unit written by the role (a dest) — scheduled work is
+              roles/host_job; a path listed for removal is not one
   mailbox     no Mailcow mailbox write — the one writer is roles/mailbox
   database    no CREATE DATABASE / ROLE / USER — the one writer is roles/postgres_db
   people      no platform_people username in the role — people come from people.yml
@@ -32,9 +34,9 @@ PASSING = ROOT / "scripts/service_contract_passing.txt"
 INV = ROOT / "inventories/prod/group_vars/all"
 MODULE = r"^\s+(?:community\.docker\.)?{}:\s*$"
 CHECKS = {
-    "containers": [re.compile(MODULE.format(m), re.M) for m in ("docker_container", "docker_compose", "docker_compose_v2")]
-                  + [re.compile(r"docker[ -]compose\b.*\b(up|down|pull)\b")],
-    "timers": [re.compile(r"/etc/systemd/system/[^\"'\s]+\.timer")],
+    "containers": [re.compile(MODULE.format(m), re.M) for m in ("docker_compose", "docker_compose_v2")]
+                  + [re.compile(r"docker[ -]compose\b.*\b(up|pull)\b")],
+    "timers": [re.compile(r"\bdest:\s*[\"']?/etc/systemd/system/[^\"'\s]+\.timer")],
     "mailbox": [re.compile(r"/api/v1/(add|edit|delete)/mailbox")],
     "database": [re.compile(r"\bCREATE\s+(DATABASE|ROLE|USER)\b", re.I)],
 }
@@ -99,6 +101,29 @@ def literal_data(value):
     return False
 
 
+def count_container_definitions(role):
+    """docker_container tasks that define a container (they carry an image); a call by name
+    that only stops, starts, restarts or removes one is lifecycle, not a definition."""
+    count = 0
+    for f in role_files(role, ["tasks"]):
+        if f.suffix not in (".yml", ".yaml"):
+            continue
+        for task in _tasks(yaml.safe_load(f.read_text()) or []):
+            for key, args in task.items():
+                if key.split(".")[-1] == "docker_container" and isinstance(args, dict) and "image" in args:
+                    count += 1
+    return count
+
+
+def _tasks(items):
+    for t in items if isinstance(items, list) else []:
+        if not isinstance(t, dict):
+            continue
+        yield t
+        for k in ("block", "rescue", "always"):
+            yield from _tasks(t.get(k))
+
+
 def check(svc, people):
     role, failures = svc["role"], []
     playbook = ROOT / svc["playbook"] if "/" in svc["playbook"] else ROOT / "playbooks" / svc["playbook"]
@@ -119,8 +144,14 @@ def check(svc, people):
     if deps:
         failures.append("meta(" + "+".join(d["role"] if isinstance(d, dict) else str(d) for d in deps) + ")")
     tasks = "\n".join(strip_comments(f.read_text()) for f in role_files(role, ["tasks"]) if f.suffix in (".yml", ".yaml"))
+    definitions = count_container_definitions(role)
+    if definitions:
+        failures.append(f"containers({definitions})")
     for name, patterns in CHECKS.items():
         hits = sum(len(p.findall(tasks)) for p in patterns)
+        if name == "containers" and hits:
+            failures.append(f"compose({hits})")
+            continue
         if hits:
             failures.append(f"{name}({hits})")
     body = "\n".join(strip_comments(f.read_text()) for f in role_files(role, ["tasks", "defaults", "vars", "templates"])
