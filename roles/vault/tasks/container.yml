@@ -1,10 +1,4 @@
 ---
-- name: "container | Pull the pinned Vault image"
-  community.docker.docker_image:
-    name: "{{ vault_image }}"
-    source: pull
-    state: present
-
 - name: "container | Audit log directory on the host (SEC-07)"
   ansible.builtin.file:
     path: /var/log/vault
@@ -30,27 +24,32 @@
     state: present
   loop: [true, false]
 
-- name: "container | Run Vault"
-  community.docker.docker_container:
-    name: "{{ vault_container_name }}"
-    image: "{{ vault_image }}"
-    command: server
-    state: started
-    restart_policy: unless-stopped
-    pull: false
-    published_ports:
-      - "{{ vault_listen_ip }}:{{ vault_port }}:8200"
-      - "127.0.0.1:{{ vault_port }}:8200"
-    volumes:
-      - "{{ vault_data_host_dir }}:/vault/data"
-      - "/var/log/vault:/vault/logs"        # SEC-07: file audit device, shipped by promtail
-      - "{{ vault_config_host_dir }}:/vault/config:ro"
-      - "{{ vault_cert_host_dir }}:{{ vault_cert_host_dir }}:ro"
-      - "/etc/ssl/certs:/etc/ssl/certs:ro"
-    env:
-      # In-container CLI (init/unseal/status via docker exec) uses the FQDN so
-      # the wildcard cert VERIFIES (CA bundle is the mounted /etc/ssl/certs).
-      VAULT_ADDR: "{{ vault_api_addr }}"
+# The container through the scaffold's containers step (the one owner of "run a pinned
+# container"); the Vault edge is Traefik's own route, so only this step applies here.
+- name: "container | Vault (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: vault
+      containers:
+        - name: "{{ vault_container_name }}"
+          image: "{{ vault_image }}"
+          command: server
+          published:
+            - "{{ vault_listen_ip }}:{{ vault_port }}:8200"
+            - "127.0.0.1:{{ vault_port }}:8200"
+          volumes:
+            - "{{ vault_data_host_dir }}:/vault/data"
+            - "/var/log/vault:/vault/logs"        # SEC-07: file audit device, shipped by promtail
+            - "{{ vault_config_host_dir }}:/vault/config:ro"
+            - "{{ vault_cert_host_dir }}:{{ vault_cert_host_dir }}:ro"
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"
+          env:
+            # In-container CLI (init/unseal/status via docker exec) uses the FQDN so
+            # the wildcard cert VERIFIES (CA bundle is the mounted /etc/ssl/certs).
+            VAULT_ADDR: "{{ vault_api_addr }}"
 
 - name: "container | Wait for Vault to respond"
   ansible.builtin.command:
