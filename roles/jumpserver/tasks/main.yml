@@ -119,51 +119,39 @@
     - "{{ jumpserver_pgdata_volume }}"
     - "{{ jumpserver_redisdata_volume }}"
 
-- name: "JumpServer | Ensure images are present (pinned)"
-  community.docker.docker_image:
-    name: "{{ item }}"
-    source: pull
-    state: present
-  loop:
-    - "{{ jumpserver_image_postgres }}"
-    - "{{ jumpserver_image_redis }}"
-    - "{{ jumpserver_image_core }}"
-    - "{{ jumpserver_image_koko }}"
-    - "{{ jumpserver_image_lion }}"
-    - "{{ jumpserver_image_web }}"
-
-- name: "JumpServer | Private docker network"
-  community.docker.docker_network:
-    name: "{{ jumpserver_docker_network }}"
-    state: present
+# The containers run through the scaffold's containers step (the one owner of "run a
+# pinned container"), one call per start stage: each stage waits for the previous one
+# to report healthy — first boot runs the migrations in core against a healthy DB.
 
 # --- Bundled Postgres 16 (UTF8) ----------------------------------------------
-- name: "JumpServer | Run jms-postgres (bundled DB)"
-  community.docker.docker_container:
-    name: jms_postgres
-    image: "{{ jumpserver_image_postgres }}"
-    hostname: jms-postgres
-    state: started
-    restart_policy: always
-    pull: false
-    env:
-      TZ: "{{ jumpserver_tz }}"
-      POSTGRES_DB: "{{ jumpserver_db_name }}"
-      POSTGRES_USER: "{{ jumpserver_db_user }}"
-      POSTGRES_PASSWORD: "{{ jumpserver_secret.db_password }}"
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.utf8"
-    volumes:
-      - "{{ jumpserver_pgdata_volume }}:/var/lib/postgresql/data"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U {{ jumpserver_db_user }} -d {{ jumpserver_db_name }}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    networks:
-      - name: "{{ jumpserver_docker_network }}"
-        aliases: [jms-postgres]
-  no_log: true
+- name: "JumpServer | Postgres (bundled DB) (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: jumpserver
+      network: "{{ jumpserver_docker_network }}"
+      containers:
+        - name: jms_postgres
+          image: "{{ jumpserver_image_postgres }}"
+          hostname: jms-postgres
+          restart_policy: always
+          env:
+            TZ: "{{ jumpserver_tz }}"
+            POSTGRES_DB: "{{ jumpserver_db_name }}"
+            POSTGRES_USER: "{{ jumpserver_db_user }}"
+            POSTGRES_PASSWORD: "{{ jumpserver_secret.db_password }}"
+            POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.utf8"
+          volumes:
+            - "{{ jumpserver_pgdata_volume }}:/var/lib/postgresql/data"
+          healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U {{ jumpserver_db_user }} -d {{ jumpserver_db_name }}"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 30s
+          aliases: [jms-postgres]
 
 - name: "JumpServer | Wait for Postgres healthy"
   community.docker.docker_container_info:
@@ -174,30 +162,32 @@
   delay: 5
 
 # --- Bundled Redis 7 (requirepass; internal net only) ------------------------
-- name: "JumpServer | Run jms-redis (bundled cache/broker)"
-  community.docker.docker_container:
-    name: jms_redis
-    image: "{{ jumpserver_image_redis }}"
-    hostname: jms-redis
-    state: started
-    restart_policy: always
-    pull: false
-    command: ["redis-server", "--requirepass", "{{ jumpserver_secret.redis_password }}", "--appendonly", "yes"]
-    env:
-      TZ: "{{ jumpserver_tz }}"
-      REDIS_PASSWORD: "{{ jumpserver_secret.redis_password }}"
-    volumes:
-      - "{{ jumpserver_redisdata_volume }}:/data"
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    networks:
-      - name: "{{ jumpserver_docker_network }}"
-        aliases: [jms-redis]
-  no_log: true
+- name: "JumpServer | Redis (bundled cache/broker) (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: jumpserver
+      network: "{{ jumpserver_docker_network }}"
+      containers:
+        - name: jms_redis
+          image: "{{ jumpserver_image_redis }}"
+          hostname: jms-redis
+          restart_policy: always
+          command: ["redis-server", "--requirepass", "{{ jumpserver_secret.redis_password }}", "--appendonly", "yes"]
+          env:
+            TZ: "{{ jumpserver_tz }}"
+            REDIS_PASSWORD: "{{ jumpserver_secret.redis_password }}"
+          volumes:
+            - "{{ jumpserver_redisdata_volume }}:/data"
+          healthcheck:
+            test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 10s
+          aliases: [jms-redis]
 
 - name: "JumpServer | Wait for Redis healthy"
   community.docker.docker_container_info:
@@ -208,32 +198,34 @@
   delay: 5
 
 # --- Core (web/api; runs migrations on first boot) ---------------------------
-- name: "JumpServer | Run core (start web)"
-  community.docker.docker_container:
-    name: jms_core
-    image: "{{ jumpserver_image_core }}"
-    hostname: jms_core
-    state: started
-    restart_policy: always
-    pull: false
-    command: start web
-    ulimits: ["core:0:0"]
-    env: "{{ jumpserver_env_safe | combine(jumpserver_env_db) | combine(jumpserver_env_oidc) | combine({'TIME_ZONE': jumpserver_tz}) }}"
-    volumes:
-      - "{{ jumpserver_base_dir }}/certs:/opt/jumpserver/data/certs"
-      - "{{ jumpserver_data_dir }}/data:/opt/jumpserver/data"
-    healthcheck:
-      test: ["CMD-SHELL", "check http://localhost:8080/api/health/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 120s
-    etc_hosts:
-      host.docker.internal: host-gateway
-    networks:
-      - name: "{{ jumpserver_docker_network }}"
-        aliases: [core]
-  no_log: true
+- name: "JumpServer | core (start web) (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: jumpserver
+      network: "{{ jumpserver_docker_network }}"
+      containers:
+        - name: jms_core
+          image: "{{ jumpserver_image_core }}"
+          hostname: jms_core
+          restart_policy: always
+          command: start web
+          ulimits: ["core:0:0"]
+          env: "{{ jumpserver_env_safe | combine(jumpserver_env_db) | combine(jumpserver_env_oidc) | combine({'TIME_ZONE': jumpserver_tz}) }}"
+          volumes:
+            - "{{ jumpserver_base_dir }}/certs:/opt/jumpserver/data/certs"
+            - "{{ jumpserver_data_dir }}/data:/opt/jumpserver/data"
+          healthcheck:
+            test: ["CMD-SHELL", "check http://localhost:8080/api/health/"]
+            interval: 10s
+            timeout: 5s
+            retries: 3
+            start_period: 120s
+          etc_hosts:
+            host.docker.internal: host-gateway
+          aliases: [core]
 
 - name: "JumpServer | Wait for core healthy (migrations run on first boot)"
   community.docker.docker_container_info:
@@ -243,108 +235,84 @@
   retries: 60
   delay: 10
 
-# --- Celery (background tasks) ------------------------------------------------
-- name: "JumpServer | Run celery (start task)"
-  community.docker.docker_container:
-    name: jms_celery
-    image: "{{ jumpserver_image_core }}"
-    hostname: jms_celery
-    state: started
-    restart_policy: always
-    pull: false
-    command: start task
-    ulimits: ["core:0:0"]
-    env: "{{ jumpserver_env_safe | combine(jumpserver_env_db) | combine(jumpserver_env_oidc) | combine({'LC_ALL': 'C.UTF-8'}) }}"
-    volumes:
-      - "{{ jumpserver_base_dir }}/certs:/opt/jumpserver/data/certs"
-      - "{{ jumpserver_data_dir }}/data:/opt/jumpserver/data"
-    etc_hosts:
-      host.docker.internal: host-gateway
-    networks:
-      - name: "{{ jumpserver_docker_network }}"
-        aliases: [celery]
-  no_log: true
-
-# --- Koko (SSH/SFTP terminal) — SAFE env, no DB ------------------------------
-- name: "JumpServer | Run koko (SSH/terminal gateway)"
-  community.docker.docker_container:
-    name: jms_koko
-    image: "{{ jumpserver_image_koko }}"
-    hostname: jms_koko
-    state: started
-    restart_policy: always
-    pull: false
-    ulimits: ["core:0:0"]
-    env: "{{ jumpserver_env_safe }}"
-    volumes:
-      - "{{ jumpserver_base_dir }}/certs:/opt/koko/data/certs"
-      - "{{ jumpserver_base_dir }}/koko/data:/opt/koko/data"
-    networks:
-      - name: "{{ jumpserver_docker_network }}"
-        aliases: [koko]
-  no_log: true
-
-# --- Lion (RDP/VNC via guacd) — SAFE env ------------------------------------
-- name: "JumpServer | Run lion (RDP/VNC gateway)"
-  community.docker.docker_container:
-    name: jms_lion
-    image: "{{ jumpserver_image_lion }}"
-    hostname: jms_lion
-    state: started
-    restart_policy: always
-    pull: false
-    ulimits: ["core:0:0"]
-    env: "{{ jumpserver_env_safe }}"
-    volumes:
-      - "{{ jumpserver_base_dir }}/certs:/opt/lion/data/certs"
-      - "{{ jumpserver_base_dir }}/lion/data:/opt/lion/data"
-    networks:
-      - name: "{{ jumpserver_docker_network }}"
-        aliases: [lion]
-  no_log: true
-
-# --- Web (nginx front; only published port) — no secrets --------------------
-- name: "JumpServer | Run web (nginx front)"
-  community.docker.docker_container:
-    name: jms_web
-    image: "{{ jumpserver_image_web }}"
-    hostname: jms_web
-    state: started
-    restart_policy: always
-    pull: false
-    ulimits: ["core:0:0"]
-    env:
-      TZ: "{{ jumpserver_tz }}"
-      HTTP_PORT: "80"
-      USE_LB: "0"            # eBPF SLB off (unprivileged) -> plain nginx; correct behind Traefik
-      USE_IPV6: "0"
-      USE_XPACK: "0"
-      GZIP: "on"
-      CLIENT_MAX_BODY_SIZE: "4096m"
-      CORE_ENABLED: "1"
-      KOKO_ENABLED: "1"
-      LION_ENABLED: "1"
-      CHEN_ENABLED: "0"     # chen (web DB client) not deployed
-      KAEL_ENABLED: "0"
-      RAZOR_ENABLED: "0"
-      FACELIVE_ENABLED: "0"
-      KOTL_ENABLED: "0"
-    published_ports:
-      - "{{ jumpserver_web_host_port }}:80"
-    volumes:
-      - "{{ jumpserver_data_dir }}/data:/opt/jumpserver/data"
-      - "{{ jumpserver_base_dir }}/nginx/logs:/var/log/nginx"
-    healthcheck:
-      test: ["CMD-SHELL", "check http://localhost/web/health/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 60s
-    etc_hosts:
-      host.docker.internal: host-gateway
-    networks:
-      - name: "{{ jumpserver_docker_network }}"
-        aliases: [web]
+# --- Celery (background tasks), koko (SSH/SFTP), lion (RDP/VNC), web (nginx front) --
+- name: "JumpServer | celery, koko, lion and web (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: jumpserver
+      network: "{{ jumpserver_docker_network }}"
+      containers:
+        - name: jms_celery
+          image: "{{ jumpserver_image_core }}"
+          hostname: jms_celery
+          restart_policy: always
+          command: start task
+          ulimits: ["core:0:0"]
+          env: "{{ jumpserver_env_safe | combine(jumpserver_env_db) | combine(jumpserver_env_oidc) | combine({'LC_ALL': 'C.UTF-8'}) }}"
+          volumes:
+            - "{{ jumpserver_base_dir }}/certs:/opt/jumpserver/data/certs"
+            - "{{ jumpserver_data_dir }}/data:/opt/jumpserver/data"
+          etc_hosts:
+            host.docker.internal: host-gateway
+          aliases: [celery]
+        - name: jms_koko
+          image: "{{ jumpserver_image_koko }}"
+          hostname: jms_koko
+          restart_policy: always
+          ulimits: ["core:0:0"]
+          env: "{{ jumpserver_env_safe }}"
+          volumes:
+            - "{{ jumpserver_base_dir }}/certs:/opt/koko/data/certs"
+            - "{{ jumpserver_base_dir }}/koko/data:/opt/koko/data"
+          aliases: [koko]
+        - name: jms_lion
+          image: "{{ jumpserver_image_lion }}"
+          hostname: jms_lion
+          restart_policy: always
+          ulimits: ["core:0:0"]
+          env: "{{ jumpserver_env_safe }}"
+          volumes:
+            - "{{ jumpserver_base_dir }}/certs:/opt/lion/data/certs"
+            - "{{ jumpserver_base_dir }}/lion/data:/opt/lion/data"
+          aliases: [lion]
+        - name: jms_web
+          image: "{{ jumpserver_image_web }}"
+          hostname: jms_web
+          restart_policy: always
+          ulimits: ["core:0:0"]
+          env:
+            TZ: "{{ jumpserver_tz }}"
+            HTTP_PORT: "80"
+            USE_LB: "0"            # eBPF SLB off (unprivileged) -> plain nginx; correct behind Traefik
+            USE_IPV6: "0"
+            USE_XPACK: "0"
+            GZIP: "on"
+            CLIENT_MAX_BODY_SIZE: "4096m"
+            CORE_ENABLED: "1"
+            KOKO_ENABLED: "1"
+            LION_ENABLED: "1"
+            CHEN_ENABLED: "0"     # chen (web DB client) not deployed
+            KAEL_ENABLED: "0"
+            RAZOR_ENABLED: "0"
+            FACELIVE_ENABLED: "0"
+            KOTL_ENABLED: "0"
+          published:
+            - "{{ jumpserver_web_host_port }}:80"
+          volumes:
+            - "{{ jumpserver_data_dir }}/data:/opt/jumpserver/data"
+            - "{{ jumpserver_base_dir }}/nginx/logs:/var/log/nginx"
+          healthcheck:
+            test: ["CMD-SHELL", "check http://localhost/web/health/"]
+            interval: 10s
+            timeout: 5s
+            retries: 3
+            start_period: 60s
+          etc_hosts:
+            host.docker.internal: host-gateway
+          aliases: [web]
 
 - name: "JumpServer | Wait for web front healthy"
   community.docker.docker_container_info:
