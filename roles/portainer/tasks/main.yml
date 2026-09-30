@@ -57,29 +57,11 @@
         mode: "0600"
       no_log: true
 
-    - name: "Portainer | Pull the pinned server image"
-      community.docker.docker_image:
-        name: "{{ portainer_server_image }}"
-        source: pull
-
-    - name: "Portainer | Run the server (one container, managed directly)"
-      no_log: true   # env carries the agent key
-      community.docker.docker_container:
-        name: portainer
-        image: "{{ portainer_server_image }}"
-        state: started
-        restart_policy: unless-stopped
-        pull: false
-        command: ["--http-enabled", "--admin-password-file=/run/secrets/admin"]
-        env:
-          AGENT_SECRET: "{{ portainer_agent_secret }}"   # without it the agents answer 403 "Invalid request signature" (shown as "already paired")
-        published_ports:
-          - "{{ portainer_listen_ip }}:{{ portainer_http_port }}:9000"
-        volumes:
-          - "portainer-data:/data"
-          - "{{ portainer_dir }}/admin-password:/run/secrets/admin:ro"
-        security_opts: ["no-new-privileges:true"]
-        log_driver: journald
+    - name: "Portainer | Platform concerns and the server container (roles/service_scaffold)"
+      ansible.builtin.include_role:
+        name: service_scaffold
+      vars:
+        service_scaffold_def: "{{ portainer_service_def }}"   # vars/main.yml
 
     - name: "Portainer | API answers"
       ansible.builtin.uri:
@@ -101,24 +83,3 @@
             proto: tcp
             from: ["{{ platform_internal_cidr4 }}", "{{ platform_internal_cidr6 }}", "{{ platform_vpn_cidr }}"]
             comment: "Portainer via Traefik"
-    - name: "Portainer | Scaffold the platform concerns"
-      ansible.builtin.include_role:
-        name: service_scaffold
-      vars:
-        service_scaffold_def:
-          name: portainer
-          fqdn: "{{ portainer_fqdn }}"
-          backend_url: "http://{{ portainer_listen_ip }}:{{ portainer_http_port }}"
-          exposure: internal              # VPN / LAN only
-          forward_auth: false             # native OIDC below; Portainer authenticates people itself
-          mailbox: true                   # portainer@<domain> for notifications
-          sso_slug: "{{ portainer_oidc_slug }}"
-          teardown:
-            # Keeping the Vault paths is the platform rule, not a Portainer exception, so it
-            # is not declared here. What is worth recording is that nothing else survives:
-            # this holds console state only — environments, users, settings — and the
-            # platform can rebuild all of it from the role.
-            note: "console state only (environments, users, settings); the role rebuilds it"
-          vault_secrets:
-            - path: "{{ portainer_admin_vault_path }}"
-            - path: "{{ portainer_agent_vault_path }}"
