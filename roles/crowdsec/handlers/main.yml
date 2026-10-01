@@ -1,6 +1,8 @@
 ---
+# CrowdSec is a container: a restart re-reads the config and the hub items.
 - name: Restart crowdsec
-  ansible.builtin.systemd:
-    name: crowdsec
-    state: restarted
-    enabled: true
+  community.docker.docker_container:
+    name: "{{ crowdsec_container }}"
+    state: started
+    restart: true
+  when: not ansible_check_mode

@@ -1,31 +1,68 @@
 ---
-# Make the LAPI central (listen on the LAN, not just loopback) + wire AppSec.
+# Everything the engine reads from /etc/crowdsec, written BEFORE the container starts, so
+# its first start already runs the platform's config. Every task registers: the container
+# restarts once when any of them changed (container.yml), never twice.
 
-- name: "config | LAPI listens on the LAN (not 127.0.0.1) so agents/bouncers reach it"
-  ansible.builtin.replace:
-    path: /etc/crowdsec/config.yaml
-    # default is `listen_uri: 127.0.0.1:8080`; only the LAPI uses that pair.
-    regexp: '(listen_uri:\s*)127\.0\.0\.1:8080'
-    replace: '\g<1>{{ crowdsec_lapi_listen_uri }}'
-  notify: Restart crowdsec
+- name: "config | Config, acquisition and parser directories"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ crowdsec_config_dir }}/acquis.d"
+    - "{{ crowdsec_config_dir }}/parsers/s01-parse"
+    - "{{ crowdsec_config_dir }}/parsers/s02-enrich"
+    - "{{ crowdsec_data_dir }}"
 
-# Documented onboarding path (CrowdSec multi-server guide): log processors
-# self-register with a shared token, restricted to our own ranges. Both `token`
-# and `allowed_ranges` are mandatory. A processor can push arbitrary alerts, so
-# the ranges are deliberately narrow — a compromised agent must not be able to
-# ban us out of our own platform.
-- name: "config | Enable LAPI auto-registration for log processors"
-  ansible.builtin.blockinfile:
-    path: /etc/crowdsec/config.yaml
-    marker: "    # {mark} ANSIBLE MANAGED auto_registration"
-    insertafter: '^\s+listen_uri:'
-    block: "{{ crowdsec_auto_registration_block }}"
+- name: "config | The platform's settings (config.yaml.local, merged over the vendor config.yaml)"
+  ansible.builtin.template:
+    src: config.yaml.local.j2
+    dest: "{{ crowdsec_config_dir }}/config.yaml.local"
+    owner: root
+    group: root
+    mode: "0600"   # the agents' registration token
   no_log: true
-  notify: Restart crowdsec
+  register: crowdsec_cfg_local
+
+# The native install wrote the registration block into the vendor config.yaml; the token
+# lives in config.yaml.local now, ONE file. Gone before the entrypoint first rewrites it.
+# A first install has no config.yaml yet: the entrypoint seeds it on the first start.
+- name: "config | The vendor config.yaml"
+  ansible.builtin.stat:
+    path: "{{ crowdsec_config_dir }}/config.yaml"
+  register: crowdsec_vendor_config
+
+- name: "config | The registration block in config.yaml (retired)"
+  ansible.builtin.blockinfile:
+    path: "{{ crowdsec_config_dir }}/config.yaml"
+    marker: "{{ crowdsec_retired_block_marker }}"
+    state: absent
+  when: crowdsec_vendor_config.stat.exists
+  register: crowdsec_cfg_block
+
+- name: "config | The host's own logs (acquis.d/<name>.yaml)"
+  ansible.builtin.copy:
+    dest: "{{ crowdsec_config_dir }}/acquis.d/{{ item.name }}.yaml"
+    mode: "0644"
+    content: |
+      # Managed by Ansible role `crowdsec` (crowdsec_host_acquisitions).
+      {{ item.config | to_nice_yaml(indent=2) }}
+  loop: "{{ crowdsec_host_acquisitions }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: crowdsec_cfg_host
+
+# Two acquisitions of one source double every event (and halve every scenario's threshold).
+- name: "config | The native package's detected acquisitions (retired, replaced above)"
+  ansible.builtin.file:
+    path: "{{ crowdsec_config_dir }}/acquis.d/{{ item }}"
+    state: absent
+  loop: "{{ crowdsec_retired_acquisitions }}"
+  register: crowdsec_cfg_setup
 
 - name: "config | AppSec acquisition (the WAF the Traefik bouncer feeds)"
   ansible.builtin.copy:
-    dest: /etc/crowdsec/acquis.d/appsec.yaml
+    dest: "{{ crowdsec_config_dir }}/acquis.d/appsec.yaml"
     mode: "0644"
     content: |
       # Managed by Ansible role `crowdsec`. AppSec (WAF) component — the Traefik
@@ -36,18 +73,18 @@
       source: appsec
       listen_addr: 0.0.0.0:{{ crowdsec_appsec_port }}
   when: crowdsec_appsec_enabled | bool
-  notify: Restart crowdsec
+  register: crowdsec_cfg_appsec
 
 - name: "config | Remove AppSec acquisition when disabled (no crash on missing config)"
   ansible.builtin.file:
-    path: /etc/crowdsec/acquis.d/appsec.yaml
+    path: "{{ crowdsec_config_dir }}/acquis.d/appsec.yaml"
     state: absent
   when: not (crowdsec_appsec_enabled | bool)
-  notify: Restart crowdsec
+  register: crowdsec_cfg_appsec_off
 
 - name: "config | Syslog feed acquisitions (services/0010 §1 — the firewalls' Suricata EVE)"
   ansible.builtin.copy:
-    dest: "/etc/crowdsec/acquis.d/syslog-{{ item.name }}.yaml"
+    dest: "{{ crowdsec_config_dir }}/acquis.d/syslog-{{ item.name }}.yaml"
     mode: "0644"
     content: |
       # Managed by Ansible role `crowdsec`. Syslog datasource fed by the OPNsense firewalls
@@ -61,34 +98,40 @@
   loop: "{{ crowdsec_syslog_feeds | default([]) }}"
   loop_control:
     label: "syslog-{{ item.name }} :{{ item.port }}"
-  notify: Restart crowdsec
+  register: crowdsec_cfg_syslog
 
 - name: "config | Bridge the OPNsense Suricata EVE syslog program onto the hub parser's name"
   ansible.builtin.template:
     src: parser-opnsense-suricata-eve.yaml.j2
-    dest: /etc/crowdsec/parsers/s01-parse/00-opnsense-suricata-eve.yaml
+    dest: "{{ crowdsec_config_dir }}/parsers/s01-parse/00-opnsense-suricata-eve.yaml"
     mode: "0644"
   when: crowdsec_suricata_syslog_program | default('') | length > 0
-  notify: Restart crowdsec
+  register: crowdsec_cfg_bridge
 
 - name: "config | Remove the Suricata program bridge (disabled, or the retired s00-raw location)"
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
+  vars:
+    _bridge: "{{ crowdsec_config_dir }}/parsers/s01-parse/00-opnsense-suricata-eve.yaml"
   loop:
-    - /etc/crowdsec/parsers/s00-raw/zz-opnsense-suricata-eve.yaml   # retired: syslog-logs leaves s00-raw
-    - "{{ '/etc/crowdsec/parsers/s01-parse/00-opnsense-suricata-eve.yaml' if not (crowdsec_suricata_syslog_program | default('') | length > 0) else omit }}"
-  notify: Restart crowdsec
+    - "{{ crowdsec_config_dir }}/parsers/s00-raw/zz-opnsense-suricata-eve.yaml"   # retired: syslog-logs leaves s00-raw
+    - "{{ _bridge if not (crowdsec_suricata_syslog_program | default('') | length > 0) else omit }}"
+  register: crowdsec_cfg_bridge_off
 
-- name: "config | Apply LAPI/AppSec config now"
-  ansible.builtin.meta: flush_handlers
+- name: "config | Whitelist the platform's own address space (parser, s02-enrich)"
+  ansible.builtin.template:
+    src: ../../crowdsec_agent/templates/whitelist-platform.yaml.j2   # one template for every agent
+    dest: "{{ crowdsec_config_dir }}/parsers/s02-enrich/00-platform-whitelist.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  when: crowdsec_whitelist_cidrs | length > 0
+  register: crowdsec_cfg_whitelist
 
-- name: "config | Wait for the LAPI to answer on the LAN"
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ crowdsec_lapi_port }}/health"
-    status_code: [200, 401, 403]
-  register: crowdsec_lapi_health
-  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
-  retries: 12
-  delay: 5
-  until: crowdsec_lapi_health.status in [200, 401, 403]
+- name: "config | Did anything the engine reads change?"
+  ansible.builtin.set_fact:
+    crowdsec_config_changed: >-
+      {{ [crowdsec_cfg_local, crowdsec_cfg_block, crowdsec_cfg_host, crowdsec_cfg_setup,
+          crowdsec_cfg_appsec, crowdsec_cfg_appsec_off, crowdsec_cfg_syslog, crowdsec_cfg_bridge,
+          crowdsec_cfg_bridge_off, crowdsec_cfg_whitelist] | select('changed') | list | length > 0 }}

@@ -3,17 +3,37 @@
 # Role: crowdsec — defaults (central LAPI / detection engine on lxc-crowdsec-01)
 # Decision A (services/0006): this host is the platform's central CrowdSec LAPI.
 # Every other host (LXC/VM/Windows) runs an AGENT that ships events here; the
-# OPNsense firewall bouncer (+ a Traefik bouncer later) enforces the decisions.
-# Native crowdsec daemon (apt, NOT Docker).
+# OPNsense firewall bouncer and the Traefik bouncer enforce the decisions.
+# Runs as a container: the vendor image on the host network (it binds :8080, the
+# syslog feeds and :6060 on the host, as the native daemon did).
 # ==============================================================================
 
-# --- Install (official CrowdSec apt repo — packagecloud) ----------------------
-crowdsec_apt_key_url: "https://packagecloud.io/crowdsec/crowdsec/gpgkey"
-crowdsec_apt_key_path: "/etc/apt/keyrings/crowdsec.asc"
-# packagecloud has no Debian 13 (trixie) repo yet → use the bookworm (Debian 12)
-# repo, whose CrowdSec Go binary runs fine on 13. Other codenames map 1:1.
-crowdsec_apt_codename: "{{ 'bookworm' if ansible_distribution_release == 'trixie' else ansible_distribution_release }}"
-crowdsec_apt_repo: "deb [signed-by={{ crowdsec_apt_key_path }}] https://packagecloud.io/crowdsec/crowdsec/debian/ {{ crowdsec_apt_codename }} main"
+# --- The container --------------------------------------------------------------
+# The -debian variant ships journalctl, which the sshd acquisition reads the host
+# journal with (the alpine variant has none).
+# renovate: datasource=docker depName=crowdsecurity/crowdsec
+crowdsec_version: "v1.8.1"
+crowdsec_image: "crowdsecurity/crowdsec:{{ crowdsec_version }}-debian"
+# Host path = path inside the container. Config: hub, acquisitions, local parsers, the
+# machine + CAPI credentials. Data: the sqlite (machines, bouncers, decisions), GeoIP.
+crowdsec_config_dir: /etc/crowdsec
+crowdsec_data_dir: /var/lib/crowdsec/data
+# Where the image ships the notification plugins (the native package used /usr/lib).
+crowdsec_plugin_dir: /usr/local/lib/crowdsec/plugins/
+# The vendor entrypoint (docker_start.sh) keeps owning config.yaml; the platform's
+# settings live in config.yaml.local, which CrowdSec merges over it. Its knobs: the local
+# machine keeps the name it is registered under, hub items change only when this role
+# says so, CAPI follows crowdsec_capi_enabled.
+crowdsec_container_env:
+  CUSTOM_HOSTNAME: "{{ inventory_hostname }}"
+  NO_HUB_UPGRADE: "true"
+  DISABLE_ONLINE_API: "{{ (not (crowdsec_capi_enabled | bool)) | string | lower }}"
+
+# --- The retired native install (removed once the container answers) ------------
+crowdsec_native_package: crowdsec
+crowdsec_native_retired_files:
+  - /etc/apt/sources.list.d/crowdsec.list
+  - /etc/apt/keyrings/crowdsec.asc
 
 # --- LAPI: listen on the SVC IP so remote agents/bouncers can reach it ---------
 # (default crowdsec listens 127.0.0.1:8080 = local only — that's what made .196
@@ -66,13 +86,15 @@ crowdsec_suricata_syslog_program: "suricata"
 # so a `cscli parsers list` reads like the rest of the estate instead of introducing a new word.
 crowdsec_local_namespace: "{{ platform_org }}"
 
-# --- Bouncers that pull decisions from this LAPI (API keys generated here) -----
-# The OPNsense firewall bouncer is the minimum enforcer. Add the Traefik bouncer
-# in the Traefik phase. Each entry → `cscli bouncers add` → key saved to Vault
-# (consumed by the OPNsense crowdsec/general MVC config + Traefik).
+# --- Bouncers that pull decisions from this LAPI ----------------------------------
+# Each entry: its key in Vault (get-or-create), registered on the LAPI under that key.
+# Vault first, so a rebuilt LAPI takes back the keys the bouncers already hold
+# (consumed by the OPNsense crowdsec/general MVC config + the Traefik plugin).
 crowdsec_bouncers:
   - name: "opnsense-firewall"
     vault_path: "{{ platform_env }}/crowdsec/bouncer-opnsense"
+  - name: "traefik"
+    vault_path: "{{ platform_env }}/crowdsec/bouncer-traefik"
 
 # --- Agent auto-enrollment token (so every LXC/VM/Windows agent can register to
 #     this LAPI non-interactively in the agent phase). Vault, get-or-create. ---
@@ -94,24 +116,31 @@ crowdsec_registration_allowed_ranges:
   # would widen who may register an agent, which is a security change, not a refactor.
   - "{{ platform_mgmt_zones.oob.cidr4 }}"   # OOB — Proxmox nodes and the firewall
 
-# Rendered as a single string so the YAML block scalar and the Jinja loop do not
-# fight over indentation. NOTE the 4-space indent: this block nests under
-# api.server alongside listen_uri — at any other level crowdsec fails to start
-# with "yaml: unmarshal errors".
-crowdsec_auto_registration_block: |
-  {{ '    auto_registration:' }}
-  {{ '      enabled: true' }}
-  {{ '      token: "' ~ crowdsec_registration_token ~ '"' }}
-  {{ '      allowed_ranges:' }}
-  {% for r in crowdsec_registration_allowed_ranges %}
-  {{ '      - ' ~ r }}
-  {% endfor %}
+# The block the native install wrote into config.yaml (retired: config.yaml.local holds it now).
+crowdsec_retired_block_marker: "    # {mark} ANSIBLE MANAGED auto_registration"
+
+# --- The host's own logs ---------------------------------------------------------
+# The LAPI host is its own log processor (the agent role skips the crowdsec group). One
+# acquis.d/<name>.yaml per entry; the container reads /var/log and the journal read-only.
+crowdsec_host_acquisitions:
+  - name: host-syslog
+    config:
+      source: file
+      filenames: [/var/log/syslog, /var/log/kern.log, /var/log/messages]
+      labels: {type: syslog}
+  - name: host-sshd
+    config:
+      source: journalctl
+      journalctl_filter: ["_SYSTEMD_UNIT=ssh.service"]
+      labels: {type: syslog}
+# What the native package's install-time detection (cscli setup) wrote — replaced above.
+crowdsec_retired_acquisitions: [setup.linux.yaml, setup.postfix.yaml, setup.sshd.yaml]
 
 # Parser whitelist for the platform's own address space (the LAPI host parses its own logs
 # too). ONE source: platform_trusted_cidrs in group_vars/all/deployment.yml.
 crowdsec_whitelist_cidrs: "{{ platform_trusted_cidrs | default([]) }}"
 
-# Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
+# Host firewall (ufw) rules for this role's listeners (host network) — applied by roles/host_firewall when ufw is active
 crowdsec_firewall_rules:
   - { port: "{{ crowdsec_lapi_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "CrowdSec LAPI (agents, bouncers)" }
   - { port: "{{ crowdsec_appsec_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "CrowdSec AppSec (Traefik)" }

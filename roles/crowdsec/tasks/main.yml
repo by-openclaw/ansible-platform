@@ -1,33 +1,38 @@
 ---
 # ==============================================================================
-# Role: crowdsec — dispatcher (central LAPI / engine)
-#   install (apt repo + crowdsec) -> LAPI listen config -> collections
-#   -> AppSec acquis -> bouncer keys -> agent registration token -> service
+# Role: crowdsec — dispatcher (central LAPI / engine, a container)
+#   registration token -> config (before the start) -> container -> collections
+#   -> bouncer keys -> host firewall -> retire the native install
 # Idempotent. The per-host AGENT rollout is a separate role (crowdsec_agent).
 # ==============================================================================
 
-- name: Install CrowdSec (official apt repo)
-  ansible.builtin.import_tasks: install.yml
-  tags: [crowdsec, install]
+- name: Agent registration token (Vault) — config.yaml.local renders it
+  ansible.builtin.import_tasks: token.yml
+  tags: [crowdsec, config, secrets]
+
+- name: Configure the engine (config.yaml.local, acquisitions, local parsers)
+  ansible.builtin.import_tasks: config.yml
+  tags: [crowdsec, config]
+
+- name: Run the LAPI as a container
+  ansible.builtin.import_tasks: container.yml
+  tags: [crowdsec, container]
 
 - name: Install detection collections (parsers + scenarios)
   ansible.builtin.import_tasks: collections.yml
   tags: [crowdsec, collections]
 
-- name: Agent registration token (Vault) — config.yml renders it
-  ansible.builtin.import_tasks: token.yml
-  tags: [crowdsec, config, secrets]
-- name: Configure the central LAPI (listen on the LAN)
-  ansible.builtin.import_tasks: config.yml
-  tags: [crowdsec, config]
-
-- name: Generate bouncer API keys + agent registration token
+- name: Bouncer keys (Vault) registered on the LAPI
   ansible.builtin.import_tasks: secrets.yml
   tags: [crowdsec, secrets]
 
-- name: "CrowdSec | Host firewall rules for the native listeners (when ufw is active)"
+- name: "CrowdSec | Host firewall rules for the listeners (when ufw is active)"
   ansible.builtin.include_role:
     name: host_firewall
   vars:
     host_firewall_rules: "{{ crowdsec_firewall_rules }}"
   tags: [crowdsec, firewall]
+
+- name: Retire the native install
+  ansible.builtin.import_tasks: retire.yml
+  tags: [crowdsec, retire]

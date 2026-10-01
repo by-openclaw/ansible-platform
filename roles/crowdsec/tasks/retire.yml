@@ -1,0 +1,15 @@
+---
+# Only once the container answers: the native package goes. A plain remove (not purge):
+# the package's purge would delete /etc/crowdsec and /var/lib/crowdsec, which the
+# container now runs on. Its prerm only stops + disables the (already stopped) unit.
+- name: "retire | The native CrowdSec package"
+  ansible.builtin.apt:
+    name: "{{ crowdsec_native_package }}"
+    state: absent
+    purge: false
+
+- name: "retire | Its apt source and signing key"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ crowdsec_native_retired_files }}"
