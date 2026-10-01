@@ -92,10 +92,16 @@ traefik_crowdsec_plugin_url: "https://github.com/maxlerebourg/crowdsec-bouncer-t
 traefik_crowdsec_plugin_sha256: "a50cdfe37d67c48be571417a26d8c5a2b28e4b91e5b1ed3b1ea2bcb0e6b4aa38"  # pragma: allowlist secret — release archive checksum, not a secret
 traefik_plugins_dir: "{{ traefik_conf_dir }}/plugins-local"
 traefik_crowdsec_lapi_scheme: "http"
-traefik_crowdsec_lapi_host: "{{ hostvars[groups['crowdsec'] | first].ansible_host }}:8080"        # central LAPI (the crowdsec group's host)
+traefik_crowdsec_lapi_host: "{{ crowdsec_lapi_host }}:{{ crowdsec_lapi_port }}"   # the central LAPI (group_vars/all/crowdsec.yml)
 traefik_crowdsec_mode: "stream"                       # cache decisions locally; resilient
+# stream mode polls the LAPI every updateIntervalSeconds (60). The plugin's default
+# updateMaxFailure is 0: ONE missed poll blocks every request with 403 until the next good
+# one — a LAPI restart (a config change, an upgrade) took the whole edge down with it. With 3
+# the cached decisions keep applying for up to 3 minutes of LAPI absence; longer, and the
+# gate closes (fail closed, by design).
+traefik_crowdsec_update_max_failure: 3
 traefik_crowdsec_keyfile: "/etc/traefik/crowdsec-lapi.key"
-traefik_crowdsec_vault_path: "{{ platform_env }}/crowdsec/bouncer-traefik"   # api_key for the Traefik bouncer
+traefik_crowdsec_vault_path: "{{ crowdsec_bouncer_vault_paths.traefik }}"   # api_key for the Traefik bouncer
 traefik_tls_min_version: "VersionTLS12"   # min TLS 1.2 on every service (SEC/TLS baseline)
 
 # Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active

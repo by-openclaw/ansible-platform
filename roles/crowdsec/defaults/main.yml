@@ -39,8 +39,8 @@ crowdsec_native_retired_files:
 crowdsec_lapi_listen_ip: "0.0.0.0"
 crowdsec_lapi_port: 8080
 crowdsec_lapi_listen_uri: "{{ crowdsec_lapi_listen_ip }}:{{ crowdsec_lapi_port }}"
-# The SVC IP agents + bouncers actually connect to (saved into their secrets).
-crowdsec_lapi_host: "{{ hostvars[groups['crowdsec'] | first].ansible_host }}"
+# The address agents + bouncers connect to: crowdsec_lapi_host / crowdsec_lapi_port
+# (group_vars/all/crowdsec.yml), the one definition every CrowdSec role reads.
 # AppSec (WAF) component — the in-band rules the Traefik reverse proxy feeds.
 # Deferred to the Traefik phase (no point running the AppSec source until a
 # Traefik CrowdSec bouncer forwards requests to it). Enable there.
@@ -65,6 +65,10 @@ crowdsec_collections:
 crowdsec_appsec_collections:
   - crowdsecurity/appsec-virtual-patching
   - crowdsecurity/appsec-generic-rules
+# Collections that were installed by the package's install-time detection and that nothing
+# here feeds (postfix logs to the journal on this host, no acquisition reads it): removed.
+crowdsec_collections_retired:
+  - crowdsecurity/postfix
 
 # --- Syslog feeds this engine listens to (acquis.d/syslog-<name>.yaml) ---------------------------
 # The OPNsense firewalls ship Suricata EVE (and everything else) as RFC5424/UDP syslog to this
@@ -93,15 +97,12 @@ crowdsec_local_namespace: "{{ platform_org }}"
 # Each entry: its key in Vault (get-or-create), registered on the LAPI under that key.
 # Vault first, so a rebuilt LAPI takes back the keys the bouncers already hold
 # (consumed by the OPNsense crowdsec/general MVC config + the Traefik plugin).
-crowdsec_bouncers:
-  - name: "opnsense-firewall"
-    vault_path: "{{ platform_env }}/crowdsec/bouncer-opnsense"
-  - name: "traefik"
-    vault_path: "{{ platform_env }}/crowdsec/bouncer-traefik"
+crowdsec_bouncers: >-
+  {{ crowdsec_bouncer_vault_paths | dict2items(key_name='name', value_name='vault_path') }}
 
 # --- Agent auto-enrollment token (so every LXC/VM/Windows agent can register to
 #     this LAPI non-interactively in the agent phase). Vault, get-or-create. ---
-crowdsec_registration_token_vault_path: "{{ platform_env }}/crowdsec/registration-token"
+# crowdsec_registration_token_vault_path: group_vars/all/crowdsec.yml (the agents read the same).
 # Bound by tasks/token.yml, which the dispatcher runs BEFORE config.yml.
 crowdsec_registration_token: ""
 

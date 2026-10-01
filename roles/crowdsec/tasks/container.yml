@@ -20,6 +20,34 @@
     source: pull
   when: crowdsec_engine_ready | bool
 
+# The LAPI's Central API identity (cscli capi register) lives in a file the entrypoint
+# regenerates when absent — a rebuilt LAPI would register a NEW identity. Vault holds a copy:
+# an absent file is restored from it before the first start (a fresh platform has neither).
+- name: "container | The CAPI credentials file"
+  ansible.builtin.stat:
+    path: "{{ crowdsec_config_dir }}/online_api_credentials.yaml"
+  register: crowdsec_capi_file
+
+- name: "container | Their escrowed copy (Vault, optional)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ crowdsec_capi_vault_path }}"
+    vault_secret_optional: true
+  when: not crowdsec_capi_file.stat.exists
+
+- name: "container | Restore the CAPI credentials from Vault (DR)"
+  ansible.builtin.copy:
+    content: "{{ vault_secret_result.credentials }}"
+    dest: "{{ crowdsec_config_dir }}/online_api_credentials.yaml"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when:
+    - not crowdsec_capi_file.stat.exists
+    - (vault_secret_result | default({})).credentials | default('') | length > 0
+
 - name: "container | Services on this host"
   ansible.builtin.service_facts:
 
@@ -58,3 +86,31 @@
   delay: 5
   until: crowdsec_lapi_health.status in [200, 401, 403]
   when: crowdsec_engine_ready | bool
+
+# After the start the file exists (restored, kept, or freshly registered): Vault keeps a
+# copy, written only when it differs (gitlab's DR document follows the same rule).
+- name: "container | The CAPI credentials (the file the engine uses)"
+  ansible.builtin.slurp:
+    src: "{{ crowdsec_config_dir }}/online_api_credentials.yaml"
+  register: crowdsec_capi_raw
+  no_log: true
+  when: crowdsec_engine_ready | bool and not ansible_check_mode
+
+- name: "container | Their escrowed copy, as stored"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ crowdsec_capi_vault_path }}"
+    vault_secret_optional: true
+  when: crowdsec_capi_raw.content is defined
+
+- name: "container | Escrow the CAPI credentials (Vault) — only when they differ"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ crowdsec_capi_vault_path }}"
+    vault_secret_init: {credentials: "{{ crowdsec_capi_raw.content | b64decode }}"}
+    vault_secret_force_fields: {credentials: "{{ crowdsec_capi_raw.content | b64decode }}"}
+  when:
+    - crowdsec_capi_raw.content is defined
+    - (vault_secret_result | default({})).credentials | default('') != (crowdsec_capi_raw.content | b64decode)

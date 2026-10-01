@@ -40,13 +40,15 @@ http:
 
 {% if traefik_crowdsec_enabled | default(false) %}
     # CrowdSec bouncer — queries the central LAPI for the client IP's decision
-    # and returns 403 for banned IPs. stream mode caches the decision list, so a
-    # brief LAPI blip does not open the gate. Key read from a 0600 file, not inline.
+    # and returns 403 for banned IPs. stream mode caches the decision list; a LAPI
+    # absence of up to updateMaxFailure polls keeps serving from that cache, longer
+    # than that the gate closes (403). Key read from a 0600 file, not inline.
     crowdsec:
       plugin:
         bouncer:
           enabled: "true"
           crowdsecMode: {{ traefik_crowdsec_mode }}
+          updateMaxFailure: {{ traefik_crowdsec_update_max_failure }}
           crowdsecLapiScheme: {{ traefik_crowdsec_lapi_scheme }}
           crowdsecLapiHost: {{ traefik_crowdsec_lapi_host }}
           crowdsecLapiKeyFile: {{ traefik_crowdsec_keyfile }}
