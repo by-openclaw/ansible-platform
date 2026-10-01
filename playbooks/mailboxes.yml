@@ -23,6 +23,9 @@
   gather_facts: false
   vars:
     mailboxes_default_delegates: "{{ platform_service_mail_delegates }}"
+    # A service built on roles/service_scaffold (mailbox: true) provisions its own box with the
+    # same role and delegates — it is NOT listed here (two call sites, one of them drifts):
+    # grc, netbox, pgadmin, portainer, step-ca, vaultwarden, verdaccio, wazuh, jitsi.
     mailboxes_services:
       # Pre-existing boxes, CONVERGED 2026-09-01: Vault prod/mail/{svc} was
       # seeded with their EXISTING passwords first, so nothing is re-minted —
@@ -37,26 +40,18 @@
       - { svc: grafana }
       - { svc: harbor }
       - { svc: netbird, aliases: [] }     # vpn.by-research.be is the app; mail stays netbird@
-      - { svc: netbox }
       - { svc: nextcloud }
       - { svc: opnsense }   # FW alerts sender (Monit) — same flow as every svc
       - { svc: diagrams }
       - { svc: mailcow }     # the mail system's own notification identity
       - { svc: monitoring }
       - { svc: pbs }
-      - { svc: pgadmin }
       - { svc: postgres }
       - { svc: redis }
       - { svc: seaweedfs }
       - { svc: traefik }
       - { svc: vault }
       - { svc: warden }
-      - { svc: vaultwarden }
-      - { svc: verdaccio }
-      - { svc: step-ca }
-      - { svc: portainer }
-      - { svc: wazuh }
-      - { svc: grc }
   tasks:
     # loop_var, not `item`: include_role re-evaluates these vars inside the role, and
     # the role loops over aliases and delegates. Inside those, `item` is the alias or
