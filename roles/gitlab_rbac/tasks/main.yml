@@ -78,13 +78,20 @@
   no_log: true
   when: gitlab_rbac_key_people | length > 0
 
+- name: "RBAC | The container's git group (gitlab-rails runs as git)"
+  ansible.builtin.command:
+    argv: "{{ gitlab_exec + [gitlab_container, 'id', '-g', 'git'] }}"
+  register: gitlab_rbac_git_gid
+  changed_when: false
+  check_mode: false   # read-only
+
 - name: "RBAC | Render the desired-state JSON"
   ansible.builtin.template:
     src: desired.json.j2
     dest: "{{ gitlab_scripts_dir }}/rbac-desired.json"
     owner: root
-    group: root
-    mode: "0600"   # carries the integration webhooks (secrets); gitlab-rails runs as root
+    group: "{{ gitlab_rbac_git_gid.stdout | trim }}"
+    mode: "0640"   # carries the integration webhooks (secrets): root + the container's git only
 
 - name: "RBAC | Reconcile (admins, groups, memberships)"
   ansible.builtin.command:
