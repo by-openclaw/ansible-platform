@@ -11,11 +11,11 @@
 # the LAPI. The LAPI needs no collections at all.
 # ==============================================================================
 
-crowdsec_agent_lapi_host: "{{ hostvars[groups['crowdsec'] | first].ansible_host }}"
-crowdsec_agent_lapi_port: 8080
+crowdsec_agent_lapi_host: "{{ crowdsec_lapi_host }}"          # group_vars/all/crowdsec.yml — one definition
+crowdsec_agent_lapi_port: "{{ crowdsec_lapi_port }}"
 # Inventory host running the central LAPI (cscli lives here) — used to delegate
 # machine cleanup so a REBUILT agent can re-register without a name conflict.
-crowdsec_agent_lapi_inventory_host: "{{ groups['crowdsec'] | first }}"
+crowdsec_agent_lapi_inventory_host: "{{ crowdsec_lapi_inventory_host }}"
 crowdsec_agent_lapi_url: "http://{{ crowdsec_agent_lapi_host }}:{{ crowdsec_agent_lapi_port }}"
 
 # Apt source — same packagecloud repo the LAPI uses. Debian 13 has no trixie
@@ -37,7 +37,7 @@ crowdsec_agent_collections:
 crowdsec_agent_extra_collections: []
 
 # This host registers itself with the LAPI using the shared token.
-crowdsec_agent_registration_token_vault_path: "{{ platform_env }}/crowdsec/registration-token"   # the crowdsec role mints it
+crowdsec_agent_registration_token_vault_path: "{{ crowdsec_registration_token_vault_path }}"   # the crowdsec role mints it
 
 # The LAPI is remote, so the local API server is switched off — this host is a
 # log processor only, never its own LAPI.

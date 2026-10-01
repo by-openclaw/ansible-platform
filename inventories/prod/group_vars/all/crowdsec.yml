@@ -4,3 +4,20 @@
 # service_decommission) runs this argv on that host — ONE definition of how to reach it.
 crowdsec_container: crowdsec
 crowdsec_cscli: [docker, exec, "{{ crowdsec_container }}", cscli]
+# The LAPI every agent and bouncer reaches: the crowdsec group's host, ONE definition
+# (roles/crowdsec, crowdsec_agent, crowdsec_fw_bouncer and traefik derived it each).
+crowdsec_lapi_inventory_host: "{{ groups['crowdsec'] | first }}"
+crowdsec_lapi_host: "{{ hostvars[crowdsec_lapi_inventory_host].ansible_host }}"
+crowdsec_lapi_port: 8080
+crowdsec_lapi_url: "http://{{ crowdsec_lapi_host }}:{{ crowdsec_lapi_port }}"
+# Where the LAPI keeps each bouncer's key (get-or-create, roles/crowdsec) and where that
+# bouncer reads it (roles/crowdsec_fw_bouncer, roles/traefik): the same path, written once.
+crowdsec_bouncer_vault_paths:
+  opnsense-firewall: "{{ platform_env }}/crowdsec/bouncer-opnsense"
+  traefik: "{{ platform_env }}/crowdsec/bouncer-traefik"
+# The shared token every log processor registers with (minted by roles/crowdsec, read by
+# roles/crowdsec_agent).
+crowdsec_registration_token_vault_path: "{{ platform_env }}/crowdsec/registration-token"
+# The LAPI's Central API credentials (cscli capi register), escrowed for DR: a rebuilt LAPI
+# takes back its CAPI identity instead of registering a new one.
+crowdsec_capi_vault_path: "{{ platform_env }}/crowdsec/capi"

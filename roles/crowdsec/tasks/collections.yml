@@ -11,10 +11,25 @@
 - name: "collections | Install collections (idempotent)"
   ansible.builtin.command:
     argv: "{{ crowdsec_cscli + ['collections', 'install', item] }}"
-  loop: "{{ crowdsec_collections }}"
+  loop: "{{ crowdsec_collections + (crowdsec_appsec_collections if crowdsec_appsec_enabled | bool else []) }}"
   register: crowdsec_coll
   changed_when: >-
     'already' not in (crowdsec_coll.stdout | default('') | lower)
     and 'nothing to do' not in (crowdsec_coll.stdout | default('') | lower)
     and 'nothing to install' not in (crowdsec_coll.stdout | default('') | lower)
+  notify: Restart crowdsec
+
+- name: "collections | Collections the engine has"
+  ansible.builtin.command:
+    argv: "{{ crowdsec_cscli + ['collections', 'list', '-o', 'json'] }}"
+  register: crowdsec_coll_have
+  changed_when: false
+  check_mode: false   # read-only probe (the removal below reads it)
+
+- name: "collections | Retired collections (removed, nothing here feeds them)"
+  ansible.builtin.command:
+    argv: "{{ crowdsec_cscli + ['collections', 'remove', item, '--force'] }}"
+  loop: "{{ crowdsec_collections_retired }}"
+  when: item in ((crowdsec_coll_have.stdout | default('{}')) | from_json).collections | default([]) | map(attribute='name') | list
+  changed_when: true
   notify: Restart crowdsec
