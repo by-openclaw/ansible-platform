@@ -1,6 +1,22 @@
 ---
-# Prometheus — metrics TSDB + scraper on lxc-monitoring-01. Debian package
-# (systemd), config in /etc/prometheus, ARGS in /etc/default/prometheus.
+# Prometheus — metrics TSDB + scraper on lxc-monitoring-01. A container (the pinned
+# official image, host network, loopback listen), config in /etc/prometheus, the TSDB in
+# /var/lib/prometheus/metrics2 — the Debian package's layout, kept.
+# renovate: datasource=docker depName=prom/prometheus
+prometheus_version: "v2.53.3"   # what the Debian package ran (2.53.3+ds1-2): no TSDB format change in the move
+prometheus_image: "prom/prometheus:{{ prometheus_version }}"
+prometheus_container: prometheus
+prometheus_config_dir: /etc/prometheus
+prometheus_data_dir: /var/lib/prometheus/metrics2
+# The account prometheus, alertmanager and blackbox run as (owns the TSDB; the configs are
+# readable by its group). This role creates it; the other two read it.
+prometheus_account: prometheus
+# The retired native install (removed once the container answers; never purged — the
+# package's purge deletes the TSDB).
+prometheus_native:
+  units: [prometheus]
+  packages: [prometheus]
+  files: [/etc/default/prometheus]
 prometheus_port: 9090
 # Local TSDB kept small (metrics TSDB must be local — POSIX/locking, not S3/NFS).
 # Long-term/S3 metrics = a future Thanos/Mimir sidecar (remote-write). 15d is plenty

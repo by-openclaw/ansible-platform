@@ -25,61 +25,95 @@
   no_log: true
   when: alertmanager_discord_enabled | bool
 
-- name: "Alertmanager | Install prometheus-alertmanager (Debian package)"
-  ansible.builtin.apt:
-    name: prometheus-alertmanager
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+- name: "Alertmanager | The account it runs as (roles/prometheus owns it)"
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ alertmanager_account }}"
+    fail_key: "{{ not ansible_check_mode }}"   # a fresh host's dry-run has not created it yet
+
+- name: "Alertmanager | Data directory (silences, notification log)"
+  ansible.builtin.file:
+    path: "{{ alertmanager_data_dir }}"
+    state: directory
+    owner: "{{ alertmanager_account }}"
+    group: "{{ alertmanager_account }}"
+    mode: "0755"
 
 - name: "Alertmanager | Notification templates → {{ alertmanager_templates_path }}"
   ansible.builtin.copy:
     src: alertmanager.tmpl
     dest: "{{ alertmanager_templates_path }}"
     owner: root
-    group: prometheus
+    group: "{{ alertmanager_account }}"
     mode: "0640"
-  notify: Restart alertmanager
+  register: alertmanager_templates_file
 
-- name: "Alertmanager | Configuration ({{ alertmanager_config }}, secrets inside)"
+# amtool comes with the image now: the candidate file is checked in a throwaway container
+# (no network, as root so it can read the 0600 temp file; the templates it names mounted).
+- name: "Alertmanager | Configuration, secrets inside — {{ alertmanager_config }}"
   ansible.builtin.template:
     src: alertmanager.yml.j2
     dest: "{{ alertmanager_config }}"
     owner: root
-    group: prometheus
+    group: "{{ alertmanager_account }}"
     mode: "0640"
-    validate: "{{ omit if ansible_check_mode else 'amtool check-config %s' }}"   # amtool arrives with the package (absent under --check on a fresh host)
+    validate: >-
+      {{ omit if ansible_check_mode else
+         'docker run --rm --network none --user 0 -v ' ~ (alertmanager_config | dirname) ~ ':' ~ (alertmanager_config | dirname)
+         ~ ':ro -v %s:/check.yml:ro --entrypoint amtool ' ~ alertmanager_image ~ ' check-config /check.yml' }}
   no_log: true
-  notify: Restart alertmanager
+  register: alertmanager_config_file
 
-- name: "Alertmanager | Runtime args (loopback listen) — /etc/default/prometheus-alertmanager"
-  ansible.builtin.copy:
-    dest: /etc/default/prometheus-alertmanager
-    owner: root
-    group: root
-    mode: "0644"
-    content: |
-      # Managed by Ansible (role: alertmanager)
-      ARGS="--config.file={{ alertmanager_config }} --web.listen-address={{ alertmanager_listen }} --cluster.listen-address="
-  notify: Restart alertmanager
+- name: "Alertmanager | The native unit stops (retired; it holds {{ alertmanager_listen }})"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: native_stop
+  vars:
+    service_scaffold_native: "{{ alertmanager_native }}"
 
-- name: "Alertmanager | Enabled + running"
-  ansible.builtin.systemd_service:
-    name: prometheus-alertmanager
-    enabled: true
-    state: started
-  when: not ansible_check_mode
+- name: "Alertmanager | Its uid and gid"
+  ansible.builtin.set_fact:
+    alertmanager_account_entry: "{{ (ansible_facts.getent_passwd | default({}))[alertmanager_account] | default(['', '0', '0']) }}"
 
-- name: "Alertmanager | Flush handlers"
-  ansible.builtin.meta: flush_handlers
+- name: "Alertmanager | The container (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  when: not (ansible_check_mode and (docker_engine_install | default({})) is changed)   # a first-install dry-run has no engine
+  vars:
+    service_scaffold_def:
+      name: alertmanager
+      containers:
+        - name: "{{ alertmanager_container }}"
+          image: "{{ alertmanager_image }}"
+          network_mode: host
+          user: "{{ alertmanager_account_entry[1] }}:{{ alertmanager_account_entry[2] }}"
+          command:
+            - "--config.file={{ alertmanager_config }}"
+            - "--storage.path={{ alertmanager_data_dir }}"
+            - "--web.listen-address={{ alertmanager_listen }}"
+            - "--cluster.listen-address="   # a single instance: no gossip port
+          volumes:
+            # the config's directory, not the file: Ansible replaces files by rename (new inode)
+            - "{{ alertmanager_config | dirname }}:{{ alertmanager_config | dirname }}:ro"
+            - "{{ alertmanager_data_dir }}:{{ alertmanager_data_dir }}"
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"   # mail STARTTLS + the Discord webhook trust the host's store
+          restart: "{{ alertmanager_templates_file is changed or alertmanager_config_file is changed }}"
 
 - name: "Alertmanager | Ready (read-only)"
   ansible.builtin.uri:
     url: "http://{{ alertmanager_listen }}/-/ready"
     status_code: [200]
   check_mode: false
-  retries: 5
+  retries: 10
   delay: 3
   register: alertmanager_ready
   until: alertmanager_ready.status == 200
   when: not ansible_check_mode
+
+- name: "Alertmanager | The native install (retired)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: native_retire
+  vars:
+    service_scaffold_native: "{{ alertmanager_native }}"

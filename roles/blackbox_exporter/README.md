@@ -1,6 +1,6 @@
 # role: blackbox_exporter
 
-Synthetic probes for the platform, on `lxc-monitoring-01` next to Prometheus (Debian package `prometheus-blackbox-exporter`, loopback `127.0.0.1:9115`). Born from incident #424: the resolver was down 12 h and nothing said so.
+Synthetic probes for the platform, on `lxc-monitoring-01` next to Prometheus (a container: `prom/blackbox-exporter:<blackbox_exporter_version>`, host network, loopback `127.0.0.1:9115`, run as the prometheus account). Born from incident #424: the resolver was down 12 h and nothing said so.
 
 ## Contract map
 
@@ -10,7 +10,7 @@ Synthetic probes for the platform, on `lxc-monitoring-01` next to Prometheus (De
 | Targets | Declared on the **prometheus** role (`prometheus_blackbox_*`); HTTPS targets are read from the live Traefik host list at play time, so a new route is probed as soon as it is published. |
 | Exposure | loopback only; Prometheus scrapes `/probe`. No firewall or Traefik object. |
 | Alerts | `platform-probes` rules in the prometheus role (ResolverDown 1 m, ProbeFailed 2 m, certificate 14 d / 5 d). |
-| Version | Debian trixie package (0.26.x). |
+| Version | `blackbox_exporter_version` (the image tag; v0.26.0 = what the Debian package ran). |
 
 ## Run
 

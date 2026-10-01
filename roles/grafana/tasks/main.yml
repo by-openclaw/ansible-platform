@@ -15,8 +15,36 @@
   when: grafana_db_enabled | bool
   tags: [db]
 
-- name: "Grafana | Install grafana (APT repo)"
-  ansible.builtin.import_tasks: install.yml
+- name: "Grafana | Service account group"
+  ansible.builtin.group:
+    name: "{{ grafana_account }}"
+    system: true
+  tags: [install]
+
+- name: "Grafana | Service account (owns the data dir; the container runs as it)"
+  ansible.builtin.user:
+    name: "{{ grafana_account }}"
+    group: "{{ grafana_account }}"
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+  register: grafana_account_user
+  tags: [install]
+
+- name: "Grafana | Config, provisioning, data and log directories"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ grafana_account }}"
+    mode: "0755"
+  loop:
+    - {path: "{{ grafana_config_dir }}", owner: root}
+    - {path: "{{ grafana_config_dir }}/provisioning/datasources", owner: root}
+    - {path: "{{ grafana_data_dir }}", owner: "{{ grafana_account }}"}
+    - {path: "{{ grafana_log_dir }}", owner: "{{ grafana_account }}"}
+  loop_control:
+    label: "{{ item.path }}"
   tags: [install]
 
 - name: "Grafana | Secrets (admin password + OIDC client)"
@@ -26,30 +54,70 @@
 - name: "Grafana | Provisioned datasources (Prometheus + optional Loki)"
   ansible.builtin.template:
     src: datasources.yaml.j2
-    dest: /etc/grafana/provisioning/datasources/datasources.yaml
+    dest: "{{ grafana_config_dir }}/provisioning/datasources/datasources.yaml"
     owner: root
-    group: grafana
+    group: "{{ grafana_account }}"
     mode: "0640"
-  notify: Restart grafana
+  register: grafana_datasources_file
   tags: [config]
 
 - name: "Grafana | grafana.ini (server + security + OIDC)"
   ansible.builtin.template:
     src: grafana.ini.j2
-    dest: /etc/grafana/grafana.ini
+    dest: "{{ grafana_config_dir }}/grafana.ini"
     owner: root
-    group: grafana
+    group: "{{ grafana_account }}"
     mode: "0640"
   no_log: true   # contains admin password + OIDC secret
-  notify: Restart grafana
+  register: grafana_ini_file
   tags: [config, sso]
 
-- name: "Grafana | Enabled + running"
-  ansible.builtin.systemd_service:
-    name: grafana-server
-    enabled: true
-    state: started
+- name: "Grafana | The native unit stops (retired; it holds :{{ grafana_port }})"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: native_stop
+  vars:
+    service_scaffold_native: "{{ grafana_native }}"
+  tags: [config]
+
+- name: "Grafana | The container (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  when: not (ansible_check_mode and (docker_engine_install | default({})) is changed)   # a first-install dry-run has no engine
+  vars:
+    service_scaffold_def:
+      name: grafana
+      containers:
+        - name: "{{ grafana_container }}"
+          image: "{{ grafana_image }}"
+          network_mode: host
+          user: "{{ grafana_account_user.uid | default(0) }}:{{ grafana_account_user.group | default(0) }}"
+          volumes:
+            - "{{ grafana_config_dir }}:{{ grafana_config_dir }}:ro"
+            - "{{ grafana_data_dir }}:{{ grafana_data_dir }}"
+            - "{{ grafana_log_dir }}:{{ grafana_log_dir }}"
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"   # verify-full to Postgres (grafana_pg_ca) + OIDC: the host's store
+          restart: "{{ grafana_datasources_file is changed or grafana_ini_file is changed }}"
+  tags: [config]
+
+- name: "Grafana | Healthy (read-only)"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/health"
+    status_code: [200]
+  register: grafana_health
+  until: grafana_health.status == 200
+  retries: 30
+  delay: 5
   when: not ansible_check_mode
+  tags: [config]
+
+- name: "Grafana | The native install (retired)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: native_retire
+  vars:
+    service_scaffold_native: "{{ grafana_native }}"
   tags: [config]
 
 - name: "Grafana | Publish via Traefik (internal / VPN-only)"

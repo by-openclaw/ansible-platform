@@ -1,9 +1,22 @@
 ---
 # ==============================================================================
 # Role: blackbox_exporter — synthetic probes (HTTPS, DNS, TCP/TLS, SMTP STARTTLS,
-# ICMP) on lxc-monitoring-01, Debian package, loopback only (Prometheus scrapes it).
-# Targets are declared on the prometheus role (data-driven); modules live here.
+# ICMP) on lxc-monitoring-01, a container (the pinned official image, host network),
+# loopback only (Prometheus scrapes it). Targets are declared on the prometheus role
+# (data-driven); modules live here.
 # ==============================================================================
+# renovate: datasource=docker depName=prom/blackbox-exporter
+blackbox_exporter_version: "v0.26.0"   # what the Debian package ran
+blackbox_exporter_image: "prom/blackbox-exporter:{{ blackbox_exporter_version }}"
+blackbox_exporter_container: blackbox-exporter
+# Runs as the prometheus account (roles/prometheus creates it; the config is group-readable).
+blackbox_exporter_account: prometheus
+blackbox_exporter_native:
+  units: [prometheus-blackbox-exporter]
+  packages: [prometheus-blackbox-exporter]
+  files:
+    - /etc/default/prometheus-blackbox-exporter
+    - /etc/systemd/system/prometheus-blackbox-exporter.service.d
 blackbox_exporter_listen: "127.0.0.1:9115"
 blackbox_exporter_config: "/etc/prometheus/blackbox.yml"
 blackbox_exporter_timeout: "10s"

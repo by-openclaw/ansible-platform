@@ -1,6 +1,6 @@
 # role: alertmanager
 
-Prometheus Alertmanager on `lxc-monitoring-01` (Debian package `prometheus-alertmanager`, loopback `127.0.0.1:9093`, clustering off). Delivers the prometheus role's alerts by mail through the platform relay and to the Discord channel `#alerts`.
+Prometheus Alertmanager on `lxc-monitoring-01` (a container: `prom/alertmanager:<alertmanager_version>`, host network, loopback `127.0.0.1:9093`, clustering off, run as the prometheus account; silences + notification log in `/var/lib/prometheus/alertmanager`). Delivers the prometheus role's alerts by mail through the platform relay and to the Discord channel `#alerts`.
 
 ## Contract map
 

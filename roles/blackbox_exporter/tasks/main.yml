@@ -1,22 +1,32 @@
 ---
-- name: "Blackbox | Install prometheus-blackbox-exporter (Debian package)"
-  ansible.builtin.apt:
-    name: prometheus-blackbox-exporter
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+# ==============================================================================
+# Blackbox exporter — a container (the pinned official image on the host network,
+# loopback listen) running as the prometheus account (roles/prometheus creates it).
+# Config first (validated with the image), then the container; a config change
+# restarts it once. The native package goes once the container answers.
+# ==============================================================================
+- name: "Blackbox | The account it runs as (roles/prometheus owns it)"
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ blackbox_exporter_account }}"
+    fail_key: "{{ not ansible_check_mode }}"   # a fresh host's dry-run has not created it yet
 
 - name: "Blackbox | Probe modules ({{ blackbox_exporter_config }})"
   ansible.builtin.template:
     src: blackbox.yml.j2
     dest: "{{ blackbox_exporter_config }}"
     owner: root
-    group: prometheus
+    group: "{{ blackbox_exporter_account }}"
     mode: "0640"
-    validate: "{{ omit if ansible_check_mode else '/usr/bin/prometheus-blackbox-exporter --config.check --config.file=%s' }}"
-  notify: Restart blackbox exporter
+    validate: >-
+      {{ omit if ansible_check_mode else
+         'docker run --rm --network none --user 0 -v %s:/check.yml:ro ' ~ blackbox_exporter_image
+         ~ ' --config.check --config.file=/check.yml' }}
+  register: blackbox_exporter_config_file
 
-- name: "Blackbox | Unprivileged ICMP: allow every group to open ping sockets (ambient CAP_NET_RAW is not honoured in an unprivileged LXC)"
+# The container shares the host's network namespace, so this host sysctl is what lets
+# its unprivileged ping sockets work (ambient CAP_NET_RAW is not honoured in the LXC).
+- name: "Blackbox | Unprivileged ICMP: allow every group to open ping sockets"
   ansible.posix.sysctl:
     name: net.ipv4.ping_group_range
     value: "0 65535"
@@ -24,46 +34,52 @@
     sysctl_set: true
     reload: true
 
-- name: "Blackbox | Retired capability drop-in absent (2026-09-19: had no effect in the LXC)"
-  ansible.builtin.file:
-    path: /etc/systemd/system/prometheus-blackbox-exporter.service.d/override.conf
-    state: absent
-  register: blackbox_exporter_dropin_gone
-  notify: Restart blackbox exporter
+- name: "Blackbox | The native unit stops (retired; it holds {{ blackbox_exporter_listen }})"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: native_stop
+  vars:
+    service_scaffold_native: "{{ blackbox_exporter_native }}"
 
-- name: "Blackbox | Reload systemd when the drop-in was removed"
-  ansible.builtin.systemd_service:
-    daemon_reload: true
-  when: blackbox_exporter_dropin_gone.changed and not ansible_check_mode
+- name: "Blackbox | Its uid and gid"
+  ansible.builtin.set_fact:
+    blackbox_exporter_account_entry: "{{ (ansible_facts.getent_passwd | default({}))[blackbox_exporter_account] | default(['', '0', '0']) }}"
 
-- name: "Blackbox | Runtime args (loopback listen) — /etc/default/prometheus-blackbox-exporter"
-  ansible.builtin.copy:
-    dest: /etc/default/prometheus-blackbox-exporter
-    owner: root
-    group: root
-    mode: "0644"
-    content: |
-      # Managed by Ansible (role: blackbox_exporter)
-      ARGS="--config.file={{ blackbox_exporter_config }} --web.listen-address={{ blackbox_exporter_listen }}"
-  notify: Restart blackbox exporter
-
-- name: "Blackbox | Enabled + running"
-  ansible.builtin.systemd_service:
-    name: prometheus-blackbox-exporter
-    enabled: true
-    state: started
-  when: not ansible_check_mode
-
-- name: "Blackbox | Flush handlers so the probe endpoint answers before Prometheus scrapes it"
-  ansible.builtin.meta: flush_handlers
+- name: "Blackbox | The container (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  when: not (ansible_check_mode and (docker_engine_install | default({})) is changed)   # a first-install dry-run has no engine
+  vars:
+    service_scaffold_def:
+      name: blackbox-exporter
+      containers:
+        - name: "{{ blackbox_exporter_container }}"
+          image: "{{ blackbox_exporter_image }}"
+          network_mode: host
+          user: "{{ blackbox_exporter_account_entry[1] }}:{{ blackbox_exporter_account_entry[2] }}"
+          command:
+            - "--config.file={{ blackbox_exporter_config }}"
+            - "--web.listen-address={{ blackbox_exporter_listen }}"
+          volumes:
+            # the config's directory, not the file: Ansible replaces files by rename (new inode)
+            - "{{ blackbox_exporter_config | dirname }}:{{ blackbox_exporter_config | dirname }}:ro"
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"   # HTTPS probes trust what the host trusts (incl. the platform CA)
+          restart: "{{ blackbox_exporter_config_file is changed }}"
 
 - name: "Blackbox | Exporter answers (read-only)"
   ansible.builtin.uri:
     url: "http://{{ blackbox_exporter_listen }}/-/healthy"
     status_code: [200]
-  check_mode: false
-  retries: 5
-  delay: 3
   register: blackbox_exporter_health
   until: blackbox_exporter_health.status == 200
+  retries: 10
+  delay: 3
   when: not ansible_check_mode
+
+- name: "Blackbox | The native install (retired)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: native_retire
+  vars:
+    service_scaffold_native: "{{ blackbox_exporter_native }}"

@@ -1,7 +1,19 @@
 ---
-# Loki — log aggregation on lxc-monitoring-01. Installed from the Grafana APT repo.
-# CHUNKS + INDEX live in SeaweedFS S3 (not local) — local disk is only the WAL +
-# tsdb cache/compactor scratch. Grafana wires it as the "Loki" datasource.
+# Loki — log aggregation on lxc-monitoring-01. A container (the pinned official image,
+# host network). CHUNKS + INDEX live in SeaweedFS S3 (not local) — local disk is only the
+# WAL + tsdb cache/compactor scratch. Grafana wires it as the "Loki" datasource.
+# renovate: datasource=docker depName=grafana/loki
+loki_version: "3.7.8"   # what the Grafana APT package ran
+loki_image: "grafana/loki:{{ loki_version }}"
+loki_container: loki
+loki_config_dir: /etc/loki
+# The account it runs as (owns the scratch dir; the config is readable by its group).
+loki_account: loki
+loki_account_group: nogroup
+loki_native:
+  units: [loki]
+  packages: [loki]
+  files: []
 loki_port: 3100
 loki_grpc_port: 9096
 loki_data_dir: "/var/lib/loki"          # local WAL/cache/compactor scratch ONLY
@@ -15,8 +27,6 @@ loki_s3_bucket: "loki-data"
 loki_s3_identity: "loki"
 loki_s3_vault_path: "{{ platform_env }}/loki/s3"   # minted by seaweedfs_bucket (Vault mode)
 
-loki_apt_repo: "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://apt.grafana.com stable main"
-loki_apt_key_url: "https://apt.grafana.com/gpg.key"
 
 # Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
 loki_firewall_rules:
