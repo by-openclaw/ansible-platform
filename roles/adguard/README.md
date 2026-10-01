@@ -10,18 +10,19 @@ Production-grade, idempotent Ansible reproduction of
 `infra-terraform-proxmox/modules/vm-opnsense/seed/setup-adguard-tls.sh`,
 parameterized for the **PROD** AdGuard VM `vm-adguard-01` (10.1.x / `fd01:`).
 
-It installs and configures **AdGuard Home** with a wildcard TLS certificate
-(DoT / DoH / DoQ), per-VLAN client policies, and an automatic daily renewal —
-no WebUI clicks.
+It runs **AdGuard Home** as a container (the pinned official image on the host
+network) with a wildcard TLS certificate (DoT / DoH / DoQ), per-VLAN client
+policies, and an automatic daily renewal — no WebUI clicks.
 
 ## What it does
 
 | Task file     | Purpose |
 |---------------|---------|
-| `install.yml` | Install AdGuard Home (tarball + `AdGuardHome -s install`). Idempotent via `stat`/`creates`. |
+| `host.yml`    | The host side: systemd-resolved's stub off (frees `:53`), the host's own `resolv.conf` pinned to the FW Unbound. |
+| `container.yml` | The container (`adguard_image`, host network, `adguard_home_dir` mounted at the image's conf + work paths, `/etc/lego` read-only); it must answer a query before the retired native unit + binary are removed. |
 | `secrets.yml` | Controller-side: read the Cloudflare token + ACME email; read-or-generate the admin bcrypt hash and persist the prod secret JSON back to the controller (`no_log`). |
-| `config.yml`  | Render the full `/opt/AdGuardHome/AdGuardHome.yaml` from a Jinja template and notify a restart. |
-| `cert.yml`    | The wildcard certificate via `roles/lego_cert` (first issuance + systemd renewal timer; AdGuardHome reloaded only when a renewal replaced the cert). |
+| `config.yml`  | Render the full `/opt/AdGuardHome/AdGuardHome.yaml` from a Jinja template before the container starts; a change restarts the container once. |
+| `cert.yml`    | The wildcard certificate via `roles/lego_cert` (first issuance + systemd renewal timer; the container restarted only when a renewal replaced the cert). |
 
 ## DNS chain context
 
@@ -37,7 +38,7 @@ AdGuard is the per-client policy layer; recursion/encryption happen on the FW.
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `adguard_ip` / `adguard_ip6` | `10.1.3.101` / `fd01:3::101` | VM addresses (used in internal rewrites). |
-| `adguard_domain` | `by-research.be` | **Prod** wildcard (NOT `test.by-research.be`). |
+| `adguard_domain` | `platform_domain` | **Prod** wildcard (NOT the test subdomain). |
 | `adguard_upstreams` | `["10.1.3.1"]` | See caveat below. |
 | `adguard_renew_days` | `30` | Renew when cert expires within N days. |
 | `adguard_cf_vault_path` | `{env}/cloudflare/{zone}` | Vault KV path of the zone secret (keys `api_token`, `acme_email`); read via the `vault_secret` role. |
