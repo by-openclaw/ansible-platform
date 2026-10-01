@@ -18,6 +18,13 @@
         group: root
         mode: "0755"
 
+    - name: "Docker | Is the Docker CE signing key there?"
+      ansible.builtin.stat:
+        path: "{{ docker_ce_keyring }}"
+      register: docker_ce_key_file
+
+    # Fetched once: get_url under --check HEADs the URL and reports "changed" for an identical
+    # file. A rotated upstream key is a deliberate change (remove the file), never a silent fetch.
     - name: "Docker | Docker CE signing key"
       ansible.builtin.get_url:
         url: "{{ docker_ce_key_url }}"
@@ -25,6 +32,7 @@
         owner: root
         group: root
         mode: "0644"
+      when: not docker_ce_key_file.stat.exists
 
     - name: "Docker | Docker CE apt repository"
       ansible.builtin.apt_repository:

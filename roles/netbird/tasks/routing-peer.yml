@@ -144,6 +144,13 @@
     - net.ipv4.ip_forward
     - net.ipv6.conf.all.forwarding
 
+- name: "routing-peer | Is the NetBird apt signing key there?"
+  ansible.builtin.stat:
+    path: "{{ netbird_client_keyring }}"
+  register: netbird_client_key_file
+
+# Fetched once: get_url under --check HEADs the URL and reports "changed" for an identical
+# file. A rotated upstream key is a deliberate change (remove the file), never a silent fetch.
 - name: "routing-peer | NetBird apt signing key"
   ansible.builtin.get_url:
     url: "{{ netbird_client_key_url }}"
@@ -151,6 +158,7 @@
     owner: root
     group: root
     mode: "0644"
+  when: not netbird_client_key_file.stat.exists
 
 # install.sh wrote the same source with its own keyring. apt refuses one source with
 # two Signed-By values ("Conflicting values set for option Signed-By"), so the old line
