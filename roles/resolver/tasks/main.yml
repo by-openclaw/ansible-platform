@@ -159,6 +159,14 @@
 # Per interface, not `all`: the kernel uses the interface's own accept_ra/forwarding, and
 # `all` only seeds defaults — reading `all` said "fix me" on a host whose interface was
 # deliberately set to ignore RAs.
+# Only where IPv6 is in use: a host without a v6 address has no router advertisements to
+# honour, and on the Proxmox node (v4-only OOB) the sysctl never stuck — it reported
+# "changed" on every run (2026-10-01).
+- name: "Resolver | Does this host use IPv6 at all"
+  ansible.builtin.set_fact:
+    resolver_has_ipv6: "{{ (ansible_default_ipv6 | default({})).address is defined }}"
+  tags: [resolver, ra]
+
 - name: "Resolver | Read the current RA settings on this host's interface"
   ansible.builtin.command: >-
     sysctl -n net.ipv6.conf.{{ resolver_interface }}.forwarding
@@ -167,7 +175,7 @@
   changed_when: false
   failed_when: false
   check_mode: false
-  when: resolver_fix_accept_ra | bool
+  when: resolver_fix_accept_ra | bool and resolver_has_ipv6 | bool
   tags: [resolver, ra]
 
 # Fix ONLY the silent case: accept_ra=1 means "accept while forwarding is off", so turning
@@ -178,7 +186,7 @@
     resolver_ra_silently_off: >-
       {{ (resolver_ra_state.stdout_lines | default(['0', '0']))[0] == '1'
          and (resolver_ra_state.stdout_lines | default(['0', '0']))[1] == '1' }}
-  when: resolver_fix_accept_ra | bool
+  when: resolver_fix_accept_ra | bool and resolver_has_ipv6 | bool
   tags: [resolver, ra]
 
 - name: "Resolver | Keep honouring router advertisements despite forwarding"
@@ -192,5 +200,6 @@
   loop: ["{{ resolver_interface }}"]
   when:
     - resolver_fix_accept_ra | bool
+    - resolver_has_ipv6 | bool
     - resolver_ra_silently_off | default(false) | bool
   tags: [resolver, ra]
