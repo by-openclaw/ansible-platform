@@ -1,22 +1,22 @@
 ---
 # ==============================================================================
-# Role: adguard — main task dispatcher
-# Translates setup-adguard-tls.sh into idempotent Ansible:
-#   install (AdGuardHome + lego) -> cert (Cloudflare DNS-01 wildcard)
-#   -> config (AdGuardHome.yaml) -> renew (cron + script)
+# Role: adguard — main task dispatcher (AdGuardHome, a container)
+#   static-only IPv6 -> the host side (:53 free, resolv.conf) -> Vault secrets
+#   -> wildcard certificate (roles/lego_cert) -> AdGuardHome.yaml (before the start)
+#   -> the container -> host firewall
 # ==============================================================================
 
 - name: Static-only IPv6 (disable RA/SLAAC)
   ansible.builtin.import_tasks: network_ra.yml
   tags: [adguard, network, ipv6]
 
-- name: Install AdGuardHome and lego
-  ansible.builtin.import_tasks: install.yml
-  tags: [adguard, install]
+- name: The host side of the resolver (:53 free, resolv.conf)
+  ansible.builtin.import_tasks: host.yml
+  tags: [adguard, host]
 
 - name: Resolve controller-side secrets
   ansible.builtin.import_tasks: secrets.yml
-  tags: [always]   # every tagged phase (cert, config, renew) needs the Vault facts
+  tags: [always]   # every tagged phase (cert, config) needs the Vault facts
 
 - name: Issue/renew wildcard TLS certificate
   ansible.builtin.import_tasks: cert.yml
@@ -26,7 +26,11 @@
   ansible.builtin.import_tasks: config.yml
   tags: [adguard, config]
 
-- name: "AdGuard | Host firewall rules for the native listeners (when ufw is active)"
+- name: Run AdGuardHome as a container
+  ansible.builtin.import_tasks: container.yml
+  tags: [adguard, container]
+
+- name: "AdGuard | Host firewall rules for the listeners (host network; when ufw is active)"
   ansible.builtin.include_role:
     name: host_firewall
   vars:

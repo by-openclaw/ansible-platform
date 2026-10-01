@@ -1,7 +1,7 @@
 ---
 # ==============================================================================
-# Role: adguard — render the full AdGuardHome.yaml deterministically.
-# Notifies a restart handler on change (no manual stop/start tasks).
+# Role: adguard — render the full AdGuardHome.yaml deterministically, BEFORE the
+# container starts; a change restarts the container once (container.yml).
 # ==============================================================================
 
 - name: "config | Ensure AdGuardHome home dir exists"
@@ -39,10 +39,4 @@
     group: root
     mode: "0640"
   when: adguard_managed_render.changed or not adguard_live_stat.stat.exists
-  notify: Restart AdGuardHome
-
-- name: "config | Ensure AdGuardHome is enabled and started"
-  ansible.builtin.systemd:
-    name: AdGuardHome
-    state: started
-    enabled: true
+  register: adguard_config_live

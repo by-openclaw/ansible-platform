@@ -1,0 +1,39 @@
+---
+# ==============================================================================
+# Role: adguard — the host side of the resolver: :53 free for AdGuard (the container
+# binds it on the host network) and the host's own resolv.conf. The container: container.yml.
+# ==============================================================================
+# ------------------------------------------------------------------------------
+# Free :53 for AdGuard. debian-12-cloud runs systemd-resolved with a stub
+# listener on 127.0.0.53:53; AdGuard binds 0.0.0.0:53 and would fail EADDRINUSE.
+# Disable the stub, then pin a static resolv.conf to the FW Unbound (SVC gateway)
+# so the host keeps working DNS once the stub is gone. The pin is declared state (idempotent
+# copy), not a one-off tied to the stub change.
+# ------------------------------------------------------------------------------
+- name: "host | Disable systemd-resolved stub listener (frees :53)"
+  ansible.builtin.copy:
+    dest: /etc/systemd/resolved.conf.d/99-adguard.conf
+    content: |
+      [Resolve]
+      DNSStubListener=no
+    owner: root
+    group: root
+    mode: "0644"
+  register: adguard_resolved_stub
+  notify: Restart systemd-resolved
+
+# The stub must be gone before AdGuard binds :53 — flush the handler now, not at the play's end.
+- name: "host | Apply the resolver change before AdGuard binds :53"
+  ansible.builtin.meta: flush_handlers
+
+- name: "host | Pin static resolv.conf to the FW Unbound (SVC gateway)"
+  ansible.builtin.copy:
+    dest: /etc/resolv.conf
+    content: |
+      # Managed by ansible (adguard role) — host resolves via the FW Unbound chain.
+      nameserver {{ adguard_upstreams[0] | regex_replace(':.*$', '') }}
+      options edns0 trust-ad
+    owner: root
+    group: root
+    mode: "0644"
+    follow: false

@@ -1,0 +1,66 @@
+---
+# ==============================================================================
+# AdGuardHome runs as a container: the pinned official image on the host network (it
+# binds :53, :853, :443 and the UI port on the host, as the binary did, and sees every
+# client's real address for the per-VLAN rules). The config and data dir is mounted at
+# the image's conf and work paths, the wildcard certificate read-only.
+# The switch-over keeps the gap to seconds: the image is pulled first, then the native
+# unit stops (it holds :53), then the container starts and must answer a query; the
+# native unit and binary are removed last.
+# ==============================================================================
+# A dry-run of the first engine install has no daemon to talk to: the Docker steps are
+# skipped then (roles/docker registered docker_engine_install earlier in the play).
+- name: "container | Is there an engine to talk to? (only a first-install dry-run has none)"
+  ansible.builtin.set_fact:
+    adguard_engine_ready: "{{ not (ansible_check_mode and (docker_engine_install | default({})) is changed) }}"
+
+- name: "container | Pull the pinned image first (the gap is the start, not the pull)"
+  community.docker.docker_image:
+    name: "{{ adguard_image }}"
+    source: pull
+  when: adguard_engine_ready | bool
+
+- name: "container | Services on this host"
+  ansible.builtin.service_facts:
+
+- name: "container | The native AdGuardHome stops (retired; it holds :53)"
+  ansible.builtin.systemd_service:
+    name: AdGuardHome
+    state: stopped
+    enabled: false
+  when: "'AdGuardHome.service' in ansible_facts.services"
+
+- name: "container | AdGuardHome (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  when: adguard_engine_ready | bool
+  vars:
+    service_scaffold_def:
+      name: adguard
+      containers:
+        - name: "{{ adguard_container }}"
+          image: "{{ adguard_image }}"
+          network_mode: host
+          volumes:
+            - "{{ adguard_home_dir }}:/opt/adguardhome/conf"
+            - "{{ adguard_home_dir }}:/opt/adguardhome/work"
+            - "/etc/lego:/etc/lego:ro"   # the wildcard certificate (DoT/DoQ/DoH)
+          restart: "{{ adguard_config_live is changed }}"   # AdGuard reads its config at start
+
+- name: "container | AdGuard answers on :53"
+  ansible.builtin.command:
+    argv: [dig, +short, +time=2, +tries=10, "@127.0.0.1", "{{ adguard_domain }}", SOA]
+  register: adguard_answer
+  changed_when: false
+  failed_when: adguard_answer.rc != 0 or (adguard_answer.stdout | trim | length) == 0
+  when: not ansible_check_mode
+
+# Only once the container answers: the native install goes. Until then it stays on
+# disk, so a failed start can be rolled back by reverting this change.
+- name: "container | Its unit and binary (retired)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ adguard_native_retired_files }}"
+  notify: Reload systemd   # systemd forgets the retired unit
