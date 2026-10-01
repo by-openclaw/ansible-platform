@@ -287,6 +287,48 @@
     success_msg: "All GitLab services up."
   when: gitlab_engine_ready | bool
 
+# update-permissions re-owns the data, not the log files the package's accounts left: a
+# service that appends to one gets EACCES and flaps (mailroom → mail_room_json.log, the
+# switch-over on 2026-10-01). The container's reconfigure owns every log directory to its
+# service's account: a file owned by ANOTHER non-root account follows its directory.
+# Root-owned files (svlogd's current/rotations, nginx, reconfigure) are left alone, so a
+# re-run finds nothing to do.
+- name: "GitLab | Log directories and their owners"
+  ansible.builtin.find:
+    paths: /var/log/gitlab
+    file_type: directory
+    recurse: false
+  register: gitlab_log_dirs
+
+- name: "GitLab | Log files and their owners"
+  ansible.builtin.find:
+    paths: /var/log/gitlab
+    file_type: file
+    recurse: true
+    hidden: true
+  register: gitlab_log_files
+
+- name: "GitLab | Which directory belongs to whom"
+  ansible.builtin.set_fact:
+    gitlab_log_dir_owner: >-
+      {{ dict(gitlab_log_dirs.files | map(attribute='path')
+              | zip(gitlab_log_dirs.files | map(attribute='uid')
+                    | zip(gitlab_log_dirs.files | map(attribute='gid')))) }}
+
+- name: "GitLab | A log file the package's account left follows its directory's owner"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: "{{ gitlab_log_dir_owner[item.path | dirname][0] }}"
+    group: "{{ gitlab_log_dir_owner[item.path | dirname][1] }}"
+  loop: >-
+    {{ gitlab_log_files.files | rejectattr('uid', 'equalto', 0)
+       | selectattr('path', 'regex', '^/var/log/gitlab/[^/]+/[^/]+$') | list }}
+  loop_control:
+    label: "{{ item.path }}"
+  when:
+    - gitlab_log_dir_owner[item.path | dirname][0] != 0
+    - item.uid != gitlab_log_dir_owner[item.path | dirname][0]
+
 - name: "GitLab | The package install (retired)"
   ansible.builtin.include_role:
     name: service_scaffold
