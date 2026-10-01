@@ -29,10 +29,15 @@
         harbor_ci_robot: "{{ vault_secret_result }}"
       no_log: true
 
+    - name: "The pre-container staging path (retired)"
+      ansible.builtin.file:
+        path: /opt/harbor-ci-vars.rb
+        state: absent
+
     - name: "Stage the CI-variable reconciler on the GitLab host"
       ansible.builtin.copy:
         src: files/harbor_ci_vars.rb
-        dest: /opt/harbor-ci-vars.rb
+        dest: "{{ gitlab_scripts_dir }}/harbor-ci-vars.rb"   # mounted into the GitLab container
         owner: root
         group: root
         mode: "0644"
@@ -45,10 +50,7 @@
             - { key: "HARBOR_ROBOT_USER", value: "{{ harbor_ci_robot.username }}", masked: false, protected: false, raw: true }
             - { key: "HARBOR_ROBOT_TOKEN", value: "{{ harbor_ci_robot.token }}", masked: true, protected: false, raw: true }  # pragma: allowlist secret
       ansible.builtin.command:
-        argv:
-          - gitlab-rails
-          - runner
-          - /opt/harbor-ci-vars.rb
+        argv: "{{ gitlab_exec + ['-e', 'HARBOR_CI_DESIRED', gitlab_container, 'gitlab-rails', 'runner', gitlab_scripts_dir ~ '/harbor-ci-vars.rb'] }}"
       environment:
         HARBOR_CI_DESIRED: "{{ harbor_ci_desired | to_json }}"
       register: harbor_ci_vars_run

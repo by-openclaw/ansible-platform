@@ -38,28 +38,29 @@
             image: "19.4.0-ce.0"
             note: "minor 19.3 -> 19.4"
 
-        # `dpkg-query` is the truth for a package install (the UI banner lags).
+        # The running container's Rails VERSION is the truth (the UI banner lags); the rungs
+        # are image tags (X.Y.Z-ce.0).
         upgrade_path_current_cmd: >-
-          dpkg-query -W -f='${Version}' gitlab-ce
+          docker exec {{ gitlab_container }} cat /opt/gitlab/embedded/service/gitlab-rails/VERSION | sed 's/$/-ce.0/'
 
-        # Re-run the gitlab role with this rung's version so the upgrade takes the
-        # normal deploy path (apt pin + reconfigure) instead of a hand-rolled apt call.
+        # Re-run the gitlab role with this rung's version so the upgrade takes the normal
+        # deploy path (the image tag; the container's startup reconfigure runs the migrations).
         upgrade_path_role: gitlab
         upgrade_path_image_var: gitlab_version
 
         # reconfigure runs the migrations; this makes sure they finished and the
         # background migrations are not stuck before the next rung is applied.
         upgrade_path_migrate_cmd: >-
-          gitlab-ctl status >/dev/null &&
-          gitlab-rake db:migrate:status 2>/dev/null | grep -c '^\s*down' | grep -qx 0
+          docker exec {{ gitlab_container }} gitlab-ctl status >/dev/null &&
+          docker exec {{ gitlab_container }} gitlab-rake db:migrate:status 2>/dev/null | grep -c '^\s*down' | grep -qx 0
 
         # Health gate: every runit service up, the app answers, no failed migration.
         # The banner in the UI comes from a CACHED version check: after an upgrade the
         # cache still holds the pre-upgrade verdict (severity danger, critical flag),
         # so the console warns about a version that is no longer running. Drop it here.
         upgrade_path_verify_cmd: >-
-          gitlab-ctl status | grep -qv '^down:' &&
+          docker exec {{ gitlab_container }} gitlab-ctl status | grep -qv '^down:' &&
           curl -fsS -o /dev/null http://127.0.0.1:8080/-/readiness &&
-          gitlab-rails runner 'Rails.cache.delete("version_check")'
+          docker exec {{ gitlab_container }} gitlab-rails runner 'Rails.cache.delete("version_check")'
 
         upgrade_path_settle_seconds: 90

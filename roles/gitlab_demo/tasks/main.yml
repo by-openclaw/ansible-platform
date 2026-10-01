@@ -2,10 +2,16 @@
 # ==============================================================================
 # gitlab_demo | create the demo project + seed its files (idempotent).
 # ==============================================================================
+- name: "Demo | The pre-container staging paths (retired)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: [/opt/gitlab-demo, /opt/gitlab-demo-seed.rb]
+
 - name: "Demo | Stage the demo app files on the GitLab host"
   ansible.builtin.copy:
     src: demo/
-    dest: /opt/gitlab-demo/
+    dest: "{{ gitlab_scripts_dir }}/demo/"   # mounted into the GitLab container
     owner: root
     group: root
     mode: "0644"
@@ -14,20 +20,16 @@
 - name: "Demo | Stage the seeder"
   ansible.builtin.copy:
     src: seed.rb
-    dest: /opt/gitlab-demo-seed.rb
+    dest: "{{ gitlab_scripts_dir }}/demo-seed.rb"
     owner: root
     group: root
     mode: "0644"
 
 - name: "Demo | Create the project + commit files (triggers the pipeline)"
   ansible.builtin.command:
-    argv:
-      - gitlab-rails
-      - runner
-      - /opt/gitlab-demo-seed.rb
-      - /opt/gitlab-demo
-      - "{{ gitlab_demo_path }}"
-      - "{{ gitlab_demo_name }}"
+    argv: >-
+      {{ gitlab_exec + ['-e', 'PLATFORM_DOMAIN', gitlab_container, 'gitlab-rails', 'runner',
+         gitlab_scripts_dir ~ '/demo-seed.rb', gitlab_scripts_dir ~ '/demo', gitlab_demo_path, gitlab_demo_name] }}
   environment:
     PLATFORM_DOMAIN: "{{ platform_domain }}"
   register: gitlab_demo_run

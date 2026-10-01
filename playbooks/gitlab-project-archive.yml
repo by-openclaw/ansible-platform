@@ -19,16 +19,15 @@
   tasks:
     - name: "Archive | Mint a short-lived admin API token (revoked at the end)"
       ansible.builtin.command:
-        argv:
-          - gitlab-rails
-          - runner
-          - >-
-            u = User.find_by_username('root');
-            u.personal_access_tokens.where(name: 'ansible-archive-temp').find_each(&:revoke!);
-            t = u.personal_access_tokens.create!(
-              name: 'ansible-archive-temp', scopes: ['api'],
-              expires_at: 2.days.from_now);
-            puts t.token
+        argv: "{{ gitlab_exec + [gitlab_container, 'gitlab-rails', 'runner', gpa_rails_code] }}"
+      vars:
+        gpa_rails_code: >-
+          u = User.find_by_username('root');
+          u.personal_access_tokens.where(name: 'ansible-archive-temp').find_each(&:revoke!);
+          t = u.personal_access_tokens.create!(
+            name: 'ansible-archive-temp', scopes: ['api'],
+            expires_at: 2.days.from_now);
+          puts t.token
       register: gpa_tok
       changed_when: true
       no_log: true
@@ -88,29 +87,27 @@
       # and makes the re-import fail with "name has already been taken". DestroyService
       # via rails removes it synchronously, then we wait until it's truly gone.
       ansible.builtin.command:
-        argv:
-          - gitlab-rails
-          - runner
-          - >-
-            u = User.find_by_username('root');
-            p = Project.find_by_full_path('{{ gpa_namespace }}/{{ gpa_restore_path }}');
-            if p; Projects::DestroyService.new(p, u).execute;
-            60.times { break if Project.find_by_full_path('{{ gpa_namespace }}/{{ gpa_restore_path }}').nil?; sleep 2 }; end;
-            puts(Project.find_by_full_path('{{ gpa_namespace }}/{{ gpa_restore_path }}').nil? ? 'gone' : 'still-present')
+        argv: "{{ gitlab_exec + [gitlab_container, 'gitlab-rails', 'runner', gpa_rails_code] }}"
+      vars:
+        gpa_rails_code: >-
+          u = User.find_by_username('root');
+          p = Project.find_by_full_path('{{ gpa_namespace }}/{{ gpa_restore_path }}');
+          if p; Projects::DestroyService.new(p, u).execute;
+          60.times { break if Project.find_by_full_path('{{ gpa_namespace }}/{{ gpa_restore_path }}').nil?; sleep 2 }; end;
+          puts(Project.find_by_full_path('{{ gpa_namespace }}/{{ gpa_restore_path }}').nil? ? 'gone' : 'still-present')
       register: gpa_del
       changed_when: "'gone' in gpa_del.stdout"
       failed_when: "'still-present' in gpa_del.stdout"
 
     - name: "Restore | Ensure the gitlab_project import source is enabled (instance policy)"
       ansible.builtin.command:
-        argv:
-          - gitlab-rails
-          - runner
-          - >-
-            s = ApplicationSetting.current;
-            unless s.import_sources.to_a.include?('gitlab_project');
-            s.update!(import_sources: (s.import_sources.to_a + ['gitlab_project']).uniq); end;
-            puts 'import_source_ok'
+        argv: "{{ gitlab_exec + [gitlab_container, 'gitlab-rails', 'runner', gpa_rails_code] }}"
+      vars:
+        gpa_rails_code: >-
+          s = ApplicationSetting.current;
+          unless s.import_sources.to_a.include?('gitlab_project');
+          s.update!(import_sources: (s.import_sources.to_a + ['gitlab_project']).uniq); end;
+          puts 'import_source_ok'
       register: gpa_imp_src
       changed_when: "'updated' in gpa_imp_src.stdout"
 
@@ -165,11 +162,10 @@
 
     - name: "Cleanup | Revoke the temporary admin token"
       ansible.builtin.command:
-        argv:
-          - gitlab-rails
-          - runner
-          - >-
-            t = PersonalAccessToken.find_by(name: 'ansible-archive-temp');
-            t&.revoke!; puts 'revoked'
+        argv: "{{ gitlab_exec + [gitlab_container, 'gitlab-rails', 'runner', gpa_rails_code] }}"
+      vars:
+        gpa_rails_code: >-
+          t = PersonalAccessToken.find_by(name: 'ansible-archive-temp');
+          t&.revoke!; puts 'revoked'
       changed_when: true
       no_log: true

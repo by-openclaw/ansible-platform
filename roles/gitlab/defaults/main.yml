@@ -1,6 +1,7 @@
 ---
 # ==============================================================================
-# Role: gitlab — GitLab CE (official Omnibus, apt) on lxc-gitlab-01 (SVC).
+# Role: gitlab — GitLab CE (the official Omnibus image, a container on the host network)
+# on lxc-gitlab-01 (SVC).
 # Bundled Postgres/Redis/object-storage are DISABLED — GitLab consumes the shared
 # cluster services (separation of concerns), all wired from the controller secret
 # store. Fronted by Traefik (TLS termination); SSO via Authentik OIDC (mandatory).
@@ -31,10 +32,27 @@ gitlab_mail_vault_path: "{{ platform_env }}/mail/gitlab"        # mailbox concer
 gitlab_secrets_vault_path: "{{ platform_env }}/gitlab/secrets"      # GitLab's own secrets (written post-install)  # pragma: allowlist secret
 
 # --- Version pin (NEVER unpinned / :latest) -----------------------------------
-# Verify the exact available string before apply: `apt-cache madison gitlab-ce`.
+# The image tag. Move through playbooks/gitlab-upgrade.yml (one rung per minor).
 # renovate: datasource=docker depName=gitlab/gitlab-ce versioning=regex:^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)-ce\.(?<build>\d+)$
-gitlab_version: "19.4.0-ce.0"          # ladder target; move through playbooks/gitlab-upgrade.yml (19.3.2 security patch first)
-gitlab_apt_repo_url: "https://packages.gitlab.com/gitlab/gitlab-ce"
+gitlab_version: "19.4.0-ce.0"
+gitlab_image: "gitlab/gitlab-ce:{{ gitlab_version }}"
+# The image's own startup (init-container) knobs: no OpenSSH in the container (git over SSH is
+# not offered — the host's sshd admits only the admin groups), and the logs stay in
+# /var/log/gitlab files as the package had them (no `gitlab-ctl tail` into the journal).
+gitlab_container_env:
+  GITLAB_DISABLE_OPENSSH: "true"
+  GITLAB_SKIP_TAIL_LOGS: "true"
+gitlab_shm_size: "256m"                # Puma/Sidekiq metrics live in /dev/shm (the image's recommendation)
+# The retired native install (removed once the container is ready). /etc/gitlab,
+# /var/opt/gitlab and /var/log/gitlab are the container's — never part of this.
+gitlab_native:
+  units: [gitlab-runsvdir]
+  packages: [gitlab-ce]
+  files:
+    - /etc/apt/sources.list.d/gitlab_gitlab-ce.list
+    - /etc/apt/keyrings/gitlab-ce.asc
+    - /usr/lib/systemd/system/gitlab-runsvdir.service
+    - /opt/gitlab   # what the package's reconfigure left beside its files (sv, service, init, etc)
 
 # --- Identity / URLs ----------------------------------------------------------
 gitlab_external_url: "https://{{ platform_service_fqdns.gitlab }}"
@@ -119,7 +137,7 @@ gitlab_sidekiq_concurrency: 10
 # --- Backup (SeaweedFS gitlab-backups → Contabo offsite tier-3, pure Ansible) --
 gitlab_backup_enabled: true
 gitlab_backup_keep_seconds: 604800     # 7 days on S3 (GitLab prunes)
-gitlab_backup_cron: "30 2 * * *"       # nightly 02:30
+gitlab_backup_on_calendar: "*-*-* 02:30:00"   # nightly (roles/host_job timer)
 
 # Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
 gitlab_firewall_rules:

@@ -103,14 +103,15 @@ gitlab_rbac_projects:
     description: "Pipeline smoke test: the runner pulls through npm.<domain> (Verdaccio) with the instance CI credentials."
 
 # --- Project files: pushed to the default branch when content differs -------
-# src = path on the GitLab host (staged by this role from roles/gitlab/files/ci-templates).
-gitlab_rbac_ci_templates_dir: /opt/gitlab-ci-templates
+# src = path the reconciler reads INSIDE the GitLab container: staged by this role (from
+# roles/gitlab/files/ci-templates) into the scripts directory the container mounts.
+gitlab_rbac_ci_templates_dir: "{{ gitlab_scripts_dir }}/ci-templates"
 gitlab_rbac_project_files:
   - project: platform/infra/ci-templates
     files:
-      - { path: pre-commit.gitlab-ci.yml, src: "/opt/gitlab-ci-templates/pre-commit.gitlab-ci.yml" }
-      - { path: security-scan.gitlab-ci.yml, src: "/opt/gitlab-ci-templates/security-scan.gitlab-ci.yml" }
-      - { path: npm.gitlab-ci.yml, src: "/opt/gitlab-ci-templates/npm.gitlab-ci.yml" }
+      - { path: pre-commit.gitlab-ci.yml, src: "{{ gitlab_rbac_ci_templates_dir }}/pre-commit.gitlab-ci.yml" }
+      - { path: security-scan.gitlab-ci.yml, src: "{{ gitlab_rbac_ci_templates_dir }}/security-scan.gitlab-ci.yml" }
+      - { path: npm.gitlab-ci.yml, src: "{{ gitlab_rbac_ci_templates_dir }}/npm.gitlab-ci.yml" }
   - project: platform/devops/npm-check
     files:
       - path: .gitlab-ci.yml
