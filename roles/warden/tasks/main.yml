@@ -1,12 +1,7 @@
 ---
-# Install ansible-core locally, seed the unseal shares (ONCE, from the
-# controller init file), deploy the local cold-start playbook + systemd unit.
-- name: "Warden | Install ansible-core (local execution engine)"
-  ansible.builtin.apt:
-    name: ansible-core
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+# Seed the unseal shares (ONCE, from the controller init file), deploy the local
+# cold-start playbook; a one-shot container (an Ansible execution environment) runs it,
+# started by the warden-coldstart timer.
 
 - name: "Warden | Ensure the warden dir"
   ansible.builtin.file:
@@ -43,6 +38,28 @@
     mode: "0600"
   notify: Restart warden-coldstart
 
+# The engine: an execution-environment image (ansible-core + python), created here and never
+# left running — each timer run is `docker start --attach`, which runs the local playbook once
+# and exits. The image is pulled at install time, so a cold start needs no registry.
+- name: "Warden | The cold-start container (roles/service_scaffold containers; created, not started)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  when: not (ansible_check_mode and (docker_engine_install | default({})) is changed)   # a first-install dry-run has no engine
+  vars:
+    service_scaffold_def:
+      name: warden
+      containers:
+        - name: "{{ warden_container }}"
+          image: "{{ warden_image }}"
+          state: present            # created; the timer starts it
+          restart_policy: "no"      # one run per start
+          network_mode: host
+          user: "0:0"               # reads the 0600 share file
+          command: [ansible-playbook, -c, local, "{{ warden_dir }}/coldstart.yml"]
+          volumes:
+            - "{{ warden_dir }}:{{ warden_dir }}:ro"
+
 # The cold-start watchdog is a roles/host_job job on a monotonic schedule: 30 s after
 # boot, then every 5 min; a failed run retries every minute in place (Restart=), so it
 # never reaches "failed" and OnFailure= could not fire — a mail per retry would be the
@@ -60,7 +77,7 @@
     host_job_name: warden-coldstart
     host_job_description: "Warden platform cold-start reconciliation (vault unseal + verify)"
     host_job_exec:
-      - "/usr/bin/ansible-playbook -c local {{ warden_dir }}/coldstart.yml"
+      - "/usr/bin/docker start --attach {{ warden_container }}"   # the run's output goes to the journal
     host_job_on_calendar: ""
     host_job_on_boot_sec: "30"
     host_job_on_unit_active_sec: "5min"
@@ -69,3 +86,19 @@
     host_job_timeout: 30min
     host_job_wants_network: true
     host_job_on_failure: false        # retries in place; a sealed Vault is the alert (probe)
+
+# One run in the container proves the engine before the native one goes: it unseals only a
+# sealed Vault, so on a running platform it verifies and probes.
+- name: "Warden | One cold-start run in the container (read-only on an unsealed Vault)"
+  ansible.builtin.command:
+    argv: [docker, start, --attach, "{{ warden_container }}"]
+  register: warden_container_run
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: "Warden | The native engine (retired)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: native_retire
+  vars:
+    service_scaffold_native: "{{ warden_native }}"

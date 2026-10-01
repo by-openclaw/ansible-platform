@@ -11,6 +11,18 @@
 # tools/vault/runbooks/unseal.md.
 # ==============================================================================
 warden_dir: /etc/warden
+# The cold-start reconciliation runs in a one-shot container: an Ansible execution environment
+# (ansible-core + python) runs the same local playbook. Created once (the image is local, so a
+# cold start needs no registry), started by the warden-coldstart timer (roles/host_job).
+# renovate: datasource=docker depName=ghcr.io/ansible-community/community-ee-minimal
+warden_ee_version: "2.20.6-1"   # ansible-core 2.20, the controller's
+warden_image: "ghcr.io/ansible-community/community-ee-minimal:{{ warden_ee_version }}"
+warden_container: warden-coldstart
+# The retired native engine (removed once a run in the container succeeded).
+warden_native:
+  units: []
+  packages: [ansible-core]
+  files: []
 warden_vault_url: "{{ platform_vault_addr }}"
 warden_share_file: "{{ warden_dir }}/unseal.json"
 warden_key_threshold: 3
