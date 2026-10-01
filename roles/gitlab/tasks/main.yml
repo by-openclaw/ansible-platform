@@ -1,34 +1,9 @@
 ---
 # ==============================================================================
-# GitLab CE (Omnibus) — install + wire to the shared cluster services.
-# Pre-req: Play 1 (pve_zfs_mount) has attached the ZFS git-data bind-mount, and
-# the gitlab DB / S3 bucket+key / OIDC client have been provisioned (playbook).
+# GitLab CE — the official Omnibus image as a container (host network), wired to the
+# shared cluster services. Pre-req: Play 1 (pve_zfs_mount) has attached the ZFS git-data
+# bind-mount, and the gitlab DB / S3 bucket+key / OIDC client have been provisioned (playbook).
 # ==============================================================================
-
-- name: "GitLab | Prereq packages (repo tooling + CA)"
-  ansible.builtin.apt:
-    name: [curl, ca-certificates, gnupg, apt-transport-https]
-    state: present
-    update_cache: true
-
-- name: "GitLab | Ensure apt keyring dir"
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: "0755"
-
-- name: "GitLab | Add GitLab CE apt signing key"
-  ansible.builtin.get_url:
-    url: "{{ gitlab_apt_repo_url }}/gpgkey"
-    dest: /etc/apt/keyrings/gitlab-ce.asc
-    mode: "0644"
-
-- name: "GitLab | Add GitLab CE apt repository"
-  ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/gitlab-ce.asc] {{ gitlab_apt_repo_url }}/debian/ {{ ansible_distribution_release }} main"
-    filename: gitlab_gitlab-ce
-    state: present
-    update_cache: true
 
 # --- Secrets from Vault (no local files; owning roles created each path) --------
 - name: "GitLab | Read PostgreSQL creds from Vault"
@@ -121,54 +96,6 @@
       git repositories land on tank/data/gitlab and survive `terraform destroy`.
   when: gitlab_gitdata_mp.rc != 0
 
-# --- Install (pinned) ---------------------------------------------------------
-# Do NOT set EXTERNAL_URL here: it makes the Omnibus postinst auto-run
-# `gitlab-ctl reconfigure` BEFORE our gitlab.rb exists, which in an unprivileged
-# LXC dies trying to set kernel sysctls. We install the package only, then render
-# gitlab.rb (with modify_kernel_parameters=false) and reconfigure explicitly.
-- name: "GitLab | Install GitLab CE (pinned {{ gitlab_version }})"
-  ansible.builtin.apt:
-    name: "gitlab-ce={{ gitlab_version }}"
-    state: present
-    update_cache: true
-
-# gitaly runs as `git` and must own the git-data storage (the ZFS bind-mount +
-# every repo under it) or it crash-loops with "permission denied". On a FRESH
-# install the git user does not exist until `gitlab-ctl reconfigure` runs — but
-# gitaly needs the ownership DURING that reconfigure, so we must create `git`
-# (omnibus idempotently adopts it) and fix ownership BEFORE reconfigure. On a
-# rebuild the preserved repos carry the OLD container's git uid, which may differ
-# from the new one, so the chown is recursive — but only when the root isn't
-# already git-owned (keeps a normal re-run on a big repo set fast + churn-free).
-- name: "GitLab | Ensure the git group exists (omnibus adopts it)"
-  ansible.builtin.group:
-    name: git
-    system: true
-
-- name: "GitLab | Ensure the git user exists before reconfigure (omnibus adopts it)"
-  ansible.builtin.user:
-    name: git
-    group: git
-    system: true
-    home: /var/opt/gitlab
-    create_home: false
-    shell: /bin/sh
-
-- name: "GitLab | Stat the git-data mount root"
-  ansible.builtin.stat:
-    path: "{{ gitlab_git_data_dir }}"
-  register: gitlab_gitdata_owner
-
-- name: "GitLab | Own git-data as git (recursive; only when not already git-owned)"
-  ansible.builtin.command: "chown -R git:git {{ gitlab_git_data_dir }}"
-  when: gitlab_gitdata_owner.stat.pw_name | default('') != 'git'
-  changed_when: true
-
-- name: "GitLab | Ensure git-data mode (setgid dir, group traversal)"
-  ansible.builtin.file:
-    path: "{{ gitlab_git_data_dir }}"
-    mode: "2770"
-
 # --- DR restore: put GitLab's OWN secrets back BEFORE the first reconfigure -----
 # On a fresh install GitLab would generate NEW secret_key_base/db_key_base, which
 # cannot decrypt the PRESERVED database (CI variables, 2FA, runner tokens, PATs are
@@ -208,7 +135,7 @@
     - not gitlab_secrets_local.stat.exists
     - gitlab_secrets_restore.gitlab_secrets | default({}) | length > 0
   no_log: true
-  notify: Reconfigure GitLab
+  register: gitlab_secrets_restored
 
 - name: "GitLab | Render /etc/gitlab/gitlab.rb"
   ansible.builtin.template:
@@ -217,24 +144,119 @@
     owner: root
     group: root
     mode: "0600"
-  notify: Reconfigure GitLab
+  register: gitlab_rb_file
 
-- name: "GitLab | Apply config now (flush handlers)"
-  ansible.builtin.meta: flush_handlers
+# --- The container ----------------------------------------------------------------
+# The official Omnibus image runs the same GitLab: /etc/gitlab, /var/opt/gitlab (with the
+# git-data ZFS bind-mount inside — Docker binds recursively) and /var/log/gitlab are mounted;
+# its startup runs `gitlab-ctl reconfigure` with our gitlab.rb (loaded by the image's own).
+# The switch-over: pull first (the gap is the start, not the pull), stop the package's
+# runsvdir, re-own the data to the image's accounts when they differ, start, wait for ready.
+- name: "GitLab | Is there an engine to talk to? (only a first-install dry-run has none)"
+  ansible.builtin.set_fact:
+    gitlab_engine_ready: "{{ not (ansible_check_mode and (docker_engine_install | default({})) is changed) }}"
+
+- name: "GitLab | Pull the pinned image first"
+  community.docker.docker_image:
+    name: "{{ gitlab_image }}"
+    source: pull
+  when: gitlab_engine_ready | bool
+
+- name: "GitLab | Does the container exist already? (a config change then reconfigures in place)"
+  community.docker.docker_container_info:
+    name: "{{ gitlab_container }}"
+  register: gitlab_container_before
+  when: gitlab_engine_ready | bool
+
+- name: "GitLab | The scripts directory callers stage for gitlab-rails runner"
+  ansible.builtin.file:
+    path: "{{ gitlab_scripts_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "GitLab | The package's runsvdir stops (retired; it holds every GitLab port)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: native_stop
+  vars:
+    service_scaffold_native: "{{ gitlab_native }}"
+
+# The image creates its accounts at build time (manage_accounts off): the data must belong
+# to ITS git user. update-permissions is the image's own tool; it runs once, when the
+# git-data owner is not the image's git — on the switch from the package, or after a restore.
+- name: "GitLab | The image's git uid"
+  ansible.builtin.command:
+    argv: [docker, run, --rm, --network, none, --entrypoint, id, "{{ gitlab_image }}", -u, git]
+  register: gitlab_image_git_uid
+  changed_when: false
+  check_mode: false   # read-only
+  when: gitlab_engine_ready | bool
+
+- name: "GitLab | The git-data owner"
+  ansible.builtin.stat:
+    path: "{{ gitlab_git_data_dir }}"
+  register: gitlab_gitdata_stat
+
+- name: "GitLab | Re-own the data to the image's accounts (update-permissions, once)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - none
+      - -v
+      - /etc/gitlab:/etc/gitlab
+      - -v
+      - /var/opt/gitlab:/var/opt/gitlab
+      - -v
+      - /var/log/gitlab:/var/log/gitlab
+      - --entrypoint
+      - update-permissions
+      - "{{ gitlab_image }}"
+  changed_when: true
+  when:
+    - gitlab_engine_ready | bool
+    - not ansible_check_mode
+    - gitlab_gitdata_stat.stat.uid | default(-1) | string != gitlab_image_git_uid.stdout | default('') | trim
+
+- name: "GitLab | The container (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  when: gitlab_engine_ready | bool
+  vars:
+    service_scaffold_def:
+      name: gitlab
+      containers:
+        - name: "{{ gitlab_container }}"
+          image: "{{ gitlab_image }}"
+          network_mode: host
+          env: "{{ gitlab_container_env }}"
+          shm_size: "{{ gitlab_shm_size }}"
+          volumes:
+            - /etc/gitlab:/etc/gitlab
+            - /var/opt/gitlab:/var/opt/gitlab
+            - /var/log/gitlab:/var/log/gitlab
+            - "{{ gitlab_scripts_dir }}:{{ gitlab_scripts_dir }}:ro"
+            - /etc/ssl/certs:/etc/ssl/certs:ro   # the host's trust store: PG verify-full names its bundle
+
+# A running container takes a config change with a reconfigure in place (no restart); a
+# container started just now reconfigured at its own start.
+- name: "GitLab | Reconfigure in the running container (config changed)"
+  ansible.builtin.command:
+    argv: "{{ gitlab_exec + [gitlab_container, 'gitlab-ctl', 'reconfigure'] }}"
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - gitlab_container_before.exists | default(false)
+    - (gitlab_container_before.container.State.Running | default(false))
+    - gitlab_rb_file is changed or gitlab_secrets_restored is changed
 
 # --- Verify the daemon is actually healthy (API 'ok' != running; read status) --
-- name: "GitLab | gitlab-ctl status"
-  ansible.builtin.command: gitlab-ctl status
-  register: gitlab_status
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-  changed_when: false
-
-- name: "GitLab | Assert no service is down"
-  ansible.builtin.assert:
-    that: "'down:' not in gitlab_status.stdout"
-    fail_msg: "A GitLab service is down:\n{{ gitlab_status.stdout }}"
-    success_msg: "All GitLab services up."
-
+# The first start of the container runs the whole reconfigure: give it minutes.
 - name: "GitLab | Wait for the web endpoint to answer"
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ gitlab_http_backend_port }}/-/readiness"
@@ -242,9 +264,35 @@
     validate_certs: false
   register: gitlab_ready
   check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
-  retries: 20
+  retries: 60
   delay: 15
   until: gitlab_ready.status in [200, 401]
+
+- name: "GitLab | gitlab-ctl status"
+  ansible.builtin.command:
+    argv: "{{ gitlab_exec + [gitlab_container, 'gitlab-ctl', 'status'] }}"
+  register: gitlab_status
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  when: gitlab_engine_ready | bool
+  failed_when:
+    - gitlab_status.rc != 0
+    # a dry-run of the switch-over: the container it would create does not exist yet
+    - not (ansible_check_mode and 'No such container' in (gitlab_status.stderr | default('')))
+
+- name: "GitLab | Assert no service is down"
+  ansible.builtin.assert:
+    that: "'down:' not in (gitlab_status.stdout | default(''))"
+    fail_msg: "A GitLab service is down:\n{{ gitlab_status.stdout | default('') }}"
+    success_msg: "All GitLab services up."
+  when: gitlab_engine_ready | bool
+
+- name: "GitLab | The package install (retired)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: native_retire
+  vars:
+    service_scaffold_native: "{{ gitlab_native }}"
 
 # --- Capture GitLab's OWN generated secrets → Vault (DR-critical, no local file) -
 # gitlab-secrets.json holds secret_key_base / db_key_base / otp_key_base: a backup
@@ -303,13 +351,22 @@
   tags: [gitlab, gitlab-dr]
 
 # --- Nightly backup → SeaweedFS gitlab-backups (pure gitlab command, no .sh) ---
-- name: "GitLab | Schedule nightly backup to S3"
+- name: "GitLab | The root crontab backup line (retired: a host_job timer now)"
   ansible.builtin.cron:
     name: "gitlab-backup-to-s3"
-    minute: "{{ gitlab_backup_cron.split()[0] }}"
-    hour: "{{ gitlab_backup_cron.split()[1] }}"
-    job: "/opt/gitlab/bin/gitlab-backup create CRON=1 >> /var/log/gitlab/backup.log 2>&1"
     user: root
+    state: absent
+
+- name: "GitLab | Nightly backup to S3 (roles/host_job)"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: gitlab-backup
+    host_job_description: "GitLab backup to S3 (gitlab-backups bucket; GitLab prunes)"
+    host_job_exec:
+      - "/usr/bin/docker exec {{ gitlab_container }} gitlab-backup create CRON=1"
+    host_job_on_calendar: "{{ gitlab_backup_on_calendar }}"
+    host_job_timeout: 2h
   when: gitlab_backup_enabled
 
 - name: "GitLab | Host firewall rules for the native listeners (when ufw is active)"

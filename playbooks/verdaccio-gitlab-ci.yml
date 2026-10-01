@@ -22,10 +22,15 @@
       vars:
         vault_secret_path: "{{ platform_env }}/verdaccio/registry"
 
+    - name: "The pre-container staging path (retired)"
+      ansible.builtin.file:
+        path: /opt/gitlab-ci-vars.rb
+        state: absent
+
     - name: "Stage the CI-variable reconciler"
       ansible.builtin.copy:
         src: files/ci_vars.rb
-        dest: /opt/gitlab-ci-vars.rb
+        dest: "{{ gitlab_scripts_dir }}/verdaccio-ci-vars.rb"   # mounted into the GitLab container
         owner: root
         group: root
         mode: "0644"
@@ -41,7 +46,7 @@
               protected: false
               raw: true
       ansible.builtin.command:
-        argv: [gitlab-rails, runner, /opt/gitlab-ci-vars.rb]
+        argv: "{{ gitlab_exec + ['-e', 'CI_VARS_DESIRED', gitlab_container, 'gitlab-rails', 'runner', gitlab_scripts_dir ~ '/verdaccio-ci-vars.rb'] }}"
       environment:
         CI_VARS_DESIRED: "{{ verdaccio_ci_desired | to_json }}"
       register: verdaccio_ci_vars_run

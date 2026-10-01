@@ -3,10 +3,16 @@
 # gitlab_rbac | reconcile GitLab admins + groups + memberships from desired state.
 # Runs on the GitLab server via gitlab-rails (no token). Idempotent + re-runnable.
 # ==============================================================================
+- name: "RBAC | The pre-container staging paths (retired; the desired state held webhooks)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: [/opt/gitlab-rbac-reconcile.rb, /opt/gitlab-rbac-desired.json, /opt/gitlab-ci-templates]
+
 - name: "RBAC | Stage the reconciler script"
   ansible.builtin.copy:
     src: reconcile.rb
-    dest: /opt/gitlab-rbac-reconcile.rb
+    dest: "{{ gitlab_scripts_dir }}/rbac-reconcile.rb"   # mounted into the GitLab container
     owner: root
     group: root
     mode: "0644"
@@ -75,18 +81,16 @@
 - name: "RBAC | Render the desired-state JSON"
   ansible.builtin.template:
     src: desired.json.j2
-    dest: /opt/gitlab-rbac-desired.json
+    dest: "{{ gitlab_scripts_dir }}/rbac-desired.json"
     owner: root
     group: root
-    mode: "0644"
+    mode: "0600"   # carries the integration webhooks (secrets); gitlab-rails runs as root
 
 - name: "RBAC | Reconcile (admins, groups, memberships)"
   ansible.builtin.command:
-    argv:
-      - gitlab-rails
-      - runner
-      - /opt/gitlab-rbac-reconcile.rb
-      - /opt/gitlab-rbac-desired.json
+    argv: >-
+      {{ gitlab_exec + [gitlab_container, 'gitlab-rails', 'runner',
+         gitlab_scripts_dir ~ '/rbac-reconcile.rb', gitlab_scripts_dir ~ '/rbac-desired.json'] }}
   register: gitlab_rbac_run
   changed_when: "'changes=0' not in gitlab_rbac_run.stdout"
   failed_when: "'RBAC_DONE' not in gitlab_rbac_run.stdout"

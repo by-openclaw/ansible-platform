@@ -88,20 +88,20 @@
 
 - name: "k3s | {{ ns.name }} | GitLab CI variable KUBECONFIG_B64 on {{ ns.gitlab_project }} (upsert, masked, protected)"
   ansible.builtin.command:
-    argv:
-      - gitlab-rails
-      - runner
-      - |
-        p = Project.find_by_full_path(ENV['P']) or abort('project not found')
-        v = p.variables.find_by(key: 'KUBECONFIG_B64')
-        val = ENV['V']
-        if v.nil?
-          p.variables.create!(key: 'KUBECONFIG_B64', value: val, masked: true, protected: true, raw: true); puts 'variable+'
-        elsif v.value != val
-          v.update!(value: val); puts 'variable~'
-        else
-          puts 'variable='
-        end
+    # gitlab-rails in the GitLab container; P and V reach it from this task's environment (-e)
+    argv: "{{ gitlab_exec + ['-e', 'P', '-e', 'V', gitlab_container, 'gitlab-rails', 'runner', k3s_ci_var_rb] }}"
+  vars:
+    k3s_ci_var_rb: |
+      p = Project.find_by_full_path(ENV['P']) or abort('project not found')
+      v = p.variables.find_by(key: 'KUBECONFIG_B64')
+      val = ENV['V']
+      if v.nil?
+        p.variables.create!(key: 'KUBECONFIG_B64', value: val, masked: true, protected: true, raw: true); puts 'variable+'
+      elsif v.value != val
+        v.update!(value: val); puts 'variable~'
+      else
+        puts 'variable='
+      end
   environment:
     P: "{{ ns.gitlab_project }}"
     V: "{{ vault_secret_result.kubeconfig_b64 }}"

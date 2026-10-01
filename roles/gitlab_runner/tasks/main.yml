@@ -20,15 +20,16 @@
 
 - name: "Runner | Mint an instance runner + token on the GitLab server (first run)"
   ansible.builtin.command:
-    # Ruby word-array (%w[]) for tags — avoids double-quotes inside the double-quoted
-    # gitlab-rails string (which broke shell/ruby parsing).
-    cmd: >-
-      gitlab-rails runner
-      "r = Ci::Runner.create!(runner_type: 'instance_type',
+    # gitlab-rails in the GitLab container (gitlab_exec, group_vars/all/gitlab.yml); the Ruby is
+    # one argv element, so no shell parses it.
+    argv: "{{ gitlab_exec + [gitlab_container, 'gitlab-rails', 'runner', gitlab_runner_mint_rb] }}"
+  vars:
+    gitlab_runner_mint_rb: >-
+      r = Ci::Runner.create!(runner_type: 'instance_type',
       description: '{{ gitlab_runner_description }}',
       tag_list: %w[{{ gitlab_runner_tags | join(' ') }}],
       run_untagged: {{ gitlab_runner_run_untagged | lower }});
-      puts r.token"
+      puts r.token
   delegate_to: "{{ gitlab_runner_gitlab_host }}"
   become: true
   register: gitlab_runner_mint
