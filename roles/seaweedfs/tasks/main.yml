@@ -1,17 +1,17 @@
 ---
-- name: "SeaweedFS | Install prerequisites"
-  ansible.builtin.apt:
-    name: [curl, tar, ca-certificates]
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
-
+# ==============================================================================
+# SeaweedFS — containers of the pinned official image (host network), run as the
+# seaweedfs account that owns /data: the combined server (master+volume+filer+S3), the
+# admin console and the offsite backup. Config first, then the containers; a config
+# change restarts the container that reads it, once. The native units, unit files and
+# binary go once the S3 gateway answers from the container.
+# ==============================================================================
 - name: "SeaweedFS | Create system group"
   ansible.builtin.group:
     name: "{{ seaweedfs_group }}"
     system: true
 
-- name: "SeaweedFS | Create system user"
+- name: "SeaweedFS | Create system user (owns /data; the containers run as it)"
   ansible.builtin.user:
     name: "{{ seaweedfs_user }}"
     group: "{{ seaweedfs_group }}"
@@ -19,6 +19,7 @@
     shell: /usr/sbin/nologin
     home: /nonexistent
     create_home: false
+  register: seaweedfs_account
 
 - name: "SeaweedFS | Own the data dir (persistent ZFS bind-mount)"
   ansible.builtin.file:
@@ -36,36 +37,6 @@
     group: "{{ seaweedfs_group }}"
     mode: "0750"
 
-- name: "SeaweedFS | Detect installed weed version"
-  ansible.builtin.command: "{{ seaweedfs_bin }} version"
-  register: seaweedfs_version_check
-  changed_when: false
-  failed_when: false
-  check_mode: false   # read-only probe: must run under --check too (the install block reads its rc/stdout)
-
-- name: "SeaweedFS | Download + install weed (pinned) when absent/mismatched"
-  when: seaweedfs_version_check.rc != 0 or seaweedfs_version not in seaweedfs_version_check.stdout
-  block:
-    - name: "SeaweedFS | Download release tarball"
-      ansible.builtin.get_url:
-        url: "{{ seaweedfs_url }}"
-        dest: "/tmp/seaweedfs_{{ seaweedfs_version }}.tar.gz"
-        mode: "0644"
-
-    - name: "SeaweedFS | Extract weed binary"
-      ansible.builtin.unarchive:
-        src: "/tmp/seaweedfs_{{ seaweedfs_version }}.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [weed]
-        owner: root
-        group: root
-        mode: "0755"
-      notify: Restart seaweedfs
-
-# A plain READ, never get-or-create: this document carries sse_kek, the key that
-# encrypts every stored object. A freshly minted one would leave existing objects
-# unreadable. If the path is ever absent, failing is the correct outcome.
 - name: "SeaweedFS | S3 admin identity and encryption key, from Vault"
   ansible.builtin.include_role:
     name: vault_secret
@@ -85,7 +56,7 @@
     group: "{{ seaweedfs_group }}"
     mode: "0640"
   no_log: true
-  notify: Restart seaweedfs
+  register: seaweedfs_cfg_s3
 
 - name: "SeaweedFS | Render master.toml (volume growth per collection)"
   ansible.builtin.template:
@@ -94,7 +65,7 @@
     owner: root
     group: "{{ seaweedfs_group }}"
     mode: "0644"
-  notify: Restart seaweedfs
+  register: seaweedfs_cfg_master
 
 - name: "SeaweedFS | Render SSE-S3 security.toml (encryption at rest)"
   ansible.builtin.template:
@@ -105,59 +76,9 @@
     mode: "0640"
   no_log: true
   when: seaweedfs_sse_enabled | bool
-  # Both processes derive keys from this file at START-UP only: the S3 server
-  # encrypts with it, and `weed filer.backup` needs it to decrypt objects before
-  # pushing them offsite. Restarting only the server left the backup process
-  # without a key → every SSE object failed to decrypt and the offsite copy
-  # stalled on the first encrypted object (2026-08-22 → found 2026-09-18).
-  notify:
-    - Restart seaweedfs
-    - Restart seaweedfs-backup
+  register: seaweedfs_cfg_security
 
-- name: "SeaweedFS | Render systemd unit"
-  ansible.builtin.template:
-    src: seaweedfs.service.j2
-    dest: /etc/systemd/system/seaweedfs.service
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Restart seaweedfs
-
-- name: "SeaweedFS | Enable + start service"
-  ansible.builtin.systemd_service:
-    name: seaweedfs
-    enabled: true
-    state: started
-    daemon_reload: true
-
-- name: "SeaweedFS | Apply any pending restart now"
-  ansible.builtin.meta: flush_handlers
-
-- name: "SeaweedFS | Wait for the S3 gateway to answer"
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ seaweedfs_s3_port }}/"
-    status_code: [200, 403]
-  register: seaweedfs_s3_ready
-  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
-  until: seaweedfs_s3_ready.status in [200, 403]
-  retries: 20
-  delay: 3
-
-
-- name: "SeaweedFS | Publish the S3 API via Traefik (internal-only)"
-  ansible.builtin.include_role:
-    name: traefik_route
-    apply:
-      tags: [route]
-  vars:
-    traefik_route_name: seaweedfs-s3
-    traefik_route_fqdn: "{{ seaweedfs_fqdn }}"
-    traefik_route_backend_url: "http://{{ seaweedfs_ip }}:{{ seaweedfs_s3_port }}"
-    traefik_route_internal_only: true
-  tags: [seaweedfs, route]
-
-# --- weed admin dashboard (Authentik-gated via Traefik forwardAuth) -------------
-- name: "SeaweedFS | Admin dashboard"
+- name: "SeaweedFS | Admin dashboard: data dir and console login"
   when: seaweedfs_admin_enabled | bool
   block:
     - name: "SeaweedFS | Admin data dir"
@@ -178,64 +99,12 @@
           password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
           _note: "SeaweedFS admin console local login (roles/seaweedfs) — behind Authentik forwardAuth; required since 4.47 to bind the SVC address"
 
-    - name: "SeaweedFS | Admin console environment (root-only; the unit reads it)"
-      ansible.builtin.copy:
-        dest: "{{ seaweedfs_admin_env_file }}"
-        owner: root
-        group: root
-        mode: "0600"
-        content: |
-          SEAWEEDFS_ADMIN_USER={{ vault_secret_result.username }}
-          SEAWEEDFS_ADMIN_PASSWORD={{ vault_secret_result.password }}
+    - name: "SeaweedFS | Bind it"
+      ansible.builtin.set_fact:
+        seaweedfs_console: "{{ vault_secret_result }}"
       no_log: true
-      notify: Restart seaweedfs-admin
-      # --check on a fresh deployment: the secret is not minted yet, so there is nothing to render
-      when: vault_secret_result.username is defined and vault_secret_result.password is defined
 
-    - name: "SeaweedFS | Render admin systemd unit"
-      ansible.builtin.template:
-        src: seaweedfs-admin.service.j2
-        dest: /etc/systemd/system/seaweedfs-admin.service
-        owner: root
-        group: root
-        mode: "0644"
-      notify: Restart seaweedfs-admin
-
-    - name: "SeaweedFS | Enable + start admin dashboard"
-      ansible.builtin.systemd_service:
-        name: seaweedfs-admin
-        enabled: true
-        state: started
-        daemon_reload: true
-
-    - name: "SeaweedFS | Apply pending admin restart now"
-      ansible.builtin.meta: flush_handlers
-
-    - name: "SeaweedFS | Wait for the admin dashboard to answer"
-      ansible.builtin.uri:
-        url: "http://{{ seaweedfs_ip }}:{{ seaweedfs_admin_port }}/"   # bound to the SVC address since 4.47 (login redirect = 307)
-        status_code: [200, 302, 307, 401, 403]
-      register: seaweedfs_admin_ready
-      check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
-      until: seaweedfs_admin_ready.status in [200, 302, 307, 401, 403]
-      retries: 15
-      delay: 3
-
-    - name: "SeaweedFS | Publish the admin UI via Traefik (Authentik SSO + internal)"
-      ansible.builtin.include_role:
-        name: traefik_route
-        apply:
-          tags: [route]
-      vars:
-        traefik_route_name: seaweedfs-admin
-        traefik_route_fqdn: "{{ seaweedfs_admin_fqdn }}"
-        traefik_route_backend_url: "http://{{ seaweedfs_ip }}:{{ seaweedfs_admin_port }}"
-        traefik_route_internal_only: true
-        traefik_route_forward_auth: true
-      tags: [seaweedfs, route]
-
-# --- Tier 3: offsite backup to Contabo (weed filer.backup) -----------------------
-- name: "SeaweedFS | Offsite backup to Contabo"
+- name: "SeaweedFS | Offsite backup to Contabo: credentials and replication.toml"
   when: seaweedfs_offsite_enabled | bool
   block:
     - name: "SeaweedFS | Offsite (Contabo) credentials, from Vault"
@@ -257,28 +126,163 @@
         group: "{{ seaweedfs_group }}"
         mode: "0640"
       no_log: true
-      notify: Restart seaweedfs-backup
+      register: seaweedfs_cfg_replication
 
-    - name: "SeaweedFS | Render offsite backup systemd unit"
-      ansible.builtin.template:
-        src: seaweedfs-backup.service.j2
-        dest: /etc/systemd/system/seaweedfs-backup.service
-        owner: root
-        group: root
-        mode: "0644"
-      notify: Restart seaweedfs-backup
+# The volume index format depends on the build: a `large_disk` image (5-byte offsets) must
+# never open data written with 4-byte ones. The pinned image's own `weed version` decides,
+# before anything stops (this also pulls the image: the gap is the start, not the pull).
+- name: "SeaweedFS | The image's build matches the data (volume offset size + version)"
+  ansible.builtin.command:
+    argv: [docker, run, --rm, --network, none, --entrypoint, "{{ seaweedfs_bin }}", "{{ seaweedfs_image }}", version]
+  register: seaweedfs_image_build
+  changed_when: false
+  check_mode: false   # read-only: under --check too, the switch-over must not be planned on a wrong image
+  failed_when: >-
+    seaweedfs_image_build.rc != 0
+    or (seaweedfs_offset_build ~ ' ' ~ seaweedfs_version) not in seaweedfs_image_build.stdout
+  when: not (ansible_check_mode and (docker_engine_install | default({})) is changed)   # a first-install dry-run has no engine
 
-    - name: "SeaweedFS | Enable + start offsite backup"
-      ansible.builtin.systemd_service:
-        name: seaweedfs-backup
-        enabled: true
-        state: started
-        daemon_reload: true
+- name: "SeaweedFS | The native units stop (retired; they hold the ports)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: native_stop
+  vars:
+    service_scaffold_native: "{{ seaweedfs_native }}"
 
-    - name: "SeaweedFS | Apply pending backup restart now"
-      ansible.builtin.meta: flush_handlers
+- name: "SeaweedFS | The account the containers run as"
+  ansible.builtin.set_fact:
+    seaweedfs_run_as: "{{ seaweedfs_account.uid | default(0) }}:{{ seaweedfs_account.group | default(0) }}"
 
-- name: "SeaweedFS | Host firewall rules for the native listeners (when ufw is active)"
+- name: "SeaweedFS | The containers to run: server, admin console, offsite backup"
+  ansible.builtin.set_fact:
+    seaweedfs_server_ctr:
+      name: "{{ seaweedfs_container }}"
+      image: "{{ seaweedfs_image }}"
+      network_mode: host
+      user: "{{ seaweedfs_run_as }}"
+      entrypoint: ["{{ seaweedfs_bin }}"]
+      command:
+        - server
+        - "-dir={{ seaweedfs_data_dir }}"
+        - "-ip={{ seaweedfs_ip }}"
+        - "-ip.bind={{ seaweedfs_bind }}"
+        - "-master.port={{ seaweedfs_master_port }}"
+        - "-volume.port={{ seaweedfs_volume_port }}"
+        - "-filer"
+        - "-filer.port={{ seaweedfs_filer_port }}"
+        - "-s3"
+        - "-s3.port={{ seaweedfs_s3_port }}"
+        - "-s3.config={{ seaweedfs_config_dir }}/s3.json"
+        - "-master.volumeSizeLimitMB={{ seaweedfs_volume_size_mb }}"
+        - "-volume.max={{ seaweedfs_volume_max }}"
+        - "-metricsPort={{ seaweedfs_metrics_port }}"
+      volumes:
+        - "{{ seaweedfs_data_dir }}:{{ seaweedfs_data_dir }}"
+        - "{{ seaweedfs_config_dir }}:{{ seaweedfs_config_dir }}:ro"   # master.toml, security.toml: weed's config search path
+      ulimits: ["nofile:65536:65536"]
+      restart: >-
+        {{ seaweedfs_cfg_s3 is changed or seaweedfs_cfg_master is changed or seaweedfs_cfg_security is changed }}
+    seaweedfs_admin_ctr:
+      name: "{{ seaweedfs_admin_container }}"
+      image: "{{ seaweedfs_image }}"
+      network_mode: host
+      user: "{{ seaweedfs_run_as }}"
+      entrypoint: ["{{ seaweedfs_bin }}"]
+      command:
+        - admin
+        - "-ip={{ seaweedfs_ip }}"
+        - "-port={{ seaweedfs_admin_port }}"
+        - "-master=localhost:{{ seaweedfs_master_port }}"
+        - "-dataDir={{ seaweedfs_admin_data_dir }}"
+        - "-adminUser={{ (seaweedfs_console | default({})).username | default('') }}"
+        - "-adminPassword={{ (seaweedfs_console | default({})).password | default('') }}"
+      volumes:
+        - "{{ seaweedfs_admin_data_dir }}:{{ seaweedfs_admin_data_dir }}"
+        - "{{ seaweedfs_config_dir }}:{{ seaweedfs_config_dir }}:ro"
+    seaweedfs_backup_ctr:
+      name: "{{ seaweedfs_backup_container }}"
+      image: "{{ seaweedfs_image }}"
+      network_mode: host
+      user: "{{ seaweedfs_run_as }}"
+      entrypoint: ["{{ seaweedfs_bin }}"]
+      command:
+        - filer.backup
+        - "-filer=localhost:{{ seaweedfs_filer_port }}"
+        - "-filerPath={{ seaweedfs_offsite_filer_path }}"
+      volumes:
+        - "{{ seaweedfs_config_dir }}:{{ seaweedfs_config_dir }}:ro"   # replication.toml (the Contabo sink), security.toml
+        - "/etc/ssl/certs:/etc/ssl/certs:ro"
+      restart: "{{ seaweedfs_cfg_replication is changed or seaweedfs_cfg_security is changed }}"
+  no_log: true   # the admin console's login is part of its command
+
+- name: "SeaweedFS | The containers (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  when: not (ansible_check_mode and (docker_engine_install | default({})) is changed)   # a first-install dry-run has no engine
+  vars:
+    service_scaffold_def:
+      name: seaweedfs
+      containers: >-
+        {{ [seaweedfs_server_ctr]
+           + ([seaweedfs_admin_ctr] if seaweedfs_admin_enabled | bool else [])
+           + ([seaweedfs_backup_ctr] if seaweedfs_offsite_enabled | bool else []) }}
+
+- name: "SeaweedFS | Wait for the S3 gateway to answer"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ seaweedfs_s3_port }}/"
+    status_code: [200, 403]
+  register: seaweedfs_s3_ready
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
+  until: seaweedfs_s3_ready.status in [200, 403]
+  retries: 40
+  delay: 3
+
+- name: "SeaweedFS | Wait for the admin dashboard to answer"
+  ansible.builtin.uri:
+    url: "http://{{ seaweedfs_ip }}:{{ seaweedfs_admin_port }}/"   # bound to the SVC address since 4.47 (login redirect = 307)
+    status_code: [200, 302, 307, 401, 403]
+  register: seaweedfs_admin_ready
+  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
+  until: seaweedfs_admin_ready.status in [200, 302, 307, 401, 403]
+  retries: 15
+  delay: 3
+  when: seaweedfs_admin_enabled | bool
+
+- name: "SeaweedFS | The native install (retired)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: native_retire
+  vars:
+    service_scaffold_native: "{{ seaweedfs_native }}"
+
+- name: "SeaweedFS | Publish the S3 API via Traefik (internal-only)"
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: seaweedfs-s3
+    traefik_route_fqdn: "{{ seaweedfs_fqdn }}"
+    traefik_route_backend_url: "http://{{ seaweedfs_ip }}:{{ seaweedfs_s3_port }}"
+    traefik_route_internal_only: true
+  tags: [seaweedfs, route]
+
+- name: "SeaweedFS | Publish the admin UI via Traefik (Authentik SSO + internal)"
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: seaweedfs-admin
+    traefik_route_fqdn: "{{ seaweedfs_admin_fqdn }}"
+    traefik_route_backend_url: "http://{{ seaweedfs_ip }}:{{ seaweedfs_admin_port }}"
+    traefik_route_internal_only: true
+    traefik_route_forward_auth: true
+  when: seaweedfs_admin_enabled | bool
+  tags: [seaweedfs, route]
+
+- name: "SeaweedFS | Host firewall rules for the listeners (host network; when ufw is active)"
   ansible.builtin.include_role:
     name: host_firewall
   vars:
