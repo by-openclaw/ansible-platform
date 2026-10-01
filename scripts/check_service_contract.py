@@ -183,6 +183,19 @@ def check(svc, people):
     return failures
 
 
+def hidden_dependencies():
+    """Every role, service or concern: composition belongs in the play, never in meta.
+    (roles/docker pulled base in through meta — the OS baseline ran inside every docker
+    include, invisibly, and a play listing `docker` alone looked complete.)"""
+    found = []
+    for meta in sorted((ROOT / "roles").glob("*/meta/main.yml")):
+        deps = (yaml.safe_load(meta.read_text()) or {}).get("dependencies") or []
+        if deps:
+            names = "+".join(d["role"] if isinstance(d, dict) else str(d) for d in deps)
+            found.append(f"{meta.parent.parent.name} -> {names}")
+    return found
+
+
 def main(argv):
     strict, ratchet = "--strict" in argv, "--ratchet" in argv
     wanted = [a for a in argv if not a.startswith("--")]
@@ -198,6 +211,10 @@ def main(argv):
     for name, role, result, why in sorted(rows, key=lambda r: (r[2] != "PASS", r[0])):
         print(f"{name:14s} {role:18s} {result}  {why}")
     print(f"\non the contract: {passing} of {len(rows)}")
+    hidden = hidden_dependencies()
+    if hidden:
+        print("ROLES WITH META DEPENDENCIES (composition belongs in the play): " + ", ".join(hidden))
+        return 1
     if ratchet:
         held = {line.split("#")[0].strip() for line in PASSING.read_text().splitlines()} - {""}
         fallen = sorted(held & {r[0] for r in rows if r[2] == "FAIL"})

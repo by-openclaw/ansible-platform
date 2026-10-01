@@ -21,7 +21,6 @@ All 71 playbooks in this repo, grouped by scope. Each runs against `inventories/
 
 | Playbook | Flow |
 |---|---|
-| `docker-logging.yml` | Docker container logs → journald → promtail → Loki (INF-27: every stream). json-file was the default, so container stdout never reached Loki. PHASED, deliberately: this play only s |
 | `hardening.yml` | Playbook: hardening Applies the hardening role to target hosts. Usage: # All hosts: ansible-playbook playbooks/hardening.yml # Single host: ansible-playbook playbooks/hardening.yml |
 | `identity-baseline.yml` | Identity/SSH baseline — identity/0004 §9 roles in contract order: 1 user-mgmt      accounts/groups/sudo/keys ({org}, svc-rune-{env}, svc-ansible-{env}) |
 | `patch-cve-report.yml` | Patch + CVE currency report — the evidence loop for security/0003 §6 (patch cadence, LOCKED) and §4 (scan trail). READ-ONLY: reports, never changes. * per guest: pending apt update |
