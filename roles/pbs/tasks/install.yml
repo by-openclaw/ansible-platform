@@ -1,5 +1,12 @@
 ---
 # PBS 4 install from the Proxmox no-subscription repo (Debian 13 / trixie).
+- name: "Install | Is the Proxmox release keyring there?"
+  ansible.builtin.stat:
+    path: /usr/share/keyrings/proxmox-archive-keyring.gpg
+  register: pbs_repo_key_file
+
+# Fetched once: get_url under --check HEADs the URL and reports "changed" for an identical
+# file. A rotated upstream key is a deliberate change (remove the file), never a silent fetch.
 - name: "Install | Proxmox release GPG keyring"
   ansible.builtin.get_url:
     url: "{{ pbs_repo_key_url }}"
@@ -7,6 +14,7 @@
     mode: "0644"
     owner: root
     group: root
+  when: not pbs_repo_key_file.stat.exists
 
 - name: "Install | PBS 4 no-subscription apt repo"
   ansible.builtin.copy:
