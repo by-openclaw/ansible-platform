@@ -283,8 +283,9 @@
 - name: "GitLab | Assert no service is down"
   ansible.builtin.assert:
     that: "'down:' not in (gitlab_status.stdout | default(''))"
-    fail_msg: "A GitLab service is down:\n{{ gitlab_status.stdout }}"
+    fail_msg: "A GitLab service is down:\n{{ gitlab_status.stdout | default('') }}"
     success_msg: "All GitLab services up."
+  when: gitlab_engine_ready | bool
 
 - name: "GitLab | The package install (retired)"
   ansible.builtin.include_role:
