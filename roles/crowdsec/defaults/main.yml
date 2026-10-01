@@ -9,11 +9,9 @@
 # ==============================================================================
 
 # --- The container --------------------------------------------------------------
-# The -debian variant ships journalctl, which the sshd acquisition reads the host
-# journal with (the alpine variant has none).
 # renovate: datasource=docker depName=crowdsecurity/crowdsec
 crowdsec_version: "v1.8.1"
-crowdsec_image: "crowdsecurity/crowdsec:{{ crowdsec_version }}-debian"
+crowdsec_image: "crowdsecurity/crowdsec:{{ crowdsec_version }}"
 # Host path = path inside the container. Config: hub, acquisitions, local parsers, the
 # machine + CAPI credentials. Data: the sqlite (machines, bouncers, decisions), GeoIP.
 crowdsec_config_dir: /etc/crowdsec
@@ -71,10 +69,15 @@ crowdsec_appsec_collections:
 # --- Syslog feeds this engine listens to (acquis.d/syslog-<name>.yaml) ---------------------------
 # The OPNsense firewalls ship Suricata EVE (and everything else) as RFC5424/UDP syslog to this
 # port (the crowdsec syslog datasource listens on UDP only) (catalog opn_syslog_destinations); the syslog-logs parser sets `program`, the suricata
-# collection does the rest. No host firewall on the LXC (nftables input policy accept); the
-# OPNsense rules decide who may reach it.
+# collection does the rest. The host firewall admits each feed from the firewall only
+# (crowdsec_feed_firewall_rules).
 crowdsec_syslog_feeds:
   - {name: suricata, port: 1515, max_message_len: 65535}
+# The firewall sends from its interface in this host's zone: that zone's gateway
+# (platform_zones). Syslog over UDP is unauthenticated — a line in it can become a ban — so
+# no other source may write into the engine.
+crowdsec_syslog_feed_source: >-
+  {%- for z in platform_zones.values() if (ansible_host | ansible.utils.ipaddr(z.cidr4)) -%}{{ z.gw4 }}{%- endfor -%}
 
 # The syslog program name the firewalls' Suricata EVE arrives under (OPNsense uses `suricata` for
 # both the engine log and the EVE stream). A local s00-raw parser maps JSON payloads from it onto
@@ -119,22 +122,20 @@ crowdsec_registration_allowed_ranges:
 # The block the native install wrote into config.yaml (retired: config.yaml.local holds it now).
 crowdsec_retired_block_marker: "    # {mark} ANSIBLE MANAGED auto_registration"
 
-# --- The host's own logs ---------------------------------------------------------
-# The LAPI host is its own log processor (the agent role skips the crowdsec group). One
-# acquis.d/<name>.yaml per entry; the container reads /var/log and the journal read-only.
-crowdsec_host_acquisitions:
-  - name: host-syslog
-    config:
-      source: file
-      filenames: [/var/log/syslog, /var/log/kern.log, /var/log/messages]
-      labels: {type: syslog}
-  - name: host-sshd
-    config:
-      source: journalctl
-      journalctl_filter: ["_SYSTEMD_UNIT=ssh.service"]
-      labels: {type: syslog}
-# What the native package's install-time detection (cscli setup) wrote — replaced above.
-crowdsec_retired_acquisitions: [setup.linux.yaml, setup.postfix.yaml, setup.sshd.yaml]
+# --- The host's own logs: not acquired here ----------------------------------------
+# The engine reads the firewalls' feeds (crowdsec_syslog_feeds), not this host's logs: its
+# sshd is reachable only from the platform's own ranges, which the whitelist exempts (no
+# decision could result); Wazuh covers the host's authentication; and the image's
+# journalctl (Debian 12) cannot follow this host's journal — verified 2026-10-01, one-shot
+# reads work, --follow sees nothing while the host's own journalctl sees every line.
+# What the native package's detection (cscli setup) wrote, and the first container's
+# host-log sources: retired.
+crowdsec_retired_acquisitions:
+  - setup.linux.yaml
+  - setup.postfix.yaml
+  - setup.sshd.yaml
+  - host-syslog.yaml
+  - host-sshd.yaml
 
 # Parser whitelist for the platform's own address space (the LAPI host parses its own logs
 # too). ONE source: platform_trusted_cidrs in group_vars/all/deployment.yml.
@@ -144,3 +145,7 @@ crowdsec_whitelist_cidrs: "{{ platform_trusted_cidrs | default([]) }}"
 crowdsec_firewall_rules:
   - { port: "{{ crowdsec_lapi_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "CrowdSec LAPI (agents, bouncers)" }
   - { port: "{{ crowdsec_appsec_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "CrowdSec AppSec (Traefik)" }
+# One rule per syslog feed, from the firewall only.
+crowdsec_feed_firewall_rules: >-
+  {{ crowdsec_syslog_feeds | map('combine', {'proto': 'udp', 'from': [crowdsec_syslog_feed_source],
+                                             'comment': 'CrowdSec syslog feed (the firewall)'}) | list }}
