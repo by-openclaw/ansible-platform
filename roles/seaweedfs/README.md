@@ -1,6 +1,6 @@
 # role: seaweedfs (S3)
 
-SeaweedFS **4.44** (native binary, master+volume+filer+S3 combined) on `lxc-seaweedfs-01`. The platform S3 (`s3.<domain>`, internal) for GitLab, Harbor blobs, Nextcloud primary, PBS datastore, JumpServer recordings, backups. Memory raised to **4G** after nightly OOM during the PBS ingest burst.
+SeaweedFS `seaweedfs_version` as containers of `chrislusf/seaweedfs:<version>_full` (host network, the `seaweedfs` account): the combined server (master+volume+filer+S3), the admin console, the offsite backup, on `lxc-seaweedfs-01`. `weed shell` = `seaweedfs_weed` (`docker exec -i seaweedfs weed`, group_vars/all/seaweedfs.yml). The image must keep the data's offset build (`seaweedfs_offset_build`, 4-byte "30GB"): never a `large_disk` variant. The platform S3 (`s3.<domain>`, internal) for GitLab, Harbor blobs, Nextcloud primary, PBS datastore, JumpServer recordings, backups. Memory raised to **4G** after nightly OOM during the PBS ingest burst.
 
 - Data = ZFS `tank/data/seaweedfs` **bind-mounted at `/data`** (created by `pve_zfs_mount`) — deliberately outside the LXC rootfs.
 - Per-service buckets + scoped identities via the `seaweedfs_bucket` concern-role.
