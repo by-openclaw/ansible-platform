@@ -3,7 +3,7 @@
 # The LAPI runs as a container: the pinned vendor image on the host network (it binds
 # :8080, the syslog feeds and :6060 on the host, as the native daemon did), the same
 # /etc/crowdsec and /var/lib/crowdsec/data, so every machine and bouncer keeps its
-# registration. /var/log and the journal are mounted read-only for the host's own logs.
+# registration.
 # The switch-over keeps the gap to seconds: the image is pulled first, then the native
 # unit stops (it holds the ports), then the container starts and is verified; the
 # native package goes last (retire.yml).
@@ -46,10 +46,6 @@
           volumes:
             - "{{ crowdsec_config_dir }}:{{ crowdsec_config_dir }}"
             - "{{ crowdsec_data_dir }}:{{ crowdsec_data_dir }}"
-            # the host's own logs (crowdsec_host_acquisitions): files and the journal
-            - "/var/log:/var/log:ro"
-            - "/run/log/journal:/run/log/journal:ro"
-            - "/etc/machine-id:/etc/machine-id:ro"
           restart: "{{ crowdsec_config_changed | default(false) }}"   # the engine reads its config at start
 
 - name: "container | The LAPI answers"

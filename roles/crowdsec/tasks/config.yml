@@ -40,20 +40,7 @@
   when: crowdsec_vendor_config.stat.exists
   register: crowdsec_cfg_block
 
-- name: "config | The host's own logs (acquis.d/<name>.yaml)"
-  ansible.builtin.copy:
-    dest: "{{ crowdsec_config_dir }}/acquis.d/{{ item.name }}.yaml"
-    mode: "0644"
-    content: |
-      # Managed by Ansible role `crowdsec` (crowdsec_host_acquisitions).
-      {{ item.config | to_nice_yaml(indent=2) }}
-  loop: "{{ crowdsec_host_acquisitions }}"
-  loop_control:
-    label: "{{ item.name }}"
-  register: crowdsec_cfg_host
-
-# Two acquisitions of one source double every event (and halve every scenario's threshold).
-- name: "config | The native package's detected acquisitions (retired, replaced above)"
+- name: "config | Host-log acquisitions (retired: the engine reads the firewalls' feeds)"
   ansible.builtin.file:
     path: "{{ crowdsec_config_dir }}/acquis.d/{{ item }}"
     state: absent
@@ -132,6 +119,6 @@
 - name: "config | Did anything the engine reads change?"
   ansible.builtin.set_fact:
     crowdsec_config_changed: >-
-      {{ [crowdsec_cfg_local, crowdsec_cfg_block, crowdsec_cfg_host, crowdsec_cfg_setup,
+      {{ [crowdsec_cfg_local, crowdsec_cfg_block, crowdsec_cfg_setup,
           crowdsec_cfg_appsec, crowdsec_cfg_appsec_off, crowdsec_cfg_syslog, crowdsec_cfg_bridge,
           crowdsec_cfg_bridge_off, crowdsec_cfg_whitelist] | select('changed') | list | length > 0 }}
