@@ -1,0 +1,19 @@
+---
+# ==============================================================================
+# A service moving from a native install to its container: the native units stop
+# (they hold the ports the container binds) right before the container starts.
+#   service_scaffold_native.units: [unit, ...]  — absent units are skipped
+# After the switch this is a no-op: the units are gone (native_retire.yml).
+# ==============================================================================
+- name: "Scaffold | Services on this host"
+  ansible.builtin.service_facts:
+
+- name: "Scaffold | The native units stop (retired; they hold the ports)"
+  ansible.builtin.systemd_service:
+    name: "{{ scaffold_native_unit }}"
+    state: stopped
+    enabled: false
+  loop: "{{ service_scaffold_native.units | default([]) }}"
+  loop_control:
+    loop_var: scaffold_native_unit
+  when: (scaffold_native_unit ~ '.service') in ansible_facts.services

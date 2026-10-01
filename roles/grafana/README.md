@@ -1,6 +1,6 @@
 # role: grafana
 
-Grafana (apt) on `lxc-monitoring-01` (`:3000`, `grafana.<domain>`), Authentik OAuth (`grafana-admins`), `grafana` DB in cluster Postgres (`ssl_mode=verify-full`), datasources Prometheus + Loki. Alerting/Alertmanager = parked.
+Grafana (a container: `grafana/grafana:<grafana_version>`, host network, run as the grafana account; the image's default paths are the Debian package's) on `lxc-monitoring-01` (`:3000`, `grafana.<domain>`), Authentik OAuth (`grafana-admins`), `grafana` DB in cluster Postgres (`ssl_mode=verify-full`), datasources Prometheus + Loki. Alerting/Alertmanager = parked.
 
 - Datasources = code in the role (`templates/datasources.yaml.j2`); dashboards, users and preferences live in the database (shared PostgreSQL).
 

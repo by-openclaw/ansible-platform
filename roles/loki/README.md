@@ -1,6 +1,6 @@
 # role: loki
 
-Loki (apt) on `lxc-monitoring-01` (`:3100`, gRPC `:9096`). Every host ships via `promtail` (journal + container labels, auditd, vault_audit, traefik_access/error, harbor_components). Retention ≥30d (audit services ≥90d).
+Loki (a container: `grafana/loki:<loki_version>`, host network, run as the loki account) on `lxc-monitoring-01` (`:3100`, gRPC `:9096`). The Grafana APT source on this host is promtail's (roles/promtail). Every host ships via `promtail` (journal + container labels, auditd, vault_audit, traefik_access/error, harbor_components). Retention ≥30d (audit services ≥90d).
 
 - `/var/lib/loki` = WAL/cache/compactor scratch **only**.
 - Query labels: `job`, `host`, `unit`, `container`.

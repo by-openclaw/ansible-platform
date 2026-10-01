@@ -17,8 +17,10 @@
   become: true
   gather_facts: true
   roles:
-    - role: blackbox_exporter   # probes (HTTPS/DNS/TCP/TLS/SMTP/ICMP), loopback
-    - role: alertmanager        # mail (platform relay) + Discord #alerts; secrets from Vault
-    - role: prometheus          # scrapes node + blackbox, evaluates the platform rules
+    - base
+    - docker
+    - role: prometheus          # scrapes node + blackbox, evaluates the platform rules; owns the prometheus account
+    - role: blackbox_exporter   # probes (HTTPS/DNS/TCP/TLS/SMTP/ICMP), loopback — runs as the prometheus account
+    - role: alertmanager        # mail (platform relay) + Discord #alerts; secrets from Vault — runs as the prometheus account
     - role: loki
     - role: grafana

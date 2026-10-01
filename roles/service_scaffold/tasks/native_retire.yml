@@ -1,0 +1,28 @@
+---
+# ==============================================================================
+# A service moving from a native install to its container: once the container
+# answers, the native install goes — a plain remove, never purge (a purge can
+# delete the data dirs the container now runs on).
+#   service_scaffold_native.packages: [deb, ...]   service_scaffold_native.files: [path, ...]
+# Until this runs the native install stays on disk: a failed start rolls back by revert.
+# ==============================================================================
+- name: "Scaffold | The native packages (retired)"
+  ansible.builtin.apt:
+    name: "{{ service_scaffold_native.packages }}"
+    state: absent
+    purge: false
+  when: service_scaffold_native.packages | default([]) | length > 0
+
+- name: "Scaffold | The native unit files and defaults (retired)"
+  ansible.builtin.file:
+    path: "{{ scaffold_native_file }}"
+    state: absent
+  loop: "{{ service_scaffold_native.files | default([]) }}"
+  loop_control:
+    loop_var: scaffold_native_file
+  register: service_scaffold_native_files_removed
+
+- name: "Scaffold | systemd forgets the retired units"
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: service_scaffold_native_files_removed is changed   # noqa: no-handler — the include ends here, a handler would fire at the play's end

@@ -1,34 +1,18 @@
 ---
-# Loki with a SeaweedFS S3 backend (chunks + index off-box).
-- name: "Loki | Ensure gnupg + curl"
-  ansible.builtin.apt:
-    name:
-      - gnupg
-      - curl
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
-
-- name: "Loki | Grafana APT signing key (dearmored)"
-  ansible.builtin.shell:
-    cmd: "set -o pipefail; curl -fsSL {{ loki_apt_key_url }} | gpg --dearmor -o /usr/share/keyrings/grafana.gpg"
-    creates: /usr/share/keyrings/grafana.gpg
-  register: loki_apt_key
-  changed_when: "'skipped' not in (loki_apt_key.stdout | default(''))"
-
-- name: "Loki | APT repo"
-  ansible.builtin.copy:
-    dest: /etc/apt/sources.list.d/grafana.list
-    owner: root
-    group: root
-    mode: "0644"
-    content: "{{ loki_apt_repo }}\n"
-
-- name: "Loki | Install loki"
-  ansible.builtin.apt:
-    name: loki
-    state: present
-    update_cache: true
+# ==============================================================================
+# Loki — a container (the pinned official image on the host network), run as the loki
+# account that owns the local scratch dir; chunks + index in SeaweedFS S3. Config
+# first, then the container; a config change restarts it once. The native package goes
+# once the container is ready. (The Grafana APT source is promtail's: roles/promtail.)
+# ==============================================================================
+- name: "Loki | Service account (owns the scratch dir; the container runs as it)"
+  ansible.builtin.user:
+    name: "{{ loki_account }}"
+    group: "{{ loki_account_group }}"
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+  register: loki_account_user
 
 - name: "Loki | Provision the SeaweedFS S3 bucket + scoped identity"
   ansible.builtin.include_role:
@@ -36,8 +20,6 @@
   vars:
     seaweedfs_bucket_identity: "{{ loki_s3_identity }}"
     seaweedfs_bucket_names: ["{{ loki_s3_bucket }}"]
-    # Vault mode, not the legacy file mode this was in: file mode PERSISTED the S3
-    # key to the controller's disk. get-or-create reads the live key, never mints.
     seaweedfs_bucket_vault_path: "{{ loki_s3_vault_path }}"
 
 - name: "Loki | Bind the S3 credentials (handed back by seaweedfs_bucket)"
@@ -45,32 +27,75 @@
     loki_s3_creds: "{{ seaweedfs_bucket_key }}"
   no_log: true
 
-- name: "Loki | Local scratch dir"
+- name: "Loki | Config and local scratch directories"
   ansible.builtin.file:
-    path: "{{ loki_data_dir }}"
+    path: "{{ item.path }}"
     state: directory
-    owner: loki
-    group: nogroup
-    mode: "0750"
+    owner: "{{ item.owner }}"
+    group: "{{ loki_account_group if item.owner != 'root' else 'root' }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ loki_config_dir }}", owner: root, mode: "0755"}
+    - {path: "{{ loki_data_dir }}", owner: "{{ loki_account }}", mode: "0750"}
+  loop_control:
+    label: "{{ item.path }}"
 
-- name: "Loki | Config (/etc/loki/config.yml) — S3 backend"
+- name: "Loki | Config (config.yml, S3 backend) in {{ loki_config_dir }}"
   ansible.builtin.template:
     src: loki.yaml.j2
-    dest: /etc/loki/config.yml
+    dest: "{{ loki_config_dir }}/config.yml"
     owner: root
-    group: nogroup
+    group: "{{ loki_account_group }}"
     mode: "0640"
   no_log: true   # contains S3 secret key
-  notify: Restart loki
+  register: loki_config_file
 
-- name: "Loki | Enabled + running"
-  ansible.builtin.systemd_service:
-    name: loki
-    enabled: true
-    state: started
+- name: "Loki | The native unit stops (retired; it holds :{{ loki_port }})"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: native_stop
+  vars:
+    service_scaffold_native: "{{ loki_native }}"
+
+- name: "Loki | The container (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  when: not (ansible_check_mode and (docker_engine_install | default({})) is changed)   # a first-install dry-run has no engine
+  vars:
+    service_scaffold_def:
+      name: loki
+      containers:
+        - name: "{{ loki_container }}"
+          image: "{{ loki_image }}"
+          network_mode: host
+          user: "{{ loki_account_user.uid | default(0) }}:{{ loki_account_user.group | default(0) }}"
+          command: ["-config.file={{ loki_config_dir }}/config.yml"]
+          volumes:
+            # the config's directory, not the file: Ansible replaces files by rename (new inode)
+            - "{{ loki_config_dir }}:{{ loki_config_dir }}:ro"
+            - "{{ loki_data_dir }}:{{ loki_data_dir }}"
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"   # the S3 endpoint's TLS is checked against the host's store
+          restart: "{{ loki_config_file is changed }}"
+
+- name: "Loki | Ready (read-only)"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ loki_port }}/ready"
+    status_code: [200]
+  register: loki_ready
+  until: loki_ready.status == 200
+  retries: 30
+  delay: 5
   when: not ansible_check_mode
 
-- name: "Loki | Host firewall rules for the native listeners (when ufw is active)"
+- name: "Loki | The native install (retired)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: native_retire
+  vars:
+    service_scaffold_native: "{{ loki_native }}"
+
+- name: "Loki | Host firewall rules for the listeners (host network; when ufw is active)"
   ansible.builtin.include_role:
     name: host_firewall
   vars:
