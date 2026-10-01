@@ -59,10 +59,28 @@
       {%- endfor -%}
       {{ out }}
 
+# ufw rewrites after.rules / after6.rules line by line with the ASCII codec (`ufw default …`,
+# backend_iptables.set_default_policy): a non-ASCII byte anywhere in them makes every ufw policy
+# change fail with UnicodeEncodeError — the first markers carried an em-dash, and the hardening
+# play's "default deny" task failed on every Docker host (2026-10-01). The markers are ASCII
+# now; a block under the old marker is removed first, so the rules are never written twice.
+- name: "Docker | DOCKER-USER block under the retired (non-ASCII) marker"
+  ansible.builtin.blockinfile:
+    path: "/etc/ufw/{{ item.file }}"
+    marker: "# {mark} ANSIBLE MANAGED \u2014 DOCKER-USER (roles/docker)"
+    state: absent
+  loop:
+    - { file: after.rules, family: 4 }
+    - { file: after6.rules, family: 6 }
+  loop_control:
+    label: "{{ item.file }}"
+  register: docker_user_rules_retired
+  when: "'Status: active' in docker_user_ufw.stdout"
+
 - name: "Docker | DOCKER-USER rules — {{ docker_user_firewall }} (IPv4 / IPv6)"
   ansible.builtin.blockinfile:
     path: "/etc/ufw/{{ item.file }}"
-    marker: "# {mark} ANSIBLE MANAGED — DOCKER-USER (roles/docker)"
+    marker: "# {mark} ANSIBLE MANAGED - DOCKER-USER (roles/docker)"
     insertafter: EOF
     block: "{{ lookup('ansible.builtin.template', 'docker-user.rules.j2', template_vars={'family': item.family}) }}"
     state: "{{ 'absent' if docker_user_firewall == 'off' else 'present' }}"
@@ -77,6 +95,6 @@
 - name: "Docker | Apply (ufw reload)"
   ansible.builtin.command: ufw reload
   when:
-    - docker_user_rules is changed
+    - docker_user_rules is changed or docker_user_rules_retired is changed
     - not ansible_check_mode
   changed_when: true
