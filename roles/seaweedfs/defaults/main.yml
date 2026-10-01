@@ -88,6 +88,11 @@ seaweedfs_offsite_enabled: true
 seaweedfs_offsite_vault_path: "{{ platform_env }}/offsite/s3"   # Contabo replica credentials
 seaweedfs_offsite_filer_path: "/buckets"
 seaweedfs_offsite_is_incremental: false
+# One-time resync window for the offsite backup (e.g. "4h"): when set, the backup starts that far
+# back instead of at its saved checkpoint — to skip a replay whose events were already sent.
+# Apply once with -e, then apply without it: the container then resumes from the checkpoint the
+# window run persisted (every minute). Left set, every restart would skip older events.
+seaweedfs_backup_time_ago: ""
 
 # --- Encryption at rest (SSE-S3) ------------------------------------------------
 # SeaweedFS honours S3 SSE-S3 (x-amz-server-side-encryption: AES256) using a KEK
