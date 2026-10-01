@@ -36,10 +36,13 @@
          | select('string') | select('!=', '') | list }}
   tags: [resolver, dns]
 
+# Tagged like the rest: without tags a `--tags resolver` run skipped this step and kept the v6
+# nameserver a full run had dropped — the role flipped the node's resolv.conf between runs.
 - name: "Resolver | Drop v6 nameservers on a host without a v6 default route (they only time out)"
   ansible.builtin.set_fact:
     resolver_nameservers: "{{ resolver_nameservers | reject('search', ':') | list }}"
   when: (ansible_default_ipv6 | default({})).address is not defined
+  tags: [resolver, dns]
 
 - name: "Resolver | Report what this host will use"
   ansible.builtin.debug:
@@ -85,6 +88,21 @@
       {% endif %}
   when: resolver_uses_resolved | bool
   notify: Restart systemd-resolved
+  tags: [resolver, dns]
+
+# A host that runs the platform resolver itself (AdGuard) has resolved's stub listener off
+# (roles/adguard frees :53), so the stub link would resolve nothing. Its /etc/resolv.conf
+# follows resolved's uplink list — the drop-in above — through resolved's own uplink file.
+# This role owns the file on every host; nothing else writes it (roles/adguard did, 2026-10-01).
+- name: "Resolver | No stub on a host that runs the resolver: resolv.conf follows resolved's uplink list"
+  ansible.builtin.file:
+    path: /etc/resolv.conf
+    src: /run/systemd/resolve/resolv.conf
+    state: link
+    force: true
+  when:
+    - resolver_uses_resolved | bool
+    - inventory_hostname in resolver_self_hosted
   tags: [resolver, dns]
 
 # Some agents own /etc/resolv.conf outright. NetBird generates it, points it at the overlay

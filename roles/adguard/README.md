@@ -18,7 +18,7 @@ policies, and an automatic daily renewal — no WebUI clicks.
 
 | Task file     | Purpose |
 |---------------|---------|
-| `host.yml`    | The host side: systemd-resolved's stub off (frees `:53`), the host's own `resolv.conf` pinned to the FW Unbound. |
+| `host.yml`    | The host side: systemd-resolved's stub off (frees `:53`). What the host resolves with is `roles/resolver`'s (hardening): a host that runs AdGuard is pointed at the firewall through resolved's uplink list — one writer of `/etc/resolv.conf`. |
 | `container.yml` | The container (`adguard_image`, host network, `adguard_home_dir` mounted at the image's conf + work paths, `/etc/lego` read-only); it must answer a query before the retired native unit + binary are removed. |
 | `secrets.yml` | Controller-side: read the Cloudflare token + ACME email; read-or-generate the admin bcrypt hash and persist the prod secret JSON back to the controller (`no_log`). |
 | `config.yml`  | Render the full `/opt/AdGuardHome/AdGuardHome.yaml` from a Jinja template before the container starts; a change restarts the container once. |
