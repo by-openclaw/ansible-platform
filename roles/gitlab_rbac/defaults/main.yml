@@ -43,9 +43,15 @@ gitlab_rbac_settings:
   usage_ping_enabled: false                          # no telemetry phone-home (private instance)
   default_project_deletion_protection: true          # guard against accidental project deletion
 
-# --- Instance admins (mirror Authentik gitlab-admins) — root always exempt ---
-gitlab_rbac_instance_admins:
-  - adm_yboujraf
+# --- Instance admins = the people in the GitLab admin group (people.yml) — root always exempt
+# Nobody is spelled out here: platform_people is the one place a person is written down
+# (identity/0004); the group names come from platform_service_groups (one source).
+gitlab_rbac_admin_group: "{{ platform_service_groups.gitlab.admin }}"     # gitlab-admins
+gitlab_rbac_user_group: "{{ platform_service_groups.gitlab.access }}"     # gitlab-users
+gitlab_rbac_people_active: "{{ platform_people | selectattr('state', 'equalto', 'active') | selectattr('groups', 'defined') | list }}"
+gitlab_rbac_instance_admins: >-
+  {{ gitlab_rbac_people_active | selectattr('groups', 'contains', gitlab_rbac_admin_group)
+     | map(attribute='username') | list }}
 gitlab_rbac_enforce_admin_exact: true
 
 # --- Group tree --------------------------------------------------------------
@@ -64,16 +70,28 @@ gitlab_rbac_groups:
   # (runbooks/KB alongside the desk), per the "desk support has a repo" rule.
   - { path: support, parent: platform, name: "Support", visibility: private, project_creation: maintainer, subgroup_creation: owner }
 
-# --- Memberships: Owner = adm_* only; users = Developer (code) / Reporter (docs) -
+# --- Memberships: Owner = the admin group's people; users = Developer (code) / Reporter (docs)
 # Not granted at platform level (inheritance would floor docs at Developer); set
-# per-subgroup so docs stays read-only for regular users.
-gitlab_rbac_members:
-  - { group: platform, username: adm_yboujraf, access: owner }   # inherits Owner to all subgroups
-  - { group: platform/infra, username: yboujraf, access: developer }
-  - { group: platform/apps, username: yboujraf, access: developer }
-  - { group: platform/devops, username: yboujraf, access: developer }
-  - { group: platform/docs, username: yboujraf, access: reporter }   # viewer — reads Pages only
-  - { group: platform/support, username: yboujraf, access: developer }   # support agent: sees confidential desk issues
+# per-subgroup so docs stays read-only for regular users. The people come from people.yml:
+# gitlab-admins → Owner of `platform` (inherits to every subgroup); gitlab-users who are
+# not admins → the per-subgroup roles below.
+gitlab_rbac_user_memberships:
+  - { group: platform/infra, access: developer }
+  - { group: platform/apps, access: developer }
+  - { group: platform/devops, access: developer }
+  - { group: platform/docs, access: reporter }      # viewer — reads Pages only
+  - { group: platform/support, access: developer }  # support agent: sees confidential desk issues
+gitlab_rbac_members: >-
+  {%- set out = [] -%}
+  {%- for u in gitlab_rbac_instance_admins -%}
+    {%- set _ = out.append({'group': 'platform', 'username': u, 'access': 'owner'}) -%}
+  {%- endfor -%}
+  {%- for p in gitlab_rbac_people_active if gitlab_rbac_user_group in p.groups and gitlab_rbac_admin_group not in p.groups -%}
+    {%- for m in gitlab_rbac_user_memberships -%}
+      {%- set _ = out.append({'group': m.group, 'username': p.username, 'access': m.access}) -%}
+    {%- endfor -%}
+  {%- endfor -%}
+  {{ out }}
 
 # --- Cleanup: throwaway projects created during CI bring-up -------------------
 gitlab_rbac_delete_projects:
