@@ -77,18 +77,8 @@
         name: seaweedfs_bucket
       vars:
         seaweedfs_bucket_identity: gitlab
-        seaweedfs_bucket_names:
-          - gitlab-artifacts
-          - gitlab-external-diffs
-          - gitlab-lfs
-          - gitlab-uploads
-          - gitlab-packages
-          - gitlab-dependency-proxy
-          - gitlab-terraform-state
-          - gitlab-ci-secure-files
-          - gitlab-pages
-          - gitlab-registry
-          - gitlab-backups
+        # what roles/gitlab configures (group_vars/all/gitlab.yml) — one list
+        seaweedfs_bucket_names: "{{ (gitlab_s3_buckets.values() | list) + [gitlab_registry_bucket, gitlab_backup_bucket] }}"
         seaweedfs_bucket_vault_path: "{{ platform_env }}/gitlab/s3"
 
     # gitlab-dr selects only the DR-capture tasks inside the role. The tag has to

@@ -94,20 +94,8 @@ gitlab_redis_ssl: true
 # hairpin via the DMZ Traefik). TLS-direct to SeaweedFS = a hardening follow-up.
 gitlab_s3_endpoint: "http://{{ groups['seaweedfs'] | first }}.{{ platform_domain }}:8333"
 gitlab_s3_region: "us-east-1"                   # SeaweedFS ignores it; GitLab requires one
-# One scoped key, access to all of these. Consolidated object storage + registry +
-# backups. seaweedfs_bucket creates the buckets and the gitlab-scoped identity.
-gitlab_s3_buckets:
-  artifacts: "gitlab-artifacts"
-  external_diffs: "gitlab-external-diffs"
-  lfs: "gitlab-lfs"
-  uploads: "gitlab-uploads"
-  packages: "gitlab-packages"
-  dependency_proxy: "gitlab-dependency-proxy"
-  terraform_state: "gitlab-terraform-state"
-  ci_secure_files: "gitlab-ci-secure-files"
-  pages: "gitlab-pages"
-gitlab_registry_bucket: "gitlab-registry"
-gitlab_backup_bucket: "gitlab-backups"
+# The buckets (gitlab_s3_buckets, gitlab_registry_bucket, gitlab_backup_bucket) live in
+# group_vars/all/gitlab.yml: the playbook provisions exactly what this role configures.
 
 # --- SSO (Authentik OIDC) -----------------------------------------------------
 gitlab_oidc_issuer: "https://{{ platform_service_fqdns.authentik }}/application/o/gitlab/"
