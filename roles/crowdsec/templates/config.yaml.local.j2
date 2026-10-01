@@ -1,0 +1,21 @@
+# Managed by Ansible (role crowdsec). CrowdSec merges this file over config.yaml, which
+# stays the vendor's (the image's entrypoint maintains it): only what the platform decides
+# lives here.
+common:
+  daemonize: false
+  log_media: stdout            # the container log: journald → Loki, like every container
+config_paths:
+  plugin_dir: {{ crowdsec_plugin_dir }}
+api:
+  server:
+    listen_uri: {{ crowdsec_lapi_listen_uri }}
+    # Log processors self-register with a shared token (multi-server guide). Both token and
+    # allowed_ranges are mandatory; a processor can push arbitrary alerts, so the ranges stay
+    # narrow — a compromised agent must not be able to ban us out of our own platform.
+    auto_registration:
+      enabled: true
+      token: "{{ crowdsec_registration_token }}"
+      allowed_ranges:
+{% for r in crowdsec_registration_allowed_ranges %}
+        - "{{ r }}"
+{% endfor %}

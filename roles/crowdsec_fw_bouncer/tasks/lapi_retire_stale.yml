@@ -4,13 +4,15 @@
 # so the enrol can proceed. Only when the firewall reports it is NOT enrolled — a live agent is
 # never touched.
 - name: "LAPI | Registrations on the central LAPI"
-  ansible.builtin.command: "/usr/bin/cscli machines list -o json"
+  ansible.builtin.command:
+    argv: "{{ crowdsec_cscli + ['machines', 'list', '-o', 'json'] }}"   # the LAPI's container
   register: crowdsec_fw_bouncer_lapi_machines
   changed_when: false
   check_mode: false
 
 - name: "LAPI | Retire the stale registration of the firewall machine"
-  ansible.builtin.command: "/usr/bin/cscli machines delete {{ crowdsec_fw_bouncer_machine_name }}"
+  ansible.builtin.command:
+    argv: "{{ crowdsec_cscli + ['machines', 'delete', crowdsec_fw_bouncer_machine_name] }}"
   when:
     - not (hostvars[crowdsec_fw_bouncer_fw_host].crowdsec_fw_bouncer_enrolled | default(true) | bool)
     - (crowdsec_fw_bouncer_lapi_machines.stdout | from_json)

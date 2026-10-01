@@ -110,7 +110,8 @@
 # central LAPI first (delegated), so re-enrolment is fully hands-off. Best-effort:
 # a first-ever install has nothing to delete. Only runs when we're (re-)enrolling.
 - name: "Crowdsec_agent | Remove any stale registration for this host on the central LAPI"
-  ansible.builtin.command: "cscli machines delete {{ inventory_hostname }}"
+  ansible.builtin.command:
+    argv: "{{ crowdsec_cscli + ['machines', 'delete', inventory_hostname] }}"   # the LAPI's container
   delegate_to: "{{ crowdsec_agent_lapi_inventory_host }}"
   become: true
   when: crowdsec_agent_needs_enrol | bool

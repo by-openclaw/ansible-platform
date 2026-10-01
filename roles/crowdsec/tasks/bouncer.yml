@@ -1,27 +1,17 @@
 ---
-- name: "bouncer | {{ crowdsec_bouncer.name }} — key in Vault? (optional read)"
-  ansible.builtin.include_role:
-    name: vault_secret
-  vars:
-    vault_secret_path: "{{ crowdsec_bouncer.vault_path }}"
-    vault_secret_optional: true
-
-- name: "bouncer | {{ crowdsec_bouncer.name }} — add it and capture the key (absent only)"
-  ansible.builtin.command: "cscli bouncers add {{ crowdsec_bouncer.name }} -o raw"
-  register: crowdsec_bouncer_add
-  changed_when: true
-  no_log: true
-  when: vault_secret_result | length == 0
-
-- name: "bouncer | {{ crowdsec_bouncer.name }} — store the new key (Vault)"
+- name: "bouncer | Its key (Vault, get-or-create) — {{ crowdsec_bouncer.name }}"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
     vault_secret_path: "{{ crowdsec_bouncer.vault_path }}"
     vault_secret_init:
-      api_key: "{{ crowdsec_bouncer_add.stdout | trim }}"
+      api_key: "{{ lookup('community.general.random_string', length=32, special=false) }}"
       lapi_url: "http://{{ crowdsec_lapi_host }}:{{ crowdsec_lapi_port }}"
       bouncer: "{{ crowdsec_bouncer.name }}"
-  when:
-    - crowdsec_bouncer_add.stdout is defined
-    - (crowdsec_bouncer_add.stdout | trim | length) > 0
+
+- name: "bouncer | Registered on the LAPI under that key (absent only) — {{ crowdsec_bouncer.name }}"
+  ansible.builtin.command:
+    argv: "{{ crowdsec_cscli + ['bouncers', 'add', crowdsec_bouncer.name, '--key', vault_secret_result.api_key] }}"
+  changed_when: true
+  no_log: true
+  when: crowdsec_bouncer.name not in crowdsec_bouncer_names
