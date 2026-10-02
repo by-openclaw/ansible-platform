@@ -11,13 +11,10 @@
 # `dyn` (+ outbound PBR). No ISP identity in any public name (ISO 27001 / NIS2).
 #
 # SCOPE / OWNERSHIP: this role is ADDITIVE — it manages only the records listed in
-# `cloudflare_dns_records` and never prunes the zone. The `resend.{{ platform_domain }}`
-# subtree (SES bounce MX, send.* SPF, resend._domainkey DKIM) is provisioned and
-# owned by RESEND's own domain-setup flow — it is OUT OF SCOPE here. Do NOT add
-# those names, and never put a `solo`/`absent` entry on a name that overlaps them.
-# This repo owns the apex + mailcow (mail/MX/SPF/DKIM/DMARC) records; Resend owns
-# its subdomain. The two senders are deliberately separate (apex=mailcow,
-# resend.{{ platform_domain }}=Resend), each with its own SPF/DKIM.
+# `cloudflare_dns_records` and never prunes the zone. The `resend.{{ platform_domain }}` subtree
+# (SES bounce MX, send.* SPF, resend._domainkey DKIM) was Resend's own domain-setup flow;
+# Resend is retired (every service sends through its Mailcow mailbox, 2026-10-02), so the
+# subtree is declared absent below. This repo owns the apex + mailcow records.
 cloudflare_dns_token: ""   # set by the playbook pre-play from Vault; empty = refuse to run
 cloudflare_dns_zone: "{{ platform_domain }}"
 
@@ -75,3 +72,9 @@ cloudflare_dns_records:
   # client autoconfiguration: Outlook (autodiscover) + Thunderbird (autoconfig)
   - {record: "autodiscover", type: CNAME, value: "{{ platform_service_fqdns.mailcow }}", state: present, solo: true}
   - {record: "autoconfig", type: CNAME, value: "{{ platform_service_fqdns.mailcow }}", state: present, solo: true}
+
+  # --- Resend (retired 2026-10-02: services send through their Mailcow mailbox) — its subtree goes ---
+  - {record: "resend", type: MX, state: absent}
+  - {record: "resend._domainkey.resend", type: TXT, state: absent}
+  - {record: "send.resend", type: MX, state: absent}
+  - {record: "send.resend", type: TXT, state: absent}
