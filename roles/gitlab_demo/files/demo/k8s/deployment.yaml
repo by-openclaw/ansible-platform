@@ -8,10 +8,16 @@ spec:
     metadata: { labels: { app: demo } }
     spec:
       imagePullSecrets: [{ name: gitlab-registry }]
+      # security/0003 §1 + the pipeline's Trivy gate (KSV-0014/0118): non-root, no privilege
+      # escalation, no capabilities, default seccomp, read-only rootfs — nginx-unprivileged writes
+      # only under /tmp (pid + temp paths), which is an emptyDir.
+      securityContext: { runAsNonRoot: true, runAsUser: 101, runAsGroup: 101, fsGroup: 101, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: demo
           image: IMAGE_PLACEHOLDER
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /, port: 8080 }, periodSeconds: 5 }
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 64Mi } }
-          securityContext: { runAsNonRoot: true, runAsUser: 101, allowPrivilegeEscalation: false, readOnlyRootFilesystem: false }
+          securityContext: { runAsNonRoot: true, runAsUser: 101, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: {} }]
