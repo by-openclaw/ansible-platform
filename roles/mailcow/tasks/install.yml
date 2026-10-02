@@ -60,8 +60,10 @@
   ansible.builtin.shell: |
     set -e
     cd {{ mailcow_install_dir }}
+    # a clone made at a tag only ever fetched that tag: restore the standard refspec first
+    git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
     [ -f .git/shallow ] && git fetch -q --unshallow origin || true
-    git fetch -q origin master
+    git fetch -q origin
     git rev-parse --verify -q master >/dev/null || git checkout -q -b master
     git branch -q --set-upstream-to=origin/master master
     git checkout -q master
