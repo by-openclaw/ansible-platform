@@ -18,6 +18,25 @@ entries:
       is_superuser: true
 {% endif %}
 {% endfor %}
+{% for sa in authentik_service_accounts %}
+  - model: authentik_core.user
+    id: sa-{{ sa.username }}
+    identifiers:
+      username: {{ sa.username }}
+    attrs:
+      username: {{ sa.username }}
+      name: "{{ sa.name }}"
+      is_active: true
+      type: service_account
+      groups:
+{% for g in sa.groups %}
+        - !Find [authentik_core.group, [name, {{ g }}]]
+{% endfor %}
+    permissions:
+{% for perm in sa.permissions %}
+      - {{ perm }}
+{% endfor %}
+{% endfor %}
 {% for u in authentik_users_resolved %}
   - model: authentik_core.user
     id: user-{{ u.username }}

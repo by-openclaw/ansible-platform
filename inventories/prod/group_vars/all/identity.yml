@@ -68,6 +68,20 @@ platform_service_groups:
 
 # Groups that gate no single service. Named individually so a role references the name rather than
 # an index into a list.
+# Service accounts at the IdP (machines that read the directory): declared here, rendered by the
+# identity blueprint with the permissions they need and nothing more — never a superuser group.
+# svc-netbird-prod was a member of the built-in `authentik Admins` (superuser) with no declaration
+# at all (found by the 2026-10-02 audit). Its credential (an app token) stays in Vault
+# ({env}/netbird/authentik-sa) and is not touched here.
+platform_service_accounts:
+  - username: "svc-netbird-{{ platform_env }}"
+    name: "NetBird IdP manager"
+    groups: ["{{ platform_service_groups.netbird.access }}"]
+    permissions:                 # what NetBird's Authentik IdP manager calls: list/read users + groups, create and update users (wt_account_id attribute)
+      - authentik_core.view_user
+      - authentik_core.view_group
+      - authentik_core.add_user
+      - authentik_core.change_user
 platform_admins_group: "platform-admins"        # Authentik superusers; also the Wazuh/Portainer gate
 platform_infra_admins_group: "infra-admins"
 platform_ldap_search_group: "ldap-search"       # the LDAP outpost's search account
