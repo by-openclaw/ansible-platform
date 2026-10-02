@@ -29,12 +29,11 @@
 - name: "install | Apply pending docker restart before the stack starts"
   ansible.builtin.meta: flush_handlers
 
-- name: "install | Clone mailcow-dockerized at the pinned tag"
+- name: "install | Clone mailcow-dockerized (full history, branch master: update.sh needs both)"
   ansible.builtin.git:
     repo: "{{ mailcow_git_repo }}"
     dest: "{{ mailcow_install_dir }}"
-    version: "{{ mailcow_git_version }}"
-    depth: 1
+    version: master
     # Clone once; never pull/reset on re-runs. mailcow's data/conf/* are tracked
     # files that we (unbound.conf) and mailcow's runtime modify, so a plain git update
     # would fail on "local modifications" / wipe live config. A pin bump goes through
@@ -54,16 +53,35 @@
 # merge (--ours keeps our tracked edits), --skip-start leaves the start to the compose step below
 # (pull always + up). update.sh follows the newest stable branch head, so the pinned tag is checked
 # out right after and asserted: the pin stays the single source of the running release.
-- name: "install | Update the checkout to the pinned release (mailcow update.sh)"
+# update.sh needs a full clone on a branch (a shallow, tag-detached checkout fails with "No current
+# branch" AFTER it stopped the stack — 2026-10-02 incident, 9 min without mail). An install made
+# before this rule is converted in place: unshallow + local branch master at the current commit.
+- name: "install | A full clone on branch master (converts an older shallow checkout in place)"
+  ansible.builtin.shell: |
+    set -e
+    cd {{ mailcow_install_dir }}
+    [ -f .git/shallow ] && git fetch -q --unshallow origin || true
+    git fetch -q origin master
+    git rev-parse --verify -q master >/dev/null || git checkout -q -b master
+    git branch -q --set-upstream-to=origin/master master
+    git checkout -q master
+  args:
+    executable: /bin/bash
+  register: mailcow_branch_fix
+  changed_when: "'shallow' in (mailcow_branch_fix.stderr | default(''))"
+  when: mailcow_release_now.stdout != mailcow_git_version
+
+- name: "install | Prefetch the images of the new release (shortens the restart)"
   ansible.builtin.command:
-    cmd: ./update.sh --force --ours --skip-start --skip-ping-check
+    cmd: ./update.sh --prefetch --force --skip-ping-check
     chdir: "{{ mailcow_install_dir }}"
   when: mailcow_release_now.stdout != mailcow_git_version
   changed_when: true
+  failed_when: false   # prefetch exits non-zero after pulling; the real update below decides
 
-- name: "install | Enforce the pinned tag after the update"
+- name: "install | Update to the newest stable with mailcow's own update.sh (migrates config, merges, restarts the stack)"
   ansible.builtin.command:
-    cmd: git checkout -q {{ mailcow_git_version }}
+    cmd: ./update.sh --force --ours --skip-ping-check
     chdir: "{{ mailcow_install_dir }}"
   when: mailcow_release_now.stdout != mailcow_git_version
   changed_when: true
@@ -79,7 +97,7 @@
 - name: "install | The checkout is the pinned release"
   ansible.builtin.assert:
     that: mailcow_release_after.stdout == mailcow_git_version
-    fail_msg: "mailcow checkout is {{ mailcow_release_after.stdout }}, the pin says {{ mailcow_git_version }}"
+    fail_msg: "mailcow checkout is {{ mailcow_release_after.stdout }}, the pin says {{ mailcow_git_version }} — update.sh follows the newest stable: bump the pin to it"
     quiet: true
   when: not ansible_check_mode
 
