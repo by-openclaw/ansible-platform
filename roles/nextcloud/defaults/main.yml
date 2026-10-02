@@ -42,6 +42,12 @@ nextcloud_redis_host: "{{ groups['redis'] | first }}.{{ platform_domain }}"
 nextcloud_redis_port: 6379
 nextcloud_redis_db: "{{ platform_redis_databases.nextcloud }}"   # own DB index on the shared Redis (group_vars/all/redis.yml allocation table, SVC-27)
 
+# Application metrics (INF-35): the serverinfo API scraped by nextcloud-exporter, a sidecar on
+# this host; Prometheus finds it through the catalog's `metrics_port` (data-driven job).
+nextcloud_exporter_image: "xperimental/nextcloud-exporter:0.9.1"
+nextcloud_metrics_port: 9205
+nextcloud_vault_serverinfo_path: "{{ platform_env }}/nextcloud/serverinfo"   # token (get-or-create here), read by the exporter + set via occ
+
 # Contabo S3 — PRIMARY object storage (bucket precreated out-of-band).
 nextcloud_s3_bucket: "{{ platform_nextcloud_bucket }}"            # group_vars/all/objectstore.yml — one definition (the mirror job reads it too)
 nextcloud_s3_host: "{{ platform_external_s3.contabo.host }}"
