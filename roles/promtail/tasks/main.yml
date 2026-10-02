@@ -46,7 +46,19 @@
     update_cache: true
     cache_valid_time: 3600
   register: promtail_acl_pkg
-  when: promtail_acl_dirs | length > 0
+  when: promtail_acl_dirs | length > 0 or promtail_acl_traverse | length > 0
+
+# A log inside a Docker volume sits under /var/lib/docker (0710): the tree ACL below never reaches
+# that parent, so promtail could open nothing. Traverse only (x), on the named directory only.
+- name: "Promtail | Traverse-only on parent directories (ACL, x)"
+  ansible.posix.acl:
+    path: "{{ item }}"
+    entity: promtail
+    etype: user
+    permissions: x
+    state: present
+  loop: "{{ promtail_acl_traverse }}"
+  when: not (ansible_check_mode and (promtail_acl_pkg is changed))
 
 - name: "Promtail | Read + traverse on declared log trees (ACL, current entries)"
   ansible.posix.acl:
