@@ -48,7 +48,7 @@ Guest images capture everything on the rootfs and named docker volumes.
 | **jitsi** | **D** | none — stateless (no recordings); config + secrets regenerable | code (role) + Vault `prod/jitsi/secrets`; LXC in the guest jobs | redeploy `playbooks/jitsi.yml` |
 | **step-ca** | **A ⚠** | `step-ca-data` volume (CA keys) | volume in PBS; CA password + root fingerprint in Vault | **volume + Vault password = the CA.** Lose both = re-init a new CA |
 | **crowdsec** | **A** | LAPI sqlite (machines/bouncers) | PBS guest image; decisions ephemeral | play re-enrols agents/bouncers |
-| **netbird** | **A** | mgmt store (`sqlite`) volume | PBS guest image | play + volume |
+| **netbird** | **A** | stores `netbird` + `netbird_events` on the shared PostgreSQL (daily `pg_dumpall`); `netbird-mgmt`/`netbird-signal` volumes (GeoLite only) | PBS guest image + the cluster DB dump | play + DB restore |
 | **grafana** | **A + D** | dashboards/config as code; `grafana` DB in cluster PG | PG dump | play + PG restore |
 | **prometheus / loki** | **E** | TSDB / WAL scratch (`/var/lib/loki` = cache only) | none — retention window, rebuilds | play |
 | **redis** | **E** | cache only | none | play |

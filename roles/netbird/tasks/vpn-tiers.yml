@@ -108,7 +108,9 @@
     label: "{{ item.network_id }} ({{ item.network }})"
   when: (netbird_vt_routes.json | selectattr('network_id', 'equalto', item.network_id) | list | length) == 0
 
-# --- admin users -> vpn-full (auto_groups so their peers get full reach) ---------
+# --- admin-group members -> NetBird role admin + vpn-full (IDN-15 group→role) -----
+# Members of the service's admin group (people.yml) administer NetBird and their
+# peers get the full route. The account owner and service users are never touched.
 - name: "vpn-tiers | List NetBird users"
   ansible.builtin.uri:
     url: "{{ netbird_vt_api }}/api/users"
@@ -119,23 +121,25 @@
   check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
   no_log: true
 
-- name: "vpn-tiers | Add vpn-full to admin users' auto_groups"
+- name: "vpn-tiers | Admin-group members: role admin + vpn-full in auto_groups"
   ansible.builtin.uri:
     url: "{{ netbird_vt_api }}/api/users/{{ item.id }}"
     method: PUT
     headers: { Authorization: "{{ netbird_auth_header }}" }
     body_format: json
     body:
-      role: "{{ item.role }}"
+      role: "admin"
       is_blocked: "{{ item.is_blocked | default(false) }}"
       auto_groups: "{{ (item.auto_groups | default([]) + [netbird_vt_full_gid]) | unique }}"
     status_code: [200]
   register: netbird_vt_user_upd
   no_log: true
-  loop: "{{ netbird_vt_users.json | selectattr('email', 'in', netbird_vpn_full_users) | list }}"
+  loop: >-
+    {{ netbird_vt_users.json | selectattr('email', 'in', netbird_vpn_full_users)
+       | rejectattr('role', 'equalto', 'owner') | rejectattr('is_service_user') | list }}
   loop_control:
     label: "{{ item.email }}"
-  when: netbird_vt_full_gid not in (item.auto_groups | default([]))
+  when: netbird_vt_full_gid not in (item.auto_groups | default([])) or item.role != 'admin'
 
 - name: "vpn-tiers | Tiers summary"
   ansible.builtin.debug:
@@ -143,4 +147,6 @@
       - "vpn-full group: {{ netbird_vt_full_gid }}"
       - "full route {{ netbird_route_network }} -> {{ 'repointed to vpn-full' if netbird_vt_repoint is changed else 'already on vpn-full' }}"
       - "web routes (All): {{ netbird_vpn_web_routes | map(attribute='network') | list }}"
-      - "admin users set to vpn-full: {{ netbird_vt_users.json | selectattr('email', 'in', netbird_vpn_full_users) | map(attribute='email') | list }}"
+      - >-
+        admin-group members (role admin + vpn-full):
+        {{ netbird_vt_users.json | selectattr('email', 'in', netbird_vpn_full_users) | map(attribute='email') | list }}
