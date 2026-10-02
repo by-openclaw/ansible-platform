@@ -254,11 +254,23 @@
   when: crowdsec_whitelist_cidrs | length > 0
   notify: Restart crowdsec agent
 
+# cscli reports an install on stderr and with wording that changed across versions, so "changed"
+# is decided by membership: what was installed before the loop vs what this host declares. A real
+# install must restart the agent, or the new parsers/scenarios are never loaded (2026-10-02).
+- name: "Crowdsec_agent | Collections installed before this run"
+  ansible.builtin.command:
+    cmd: cscli collections list -o json
+  register: crowdsec_agent_coll_before
+  changed_when: false
+  check_mode: false
+
 - name: "Crowdsec_agent | Install detection collections"
   ansible.builtin.command:
     cmd: "cscli collections install {{ item }} --error"
   register: crowdsec_agent_coll
-  changed_when: "'Enabled' in (crowdsec_agent_coll.stdout | default(''))"
+  changed_when: >-
+    item not in ((crowdsec_agent_coll_before.stdout | default('{}') | from_json).collections | default([])
+                 | map(attribute='name') | list)
   failed_when:
     - crowdsec_agent_coll.rc != 0
     - "'already' not in (crowdsec_agent_coll.stderr | default('') ~ crowdsec_agent_coll.stdout | default(''))"
