@@ -53,27 +53,3 @@
     name: "{{ mailcow_backup_rclone_image }}"
     source: pull
   check_mode: false
-
-# --- Nightly schedule on the CONTROL NODE: cron → ansible-playbook --tags backup.
-#     Vault auth = the deploy AppRole file the controller already uses; the log
-#     lives under the operator's state dir (cron runs unprivileged).
-- name: "backup | Control-node log dir for the nightly run"
-  ansible.builtin.file:
-    path: "{{ mailcow_backup_log_dir }}"
-    state: directory
-    mode: "0750"
-  delegate_to: localhost
-  become: false
-  when: mailcow_backup_schedule_enabled | bool
-
-- name: "backup | Schedule the nightly backup (control node → ansible-playbook)"
-  ansible.builtin.cron:
-    name: "mailcow-backup-s3"
-    minute: "{{ mailcow_backup_cron_minute }}"
-    hour: "{{ mailcow_backup_cron_hour }}"
-    job: >-
-      cd {{ mailcow_repo_dir }} && {{ mailcow_backup_ansible_bin }} -i inventories/prod
-      playbooks/mailcow.yml --tags backup >> {{ mailcow_backup_log_dir }}/mailcow-backup.log 2>&1
-    state: "{{ 'present' if mailcow_backup_schedule_enabled | bool else 'absent' }}"
-  delegate_to: localhost
-  become: false

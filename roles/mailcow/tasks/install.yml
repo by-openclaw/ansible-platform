@@ -36,11 +36,52 @@
     version: "{{ mailcow_git_version }}"
     depth: 1
     # Clone once; never pull/reset on re-runs. mailcow's data/conf/* are tracked
-    # files that we (unbound.conf) and mailcow's runtime modify, so a git update
-    # would fail on "local modifications" / wipe live config. Version bumps are
-    # done out-of-band via mailcow's own update.sh, not git pull.
+    # files that we (unbound.conf) and mailcow's runtime modify, so a plain git update
+    # would fail on "local modifications" / wipe live config. A pin bump goes through
+    # mailcow's own update.sh (next tasks), never git pull.
     update: false
   register: mailcow_clone
+
+- name: "install | Current mailcow release (tag at the checkout)"
+  ansible.builtin.command:
+    cmd: git describe --tags --always
+    chdir: "{{ mailcow_install_dir }}"
+  register: mailcow_release_now
+  changed_when: false
+  check_mode: false   # read-only probe: must run under --check too (the next tasks read it)
+
+# A pin bump is a vendor update. mailcow's own update.sh does the config migration and the git
+# merge (--ours keeps our tracked edits), --skip-start leaves the start to the compose step below
+# (pull always + up). update.sh follows the newest stable branch head, so the pinned tag is checked
+# out right after and asserted: the pin stays the single source of the running release.
+- name: "install | Update the checkout to the pinned release (mailcow update.sh)"
+  ansible.builtin.command:
+    cmd: ./update.sh --force --ours --skip-start --skip-ping-check
+    chdir: "{{ mailcow_install_dir }}"
+  when: mailcow_release_now.stdout != mailcow_git_version
+  changed_when: true
+
+- name: "install | Enforce the pinned tag after the update"
+  ansible.builtin.command:
+    cmd: git checkout -q {{ mailcow_git_version }}
+    chdir: "{{ mailcow_install_dir }}"
+  when: mailcow_release_now.stdout != mailcow_git_version
+  changed_when: true
+
+- name: "install | Release after the update"
+  ansible.builtin.command:
+    cmd: git describe --tags --always
+    chdir: "{{ mailcow_install_dir }}"
+  register: mailcow_release_after
+  changed_when: false
+  check_mode: false
+
+- name: "install | The checkout is the pinned release"
+  ansible.builtin.assert:
+    that: mailcow_release_after.stdout == mailcow_git_version
+    fail_msg: "mailcow checkout is {{ mailcow_release_after.stdout }}, the pin says {{ mailcow_git_version }}"
+    quiet: true
+  when: not ansible_check_mode
 
 - name: "install | Render mailcow.conf"
   ansible.builtin.template:
