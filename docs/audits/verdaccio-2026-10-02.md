@@ -45,3 +45,15 @@ Method: roles/contract_audit (PASS=11 FAIL=0 SKIP=22) + manual walk on the live 
 | backup | INF-41–43 | PASS | PBS ct 505: 20 snapshots, latest 2026-10-02T01:50Z (5.7 GB); packages in the replicated bucket |
 | pins | GIT-01–05 | GAP → fixed | gap 1 |
 | contract | SVC-23 | PASS | `check_service_contract.py` 32/32; `contract_audit` PASS=11 FAIL=0 |
+
+## Closure — 2026-10-02
+
+| Outcome | Gaps |
+|---|---|
+| **Fixed, applied ×2 (`changed=0`), verified** | 1 (platform image `verdaccio-platform:6.10.4-p1` built on the official `6.10.4` base with `verdaccio-openid 0.19.0` + `verdaccio-aws-s3-storage 12.1.2`; container recreated once, uid 10001; `/-/ping` 200, `/-/whoami` as the CI account, a proxied package through the npmjs uplink (117 versions), blackbox up), 2 (`mailbox: false`), 3 (service page) |
+| **Noted** | 4 (no Prometheus endpoint exists for Verdaccio 6; blackbox + `/-/ping` cover the gate) |
+| **Platform passes** | 5 (read-only rootfs, NetBox, per-service alert rules) |
+
+Idempotence: apply 1 `changed=4` (base pull, Dockerfile, image build, container), apply 2 `changed=0`; `main` = `changed=0` after the merge. Restarts: the registry container once (20:52Z, seconds).
+
+Found on the way: `roles/service_scaffold` honours `pull: false` for an image the role builds on the host (a dry-run of a new tag 404ed on the pull).
