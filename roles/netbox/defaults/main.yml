@@ -5,7 +5,10 @@
 # PostgreSQL (postgres_db: netbox) + Redis, both over verified TLS. Fronted by
 # Traefik (wildcard TLS). Upgrade = bump netbox_image tag.
 # ==============================================================================
-netbox_image: "netboxcommunity/netbox:v4.6.8"   # exact pin — bump deliberately
+netbox_image: "netboxcommunity/netbox:v4.7.2"   # exact pin — bump deliberately (4.7 needs PostgreSQL 15+, the ltree extension, Redis 6+)
+# --- Metrics (INF-33): NetBox's own /metrics (django-prometheus) on the app port; the monitoring host
+# is admitted by the DOCKER-USER catalog and must be an allowed Host (ALLOWED_HOSTS carries the SVC address).
+netbox_metrics_enabled: true
 
 netbox_fqdn: "{{ platform_service_fqdns.netbox }}"
 
@@ -57,9 +60,16 @@ netbox_oidc_app_slug: "netbox"
 # OIDC `groups` claim). Login restriction to the group is enforced IdP-side
 # (authentik application policy binding, restrict_to_group).
 netbox_oidc_superuser_group: "{{ platform_service_groups.netbox.admin }}"
+# Superusers = the active members of that group (people.yml) + the local break-glass account.
+# tasks/rbac.yml reconciles the flag on every run (the login pipeline only touches the user logging in).
+netbox_superusers: >-
+  {{ platform_people | selectattr('state', 'equalto', 'active')
+     | selectattr('groups', 'contains', netbox_oidc_superuser_group)
+     | map(attribute='username') | list }}
 # NetBox config (Python) for the OIDC group->role pipeline — rendered by Ansible
 # and bind-mounted into /etc/netbox/config/extra.py (netbox-docker loads it).
 netbox_oidc_extra_host_path: "/etc/netbox/extra.py"
+netbox_scripts_dir: "/etc/netbox"              # host-side scripts fed to NetBox's shell (rbac.py)
 
 # Persistent volume (uploaded files / images).
 netbox_media_volume: "netbox-media"
