@@ -24,6 +24,17 @@
             - "{{ nextcloud_app_volume }}:/var/www/html"
             - "/etc/ssl/certs:/etc/ssl/certs:ro"
           env: "{{ nextcloud_env }}"
+        # Metrics sidecar: scrapes the serverinfo API through the public FQDN (the only
+        # trusted_domain), publishes :{{ nextcloud_metrics_port }} to the monitoring host only.
+        - name: nextcloud-exporter
+          image: "{{ nextcloud_exporter_image }}"
+          published:
+            - "{{ nextcloud_listen_ip }}:{{ nextcloud_metrics_port }}:9205"
+          env:
+            NEXTCLOUD_SERVER: "https://{{ nextcloud_fqdn }}"
+            NEXTCLOUD_AUTH_TOKEN: "{{ nextcloud_serverinfo_token }}"
+            NEXTCLOUD_LISTEN_ADDRESS: ":9205"
+            NEXTCLOUD_TIMEOUT: "10s"
 
 # First start runs the automated install (creates the schema in the empty
 # Postgres DB over libpq TLS + S3 primary wiring) before status.php reports
