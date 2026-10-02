@@ -171,7 +171,7 @@ Everything else walked below is PASS or N/A for an identity provider.
 | INF-29 | PASS | Loki `retention_period: 2160h` (90 d) platform-wide |
 | INF-30/31 | PASS | Authentik logs JSON (`{"event": …, "level": …}`), no secrets observed |
 | INF-32 | **GAP** | Authentik streams lack the `audit` label (gap 3) |
-| SEC-23/24 | PASS / NOT VERIFIED | auditd on (contract_audit); 180 d immutable audit class not verified |
+| SEC-23/24 | **GAP** (corrected 2026-10-02 by the Nextcloud audit) / NOT VERIFIED | auditd is **inactive** on this LXC guest too (`systemctl is-active auditd` → inactive; the kernel audit subsystem is not available to unprivileged containers) — the contract_audit check that said PASS tests the rules file, not the daemon; platform item: audit at the hypervisor or Wazuh syscheck |
 | SVC-24 | N/A | NetBox row |
 
 ## backup

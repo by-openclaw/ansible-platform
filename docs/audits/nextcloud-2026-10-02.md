@@ -12,19 +12,19 @@ Rows identical to the Authentik audit (same `base`/`docker`/`hardening`/`promtai
 
 | # | Checks | Finding | Where it is fixed |
 |---|---|---|---|
-| 1 | INF-41, INF-42 | **Every user file exists exactly once**: primary storage is the S3 bucket `nextcloud-data` at an external provider (`eu2.contabostorage.com`); no sync, replica or export of that bucket exists anywhere (PBS holds the config volume — ct 503: 21 snapshots, latest 2026-10-02T01:39Z, ~14.5 GB; PG is dumped daily by `roles/postgresql`). Provider-side loss or a credential compromise = total loss of the files. | **FIX** — a daily on-prem mirror of the bucket to the platform S3 (SeaweedFS), pinned `rclone` as a `roles/host_job` timer with credentials from Vault, logs → Loki; the direction flips when the planned primary move to SeaweedFS lands |
-| 2 | SEC-01 (spirit), INF-42 | **Files rest in cleartext at a third party**: the `encryption` app is disabled, so the external bucket holds readable user data. | **PROPOSE** — move the primary storage on-prem (already planned; Contabo becomes the encrypted PBS offsite only) or enable server-side encryption for the object store now (slower, previews/`files_external` caveats) |
-| 3 | SEC-15 | `nextcloud` and `nextcloud-cron` start as **root** (`user: ''`, Apache master PID 1 root, 10 workers `www-data`; the vendor entrypoint chowns then drops) — the ADR forbids root processes and says `--user` is not a workaround. | **PROPOSE** — an ADR clause for vendor entrypoints that drop privileges after init (with the override register as the record), or a rootless image policy; same family as doc-platform-core #68 |
-| 4 | INF-27, INF-32, SEC (IPS) | The application log (`nextcloud.log`, 2.2 MB in the `nextcloud-app` volume, `log_type` unset = file) is **not shipped to Loki** (0 `reqId` lines) and **not read by CrowdSec** (host agent: `linux`/`postfix`/`sshd` only; `crowdsecurity/nextcloud` disabled on the engine; no acquisition). Container stdout is shipped (402 lines/h). | **FIX** — promtail file target on the volume path with the `audit` label; CrowdSec agent acquisition + `crowdsecurity/nextcloud` collection (login brute-force → ban at Traefik) |
-| 5 | INF-35 | **No application metrics**: no exporter, `serverinfo` token unset; only node/cadvisor/blackbox (all `up`). | **FIX** — `nextcloud-exporter` sidecar (pinned) on the serverinfo API, token in Vault, `metrics_port` in the catalog (Prometheus job is data-driven since #720) |
-| 6 | SVC-27 | Redis `dbindex` unset (DB 0 shared) although the allocation table reserves **3**. | **FIX** — `occ config:system:set redis dbindex` from `platform_redis_databases.nextcloud` in post-install |
-| 7 | SVC (health) | 19 **missing optional DB indices** (taskprocessing, mail, polls, tables) reported by `occ setupchecks`. | **FIX** — `occ db:add-missing-indices` in post-install (idempotent) |
+| 1 | INF-41, INF-42 | **Every user file exists exactly once**: primary storage is the S3 bucket `nextcloud-data` at an external provider (`eu2.contabostorage.com`); no sync, replica or export of that bucket exists anywhere (PBS holds the config volume — ct 503: 21 snapshots, latest 2026-10-02T01:39Z, ~14.5 GB; PG is dumped daily by `roles/postgresql`). Provider-side loss or a credential compromise = total loss of the files. | **FIXED** — #731: `seaweedfs_mirrors` (pinned rclone, scoped identity, Vault creds, 30-day trash), first run 108/108 objects equal, daily 03:30; the provider is one definition (`platform_external_s3`) read by roles/nextcloud too |
+| 2 | SEC-01 (spirit), INF-42 | **Files rest in cleartext at a third party**: the `encryption` app is disabled, so the external bucket holds readable user data. | **PROPOSE → doc-platform-core #69** — services/0009 §4: external provider = interim (mirrored + application-encrypted or registered risk), platform S3 the target primary; recommended: register the risk, schedule the move |
+| 3 | SEC-15 | `nextcloud` and `nextcloud-cron` start as **root** (`user: ''`, Apache master PID 1 root, 10 workers `www-data`; the vendor entrypoint chowns then drops) — the ADR forbids root processes and says `--user` is not a workaround. | **PROPOSE → doc-platform-core #68 (§1 clause)** + register entry OH-3 in #724 (master root, 10 workers `www-data`; rootless variant when upstream ships one) |
+| 4 | INF-27, INF-32, SEC (IPS) | The application log (`nextcloud.log`, 2.2 MB in the `nextcloud-app` volume, `log_type` unset = file) is **not shipped to Loki** (0 `reqId` lines) and **not read by CrowdSec** (host agent: `linux`/`postfix`/`sshd` only; `crowdsecurity/nextcloud` disabled on the engine; no acquisition). Container stdout is shipped (402 lines/h). | **FIXED** — #730 + #732: promtail job `nextcloud_app` with `audit="true"` (traverse ACL on /var/lib/docker), CrowdSec agent `file` datasource + `crowdsecurity/nextcloud`; probe: 3 failed logins → 3 lines in Loki, 3/3 parsed by `nextcloud-logs`, whitelisted source → no ban |
+| 5 | INF-35 | **No application metrics**: no exporter, `serverinfo` token unset; only node/cadvisor/blackbox (all `up`). | **FIXED** — #729: serverinfo token in Vault, `nextcloud-exporter` sidecar, `metrics_port: 9205` → Prometheus job `nextcloud` up, `nextcloud_up` = 1 |
+| 6 | SVC-27 | Redis `dbindex` unset (DB 0 shared) although the allocation table reserves **3**. | **FIXED** — #728: `redis dbindex` = 3 (allocation table), fingerprint input |
+| 7 | SVC (health) | 19 **missing optional DB indices** (taskprocessing, mail, polls, tables) reported by `occ setupchecks`. | **FIXED** — #728: `occ db:add-missing-indices` in post-install; setupchecks no longer lists missing indices |
 | 8 | SVC (health) | Talk: HPB **version mismatch** (`2.1.1~docker`, "missing features: changed-users") and **Client Push not installed**. | **FIX in the `collab` walk** (next service) |
 | 9 | IDN-13 (scope) | All 23 IdP groups are provisioned into Nextcloud (`gitlab-admins`, `harbor-users`, …), not only `nextcloud-*`/`admin`. | **PLATFORM** — scope the group claim per application (Authentik property mapping) |
 | 10 | IDN-16 | Break-glass `admin` (local, no MFA) at `secret/{env}/nextcloud/admin`, no alert on use. | **PROPOSE** — doc-platform-core #65 (A); alert = Vault audit pass |
 | 11 | SEC-22 | Writable rootfs, no tmpfs (both containers). | **PLATFORM** — scaffold read-only + tmpfs pass (Authentik gap 5) |
 | 12 | SEC-23 | **auditd is inactive on this guest — and on `lxc-authentik-01`** (unprivileged LXC: the kernel audit subsystem is not available to the container; the hardening role deploys rules nobody consumes). The Authentik record's SEC-23 "PASS" is corrected by this finding. | **PLATFORM** — audit at the hypervisor (host auditd covers every container) or Wazuh syscheck; hardening walk |
-| 13 | IDN-17, SVC-37 | No `docs/services/nextcloud.md` (identity + notifications). | **FIX** (docs) — with this audit |
+| 13 | IDN-17, SVC-37 | No `docs/services/nextcloud.md` (identity + notifications). | **FIXED** — `docs/services/nextcloud.md` (#727) |
 | 14 | NAM-03 | 16-character hostname (`lxc-nextcloud-01`). | note — platform decision (Authentik record) |
 
 ## naming
@@ -125,3 +125,16 @@ Rows identical to the Authentik audit (same `base`/`docker`/`hardening`/`promtai
 | SVC-18/19 | GAP (platform) | NetBox empty |
 | SVC-23 (contract) | PASS | `scripts/check_service_contract.py` passing; containers via `service_scaffold`; `contract_audit` PASS=11 FAIL=0 |
 | SVC-37 | GAP → fixed | service page created |
+
+
+## Closure — 2026-10-02
+
+| Outcome | Gaps |
+|---|---|
+| **Fixed, applied ×2 (`changed=0`), verified** | 1 (second copy of the files: #731), 4 (application log in Loki with `audit` + CrowdSec parsing: #730, #732), 5 (application metrics: #729), 6 (Redis DB 3: #728), 7 (DB indices: #728), 13 (service page: #727) |
+| **Decision pending (owner merges the proposal)** | 2 (cleartext at the provider → doc-platform-core #69), 3 (vendor root entrypoint → #68 §1 clause + register OH-3 in #724), 10 (break-glass → #65 A) |
+| **Platform passes (every service at once)** | 9 IdP group-claim scope, 11 read-only rootfs + tmpfs, 12 auditd in LXC (hypervisor-level audit or Wazuh syscheck — hardening walk) |
+| **Next service's walk** | 8 Talk HPB version + Client Push → `collab` |
+| **Note** | 14 hostname length (NAM-03, owner) |
+
+Found on the way and fixed in the roles, not only for this service: role-level `vars:` in `playbooks/crowdsec-agents.yml` had been silently overriding every host group's agent collections (now inventory data — #732); the promtail role could not read any log inside a Docker volume (`promtail_acl_traverse` — #732); a CrowdSec collection install never counted as a change, so parsers were loaded only on the next unrelated restart (#732); the promtail role's ACL tasks broke `--check` on a first run (#730).
