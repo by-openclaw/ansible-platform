@@ -12,6 +12,8 @@
 # The pull runs under --check too: a dry-run of an image bump otherwise fails in the next task,
 # because docker_container needs the new image's config to compare against the running
 # container. An image in the local cache changes no service state.
+# A container whose image the role BUILDS on the host (pull: false) has nothing to pull: under
+# --check the build is skipped and the tag does not exist yet, so a pull would 404.
 - name: "Scaffold | Pull the pinned images"
   community.docker.docker_image:
     name: "{{ scaffold_ctr.image }}"
@@ -22,6 +24,7 @@
   loop_control:
     loop_var: scaffold_ctr
     label: "{{ scaffold_ctr.image }}"
+  when: scaffold_ctr.pull | default(true) | bool
 
 # A published port reaches the host through Docker's DNAT, past ufw: the DOCKER-USER catalog
 # (group_vars/all/docker_firewall.yml) is the one list of what may reach it and from where. A

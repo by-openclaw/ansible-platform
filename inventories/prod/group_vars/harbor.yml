@@ -1,5 +1,8 @@
 ---
-# Harbor components log via the syslog driver into /var/log/harbor/*.log
-# (harbor's own design) — ship them to Loki; rotation = roles/logrotate.
+# Harbor's components log through the syslog driver into the log sidecar, which writes
+# /var/log/harbor/<component>.log; promtail ships them. The forwarded audit log
+# (roles/harbor settings: audit_log_forward_endpoint) lands in audit.log and carries the
+# `audit` label (INF-32, 90-day class).
 promtail_extra_file_jobs:
-  - { name: harbor_components, path: "/var/log/harbor/*.log" }
+  - {name: harbor_components, path: "/var/log/harbor/{core,jobservice,registry,registryctl,portal,proxy,trivy-adapter,redis,exporter}.log"}
+  - {name: harbor_audit, path: "/var/log/harbor/audit.log", audit: true}

@@ -114,12 +114,13 @@
       fqdn: "{{ verdaccio_fqdn }}"
       backend_url: "http://{{ verdaccio_listen_ip }}:{{ verdaccio_port }}"
       exposure: internal
-      mailbox: true
+      mailbox: false            # Verdaccio sends no mail; the mailbox created earlier stays at mailcow (never deleted)
       s3_bucket: "{{ verdaccio_s3_bucket }}"   # packages + package db in SeaweedFS (Vault {env}/verdaccio/s3)
       sso_slug: verdaccio                       # Authentik OIDC app (roles/authentik authentik_oidc_apps)
       containers:
         - name: verdaccio
           image: "{{ verdaccio_platform_image }}:{{ verdaccio_image.split(':')[1] }}-p{{ verdaccio_platform_rev }}"
+          pull: false               # built above on this host (no registry holds it)
           log_driver: journald
           restart: "{{ verdaccio_config.changed | default(false) }}"   # verdaccio does not hot-reload config.yaml
           published:
