@@ -88,7 +88,7 @@
   when: mailcow_release_now.stdout != mailcow_git_version
   changed_when: true
 
-- name: "install | Release after the update"
+- name: "install | Release after the update (nearest tag; master may carry hotfix commits past it)"
   ansible.builtin.command:
     cmd: git describe --tags --always
     chdir: "{{ mailcow_install_dir }}"
@@ -98,7 +98,7 @@
 
 - name: "install | The checkout is the pinned release"
   ansible.builtin.assert:
-    that: mailcow_release_after.stdout == mailcow_git_version
+    that: (mailcow_release_after.stdout | regex_replace('-[0-9]+-g[0-9a-f]+$', '')) == mailcow_git_version
     fail_msg: "mailcow checkout is {{ mailcow_release_after.stdout }}, the pin says {{ mailcow_git_version }} — update.sh follows the newest stable: bump the pin to it"
     quiet: true
   when: not ansible_check_mode
