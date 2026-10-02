@@ -76,7 +76,7 @@ harbor_gc_delete_untagged: true
 harbor_scan_all_schedule: "0 0 2 * * *"             # daily 02:00
 harbor_audit_purge_schedule: "0 0 5 * * 0"          # weekly, Sunday 05:00
 harbor_audit_retention_hours: 4320                  # 180 days
-harbor_audit_purge_operations: "create,delete,pull"
+harbor_audit_purge_event_types: "create_artifact,delete_artifact,pull_artifact"   # Harbor ≥ 2.10 event types (the old include_operations is gone)
 # The schedule documents the API takes (tasks/settings.yml) — derived from the knobs above.
 harbor_schedule_specs:
   gc:
@@ -86,7 +86,7 @@ harbor_schedule_specs:
     schedule: {type: Custom, cron: "{{ harbor_scan_all_schedule }}"}
   purgeaudit:
     schedule: {type: Custom, cron: "{{ harbor_audit_purge_schedule }}"}
-    parameters: {audit_retention_hour: "{{ harbor_audit_retention_hours | int }}", include_operations: "{{ harbor_audit_purge_operations }}", dry_run: false}
+    parameters: {audit_retention_hour: "{{ harbor_audit_retention_hours | int }}", include_event_types: "{{ harbor_audit_purge_event_types }}", dry_run: false}
 
 # --- Pull-through proxy caches (replace Docker Hub etc.) -----------------------
 # A proxy-cache project mirrors an upstream registry: the first pull fetches +
