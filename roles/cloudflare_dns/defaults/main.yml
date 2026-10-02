@@ -47,6 +47,13 @@ cloudflare_dns_records:
   - {record: "nextcloud", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}
   - {record: "vaultwarden", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}
   - {record: "authentik", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}
+  # exposure: private (catalog) → split-DNS only, no public record (naming/0001 §7, exposure model).
+  # These CNAMEs pre-dated the catalog; the routes behind them are internal-only anyway.
+  - {record: "gitlab", type: CNAME, state: absent}
+  - {record: "gitlab-ssh", type: CNAME, state: absent}
+  - {record: "registry", type: CNAME, state: absent}
+  - {record: "pages", type: CNAME, state: absent}
+  - {record: "*.pages", type: CNAME, state: absent}
   - {record: "meet", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}
   - {record: "office", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}   # ONLYOFFICE Docs (browsers need it)
   - {record: "talk", type: CNAME, value: "{{ platform_domain }}", state: present, solo: true}     # Talk TURN/STUN host name (WAN address, no split-DNS)

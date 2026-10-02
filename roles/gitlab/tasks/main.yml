@@ -50,36 +50,21 @@
     gitlab_oidc: "{{ vault_secret_result }}"
   no_log: true
 
-# SMTP is optional — the mailcow mailbox may not be made yet, so read-if-present.
-- name: "GitLab | Probe optional SMTP creds in Vault (mailcow)"
-  ansible.builtin.include_role:
-    name: vault_secret
-  vars:
-    vault_secret_path: "{{ gitlab_smtp_vault_path }}"
-    vault_secret_optional: true
-
-- name: "GitLab | Adopt SMTP creds when present"
-  ansible.builtin.set_fact:
-    gitlab_smtp: "{{ vault_secret_result }}"
-    gitlab_smtp_configured: true
-  no_log: true
-  when: vault_secret_result | length > 0
-
-- name: "GitLab | Read the gitlab@ mailbox (IMAP) creds for Service Desk"
+# The service mailbox (roles/mailbox → secret/{env}/mail/gitlab) is the ONE document for outbound
+# SMTP and the Service Desk IMAP (SVC-11/SVC-16). Optional: on a first install the mailbox may
+# not exist yet — then mail stays off until it does.
+- name: "GitLab | Read the service mailbox document (SMTP + IMAP; optional)"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
     vault_secret_path: "{{ gitlab_mail_vault_path }}"
     vault_secret_optional: true
-  when: gitlab_service_desk_enabled | bool
 
-- name: "GitLab | Adopt the mailbox creds (Service Desk)"
+- name: "GitLab | Adopt the mailbox creds (mail is on when the document names an SMTP host)"
   ansible.builtin.set_fact:
-    gitlab_mail: "{{ vault_secret_result }}"
+    gitlab_mail: "{{ vault_secret_result | default({}) }}"
+    gitlab_smtp_configured: "{{ ((vault_secret_result | default({})).smtp_host | default('')) | length > 0 }}"
   no_log: true
-  when:
-    - gitlab_service_desk_enabled | bool
-    - vault_secret_result | default({}) | length > 0
 
 # --- Persistent git storage must be the ZFS bind-mount BEFORE install ----------
 - name: "GitLab | Verify git-data is a mountpoint (ZFS bind-mount)"
@@ -236,6 +221,7 @@
           network_mode: host
           env: "{{ gitlab_container_env }}"
           shm_size: "{{ gitlab_shm_size }}"
+          log_driver: journald   # the container's own stdout -> journal -> promtail (INF-27); GitLab's logs are files, shipped by promtail file jobs
           volumes:
             - /etc/gitlab:/etc/gitlab
             - /var/opt/gitlab:/var/opt/gitlab
