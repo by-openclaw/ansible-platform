@@ -37,6 +37,9 @@ cloudflare_dns_records:
   # --- Apex = Telenet static (default anchor). solo => exactly one record. ---
   - {record: "@", type: A, value: "{{ cloudflare_dns_apex_v4 }}", state: present, solo: true}
   - {record: "@", type: AAAA, value: "{{ cloudflare_dns_apex_v6 }}", state: present, solo: true}
+  # CAA: only Let's Encrypt may issue for the zone (security/0004 — public certs are LE via lego; the internal
+  # CA is private and unaffected). Found absent by the mailcow audit, 2026-10-02.
+  - {record: "@", type: CAA, flag: 0, tag: issue, value: "letsencrypt.org", state: present}
 
   # --- vpn: convert from Telenet direct A/AAAA to CNAME -> apex (delete first) ---
   - {record: "vpn", type: A, state: absent}

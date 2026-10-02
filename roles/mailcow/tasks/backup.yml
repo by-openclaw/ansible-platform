@@ -1,13 +1,12 @@
 ---
 # ==============================================================================
-# Role: mailcow — backup (Ansible-native, no custom shell). Snapshot via mailcow's
-# OWN official helper (vendor CLI, invoked by Ansible) → archive → push to
-# SeaweedFS S3 (amazon.aws.s3_object) → prune local + S3 beyond retention.
+# Role: mailcow — backup. The daily timer (backup-schedule.yml, roles/host_job) runs mailcow's
+# OWN helper (app-consistent set), archives the newest set and pushes it to SeaweedFS S3 with
+# pinned rclone; retention prunes local + S3. This file provisions what the timer needs.
 # SeaweedFS tier-3 auto-offsites the bucket to Contabo, giving
 # live(local vmail) + backup(SeaweedFS) + offsite(Contabo).
 # Credentials: Vault {{ mailcow_backup_s3_vault_path }} (minted by seaweedfs_bucket).
-# Runs nightly from the control node (cron below) or on demand:
-#   ansible-playbook -i inventories/prod playbooks/mailcow.yml --tags backup
+# On demand: `systemctl start mailcow-backup.service` on the host (same unit the timer fires).
 # ==============================================================================
 - name: "backup | Assert the mailcow stack is running (helper needs mysql/redis up)"
   ansible.builtin.command:
@@ -30,125 +29,30 @@
     mailcow_s3: "{{ vault_secret_result }}"
   no_log: true
 
-- name: "backup | Ensure boto3 (for the S3 module) + staging dir"
-  block:
-    - name: "backup | Install python3-boto3"
-      ansible.builtin.apt:
-        name: python3-boto3
-        state: present
-        update_cache: true
-        cache_valid_time: 3600
-
-    - name: "backup | Staging dir (world-writable: mailcow helper needs o+w)"
-      ansible.builtin.file:
-        path: "{{ mailcow_backup_dir }}"
-        state: directory
-        owner: root
-        group: root
-        mode: "0777"
-
-- name: "backup | Run mailcow's official backup (vmail+mysql+redis+conf) + local prune"
-  ansible.builtin.command:
-    cmd: "./helper-scripts/backup_and_restore.sh backup {{ mailcow_backup_components }} --delete-days {{ mailcow_backup_retention_days }}"
-    chdir: "{{ mailcow_install_dir }}"
-  environment:
-    MAILCOW_BACKUP_LOCATION: "{{ mailcow_backup_dir }}"
-  register: mailcow_backup_run
-  changed_when: true   # a backup run always produces a new set (operation, not state)
-
-- name: "backup | Locate the newest backup set"
-  ansible.builtin.find:
-    paths: "{{ mailcow_backup_dir }}"
-    file_type: directory
-    patterns: "mailcow-*"
-  register: mailcow_backup_dirs
-
-- name: "backup | Select the latest set"
-  ansible.builtin.set_fact:
-    mailcow_backup_latest: "{{ (mailcow_backup_dirs.files | sort(attribute='mtime') | last).path }}"
-  when: mailcow_backup_dirs.files | length > 0
-
-- name: "backup | Archive the latest set"
-  community.general.archive:
-    path: "{{ mailcow_backup_latest }}"
-    dest: "{{ mailcow_backup_latest }}.tar.gz"
-    format: gz
-    mode: "0600"
-  when: mailcow_backup_latest is defined
-
-- name: "backup | Upload the archive to SeaweedFS S3"
-  amazon.aws.s3_object:
-    endpoint_url: "{{ mailcow_s3.endpoint }}"
-    access_key: "{{ mailcow_s3.access_key }}"
-    secret_key: "{{ mailcow_s3.secret_key }}"
-    bucket: "{{ mailcow_s3.buckets[0] }}"
-    object: "{{ (mailcow_backup_latest | basename) }}.tar.gz"
-    src: "{{ mailcow_backup_latest }}.tar.gz"
-    mode: put
-    permission: []          # SeaweedFS: skip PutObjectAcl (limited ACL support; scoped key)
-  no_log: true
-  when:
-    - mailcow_backup_latest is defined
-    # The archive above is only simulated under --check, so there is no file to send — and a
-    # dry-run should not be shipping a backup to object storage in any case. Without this the
-    # whole mailcow play could not be dry-run at all: it died here on a missing archive.
-    - not ansible_check_mode
-
-- name: "backup | Prune local archives beyond retention"
-  ansible.builtin.find:
-    paths: "{{ mailcow_backup_dir }}"
-    patterns: "mailcow-*.tar.gz"
-    age: "{{ mailcow_backup_retention_days }}d"
-  register: mailcow_backup_old
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-  changed_when: false
-
-- name: "backup | Delete old local archives"
+- name: "backup | Staging dir (world-writable: mailcow helper needs o+w)"
   ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: absent
-  loop: "{{ mailcow_backup_old.files }}"
-  loop_control:
-    label: "{{ item.path | basename }}"
+    path: "{{ mailcow_backup_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0777"
 
-# --- S3 retention: the bucket keeps the same {{ mailcow_backup_retention_days }} days.
-#     Object names carry the set date (mailcow-YYYY-MM-DD-hh-mm-ss.tar.gz); anything
-#     older than the cut-off is removed. The SeaweedFS→Contabo replica follows.
-- name: "backup | List the S3 archives"
-  amazon.aws.s3_object:
-    endpoint_url: "{{ mailcow_s3.endpoint }}"
-    access_key: "{{ mailcow_s3.access_key }}"
-    secret_key: "{{ mailcow_s3.secret_key }}"
-    bucket: "{{ mailcow_s3.buckets[0] }}"
-    mode: list
-    prefix: "mailcow-"
-  register: mailcow_s3_list
+# The upload runs on THIS host from the daily timer (backup-schedule.yml): rclone, pinned image, remote
+# from this env file. No controller, no boto3, no Ansible run at night.
+- name: "backup | Rclone remote for the S3 upload (env file, root only)"
+  ansible.builtin.template:
+    src: mailcow-backup.env.j2
+    dest: "{{ mailcow_backup_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
   no_log: true
-  changed_when: false
-  check_mode: false   # read-only listing, valid under --check
 
-- name: "backup | Select S3 archives beyond retention"
-  ansible.builtin.set_fact:
-    mailcow_s3_old: >-
-      {{ (mailcow_s3_list.s3_keys | default([]))
-         | select('match', '^mailcow-\d{4}-\d{2}-\d{2}-')
-         | select('lt', 'mailcow-' ~ (mailcow_backup_cutoff_date))
-         | list }}
-  vars:
-    mailcow_backup_cutoff_date: "{{ '%Y-%m-%d' | strftime(ansible_date_time.epoch | int - (mailcow_backup_retention_days | int) * 86400) }}"
-
-- name: "backup | Delete S3 archives beyond retention"
-  amazon.aws.s3_object:
-    endpoint_url: "{{ mailcow_s3.endpoint }}"
-    access_key: "{{ mailcow_s3.access_key }}"
-    secret_key: "{{ mailcow_s3.secret_key }}"
-    bucket: "{{ mailcow_s3.buckets[0] }}"
-    object: "{{ item }}"
-    mode: delobj
-  loop: "{{ mailcow_s3_old }}"
-  loop_control:
-    label: "{{ item }}"
-  no_log: true
+- name: "backup | Pull the pinned rclone image"
+  community.docker.docker_image:
+    name: "{{ mailcow_backup_rclone_image }}"
+    source: pull
+  check_mode: false
 
 # --- Nightly schedule on the CONTROL NODE: cron → ansible-playbook --tags backup.
 #     Vault auth = the deploy AppRole file the controller already uses; the log

@@ -9,13 +9,30 @@
     name: host_job
   vars:
     host_job_name: mailcow-backup
-    host_job_description: "Daily mailcow app-consistent backup (helper script, local)"
     host_job_on_calendar: "{{ mailcow_backup_on_calendar }}"
     host_job_randomized_delay: "300"
     host_job_workdir: "{{ mailcow_install_dir }}"
     host_job_environment:
       MAILCOW_BACKUP_LOCATION: "{{ mailcow_backup_dir }}"
+    host_job_description: "Daily mailcow app-consistent backup → archive → SeaweedFS S3 (rclone)"
+    host_job_wants_network: true
+    host_job_timeout: "2h"
     host_job_exec:
       - >-
         {{ mailcow_install_dir }}/helper-scripts/backup_and_restore.sh
         backup {{ mailcow_backup_components }} --delete-days {{ mailcow_backup_retention_days }}
+      # archive the newest set once (a shell for the dynamic name only)
+      - >-
+        /bin/sh -c 'set -e; cd {{ mailcow_backup_dir }}; d=$$(ls -1d mailcow-*/ | sort | tail -1); d=$${d%/};
+        [ -f "$$d.tar.gz" ] || tar -czf "$$d.tar.gz" "$$d"'
+      # push new archives, then prune the bucket beyond retention — credentials stay in the env file
+      - >-
+        /bin/sh -c '. {{ mailcow_backup_env_file }}; /usr/bin/docker run --rm --network host
+        --env-file {{ mailcow_backup_env_file }} -v {{ mailcow_backup_dir }}:/data:ro {{ mailcow_backup_rclone_image }}
+        copy /data "dst:$$MAILCOW_S3_BUCKET" --include "mailcow-*.tar.gz" --max-age {{ mailcow_backup_retention_days }}d --stats-one-line -v'
+      - >-
+        /bin/sh -c '. {{ mailcow_backup_env_file }}; /usr/bin/docker run --rm --network host
+        --env-file {{ mailcow_backup_env_file }} {{ mailcow_backup_rclone_image }}
+        delete "dst:$$MAILCOW_S3_BUCKET" --min-age {{ mailcow_backup_retention_days }}d --include "mailcow-*.tar.gz" -v'
+    host_job_retention:
+      - { path: "{{ mailcow_backup_dir }}", age: "{{ mailcow_backup_retention_days }}d" }
