@@ -43,6 +43,11 @@ gitlab_rbac_settings:
   usage_ping_enabled: false                          # no telemetry phone-home (private instance)
   default_project_deletion_protection: true          # guard against accidental project deletion
   enabled_git_access_protocol: http                  # git over SSH is not offered (no sshd in the container, the host's admits admins only): the UI shows HTTPS clone only
+  # SSO only (IDN-01): the sign-in page auto-submits to Authentik and the web password form is off
+  # (found already off on 2026-10-02 — now declared). Break-glass when Authentik is down: on the
+  # host, `gitlab-rails runner 'ApplicationSetting.current.update!(password_authentication_enabled_for_web: true)'`,
+  # then `root` with the password from Vault `gitlab/secrets` at `/users/sign_in?auto_sign_in=false`.
+  password_authentication_enabled_for_web: false
 
 # --- Instance admins = the people in the GitLab admin group (people.yml) — root always exempt
 # Nobody is spelled out here: platform_people is the one place a person is written down
