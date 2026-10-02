@@ -81,7 +81,7 @@ service and its Ansible role against the full list.
 | IDN-10 | Vault = credentials source of truth (API tokens, client secrets, SSH passphrases) | identity/0002; identity/0004 §11 |
 | SVC-03 | OPNsense API key in Vault `secret/{env}/opnsense/svc-rune-api-key` | services/0001 |
 | SVC-11 | All mailbox IMAP/SMTP creds in Vault `secret/{env}/mail/{tool}`; none on disk | services/0002 |
-| SVC-28 | Per-service DB creds in Vault `secret/{env}/{service}/db-password`, ≥32 chars, runtime-injected | services/0004 |
+| SVC-28 | Per-service DB creds in Vault `secret/{env}/{service}/db-pgsql`, ≥32 chars, runtime-injected | services/0004 | <!-- services/0004 amended 2026-09-29: the credential document is `db-pgsql` (database, host, port, user, password); the row said `db-password` until 2026-10-02 -->
 | SVC-31 | DB break-glass superuser in Vault, audited on read, rotated after use | services/0004 |
 | SVC-36 | Notification creds only in Vault (Graph/Discord/Mailcow) | services/0005 |
 | SVC-54 | S3 creds: generate once → fabric → Vault mirror; per-service scoped | services/0009 |
