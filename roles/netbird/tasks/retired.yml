@@ -8,6 +8,8 @@
 #   * /root/.nb_setup_key: the router setup key lives in Vault.
 #   * SQLite store files in the volume: management runs on PostgreSQL and the
 #     migration archived them under {{ netbird_sqlite_archive_dir }}/sqlite-*.
+#   * empty store-backup-* directories under the build dir (an earlier, manual
+#     store copy whose content moved on): only removed when nothing is inside.
 # ==============================================================================
 
 - name: "retired | Approval notifier units present?"
@@ -113,3 +115,28 @@
       loop: "{{ netbird_archived_dbs.stdout_lines }}"
       delegate_to: "{{ netbird_pg_delegate }}"
       changed_when: true
+
+- name: "retired | store-backup-* directories left by the first store copy"
+  ansible.builtin.find:
+    paths: "{{ netbird_build_dir }}"
+    patterns: ["store-backup-*"]
+    file_type: directory
+    recurse: false
+  register: netbird_store_backup_dirs
+
+- name: "retired | Anything still inside them?"
+  ansible.builtin.find:
+    paths: "{{ netbird_store_backup_dirs.files | map(attribute='path') | list }}"
+    recurse: true
+    file_type: any
+  register: netbird_store_backup_content
+  when: netbird_store_backup_dirs.files | length > 0
+
+- name: "retired | Remove the empty ones (a non-empty copy is kept)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ netbird_store_backup_dirs.files | map(attribute='path') | list }}"
+  when:
+    - netbird_store_backup_dirs.files | length > 0
+    - (netbird_store_backup_content.files | default([]) | map(attribute='path') | select('match', item ~ '/') | list | length) == 0

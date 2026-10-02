@@ -85,6 +85,7 @@
           restart_policy: unless-stopped
           published:
             - "{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}:{{ netbird_mgmt_port }}"
+            - "{{ netbird_listen_ip }}:{{ netbird_mgmt_metrics_port }}:{{ netbird_metrics_port_internal }}"   # /metrics (INF-33)
           # Resolve Authentik internally via our Traefik (no public hairpin; survives the
           # NetBird client rewriting host resolv.conf once the routing peer is up — #408).
           #
@@ -128,6 +129,7 @@
           published:
             - "{{ netbird_listen_ip }}:{{ netbird_signal_grpc_port }}:{{ netbird_signal_grpc_port }}"
             - "{{ netbird_listen_ip }}:{{ netbird_signal_ws_host_port }}:{{ netbird_signal_ws_port }}"
+            - "{{ netbird_listen_ip }}:{{ netbird_signal_metrics_port }}:{{ netbird_metrics_port_internal }}"   # /metrics (INF-33)
           volumes:
             - "{{ netbird_signal_volume }}:/var/lib/netbird"
           log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
@@ -136,6 +138,7 @@
           restart_policy: unless-stopped
           published:
             - "{{ netbird_listen_ip }}:{{ netbird_relay_port }}:{{ netbird_relay_port }}"
+            - "{{ netbird_listen_ip }}:{{ netbird_relay_metrics_port }}:{{ netbird_metrics_port_internal }}"   # /metrics (INF-33)
           env:
             NB_LOG_LEVEL: "info"
             NB_LISTEN_ADDRESS: ":{{ netbird_relay_port }}"
