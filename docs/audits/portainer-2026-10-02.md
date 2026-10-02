@@ -42,3 +42,13 @@ Method: roles/contract_audit (PASS=11 FAIL=0 SKIP=22) + manual walk on the live 
 | backup | INF-41 | PASS | class D; PBS ct 511: 12 snapshots, latest 2026-10-02T02:08Z (5.3 GB) |
 | pins | GIT-01–05 | PASS | `portainer_version` pinned, never `:latest` |
 | contract | SVC-23 | PASS | `check_service_contract.py` 32/32; `contract_audit` PASS=11 FAIL=0 |
+
+## Closure — 2026-10-02
+
+| Outcome | Gaps |
+|---|---|
+| **Verified, no code change** | `portainer.yml -l lxc-portainer-01` from the branch: `ok=176 changed=0` — the live console matches the role (pin, OAuth, admin password from Vault, internal-only route, DOCKER-USER rule); service page committed |
+| **Decision pending (owner)** | the console runs as root (vendor image) — register OH-14 in #724 |
+| **Platform passes** | read-only rootfs, NetBox, per-service alert rules; the fleet agents play (`portainer.yml` on every Docker host) is applied in the next idle window, not during the walk's parallel applies |
+
+Idempotence: `changed=0` on the console host; `main` = `changed=0` after the merge.
