@@ -34,7 +34,7 @@ Then add the host to `inventories/prod/hosts.yml` under the right group.
           init: { admin_token: "{{ lookup('community.general.random_string', length=40, special=false) }}" }
       logrotate:
         - { name: <name>, paths: ["/var/log/<name>/*.log"], rotate: 14 }
-      sso_slug: <name>                     # asserted present in authentik_oidc_apps
+      sso_slug: <name>                     # asserted registered (authentik_oidc_apps or authentik_proxy_apps)
 ```
 
 The scaffold composes, in order: **Postgres DB** (if `db: postgres`) → **S3
@@ -45,9 +45,9 @@ bucket** (if `s3_bucket`) → **Vault secrets** → **mailbox** → **Traefik ro
 
 These live in shared data files — the scaffold **asserts** them:
 
-- **SSO** — add an entry to `authentik_oidc_apps` in
-  `roles/authentik/defaults/main.yml` (slug, launch_url, group, redirect_uris,
-  secret_file). Run `playbooks/authentik.yml`. *(Skip only for a service with no
+- **SSO** — add an entry to `authentik_oidc_apps` (native OIDC) or `authentik_proxy_apps`
+  (forwardAuth) in `inventories/prod/group_vars/all/sso.yml` (slug, launch_url, group,
+  redirect_uris, vault_path). Run `playbooks/authentik.yml`. *(Skip only for a service with no
   human UI; then leave `sso_slug` empty.)*
 - **Firewall** — add the port alias + the DMZ→SVC / edge rule to the OPNsense
   catalog in `inventories/prod/group_vars/opnsense.yml` (lib-first; never manual

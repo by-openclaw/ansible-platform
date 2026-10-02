@@ -120,16 +120,17 @@
   ansible.builtin.assert:
     that:
       - (service_scaffold_def.sso_slug | default('')) | length == 0
-        or service_scaffold_def.sso_slug in (authentik_oidc_apps | default([]) | map(attribute='slug') | list)
+        or service_scaffold_def.sso_slug in ((authentik_oidc_apps | map(attribute='slug') | list)
+                                             + (authentik_proxy_apps | map(attribute='slug') | list))
     fail_msg: >-
-      SSO app '{{ service_scaffold_def.sso_slug }}' not in authentik_oidc_apps —
-      add it (see docs/new-service.md §SSO) or clear sso_slug for a service
+      SSO app '{{ service_scaffold_def.sso_slug }}' is not registered — add it to
+      authentik_oidc_apps (native OIDC) or authentik_proxy_apps (forwardAuth) in
+      group_vars/all/sso.yml (docs/new-service.md §3), or clear sso_slug for a service
       without a human UI.
     quiet: true
   when:
     - service_scaffold_assert_central | bool
     - (service_scaffold_def.sso_slug | default('')) | length > 0
-    - authentik_oidc_apps is defined
 
 - name: "Scaffold | Summary"
   ansible.builtin.debug:

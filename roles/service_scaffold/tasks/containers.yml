@@ -19,6 +19,42 @@
     loop_var: scaffold_ctr
     label: "{{ scaffold_ctr.image }}"
 
+# A published port reaches the host through Docker's DNAT, past ufw: the DOCKER-USER catalog
+# (group_vars/all/docker_firewall.yml) is the one list of what may reach it and from where. A
+# service may not publish a port the catalog does not know — the same port written in two
+# places drifted; now the service declares it, the catalog gates it, and the mismatch fails here.
+- name: "Scaffold | Every published port is in the DOCKER-USER catalog (a new port = a catalog entry first)"
+  ansible.builtin.assert:
+    that: service_scaffold_published | difference(service_scaffold_catalog) | length == 0
+    fail_msg: >-
+      {{ service_scaffold_def.name }} publishes {{ service_scaffold_published | difference(service_scaffold_catalog) }}
+      — not in platform_docker_firewall (group_vars/all/docker_firewall.yml) for the services of
+      {{ inventory_hostname }}: declare the port there first.
+    quiet: true
+  vars:
+    service_scaffold_published: >-
+      {%- set out = [] -%}
+      {%- for c in service_scaffold_def.containers | default([]) if c.state | default('started') != 'absent' -%}
+        {%- for spec in c.published | default([]) | map('string') -%}
+          {%- set proto = 'udp' if spec.endswith('/udp') else 'tcp' -%}
+          {%- set parts = (spec | regex_replace('/(tcp|udp)$', '')).split(':') -%}
+          {%- set _ = out.append((parts[-2] if parts | length > 1 else parts[0]) ~ '/' ~ proto) -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out | unique }}
+    service_scaffold_catalog: >-
+      {%- set out = [] -%}
+      {%- for r in platform_docker_firewall_common | default([]) -%}
+        {%- set _ = out.append((r.port | string) ~ '/' ~ (r.proto | default('tcp'))) -%}
+      {%- endfor -%}
+      {%- for s in platform_services | selectattr('host', 'equalto', inventory_hostname) | map(attribute='name') -%}
+        {%- for r in (platform_docker_firewall | default({})).get(s, []) -%}
+          {%- set _ = out.append((r.port | string) ~ '/' ~ (r.proto | default('tcp'))) -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out | unique }}
+  when: inventory_hostname in (platform_docker_firewall_enforce | default([]))
+
 - name: "Scaffold | Run the containers"
   community.docker.docker_container:
     name: "{{ scaffold_ctr.name }}"
