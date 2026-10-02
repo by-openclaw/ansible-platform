@@ -8,3 +8,23 @@ gitlab_zfs_mounts:
     quota: "100G"
     mp_index: 0
     mount_path: "/var/opt/gitlab/git-data"
+
+# --- Logs (infra/0006) ----------------------------------------------------------------------
+# GitLab writes its logs as files under /var/log/gitlab (the image's tail-to-stdout is off);
+# promtail ships them. GitLab is an audit service (INF-29 ≥ 90 d): the sign-in/audit/git-access
+# streams carry the `audit` label. The trees are 0700 to the service accounts → read ACLs.
+promtail_extra_file_jobs:
+  - {name: gitlab_audit, path: "/var/log/gitlab/gitlab-rails/{audit,auth}_json.log", audit: true}
+  - {name: gitlab_shell, path: "/var/log/gitlab/gitlab-shell/gitlab-shell.log", audit: true}
+  - {name: gitlab_rails, path: "/var/log/gitlab/gitlab-rails/{production,api,application,graphql,integrations,exceptions}_json.log"}
+  - {name: gitlab_nginx, path: "/var/log/gitlab/nginx/gitlab_*access.log"}
+  - {name: gitlab_services, path: "/var/log/gitlab/{gitaly,sidekiq,puma,registry,gitlab-pages,gitlab-workhorse,mailroom,gitlab-kas}/current"}
+promtail_acl_dirs:
+  - /var/log/gitlab
+
+# CrowdSec agent: the hub's GitLab collection (sign-in brute force + user enumeration) on the
+# Rails request log; decisions reach the Traefik bouncer like every other scenario.
+crowdsec_agent_extra_collections:
+  - timokoessler/gitlab
+crowdsec_agent_file_sources:
+  - {name: gitlab, paths: ["/var/log/gitlab/gitlab-rails/production_json.log"], type: gitlab}

@@ -51,26 +51,7 @@
         postgres_db_name: gitlabhq_production
         postgres_db_user: gitlab
         postgres_db_vault_path: "{{ platform_env }}/gitlab/db-pgsql"
-
-    - name: "Read installed Postgres extensions (gitlab db)"
-      ansible.builtin.command:
-        cmd: docker exec postgres psql -tAU postgres -d gitlabhq_production -c "SELECT extname FROM pg_extension"
-      delegate_to: "{{ groups['postgresql'] | first }}"
-      register: gitlab_pg_ext
-      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-      changed_when: false
-
-    - name: "Enable required Postgres extensions for GitLab (superuser)"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec postgres psql -U postgres -d gitlabhq_production
-          -c "CREATE EXTENSION IF NOT EXISTS {{ item }}"
-      delegate_to: "{{ groups['postgresql'] | first }}"
-      loop:
-        - pg_trgm
-        - btree_gist
-      when: item not in gitlab_pg_ext.stdout_lines
-      changed_when: true
+        postgres_db_extensions: [pg_trgm, btree_gist]
 
     - name: "Provision GitLab S3 buckets + scoped key (SeaweedFS)"
       ansible.builtin.include_role:
