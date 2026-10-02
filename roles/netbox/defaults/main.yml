@@ -33,7 +33,11 @@ netbox_redis_cache_db: 1
 # the disk copy was a second source that nothing kept in step (#377).
 netbox_vault_path: "{{ platform_env }}/netbox/admin"        # secret_key + superuser + token
 netbox_redis_vault_path: "{{ platform_env }}/redis/admin"
-netbox_smtp_vault_path: "{{ platform_env }}/resend/{{ platform_org }}"   # SMTP, env-only
+# Outbound mail = the service's own mailbox on the platform mail server (roles/mailbox through
+# the scaffold: {env}/mail/netbox → address, smtp_host, smtp_port, password), like alertmanager
+# and every other service. The Resend relay it used is retired. Read-if-present: on a fresh
+# platform the scaffold mints the box on this same run, the next run wires it.
+netbox_mail_vault_path: "{{ platform_env }}/mail/netbox"
 
 # Internal-only deployment toggle. NOTE: disabling the newsfeed did NOT fix the
 # slow dashboard render, so the RSS feed is left ENABLED (false) per request.
