@@ -4,13 +4,14 @@
 # stack serves plain HTTP on the loopback. JVB media = UDP 10000, DNAT'd from WAN
 # so external participants connect. Internal component secrets live in Vault.
 # renovate: datasource=docker depName=jitsi/web versioning=regex:^stable-(?<major>\d+)$
-jitsi_image_tag: "stable-11031"        # pinned; latest published on Docker Hub (bump deliberately)
+jitsi_image_tag: "stable-11248"        # pinned (upstream stable of 2026-09-14); bump deliberately, every component shares the tag
 jitsi_build_dir: "/opt/jitsi"
 jitsi_config_dir: "/opt/jitsi/config"
 jitsi_fqdn: "{{ platform_service_fqdns.jitsi }}"
-jitsi_http_ip: "0.0.0.0"                   # bind all; ufw (internal only) + OPNsense FW gate it; Traefik is the ingress
+jitsi_http_ip: "{{ hostvars[inventory_hostname].ansible_host }}"   # the host address, like every service: Traefik is the ingress, ufw admits it
 jitsi_http_port: 8000
 jitsi_jvb_port: 10000                      # UDP media
+jitsi_metrics_port: 9222                   # JVB /metrics (Prometheus) published to the monitoring host; catalog metrics_port
 # Addresses the video bridge advertises as ICE candidates (docker-jitsi-meet JVB_ADVERTISE_IPS):
 # the host address for LAN/VPN peers and the public address for peers on the internet. Without
 # them the bridge only offers its Docker-network address (172.18.x) and every call drops after
