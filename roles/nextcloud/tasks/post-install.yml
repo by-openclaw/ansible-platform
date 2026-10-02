@@ -20,6 +20,13 @@
       redis port --type=integer --value="{{ nextcloud_redis_port }}"
   changed_when: true
 
+- name: "post-install | Configure Redis DB index (allocation table)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      redis dbindex --type=integer --value="{{ nextcloud_redis_db }}"
+  changed_when: true
+
 - name: "post-install | Configure Redis password"
   ansible.builtin.command:
     cmd: >-
@@ -300,6 +307,14 @@
   ansible.builtin.command:
     cmd: docker exec -u www-data nextcloud php occ maintenance:mimetype:update-js
   changed_when: true
+
+# Optional DB indices that apps and upgrades add later (setupchecks ⚠ "missing indices");
+# occ only prints "Adding" lines when it created one, "Done" otherwise.
+- name: "post-install | Add missing optional DB indices"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ db:add-missing-indices
+  register: nextcloud_db_indices
+  changed_when: "'Adding' in nextcloud_db_indices.stdout"
 
 # --- assertions ---------------------------------------------------------------
 - name: "post-install | Confirm S3 primary object store is active"
