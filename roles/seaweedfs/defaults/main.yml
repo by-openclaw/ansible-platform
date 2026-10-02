@@ -53,8 +53,9 @@ seaweedfs_admin_fqdn: "{{ platform_service_fqdns.seaweedfs_admin }}"
 seaweedfs_admin_group: "{{ platform_service_groups.seaweedfs.admin }}"   # Authentik access group (forwardAuth)
 # SeaweedFS ≥ 4.47 binds `weed admin` to loopback unless a local admin credential is set
 # (or -allowInsecureBind, which is refused here: no unauthenticated admin API on the network).
-# The credential is minted once in Vault and handed to the unit through a root-only
-# environment file; Authentik forwardAuth stays in front, the local login is the second door.
+# The credential is minted once in Vault and reaches the container through its environment
+# (WEED_ADMIN_USER / WEED_ADMIN_PASSWORD, 4.48+); Authentik forwardAuth stays in front, the local
+# login is the second door.
 seaweedfs_admin_user: "{{ platform_org }}"
 seaweedfs_console_vault_path: "{{ platform_env }}/seaweedfs/console"   # the console login; {env}/seaweedfs/admin is the S3 admin identity
 seaweedfs_metrics_port: "{{ platform_seaweedfs_metrics_port }}"             # Prometheus → Grafana (parked monitoring stack)
