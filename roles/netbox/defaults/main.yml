@@ -25,8 +25,8 @@ netbox_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"
 # Shared Redis (TLS, two logical DBs: tasks=0, cache=1).
 netbox_redis_host: "{{ groups['redis'] | first }}.{{ platform_domain }}"
 netbox_redis_port: 6379
-netbox_redis_tasks_db: 0
-netbox_redis_cache_db: 1
+netbox_redis_tasks_db: "{{ platform_redis_databases['netbox-tasks'] }}"   # group_vars/all/redis.yml — one allocation table
+netbox_redis_cache_db: "{{ platform_redis_databases['netbox-cache'] }}"
 
 # Controller secret store.
 # Vault KV paths (security/0001 secret/{env}/{service}/{key}). No controller files:
