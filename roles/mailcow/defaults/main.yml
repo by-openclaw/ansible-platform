@@ -11,7 +11,7 @@
 #     own compose, see CLAUDE.md no-:latest rule) ---------------------------------
 mailcow_git_repo: "https://github.com/mailcow/mailcow-dockerized.git"
 # renovate: datasource=github-tags depName=mailcow/mailcow-dockerized versioning=regex:^(?<major>\d{4})-(?<minor>\d{2})(?<patch>[a-z])?$
-mailcow_git_version: "2026-05c" # latest stable 2026-05-26; bump deliberately
+mailcow_git_version: "2026-09"  # the release the platform must run (= newest stable when bumped; mailcow's update.sh updates to the newest and the role asserts it equals the pin). 2026-07a was a security release.
 mailcow_install_dir: "/opt/mailcow-dockerized"
 mailcow_mysql_container: "mailcowdockerized-mysql-mailcow-1"
 
@@ -174,7 +174,10 @@ mailcow_ssl_dir: "{{ mailcow_install_dir }}/data/assets/ssl"
 # --- Backups: mailcow helper-script dump → push to S3 (storage = NAS + S3 only,
 #     no 2nd local disk). vmail itself already lives on the NAS. -----------------
 mailcow_backup_enabled: true
-mailcow_backup_dir: "/var/backups/mailcow" # transient local staging before S3 push
+mailcow_backup_dir: "/var/backups/mailcow" # local staging; the timer archives the newest set and pushes it to S3
+mailcow_backup_env_file: "/etc/mailcow-backup.env"       # rclone remote for the S3 upload (0600 root, rendered from Vault)
+mailcow_backup_rclone_image: "rclone/rclone:1.75.1"       # pinned (never latest)
+mailcow_ofelia_image: "mcuadros/ofelia:a573727"          # mailcow's own compose says :latest — pinned through docker-compose.override.yml
 mailcow_backup_s3_vault_path: "{{ platform_env }}/mailcow/s3"  # SeaweedFS bucket + scoped key, minted by seaweedfs_bucket (Vault-native, no file)
 
 # --- Dovecot master user (Vault, get-or-create) — the Nextcloud Mail app logs in
@@ -182,15 +185,9 @@ mailcow_backup_s3_vault_path: "{{ platform_env }}/mailcow/s3"  # SeaweedFS bucke
 #     type a mail password in Nextcloud. Alphanumeric only (mailcow.conf rule).
 mailcow_master_vault_path: "{{ platform_env }}/mailcow/master-user"
 mailcow_master_user: "nextcloud"                        # expands to nextcloud@mailcow.local
-mailcow_backup_cron_hour: 3
-mailcow_backup_cron_minute: 30
 mailcow_backup_components: "all" # backup_and_restore.sh scope (vmail+mysql+redis+conf+...)
 mailcow_backup_on_calendar: "*-*-* 01:00:00"   # local snapshot, before the nightly PBS job
 mailcow_backup_retention_days: 7          # applied to the local staging dir AND to the S3 bucket
-mailcow_backup_schedule_enabled: true   # nightly ansible-triggered run (cron -> ansible-playbook --tags backup on the control node; migrates to GitLab CI)
-mailcow_repo_dir: "{{ lookup('env', 'HOME') }}/repos/ansible-platform"  # control-node path for the scheduled backup run
-mailcow_backup_ansible_bin: "{{ lookup('env', 'HOME') }}/.local/bin/ansible-playbook"  # cron has no ~/.local/bin in PATH
-mailcow_backup_log_dir: "{{ lookup('env', 'HOME') }}/.local/state/ansible"            # control-node log of the nightly run
 
 # --- Secrets (Vault only) ---------------------------------------------------------
 mailcow_vault_path: "{{ platform_env }}/mailcow/admin"   # DBROOT/DBPASS/REDISPASS/API key (get-or-create)

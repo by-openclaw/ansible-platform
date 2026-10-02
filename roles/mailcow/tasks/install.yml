@@ -29,18 +29,101 @@
 - name: "install | Apply pending docker restart before the stack starts"
   ansible.builtin.meta: flush_handlers
 
-- name: "install | Clone mailcow-dockerized at the pinned tag"
+- name: "install | Clone mailcow-dockerized (full history, branch master: update.sh needs both)"
   ansible.builtin.git:
     repo: "{{ mailcow_git_repo }}"
     dest: "{{ mailcow_install_dir }}"
-    version: "{{ mailcow_git_version }}"
-    depth: 1
+    version: master
     # Clone once; never pull/reset on re-runs. mailcow's data/conf/* are tracked
-    # files that we (unbound.conf) and mailcow's runtime modify, so a git update
-    # would fail on "local modifications" / wipe live config. Version bumps are
-    # done out-of-band via mailcow's own update.sh, not git pull.
+    # files that we (unbound.conf) and mailcow's runtime modify, so a plain git update
+    # would fail on "local modifications" / wipe live config. A pin bump goes through
+    # mailcow's own update.sh (next tasks), never git pull.
     update: false
   register: mailcow_clone
+
+- name: "install | Current mailcow release (tag at the checkout)"
+  ansible.builtin.command:
+    cmd: git describe --tags --always
+    chdir: "{{ mailcow_install_dir }}"
+  register: mailcow_release_now
+  changed_when: false
+  check_mode: false   # read-only probe: must run under --check too (the next tasks read it)
+
+- name: "install | Nearest release tag at the checkout (master may carry hotfix commits past it)"
+  ansible.builtin.set_fact:
+    mailcow_release_now_tag: "{{ mailcow_release_now.stdout | regex_replace('-[0-9]+-g[0-9a-f]+$', '') }}"
+
+# A pin bump is a vendor update. mailcow's own update.sh does the config migration and the git
+# merge (--ours keeps our tracked edits), --skip-start leaves the start to the compose step below
+# (pull always + up). update.sh follows the newest stable branch head, so the pinned tag is checked
+# out right after and asserted: the pin stays the single source of the running release.
+# update.sh needs a full clone on a branch (a shallow, tag-detached checkout fails with "No current
+# branch" AFTER it stopped the stack — 2026-10-02 incident, 9 min without mail). An install made
+# before this rule is converted in place: unshallow + local branch master at the current commit.
+- name: "install | A full clone on branch master (converts an older shallow checkout in place)"
+  ansible.builtin.shell: |
+    set -e
+    cd {{ mailcow_install_dir }}
+    # a clone made at a tag only ever fetched that tag: restore the standard refspec first
+    git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+    [ -f .git/shallow ] && git fetch -q --unshallow origin || true
+    git fetch -q origin
+    git rev-parse --verify -q master >/dev/null || git checkout -q -b master
+    git branch -q --set-upstream-to=origin/master master
+    git checkout -q master
+  args:
+    executable: /bin/bash
+  register: mailcow_branch_fix
+  changed_when: "'shallow' in (mailcow_branch_fix.stderr | default(''))"
+  when: mailcow_release_now_tag != mailcow_git_version
+
+- name: "install | Prefetch the images of the new release (shortens the restart)"
+  ansible.builtin.command:
+    cmd: ./update.sh --prefetch --force --skip-ping-check
+    chdir: "{{ mailcow_install_dir }}"
+  when: mailcow_release_now_tag != mailcow_git_version
+  changed_when: true
+  failed_when: false   # prefetch exits non-zero after pulling; the real update below decides
+
+- name: "install | Update to the newest stable with mailcow's own update.sh (migrates config, merges, restarts the stack)"
+  ansible.builtin.command:
+    cmd: ./update.sh --force --ours --skip-ping-check
+    chdir: "{{ mailcow_install_dir }}"
+  when: mailcow_release_now_tag != mailcow_git_version
+  changed_when: true
+
+- name: "install | Release after the update (nearest tag; master may carry hotfix commits past it)"
+  ansible.builtin.command:
+    cmd: git describe --tags --always
+    chdir: "{{ mailcow_install_dir }}"
+  register: mailcow_release_after
+  changed_when: false
+  check_mode: false
+
+- name: "install | The checkout is the pinned release"
+  ansible.builtin.assert:
+    that: (mailcow_release_after.stdout | regex_replace('-[0-9]+-g[0-9a-f]+$', '')) == mailcow_git_version
+    fail_msg: >-
+      mailcow checkout is {{ mailcow_release_after.stdout }}, the pin says {{ mailcow_git_version }} —
+      update.sh follows the newest stable: bump the pin to it
+    quiet: true
+  when: not ansible_check_mode
+
+# update.sh rewrites ENABLE_IPV6 from its own egress probe; the role's render is authoritative.
+# When the NETWORK definition changes (ENABLE_IPV6 / IPV4_NETWORK / IPV6_NETWORK), Compose
+# recreates the network and re-attaches the running containers with DYNAMIC addresses —
+# unbound lost its static .254 (internal DNS dead, web/dockerapi down) twice on 2026-10-02.
+# So: read the network keys, render, and if they differ stop the stack first; the compose
+# step then recreates every container with its static address.
+- name: "install | Network keys of the live mailcow.conf (before render)"
+  ansible.builtin.shell: |
+    set -o pipefail
+    grep -E '^(ENABLE_IPV6|IPV4_NETWORK|IPV6_NETWORK)=' {{ mailcow_install_dir }}/mailcow.conf 2>/dev/null | sort || true
+  args:
+    executable: /bin/bash
+  register: mailcow_net_before
+  changed_when: false
+  check_mode: false   # read-only probe
 
 - name: "install | Render mailcow.conf"
   ansible.builtin.template:
@@ -50,6 +133,27 @@
     group: root
     mode: "0600"
   no_log: true # carries DB/Redis passwords
+
+- name: "install | Network keys after render"
+  ansible.builtin.shell: |
+    set -o pipefail
+    grep -E '^(ENABLE_IPV6|IPV4_NETWORK|IPV6_NETWORK)=' {{ mailcow_install_dir }}/mailcow.conf 2>/dev/null | sort || true
+  args:
+    executable: /bin/bash
+  register: mailcow_net_after
+  changed_when: false
+  check_mode: false   # read-only probe (under --check the file is unchanged: before == after)
+
+- name: "install | Network definition changed: stop the stack so the compose step recreates it with static addresses"
+  ansible.builtin.include_role:
+    name: compose_stack
+  vars:
+    compose_stack_dir: "{{ mailcow_install_dir }}"
+    compose_stack_env_files: ["{{ mailcow_install_dir }}/mailcow.conf"]   # COMPOSE_PROJECT_NAME lives there
+    compose_stack_state: absent
+  when:
+    - mailcow_net_before.stdout != mailcow_net_after.stdout
+    - not ansible_check_mode
 
 # generate_config.sh (which we skip — we template mailcow.conf) also creates the
 # initial self-signed cert; without it nginx crash-loops. Traefik terminates the
@@ -100,6 +204,14 @@
         forward-addr: {{ fwd }}
       {% endfor %}
   notify: Restart mailcow unbound
+
+- name: "install | Compose override (pins mailcow's floating images, e.g. ofelia:latest)"
+  ansible.builtin.template:
+    src: docker-compose.override.yml.j2
+    dest: "{{ mailcow_install_dir }}/docker-compose.override.yml"
+    owner: root
+    group: root
+    mode: "0644"
 
 # NOTE: vmail = mailcow's default docker volume on the local disk (no override).
 # example.com internal-only postfix restriction is applied in config.yml (after
