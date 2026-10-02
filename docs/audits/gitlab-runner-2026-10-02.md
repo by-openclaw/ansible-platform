@@ -51,3 +51,13 @@ Method: roles/contract_audit (PASS=12 FAIL=0 SKIP=21) + manual walk on the live 
 | firewall | SVC-56/57 | PASS | CrowdSec agent (linux, sshd, auditd collections); decisions reach the bouncers |
 | jobs | integration | PASS | last two jobs of the demo project succeeded (22–23 s); a pipeline is run again after the apply (closure) |
 | contract | SVC-23 | PASS / GAP → fixed | `check_service_contract.py` 32/32; `contract_audit` PASS=12 FAIL=0; gap 3 |
+
+## Closure — 2026-10-02
+
+| Outcome | Gaps |
+|---|---|
+| **Fixed, applied ×2 (`changed=0`), verified** | 1 (`listen_address = ":9252"`, published on the host address only, DOCKER-USER rule from `monitoring`, catalog `metrics_port` → Prometheus job `gitlab-runner` up, 94 metric families), 2 (`v19.4.1`; `gitlab-runner verify` → `is alive`), 3 (catalog row: `pin`, `monitoring: [node, cadvisor, metrics]`; register row), 4 (service page), 6 (weekly `docker image prune -af --filter until=168h` through `roles/host_job`, next run Sun 04:00; 17 images cached today) |
+| **Decision pending (owner)** | 5 (register OH-10 in #724) |
+| **Platform passes / notes** | 7 (S3 cache on SeaweedFS — optional, not an ADR requirement), 8 (absent path for cross-service objects — the runner record in GitLab), 9 (read-only rootfs, NetBox, per-service alert rules, LLMNR on the VM) |
+
+Idempotence: `gitlab-runner.yml` ×2 from the branch — `changed=7` (pin, config, published port, prune timer, container) then `changed=0`; `monitoring.yml` ×2 — `changed=2` (scrape config + reload) then `changed=0`; `main` = `changed=0` after the merge (the monitoring host is re-applied from `main` with #748). Integration: demo pipeline 24 on the upgraded runner — 6/6 jobs succeeded (trivy_fs, sbom_trivy, sast_semgrep, kaniko-build, deploy-k3s, pages).
