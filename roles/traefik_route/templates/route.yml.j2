@@ -17,6 +17,8 @@
 {%   set _net_mw = '' %}
 {% endif %}
 {% set _mws = [] %}
+{# endpoints flagged admin_only (break-glass UIs such as /admin) carry the internal ipAllowList on a public route #}
+{% set _admin_eps = traefik_route_endpoints | selectattr('admin_only', 'defined') | selectattr('admin_only') | list %}
 {% if traefik_route_path_prefix | length > 0 and traefik_route_strip_prefix | bool %}{% set _ = _mws.append(traefik_route_name ~ '-strip') %}{% endif %}
 {% if _net_mw %}{% set _ = _mws.append(_net_mw) %}{% endif %}
 {% if traefik_route_path_prefix | length > 0 %}
@@ -45,9 +47,10 @@ http:
 {% if ep.priority is defined %}
       priority: {{ ep.priority }}
 {% endif %}
-{% if _mws %}
+{%   set _ep_mws = _mws + ([traefik_route_name ~ '-admin'] if ep.admin_only | default(false) | bool else []) %}
+{% if _ep_mws %}
       middlewares:
-{% for m in _mws %}
+{% for m in _ep_mws %}
         - {{ m }}
 {% endfor %}
 {% endif %}
@@ -119,7 +122,7 @@ http:
       rootCAs:
         - "{{ traefik_route_backend_root_ca_file }}"
 {% endif %}
-{% if _net_mw or (traefik_route_path_prefix | length > 0 and traefik_route_strip_prefix | bool) %}
+{% if _net_mw or _admin_eps or (traefik_route_path_prefix | length > 0 and traefik_route_strip_prefix | bool) %}
 
   middlewares:
 {% if traefik_route_path_prefix | length > 0 and traefik_route_strip_prefix | bool %}
@@ -145,4 +148,15 @@ http:
         average: {{ traefik_route_ratelimit_average }}
         burst: {{ traefik_route_ratelimit_burst }}
 {% endif %}
+{% endif %}
+{% if _admin_eps %}
+    {{ traefik_route_name }}-admin:
+      ipAllowList:
+        sourceRange:
+{% for cidr in traefik_route_internal_cidrs %}
+          - "{{ cidr }}"
+{% endfor %}
+{% for cidr in traefik_route_admin_cidrs %}
+          - "{{ cidr }}"
+{% endfor %}
 {% endif %}
