@@ -37,14 +37,17 @@ netbox_env_base:
   SUPERUSER_API_TOKEN: "{{ netbox_secrets.superuser_api_token }}"
   # Internal-only: skip internet-dependent features (dashboard newsfeed/release).
   ISOLATED_DEPLOYMENT: "{{ netbox_isolated_deployment | string | lower }}"
-  # SMTP via Resend (env-only — no .py).
-  EMAIL_SERVER: "{{ netbox_resend.smtp_host }}"
-  EMAIL_PORT: "{{ netbox_resend.smtp_port | string }}"
-  EMAIL_USERNAME: "{{ netbox_resend.smtp_username }}"
-  EMAIL_PASSWORD: "{{ netbox_resend.smtp_api_key }}"
-  EMAIL_USE_SSL: "{{ 'true' if (netbox_resend.smtp_port | string) == '465' else 'false' }}"
-  EMAIL_USE_TLS: "{{ 'true' if (netbox_resend.smtp_port | string) != '465' else 'false' }}"
-  EMAIL_FROM: "{{ netbox_resend.from_address }}"
+
+# Outbound mail through the service's own mailbox (submission, STARTTLS) — only once the
+# scaffold has minted it (netbox_mail_configured); merged into netbox_env by tasks/main.yml.
+netbox_env_mail:
+  EMAIL_SERVER: "{{ netbox_mail.smtp_host | default('') }}"
+  EMAIL_PORT: "{{ netbox_mail.smtp_port | default(587) | string }}"
+  EMAIL_USERNAME: "{{ netbox_mail.address | default('') }}"
+  EMAIL_PASSWORD: "{{ netbox_mail.password | default('') }}"
+  EMAIL_USE_SSL: "false"
+  EMAIL_USE_TLS: "true"
+  EMAIL_FROM: "{{ netbox_mail.address | default('') }}"
 
 # Authentik OIDC, once roles/authentik has minted the client (netbox_oidc_held).
 netbox_env_oidc:
@@ -61,7 +64,8 @@ netbox_env_oidc:
 
 netbox_env: >-
   {{ netbox_env_base
-     | combine(netbox_env_oidc if netbox_oidc_held | default(false) | bool else {}) }}
+     | combine(netbox_env_oidc if netbox_oidc_held | default(false) | bool else {})
+     | combine(netbox_env_mail if netbox_mail_configured | default(false) | bool else {}) }}
 
 # The OIDC group->role pipeline config, bind-mounted once SSO is wired.
 netbox_extra_mounts: >-
