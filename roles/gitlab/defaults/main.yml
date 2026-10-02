@@ -22,7 +22,8 @@ gitlab_pg_vault_path: "{{ platform_env }}/gitlab/db-pgsql"          # postgres_d
 gitlab_redis_vault_path: "{{ platform_env }}/redis/admin"         # redis role owns (shared)
 gitlab_s3_vault_path: "{{ platform_env }}/gitlab/s3"   # seaweedfs_bucket creates
 gitlab_oidc_vault_path: "{{ platform_env }}/gitlab/oidc"        # authentik creates
-gitlab_smtp_vault_path: "{{ platform_env }}/gitlab/smtp"        # mailcow mailbox (optional)
+# SMTP + IMAP both come from the service mailbox document below (SVC-11/SVC-16); the former
+# `{env}/gitlab/smtp` document is no longer read.
 # Service Desk / reply-by-email (mailroom over IMAPS on the gitlab@ box, Vault
 # prod/mail/gitlab). Dependency: mail.<domain> must resolve INTERNALLY to mailcow
 # (split-DNS record in the FW catalog) — SVC→DMZ is allowed by default, no FW
@@ -34,7 +35,7 @@ gitlab_secrets_vault_path: "{{ platform_env }}/gitlab/secrets"      # GitLab's o
 # --- Version pin (NEVER unpinned / :latest) -----------------------------------
 # The image tag. Move through playbooks/gitlab-upgrade.yml (one rung per minor).
 # renovate: datasource=docker depName=gitlab/gitlab-ce versioning=regex:^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)-ce\.(?<build>\d+)$
-gitlab_version: "19.4.0-ce.0"
+gitlab_version: "19.4.1-ce.0"
 gitlab_image: "gitlab/gitlab-ce:{{ gitlab_version }}"
 # The image's own startup (init-container) knobs: no OpenSSH in the container (git over SSH is
 # not offered — the host's sshd admits only the admin groups), and the logs stay in
@@ -103,7 +104,7 @@ gitlab_oidc_required_groups: ["{{ platform_service_groups.gitlab.access }}"]   #
 gitlab_oidc_admin_groups: ["{{ platform_service_groups.gitlab.admin }}"]     # these become GitLab admins (CE)
 gitlab_oidc_block_auto_created: false           # auto-provision on first SSO login
 # Keep local password login as break-glass (root). SSO is the user path.
-gitlab_disable_password_login: false
+gitlab_disable_password_login: true    # the sign-in page goes straight to Authentik (IDN-01); break-glass root: ?auto_sign_in=false, password in Vault
 
 # --- Email (mailcow submission) — optional ------------------------------------
 # If the Vault path exists (mailcow mailbox provisioned), SMTP is configured; else
@@ -119,6 +120,16 @@ gitlab_pages_backend_port: 8091   # Pages daemon external_http (Traefik target);
 
 # --- Footprint knobs ----------------------------------------------------------
 gitlab_prometheus_monitoring: false    # bundled prometheus/grafana off (RAM; monitoring stack is separate/parked)
+# --- Metrics for the platform Prometheus (INF-33) -----------------------------------------
+# The services' own exporters bind to the SVC address (host network) and ufw admits the
+# monitoring host; the catalog `metrics_ports` scrapes them (job `gitlab`).
+gitlab_metrics_ports:
+  puma: 8083
+  sidekiq: 8082
+  workhorse: 9229
+  gitaly: 9236
+  gitlab_exporter: 9168
+gitlab_metrics_scrapers: "{{ groups['monitoring'] | default([]) | map('extract', hostvars, 'ansible_host') | list }}"
 gitlab_puma_workers: 2
 gitlab_sidekiq_concurrency: 10
 
@@ -132,3 +143,8 @@ gitlab_firewall_rules:
   - { port: "{{ gitlab_http_backend_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "GitLab HTTP backend (Traefik)" }
   - { port: "{{ gitlab_registry_backend_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "GitLab registry backend (Traefik)" }
   - { port: "{{ gitlab_pages_backend_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "GitLab Pages backend (Traefik)" }
+  - { port: "{{ gitlab_metrics_ports.puma }}", proto: tcp, from: "{{ gitlab_metrics_scrapers }}", comment: "GitLab Puma /metrics (Prometheus)" }
+  - { port: "{{ gitlab_metrics_ports.sidekiq }}", proto: tcp, from: "{{ gitlab_metrics_scrapers }}", comment: "GitLab Sidekiq /metrics (Prometheus)" }
+  - { port: "{{ gitlab_metrics_ports.workhorse }}", proto: tcp, from: "{{ gitlab_metrics_scrapers }}", comment: "GitLab Workhorse /metrics (Prometheus)" }
+  - { port: "{{ gitlab_metrics_ports.gitaly }}", proto: tcp, from: "{{ gitlab_metrics_scrapers }}", comment: "Gitaly /metrics (Prometheus)" }
+  - { port: "{{ gitlab_metrics_ports.gitlab_exporter }}", proto: tcp, from: "{{ gitlab_metrics_scrapers }}", comment: "gitlab-exporter /metrics (Prometheus)" }

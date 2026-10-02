@@ -31,6 +31,7 @@ gitaly['configuration'] = {
       path: '{{ gitlab_git_data_dir }}/repositories',
     },
   ],
+  prometheus_listen_addr: '{{ gitlab_svc_ip }}:{{ gitlab_metrics_ports.gitaly }}',   # Gitaly's top-level key (the [prometheus] table holds only buckets)
 }
 
 ## Git-over-SSH: advertise the LXC host directly (gitlab.{{ platform_domain }} → Traefik,
@@ -153,17 +154,17 @@ gitlab_rails['omniauth_providers'] = [
 # ------------------------------------------------------------------------------
 {% if gitlab_smtp_configured | default(false) %}
 gitlab_rails['smtp_enable'] = true
-gitlab_rails['smtp_address'] = '{{ gitlab_smtp.smtp_host }}'
-gitlab_rails['smtp_port'] = {{ gitlab_smtp.smtp_port }}
-gitlab_rails['smtp_user_name'] = '{{ gitlab_smtp.smtp_user }}'
-gitlab_rails['smtp_password'] = '{{ gitlab_smtp.smtp_password }}'
+gitlab_rails['smtp_address'] = '{{ gitlab_mail.smtp_host }}'
+gitlab_rails['smtp_port'] = {{ gitlab_mail.smtp_port }}
+gitlab_rails['smtp_user_name'] = '{{ gitlab_mail.address }}'
+gitlab_rails['smtp_password'] = '{{ gitlab_mail.password }}'
 gitlab_rails['smtp_domain'] = '{{ platform_domain }}'
 gitlab_rails['smtp_authentication'] = 'login'
 gitlab_rails['smtp_enable_starttls_auto'] = true
 gitlab_rails['smtp_tls'] = false
-gitlab_rails['gitlab_email_from'] = '{{ gitlab_smtp.smtp_user }}'
-gitlab_rails['gitlab_email_reply_to'] = '{{ gitlab_smtp.smtp_user }}'
-{% if gitlab_service_desk_enabled | default(false) and gitlab_mail is defined %}
+gitlab_rails['gitlab_email_from'] = '{{ gitlab_mail.address }}'
+gitlab_rails['gitlab_email_reply_to'] = '{{ gitlab_mail.address }}'
+{% if gitlab_service_desk_enabled | default(false) and (gitlab_mail.imap_host | default('')) | length > 0 %}
 # --- Service Desk + reply-by-email (mailroom over IMAPS) -----------------------
 # Incoming address uses plus-addressing (mailcow recipient_delimiter=+): every
 # project/issue key rides gitlab+<key>@; Service Desk shares the same mailbox.
@@ -231,5 +232,16 @@ gitlab_rails['backup_keep_time'] = {{ gitlab_backup_keep_seconds }}
 # Footprint
 # ------------------------------------------------------------------------------
 prometheus_monitoring['enable'] = {{ gitlab_prometheus_monitoring | lower }}
+# Metrics for the platform Prometheus (INF-33): the services' exporters on the SVC address; ufw admits the monitoring host.
+puma['exporter_enabled'] = true
+puma['exporter_address'] = '{{ gitlab_svc_ip }}'
+puma['exporter_port'] = {{ gitlab_metrics_ports.puma }}
+sidekiq['metrics_enabled'] = true
+sidekiq['listen_address'] = '{{ gitlab_svc_ip }}'
+sidekiq['listen_port'] = {{ gitlab_metrics_ports.sidekiq }}
+gitlab_workhorse['prometheus_listen_addr'] = '{{ gitlab_svc_ip }}:{{ gitlab_metrics_ports.workhorse }}'
+gitlab_exporter['enable'] = true
+gitlab_exporter['listen_address'] = '{{ gitlab_svc_ip }}'
+gitlab_exporter['listen_port'] = {{ gitlab_metrics_ports.gitlab_exporter }}
 puma['worker_processes'] = {{ gitlab_puma_workers }}
 sidekiq['max_concurrency'] = {{ gitlab_sidekiq_concurrency }}
