@@ -15,10 +15,10 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: nextcloud`).
 
 1. **Transport:** SMTP to `vm-mailcow-01.<domain>:587` STARTTLS (`mail_smtpmode smtp`, `mail_smtpsecure tls`), sender `nextcloud@<domain>`; credentials from the mailbox role, not in this role.
 2. **What is sent:** share/activity/Talk notifications to users; admin notifications to the `admin` group; the Mail app is provisioned for every SSO user (`nextcloud_mail_provisioning`).
-3. **Alerting path:** service-down → Prometheus blackbox (`/status.php`, `/`, signaling, recording) → Alertmanager → Discord/mail (platform); application metrics: audit gap 5.
-4. **Logs:** container stdout → journald → promtail → Loki (`container="nextcloud"`); application log shipping: audit gap 4.
+3. **Alerting path:** service-down → Prometheus blackbox (`/status.php`, `/`, signaling, recording) → Alertmanager → Discord/mail (platform); application metrics: Prometheus job `nextcloud` (serverinfo API via `nextcloud-exporter`, `:9205` to the monitoring host only).
+4. **Logs:** container stdout → journald → promtail → Loki (`container="nextcloud"`); application log `nextcloud.log` → promtail job `nextcloud_app` with `audit="true"` and the CrowdSec agent (`crowdsecurity/nextcloud`, bans at Traefik).
 5. **Operator contact:** `docs/register.md` row (owner Youssef Boujraf).
 
 ## Backup (infra/0008)
 
-Class A + C (`docs/backup.md`): PostgreSQL in the shared cluster (daily `pg_dumpall` + PBS of the DB guest), the `nextcloud-app` volume (config, apps) in PBS (ct 503, daily), **files on S3 primary storage** (external bucket — audit gap 1: single copy until the mirror job lands).
+Class A + C (`docs/backup.md`): PostgreSQL in the shared cluster (daily `pg_dumpall` + PBS of the DB guest), the `nextcloud-app` volume (config, apps) in PBS (ct 503, daily), **files on S3 primary storage** (external bucket) mirrored daily into the platform S3 (`seaweedfs_mirrors`, 30-day trash) until the primary moves on-prem.
