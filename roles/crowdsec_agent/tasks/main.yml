@@ -231,6 +231,19 @@
   when: crowdsec_agent_docker_sources | length > 0
   notify: Restart crowdsec agent
 
+- name: "Crowdsec_agent | Acquire host log files via the file datasource"
+  ansible.builtin.template:
+    src: acquis-file.yaml.j2
+    dest: "/etc/crowdsec/acquis.d/{{ item.name }}.yaml"
+    owner: root
+    group: root
+    mode: "0640"
+  loop: "{{ crowdsec_agent_file_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: crowdsec_agent_file_sources | length > 0
+  notify: Restart crowdsec agent
+
 - name: "Crowdsec_agent | Whitelist the platform's own address space (parser, s02-enrich)"
   ansible.builtin.template:
     src: whitelist-platform.yaml.j2
