@@ -4,6 +4,9 @@ GitLab Runner on `vm-gitlab-runner-01` (VM, not LXC — docker executor). Regist
 
 - `gitlab_runner_image` is the pinned runner image (the runner runs as a container; roles/docker owns the engine).
 - Container logs ride journald (fleet default); job containers are transient.
+- `/metrics` on `gitlab_runner_metrics_port` (published on the host address; the monitoring host scrapes it — catalog `metrics_port`).
+- Weekly `docker image prune` of job images unused for `gitlab_runner_image_prune_age` (roles/host_job timer `docker-image-prune`).
+- Service page: `docs/services/gitlab-runner.md`.
 
 Run: `ansible-playbook -i inventories/prod/hosts.yml playbooks/gitlab-runner.yml`
 
