@@ -16,24 +16,28 @@
     group: root
     mode: "0640"
     content: |
-      import json, os
-      from users.models import Token, User
-      out = {"changed": [], "token": ""}
-      admin = User.objects.get(username=os.environ["U"])
-      held = os.environ.get("T", "")
-      valid = any(t.validate(held) for t in admin.tokens.all()) if held else False
-      if not valid:
-          t = Token(user=admin, description="break-glass token (Vault netbox/admin, roles/netbox)", write_enabled=True)
-          t.save()
-          out["token"] = t.token
-          out["changed"].append("token")
-      allowed = set(filter(None, os.environ.get("ADMINS", "").split(","))) | {admin.username}
-      for u in User.objects.all():
-          want = u.username in allowed
-          if u.is_superuser != want:
-              u.is_superuser = want
-              u.save()
-              out["changed"].append("superuser:" + u.username + "=" + str(want))
+      import json, os, traceback
+      out = {"changed": [], "token": "", "error": ""}
+      try:
+          from users.models import Token, User
+          admin = User.objects.get(username=os.environ["U"])
+          held = os.environ.get("T", "")
+          valid = any(t.validate(held) for t in admin.tokens.all()) if held else False
+          if not valid:
+              t = Token(user=admin, description="break-glass token (Vault netbox/admin, roles/netbox)", write_enabled=True)
+              t.save()
+              out["token"] = t.token
+              out["changed"].append("token")
+          allowed = set(filter(None, os.environ.get("ADMINS", "").split(","))) | {admin.username}
+          for u in User.objects.all():
+              want = u.username in allowed
+              if u.is_superuser != want:
+                  u.is_superuser = want
+                  u.save()
+                  out["changed"].append("superuser:" + u.username + "=" + str(want))
+      except Exception:
+          # a traceback never carries the token (environment values are not printed); keep the tail
+          out["error"] = traceback.format_exc()[-800:]
       print("RBAC " + json.dumps(out))
 
 - name: "rbac | Validate the break-glass token and reconcile the superusers"
@@ -44,13 +48,23 @@
   args:
     executable: /bin/bash
   environment:
-    T: "{{ netbox_secrets.superuser_api_token | default('') }}"
+    T: "{{ netbox_secrets.superuser_api_token | default('') }}"   # pragma: allowlist secret — a Vault reference, no value
     U: "{{ netbox_superuser_name }}"
     ADMINS: "{{ netbox_superusers | join(',') }}"
   register: netbox_rbac_out
-  changed_when: (netbox_rbac_out.stdout | regex_replace('^RBAC ', '') | from_json).changed | length > 0
+  vars:
+    netbox_rbac_parsed: "{{ netbox_rbac_out.stdout | default('RBAC {}') | regex_replace('^RBAC ', '') | from_json }}"
+  changed_when: netbox_rbac_parsed.changed | default([]) | length > 0
+  failed_when: netbox_rbac_out.rc != 0 or (netbox_rbac_parsed.error | default('')) | length > 0
   no_log: true
   when: not ansible_check_mode
+
+- name: "rbac | Show the script error when there is one (traceback tail, nothing sensitive)"
+  ansible.builtin.debug:
+    msg: "{{ (netbox_rbac_out.stdout | default('RBAC {}') | regex_replace('^RBAC ', '') | from_json).error | default('') }}"
+  when:
+    - not ansible_check_mode
+    - (netbox_rbac_out.stdout | default('RBAC {}') | regex_replace('^RBAC ', '') | from_json).error | default('') | length > 0
 
 - name: "rbac | Keep the result"
   ansible.builtin.set_fact:
@@ -63,8 +77,8 @@
     name: vault_secret
   vars:
     vault_secret_path: "{{ netbox_vault_path }}"
-    vault_secret_init: { superuser_api_token: "{{ netbox_rbac.token }}" }
-    vault_secret_force_fields: { superuser_api_token: "{{ netbox_rbac.token }}" }
+    vault_secret_init: { superuser_api_token: "{{ netbox_rbac.token }}" }   # pragma: allowlist secret
+    vault_secret_force_fields: { superuser_api_token: "{{ netbox_rbac.token }}" }   # pragma: allowlist secret
   when:
     - not ansible_check_mode
     - netbox_rbac.token | default('') | length > 0
