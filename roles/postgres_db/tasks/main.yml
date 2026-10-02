@@ -93,3 +93,22 @@
   delegate_to: "{{ postgres_db_host }}"
   when: postgres_db_exists.stdout | trim != '1'
   changed_when: true
+
+# --- Extensions the consumer declared (superuser; created once, never dropped) -------------
+- name: "Postgresdb | Installed extensions of {{ postgres_db_name }}"
+  ansible.builtin.command:
+    cmd: docker exec {{ postgres_db_container }} psql -tAU postgres -d {{ postgres_db_name }} -c "SELECT extname FROM pg_extension"
+  delegate_to: "{{ postgres_db_host }}"
+  register: postgres_db_ext_now
+  check_mode: false  # read-only probe (a database created only in this dry-run answers nothing)
+  changed_when: false
+  failed_when: false
+  when: postgres_db_extensions | length > 0
+
+- name: "Postgresdb | Create the declared extensions in {{ postgres_db_name }}"
+  ansible.builtin.command:
+    cmd: docker exec {{ postgres_db_container }} psql -U postgres -d {{ postgres_db_name }} -c "CREATE EXTENSION IF NOT EXISTS {{ item }}"
+  delegate_to: "{{ postgres_db_host }}"
+  loop: "{{ postgres_db_extensions }}"
+  when: item not in (postgres_db_ext_now.stdout_lines | default([]))
+  changed_when: true
