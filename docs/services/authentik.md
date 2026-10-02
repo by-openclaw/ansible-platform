@@ -23,7 +23,9 @@ services/0005 §notifications.md) and points at everything else. Audit: [`audits
 5. **Group → role mapping:** `platform_service_groups` in
    [`identity.yml`](../../inventories/prod/group_vars/all/identity.yml) (`{service}-users` /
    `{service}-admins`; `platform-admins` = Authentik superusers) — people hold groups in
-   [`people.yml`](../../inventories/prod/group_vars/all/people.yml). No copy here.
+   [`people.yml`](../../inventories/prod/group_vars/all/people.yml). No copy here. Service accounts
+   (`platform_service_accounts`, same file) render as user + RBAC role + a group of the SA's name that
+   carries the role — scoped rights, never a superuser group.
 6. **Removal notes:** a person is `state: disabled` in people.yml (never deleted — identity/0001);
    an application leaves `sso.yml` and, for forwardAuth apps, is named in
    `authentik_proxy_apps_retired` (blueprints only add); `playbooks/decommission-service.yml` removes
