@@ -1,4 +1,31 @@
-# Portainer — Setup Runbook
+# Portainer — service page + setup runbook
+
+Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: portainer`). Role `roles/portainer` (console + the Docker agent on every Docker host + the Kubernetes agent), play `playbooks/portainer.yml`, guest `lxc-portainer-01` (ct 511). Audit: [`docs/audits/portainer-2026-10-02.md`](../audits/portainer-2026-10-02.md). The setup runbook follows below.
+
+## Identity (identity/0002 §per-tool identity doc)
+
+1. **ADR:** `identity/0001-authentication` — Portainer's OAuth provider against Authentik (`AuthenticationMethod: OAuth`), configured by the role through the API (`tasks/sso.yml`); agents authenticate to the console with the shared agent key.
+2. **Authentik application:** OIDC, slug `portainer` (`group_vars/all/sso.yml`).
+3. **Access model:** people sign in through Authentik (auto-provisioned, team/role mapping in Portainer); the local `admin` is break-glass only — its password comes from Vault through `--admin-password-file` (never a flag value); agents pair with `AGENT_SECRET` from Vault.
+4. **Vault paths:** `secret/{env}/portainer/admin` (break-glass password), `portainer/agent` (shared agent key), `portainer/oidc` (`roles/authentik`).
+5. **Ansible adapter + vars:** `roles/portainer` (`defaults/main.yml`: pin, ports, agent flags; `tasks/main.yml` console, `agent.yml` per Docker host, `k8s_agent.yml`, `register.yml` endpoints, `sso.yml` OAuth settings, `absent.yml`); `service_scaffold` for route, SSO assertion and Vault paths.
+6. **Removal notes:** `playbooks/decommission-service.yml` (`tasks/absent.yml` removes the console, every agent and the Kubernetes agent); class D — `portainer-data` holds endpoint registrations and settings only, all recreated by the play.
+
+## Notifications (services/0005)
+
+1. **Transport:** none — Portainer sends no mail here (`mailbox: false` in the scaffold).
+2. **What is sent:** nothing.
+3. **Alerting path:** Prometheus blackbox `https://portainer.<domain>/` → Alertmanager → Discord/mail (platform); Portainer CE exposes no Prometheus endpoint.
+4. **Logs:** the console and every agent → journald → promtail → Loki (`container="portainer"`, `container="portainer-agent"` per host).
+5. **Operator contact:** `docs/register.md` row.
+
+## Backup (infra/0008)
+
+Class D (`docs/backup.md`): state = this role (endpoints, settings, SSO) + Vault; the guest image in PBS (daily, ct 511) is a convenience. Restore = re-run the play.
+
+---
+
+# Setup runbook
 
 The container console: one web UI for every Docker host (agent per host) and the k3s cluster (agent in the cluster). Runs on its **own guest**, `lxc-portainer-01` (SVC), and is born through `service_scaffold` like every service. It watches and operates containers; it does not monitor or self-heal them (that is Prometheus/Alertmanager and the engines' restart policies).
 
