@@ -19,6 +19,29 @@ entries:
 {% endif %}
 {% endfor %}
 {% for sa in authentik_service_accounts %}
+{# A service account gets its rights through an RBAC role on a group of its own name
+   (role -> group -> member). The entry-level `permissions:` key is OBJECT-level ("who may act on
+   this object"); a list of permission names there makes the whole blueprint fail to load — status
+   error, nothing applied, no message (2026-10-02). Role permissions are additive on update: drop a
+   right by removing it here AND once from the role in Authentik. #}
+  - model: authentik_rbac.role
+    id: role-{{ sa.username }}
+    identifiers:
+      name: {{ sa.username }}
+    attrs:
+      name: {{ sa.username }}
+      permissions:
+{% for perm in sa.permissions %}
+        - {{ perm }}
+{% endfor %}
+  - model: authentik_core.group
+    id: group-{{ sa.username }}
+    identifiers:
+      name: {{ sa.username }}
+    attrs:
+      name: {{ sa.username }}
+      roles:
+        - !Find [authentik_rbac.role, [name, {{ sa.username }}]]
   - model: authentik_core.user
     id: sa-{{ sa.username }}
     identifiers:
@@ -29,12 +52,9 @@ entries:
       is_active: true
       type: service_account
       groups:
+        - !Find [authentik_core.group, [name, {{ sa.username }}]]
 {% for g in sa.groups %}
         - !Find [authentik_core.group, [name, {{ g }}]]
-{% endfor %}
-    permissions:
-{% for perm in sa.permissions %}
-      - {{ perm }}
 {% endfor %}
 {% endfor %}
 {% for u in authentik_users_resolved %}
