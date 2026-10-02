@@ -8,8 +8,11 @@
 #     - project: 'infra/ci-templates'                 # or copy verbatim
 #       file: '/security-scan.gitlab-ci.yml'
 #
-# All jobs are non-blocking by default (allow_failure) so they inform without
-# gating; flip allow_failure: false per job to enforce once a repo is clean.
+# trivy_fs is THE gate (security/0003 §4: zero Critical + zero High on every MR and on
+# main; vuln + secret + misconfig). Suppressions live in the project's `.trivyignore.yaml`
+# (Trivy's structured ignore file): every entry carries `statement:` (why) and
+# `expired_at:` (date) — an expired entry re-fails the gate by itself (§4). The SAST and
+# SBOM jobs inform (allow_failure) — the ADR gates on vulnerabilities, not on patterns.
 # Pinned tool images — never :latest.
 # ==============================================================================
 
@@ -69,9 +72,10 @@ trivy_fs:
   cache:
     paths: [".trivycache/"]
   script:
-    - trivy fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 0 --format table .
-    - trivy fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --format json --output trivy.json .
-  allow_failure: true
+    # Evidence first (always archived), then the gate: a non-zero exit fails the pipeline.
+    - trivy fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 0 --ignorefile .trivyignore.yaml --format json --output trivy.json .
+    - trivy fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 1 --ignorefile .trivyignore.yaml --format table .
+  allow_failure: false
   artifacts:
     when: always
     paths: ["trivy.json"]
