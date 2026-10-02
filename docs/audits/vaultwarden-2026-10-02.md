@@ -46,3 +46,14 @@
 | backup | INF-41 | PASS | class A: PG dump + `vaultwarden-data` in PBS (ct 502: 21 snapshots, latest 2026-10-02T01:37Z) |
 | pins | GIT-01–05 | PASS → bumped | gap 5 |
 | contract | SVC-23 | PASS / platform gap | `check_service_contract.py` 32/32; `contract_audit` PASS=12 FAIL=0; gap 8 |
+
+
+## Closure — 2026-10-02
+
+| Outcome | Gaps |
+|---|---|
+| **Fixed, applied ×2 (`changed=0`), verified** | 1 (SMTP via the service mailbox: admin API test mail → Mailcow `sasl_username=vaultwarden@…`, `status=sent`; no Resend variable left in the container), 2 (`SSO_ONLY=true`, `SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION=false`), 3 (`/admin` router with the internal+admin ipAllowList, 7 ranges; app router public), 4 (`ORG_EVENTS_ENABLED`, 90 d), 5 (`1.37.3`), 7 (service page) |
+| **Decision pending (owner)** | 6 (doc-platform-core #68 + register OH-6 in #724) |
+| **Platform passes** | 8 (scaffold `env: strict` after a fleet dry-run — stale environment survived a month here), 9 (read-only rootfs, auditd, NetBox) |
+
+Found on the way, fixed in the concern roles: `roles/traefik_route` per-endpoint `admin_only` (reusable for every break-glass UI); `roles/service_scaffold` pulls pinned images under `--check` so an image bump can be dry-run.
