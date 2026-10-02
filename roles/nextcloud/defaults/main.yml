@@ -42,11 +42,11 @@ nextcloud_redis_host: "{{ groups['redis'] | first }}.{{ platform_domain }}"
 nextcloud_redis_port: 6379
 
 # Contabo S3 — PRIMARY object storage (bucket precreated out-of-band).
-nextcloud_s3_bucket: "nextcloud-data"
-nextcloud_s3_host: "eu2.contabostorage.com"
+nextcloud_s3_bucket: "{{ platform_nextcloud_bucket }}"            # group_vars/all/objectstore.yml — one definition (the mirror job reads it too)
+nextcloud_s3_host: "{{ platform_external_s3.contabo.host }}"
 nextcloud_s3_port: 443
 nextcloud_s3_ssl: "true"
-nextcloud_s3_region: "eu2"
+nextcloud_s3_region: "{{ platform_external_s3.contabo.region }}"
 nextcloud_s3_usepath_style: "true"   # Contabo requires path-style addressing
 nextcloud_s3_autocreate: "false"     # we precreate the bucket
 
@@ -54,7 +54,7 @@ nextcloud_s3_autocreate: "false"     # we precreate the bucket
 nextcloud_vault_admin_path: "{{ platform_env }}/nextcloud/admin"      # admin_user + admin_password (+url); get-or-create
 nextcloud_vault_db_path: "{{ platform_env }}/nextcloud/db-pgsql"      # minted by postgres_db (Vault mode)
 nextcloud_vault_redis_path: "{{ platform_env }}/redis/admin"          # shared Redis requirepass (owner: roles/redis)
-nextcloud_vault_s3_path: "{{ platform_env }}/backup/s3-contabo"       # Contabo primary storage creds (until the SeaweedFS move)
+nextcloud_vault_s3_path: "{{ platform_external_s3.contabo.vault_path }}"   # Contabo primary storage creds (until the SeaweedFS move)
 nextcloud_vault_oidc_path: "{{ platform_env }}/nextcloud/oidc"        # minted by roles/authentik (Vault-native app)
 
 # Initial local break-glass admin (kept alongside SSO as the break-glass login).
