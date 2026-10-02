@@ -103,14 +103,27 @@
     - vault_secret_get.rc != 0
     - vault_secret_init | length > 0
 
-# Rotation mode (SEC-09): when vault_secret_force_fields is set, OVERWRITE the
-# secret with exactly those fields (a new KV v2 version — old versions retained).
-- name: "Vault secret | Force-write rotated fields (SEC-09 rotation)"
+# Rotation mode (SEC-09): when vault_secret_force_fields is set, those fields are
+# written OVER the stored document — the other fields are kept (a new KV v2 version;
+# old versions retained). Before 2026-10-02 this was a bare `kv put` of the rotated
+# fields alone, which REPLACED the document: rotating one field wiped every other one
+# (three documents recovered from their version history that day).
+- name: "Vault secret | The document the rotation merges into (stored > just initialised > none)"
+  ansible.builtin.set_fact:
+    vault_secret_merge_base: >-
+      {{ (vault_secret_get.stdout | from_json).data.data
+         if vault_secret_get.rc == 0
+         else ((vault_secret_get2.stdout | from_json).data.data
+               if (vault_secret_get2.rc | default(1)) == 0 else {}) }}
+  no_log: true
+  when: vault_secret_force_fields | default({}) | length > 0
+
+- name: "Vault secret | Force-write rotated fields (SEC-09 rotation; merged into the document)"
   ansible.builtin.command:
     cmd: >-
       docker exec -i -e VAULT_TOKEN={{ vault_secret_token }} {{ vault_secret_container }}
       vault kv put -mount={{ vault_secret_mount }} {{ vault_secret_path }} -
-    stdin: "{{ vault_secret_force_fields | to_json }}"
+    stdin: "{{ vault_secret_merge_base | combine(vault_secret_force_fields) | to_json }}"
   delegate_to: "{{ vault_secret_host }}"
   become: true
   when: vault_secret_force_fields | default({}) | length > 0
@@ -136,10 +149,10 @@
 
 - name: "Vault secret | Publish the secret fields as `vault_secret_result`"
   ansible.builtin.set_fact:
-    # force_fields > the stored secret > the freshly initialised one > under --check,
-    # the init that WOULD have been written > {} (optional and absent).
+    # the document with the rotated fields merged in > the stored secret > the freshly
+    # initialised one > under --check, the init that WOULD have been written > {} (optional and absent).
     vault_secret_result: >-
-      {{ vault_secret_force_fields
+      {{ (vault_secret_merge_base | combine(vault_secret_force_fields))
          if (vault_secret_force_fields | default({}) | length > 0)
          else ((vault_secret_get.stdout | from_json).data.data
                if vault_secret_get.rc == 0
