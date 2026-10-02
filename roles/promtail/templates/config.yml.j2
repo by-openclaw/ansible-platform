@@ -31,6 +31,13 @@ scrape_configs:
           stages:
             - static_labels:
                 audit: "true"
+{% if promtail_journal_audit_containers | length > 0 %}
+      - match:
+          selector: '{container=~"{{ promtail_journal_audit_containers | join('|') }}"}'
+          stages:
+            - static_labels:
+                audit: "true"
+{% endif %}
 {% endif %}
 {% for l in promtail_syslog_listeners | default([]) %}
   - job_name: syslog_{{ l.name }}

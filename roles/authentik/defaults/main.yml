@@ -30,6 +30,10 @@ authentik_redis_port: 6379
 authentik_vault_path: "{{ platform_env }}/authentik/admin"          # secret_key + bootstrap (get-or-create)
 authentik_pg_vault_path: "{{ platform_env }}/authentik/db-pgsql"    # postgres_db creates it
 authentik_redis_vault_path: "{{ platform_env }}/redis/admin"        # the redis role owns it (shared)
+authentik_redis_db: "{{ platform_redis_databases.authentik }}"      # own DB number (SVC-27; group_vars/all/redis.yml)
+# Authentik's own metrics listener (:9300 inside the server container), published on the host for
+# Prometheus (INF-33); the DOCKER-USER catalog admits the monitoring host to it.
+authentik_metrics_port: 9300
 
 # Initial admin (akadmin).
 authentik_bootstrap_email: "admin@{{ platform_domain }}"

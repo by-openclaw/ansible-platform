@@ -51,6 +51,14 @@ scrape_configs:
 {% endfor %}
 {% endif %}
 
+{% for svc in prometheus_app_metrics | sort(attribute='name') %}
+  - job_name: {{ svc.name }}
+    static_configs:
+      - targets: ['{{ hostvars[svc.host].ansible_host }}:{{ svc.metrics_port }}']
+        labels:
+          instance: "{{ svc.host }}"
+{% endfor %}
+
 {% if prometheus_seaweedfs_hosts | length > 0 %}
   - job_name: seaweedfs
     static_configs:

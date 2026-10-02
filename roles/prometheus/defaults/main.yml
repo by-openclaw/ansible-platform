@@ -36,6 +36,9 @@ prometheus_node_groups:
 # Per-container metrics (roles/cadvisor) on every Docker host
 prometheus_cadvisor_group: docker_hosts
 prometheus_cadvisor_port: 9180
+# Application metrics (INF-33): every catalog row with `metrics` in its monitoring list and a
+# metrics_port is scraped as job <name> on its host — the catalog is the one list.
+prometheus_app_metrics: "{{ platform_services | selectattr('metrics_port', 'defined') | list }}"
 # Shared PostgreSQL metrics (roles/postgres_exporter on the database host): saturation of the
 # cluster every service depends on. 2026-09-22 showed the symptom (500s everywhere) long before
 # anyone could see the cause.
