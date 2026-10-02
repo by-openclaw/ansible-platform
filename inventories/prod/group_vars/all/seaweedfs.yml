@@ -4,3 +4,16 @@
 # that host — ONE definition of how to reach it (stdin carries the shell's commands: -i).
 seaweedfs_container: seaweedfs
 seaweedfs_weed: "docker exec -i {{ seaweedfs_container }} weed"
+
+# External buckets mirrored INTO the platform S3 — roles/seaweedfs renders one roles/host_job timer
+# per entry (pinned rclone, credentials from Vault, logs → journald → Loki, failure → alert). A
+# second copy of data whose primary lives at a provider; the direction flips when that primary
+# moves on-prem. Changed/deleted objects land in `<bucket>-trash/<date>` and are purged after
+# keep_deleted_days.
+seaweedfs_mirrors:
+  - name: nextcloud-data                                   # audit nextcloud gap 1 (INF-41/42)
+    source: "{{ platform_external_s3.contabo }}"
+    source_bucket: "{{ platform_nextcloud_bucket }}"
+    bucket: nextcloud-data-mirror
+    schedule: "*-*-* 03:30:00"
+    keep_deleted_days: 30
