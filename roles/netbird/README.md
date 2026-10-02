@@ -39,7 +39,7 @@ targets). The `.sh` never runs. Catalog row `name: netbird` in
   `tasks/account-settings.yml` (peer login expiration, no redundant user approval).
 - `roles/host_firewall` rules for the native listeners; `tasks/retired.yml` removes what
   the role no longer manages (old notifier, secret copies superseded by Vault, SQLite
-  files once PostgreSQL is proven, empty `store-backup-*` leftovers).
+  files and the `store-backup-*` copy once PostgreSQL is proven).
 
 ## Auth model
 

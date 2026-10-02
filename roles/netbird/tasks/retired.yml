@@ -8,8 +8,9 @@
 #   * /root/.nb_setup_key: the router setup key lives in Vault.
 #   * SQLite store files in the volume: management runs on PostgreSQL and the
 #     migration archived them under {{ netbird_sqlite_archive_dir }}/sqlite-*.
-#   * empty store-backup-* directories under the build dir (an earlier, manual
-#     store copy whose content moved on): only removed when nothing is inside.
+#   * store-backup-* under the build dir: the SQLite copy of the FIRST store migration
+#     (2026-08-19, before the archive dir existed) — removed with the other migration
+#     archives once PostgreSQL is proven (the nightly dump + PBS hold the last copies).
 # ==============================================================================
 
 - name: "retired | Approval notifier units present?"
@@ -116,7 +117,7 @@
       delegate_to: "{{ netbird_pg_delegate }}"
       changed_when: true
 
-- name: "retired | store-backup-* directories left by the first store copy"
+- name: "retired | store-backup-* copies of the first store migration (build dir)"
   ansible.builtin.find:
     paths: "{{ netbird_build_dir }}"
     patterns: ["store-backup-*"]
@@ -124,19 +125,11 @@
     recurse: false
   register: netbird_store_backup_dirs
 
-- name: "retired | Anything still inside them?"
-  ansible.builtin.find:
-    paths: "{{ netbird_store_backup_dirs.files | map(attribute='path') | list }}"
-    recurse: true
-    file_type: any
-  register: netbird_store_backup_content
-  when: netbird_store_backup_dirs.files | length > 0
-
-- name: "retired | Remove the empty ones (a non-empty copy is kept)"
+- name: "retired | Remove them (PostgreSQL store proven; nightly dump + PBS hold the last copies)"
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
   loop: "{{ netbird_store_backup_dirs.files | map(attribute='path') | list }}"
   when:
-    - netbird_store_backup_dirs.files | length > 0
-    - (netbird_store_backup_content.files | default([]) | map(attribute='path') | select('match', item ~ '/') | list | length) == 0
+    - ((netbird_retired_mgmt.content | b64decode | from_json).StoreConfig.Engine | default('')) == 'postgres'
+    - not netbird_live_sqlite.stat.exists
