@@ -19,3 +19,11 @@ mailcow_deploy_stack: true
 # (roles/systemd_failure_alert — lego-renew-mailcow, …) submits over SMTP to mailcow's
 # own postfix on 127.0.0.1:25 with s-nail (installed by the hardening baseline).
 systemd_failure_alert_submit: "/usr/bin/s-nail -Sv15-compat -Smta=smtp://127.0.0.1:25 -Ssmtp-auth=none -t"
+
+# CrowdSec agent on the mail host: postfix + dovecot collections over the containers' stdout
+# (mailcow's services log to Docker, never to /var/log/mail.log).
+crowdsec_agent_extra_collections:
+  - crowdsecurity/postfix
+  - crowdsecurity/dovecot
+crowdsec_agent_docker_sources:
+  - {name: mailcow, containers: [mailcowdockerized-postfix-mailcow-1, mailcowdockerized-dovecot-mailcow-1], type: syslog}
