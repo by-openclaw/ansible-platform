@@ -47,3 +47,24 @@ k3s_gitlab_host: "{{ groups['gitlab'] | first }}"                       # where 
 # proxy app (roles/authentik authentik_proxy_apps) with the same slug.
 k3s_published_apps:
   - { name: demo-apps, fqdn: "{{ platform_service_fqdns.k3s_demo }}" }
+
+# --- Kubernetes operations: Headlamp (web UI) + k9s (CLI) — infra/0001 §1 ---------------------
+# Headlamp runs IN the cluster and holds no rights of its own: a person signs in through the IdP
+# (OIDC), the API server validates that token itself (kube-apiserver --oidc-*), and the cluster
+# maps the IdP group to cluster-admin. No shared token, every action is the person's in the audit log.
+k3s_headlamp_enabled: true
+# renovate: datasource=docker depName=ghcr.io/headlamp-k8s/headlamp
+k3s_headlamp_version: "v0.45.0"
+k3s_headlamp_image: "ghcr.io/headlamp-k8s/headlamp:{{ k3s_headlamp_version }}"
+k3s_headlamp_namespace: headlamp
+k3s_headlamp_fqdn: "{{ platform_service_fqdns.headlamp }}"
+k3s_headlamp_oidc_slug: headlamp                       # the SSO registry entry (group_vars/all/sso.yml)
+k3s_headlamp_oidc_issuer: "https://{{ platform_service_fqdns.authentik }}/application/o/{{ k3s_headlamp_oidc_slug }}/"
+k3s_headlamp_vault_path: "{{ k3s_env }}/k3s/headlamp-oidc"   # client_id / client_secret, minted by the authentik play
+k3s_headlamp_admin_group: "{{ platform_admins_group }}"
+k3s_oidc_prefix: "oidc:"                               # IdP users and groups are namespaced in RBAC subjects
+# k9s on the node (the admin kubeconfig is the node's; break-glass and day-to-day CLI).
+# renovate: datasource=github-releases depName=derailed/k9s
+k3s_k9s_version: "v0.51.0"
+k3s_k9s_sha256: "c3752ad51a5a4015a113819c4eeb6e55a4d0e4b8e652494797532f6fc8161dd7"  # pragma: allowlist secret — release archive checksum
+k3s_k9s_url: "https://github.com/derailed/k9s/releases/download/{{ k3s_k9s_version }}/k9s_Linux_amd64.tar.gz"

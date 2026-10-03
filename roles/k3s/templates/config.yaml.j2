@@ -16,11 +16,28 @@ secrets-encryption: true
 # API anonymously — with it off, controllers never start ("failed waiting on CRD helmchartconfigs").
 kubelet-arg:
   - "protect-kernel-defaults=true"
+{% set apiserver_args = [] %}
 {% if k3s_audit_enabled | bool %}
+{%   set _ = apiserver_args.extend([
+       'audit-log-path=' ~ k3s_audit_log_dir ~ '/audit.log',
+       'audit-policy-file=/etc/rancher/k3s/audit-policy.yaml',
+       'audit-log-maxage=' ~ k3s_audit_log_maxage,
+       'audit-log-maxbackup=' ~ k3s_audit_log_maxbackup,
+       'audit-log-maxsize=' ~ k3s_audit_log_maxsize]) %}
+{% endif %}
+{% if k3s_headlamp_enabled | bool and k3s_headlamp_oidc.client_id | default('') | length > 0 %}
+{#   people sign in through the IdP; the API server validates the token itself #}
+{%   set _ = apiserver_args.extend([
+       'oidc-issuer-url=' ~ k3s_headlamp_oidc_issuer,
+       'oidc-client-id=' ~ k3s_headlamp_oidc.client_id,
+       'oidc-username-claim=preferred_username',
+       'oidc-username-prefix=' ~ k3s_oidc_prefix,
+       'oidc-groups-claim=groups',
+       'oidc-groups-prefix=' ~ k3s_oidc_prefix]) %}
+{% endif %}
+{% if apiserver_args | length > 0 %}
 kube-apiserver-arg:
-  - "audit-log-path={{ k3s_audit_log_dir }}/audit.log"
-  - "audit-policy-file=/etc/rancher/k3s/audit-policy.yaml"
-  - "audit-log-maxage={{ k3s_audit_log_maxage }}"
-  - "audit-log-maxbackup={{ k3s_audit_log_maxbackup }}"
-  - "audit-log-maxsize={{ k3s_audit_log_maxsize }}"
+{% for a in apiserver_args %}
+  - "{{ a }}"
+{% endfor %}
 {% endif %}
