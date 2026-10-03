@@ -117,3 +117,12 @@ harbor_ci_robot_duration: -1                              # days; -1 = non-expir
 # once #551 is fixed. Vault already holds the value at harbor/robot-gitlab.
 harbor_ci_robot_vault_path: "{{ platform_env }}/harbor/robot-gitlab"   # robot name + secret (Harbor returns it only on create)
 harbor_ci_pull_cache_project: "dockerhub"                 # proxy-cache the robot may pull from
+
+# --- Cold start ------------------------------------------------------------------------------
+# Harbor's containers log through the syslog driver to the `harbor-log` sidecar. After a host
+# boot Docker starts them all at once: the ones that come before the sidecar listens fail with
+# "failed to initialize logging driver" and Docker does not retry a failed START (the restart
+# policy only covers a container that ran). Found on 2026-10-03: after the hypervisor reboot ten
+# containers stayed down until the playbook ran. A watchdog starts them in order — the sidecar
+# first — 60 s after boot and every 5 min; on a healthy stack it is a no-op.
+harbor_coldstart_containers: [harbor-log, redis, registry, registryctl, harbor-core, harbor-portal, harbor-jobservice, trivy-adapter, nginx, harbor-exporter]

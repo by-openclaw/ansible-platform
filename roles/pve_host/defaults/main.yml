@@ -209,3 +209,25 @@ pve_host_config_backup_paths:
   pve-etc: /etc/pve
   network: /etc/network
   apt: /etc/apt
+
+# --- Vendor storage CLI (HPE Smart Array) ------------------------------------------------------
+# On an HPE ProLiant whose Smart Array runs in RAID mode, every pool disk is a single-drive
+# logical volume: the controller — not the OS — knows the bay, the health and the predictive
+# failures of each physical drive, and a replaced drive stays invisible to the OS until its
+# logical volume exists. `ssacli` (HPE's CLI, from HPE's own repository) reads and manages that
+# without a reboot. Off by default; a node that carries the controller turns it on in the inventory.
+pve_host_smartarray_cli: false
+pve_host_hpe_repo_url: "https://downloads.linux.hpe.com/SDR/repo/mcp"
+pve_host_hpe_repo_suite: "{{ ansible_distribution_release }}/current"
+pve_host_hpe_repo_keys:        # HPE's signing keys, pinned by checksum
+  - {name: hpe-mcp-key1.asc, url: "https://downloads.linux.hpe.com/SDR/hpePublicKey2048_key1.pub", sha256: "3fe679e5ca629526e3927b7aa7d58bc58f173d49cb1c00f163eea761c39b718e"}  # pragma: allowlist secret — public key checksum
+  - {name: hpe-mcp-key2.asc, url: "https://downloads.linux.hpe.com/SDR/hpePublicKey2048_key2.pub", sha256: "60888e9309eda5f45428605c80d7210fed5fe0999a774b1a480da8fafeceb902"}  # pragma: allowlist secret — public key checksum
+pve_host_smartarray_package: ssacli
+
+# --- Cold-start sequence of the guests ---------------------------------------------------------
+# PVE starts guests in ascending `order` and waits `up` seconds after each one before the next;
+# a guest without an entry starts last. Without a sequence every guest starts in the same second:
+# on 2026-10-03 the node's load reached 270 on 12 CPUs, the firewall VM came up fifth, and the
+# platform needed 17 minutes to settle. Declared per node in the inventory (guest = the name PVE
+# shows; the VMID is read from the node — Terraform and the firewall seed own the ids).
+pve_host_boot_order: []        # [{guest: <name>, order: <n>, up: <seconds>}]

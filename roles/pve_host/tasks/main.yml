@@ -3,6 +3,11 @@
   ansible.builtin.import_tasks: apt.yml
   tags: [pve_host, apt]
 
+- name: "PVE host | Vendor storage CLI (HPE Smart Array)"
+  ansible.builtin.import_tasks: vendor_tools.yml
+  when: pve_host_smartarray_cli | bool
+  tags: [pve_host, apt, vendor]
+
 - name: "PVE host | Datacenter options"
   ansible.builtin.import_tasks: options.yml
   tags: [pve_host, options]
@@ -18,6 +23,11 @@
 - name: "PVE host | Static routes to the guest zones (persistent + now)"
   ansible.builtin.import_tasks: routes.yml
   tags: [pve_host, routes]
+
+- name: "PVE host | Cold-start sequence of the guests"
+  ansible.builtin.import_tasks: boot_order.yml
+  when: pve_host_boot_order | length > 0
+  tags: [pve_host, boot]
 
 - name: "PVE host | Netfilter modules for the guests (preloaded at host boot)"
   ansible.builtin.import_tasks: netfilter.yml
