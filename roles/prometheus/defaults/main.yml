@@ -39,6 +39,64 @@ prometheus_cadvisor_port: 9180
 # Application metrics (INF-33): every catalog row with `metrics` in its monitoring list and a
 # metrics_port is scraped as job <name> on its host — the catalog is the one list.
 prometheus_app_metrics: "{{ platform_services | selectattr('metrics_port', 'defined') | list }}"
+
+# --- The pacemaker rule (owner direction 2026-10-03) --------------------------------------------
+# Prometheus keeps the series that say whether the platform is alive and why not — not everything
+# an exporter can emit. On 2026-10-03 the TSDB held 244,000 series, 94 % of them from three jobs
+# (node 53 %, gitlab 24 %, cadvisor 16 %) while the alert rules read ten families and no
+# dashboard read the rest. A job named here KEEPS the families listed (anchored on the metric
+# name) and drops everything else at scrape time; a job not named keeps what it scrapes.
+# A rule or a dashboard that needs another family adds it here in the same change.
+prometheus_keep:
+  node:
+    - "node_(uname|os|exporter_build)_info"
+    - "node_(boot_time|time)_seconds"
+    - "node_load(1|5|15)"
+    - "node_memory_(MemTotal|MemAvailable|MemFree|Buffers|Cached|SwapTotal|SwapFree)_bytes"
+    - "node_cpu_seconds_total"
+    - "node_filesystem_(avail_bytes|size_bytes|free_bytes|files|files_free|readonly|device_error)"
+    - "node_network_(receive|transmit)_(bytes|errs|drop)_total"
+    - "node_network_up"
+    - "node_disk_(read_bytes|written_bytes|io_time_seconds)_total"
+    - "node_systemd_unit_state"            # failed units only — see prometheus_drop
+    - "node_zfs_zpool_state"               # the ZfsPoolNotOnline rule
+    - "node_pressure_.*"
+    - "node_vmstat_oom_kill"
+    - "node_nf_conntrack_entries(_limit)?"
+    - "node_filefd_(allocated|maximum)"
+    - "node_procs_(running|blocked)"
+    - "node_timex_(offset_seconds|sync_status)"
+    - "node_hwmon_temp_celsius"
+    - "node_textfile_.*"
+  cadvisor:
+    - "container_(start_time_seconds|last_seen)"
+    - "container_memory_(working_set|usage)_bytes"
+    - "container_spec_memory_limit_bytes"
+    - "container_cpu_usage_seconds_total"
+    - "container_network_(receive|transmit)_bytes_total"
+    - "container_oom_events_total"
+    - "cadvisor_version_info"
+    - "machine_(cpu_cores|memory_bytes)"
+  gitlab:
+    - "gitlab_(build|version)_info"
+    - "puma_(workers|running|max_threads|pool_capacity|active_connections|queued_connections)"
+    - "sidekiq_(running_jobs|concurrency|queue_size|queue_latency_seconds)"
+    - "gitlab_database_connection_pool_(size|busy|dead|waiting)"
+    - "gitlab_ci_pending_builds"
+    - "process_(start_time_seconds|resident_memory_bytes)"
+  monitoring:
+    - ".*_build_info"
+    - "alertmanager_alerts"
+    - "alertmanager_notifications(_failed)?_total"
+    - "alertmanager_config_last_reload_successful"
+    - "loki_ingester_memory_streams"
+    - "loki_distributor_(bytes|lines)_received_total"
+    - "grafana_stat_.*"
+    - "process_(start_time_seconds|resident_memory_bytes)"
+# Label-level drops applied after the keep (source labels joined by ';').
+prometheus_drop:
+  node:
+    - {labels: [__name__, state], regex: "node_systemd_unit_state;(activating|active|deactivating|inactive)"}
 # Shared PostgreSQL metrics (roles/postgres_exporter on the database host): saturation of the
 # cluster every service depends on. 2026-09-22 showed the symptom (500s everywhere) long before
 # anyone could see the cause.
