@@ -1,0 +1,75 @@
+---
+# Configuration export (infra/0008): the hypervisor's own configuration as a daily PBS host backup
+# — /etc/pve (pmxcfs), /etc/network, /etc/apt — with the credentials and the encryption key of the
+# PBS storage the guests already use (PVE keeps both root-only under /etc/pve/priv/storage/).
+- name: "PVE host | The PBS storage definition the export reuses"
+  ansible.builtin.command:
+    cmd: >-
+      awk '/^pbs: {{ pve_host_config_backup_storage }}$/{f=1;next} /^[a-z]+:/{f=0} f' /etc/pve/storage.cfg
+  register: pve_host_cb_storage
+  changed_when: false
+  check_mode: false
+
+- name: "PVE host | The storage is defined (pbs-pve-storage.yml ran)"
+  ansible.builtin.assert:
+    that:
+      - pve_host_cb_storage.stdout is search('server ')
+      - pve_host_cb_storage.stdout is search('datastore ')
+      - pve_host_cb_storage.stdout is search('username ')
+      - pve_host_cb_storage.stdout is search('fingerprint ')
+    fail_msg: "storage '{{ pve_host_config_backup_storage }}' is not a complete pbs storage in /etc/pve/storage.cfg — run playbooks/pbs-pve-storage.yml first"
+    quiet: true
+
+- name: "PVE host | Repository and fingerprint from the storage definition"
+  ansible.builtin.set_fact:
+    pve_host_cb_repository: >-
+      {{ pve_host_cb_kv.username }}@{{ pve_host_cb_kv.server }}:{{ pve_host_cb_kv.datastore }}
+    pve_host_cb_fingerprint: >-
+      {{ pve_host_cb_kv.fingerprint }}
+  vars:
+    # "key value" lines of the storage block -> a dict (no regex escapes in YAML strings)
+    pve_host_cb_kv: >-
+      {{ dict(pve_host_cb_storage.stdout_lines | map('trim') | map('split', ' ', 1)
+              | selectattr(1, 'defined') | map('map', 'trim') | list) }}
+
+- name: "PVE host | Daily configuration export to PBS (host backup, encrypted with the storage key)"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: pve-config-backup
+    host_job_description: "Proxmox VE configuration export to PBS (/etc/pve, /etc/network, /etc/apt)"
+    host_job_exec:
+      - >-
+        /usr/bin/proxmox-backup-client backup
+        {% for name, path in pve_host_config_backup_paths.items() %}{{ name }}.pxar:{{ path }} {% endfor %}
+        --repository {{ pve_host_cb_repository }} --backup-type host --backup-id {{ pve_host_node }}
+        --keyfile /etc/pve/priv/storage/{{ pve_host_config_backup_storage }}.enc
+    host_job_environment:
+      PBS_PASSWORD_FILE: "/etc/pve/priv/storage/{{ pve_host_config_backup_storage }}.pw"
+      PBS_FINGERPRINT: "{{ pve_host_cb_fingerprint }}"
+    host_job_on_calendar: "{{ pve_host_config_backup_schedule }}"
+    host_job_randomized_delay: "300"
+    host_job_wants_network: true
+    host_job_timeout: "30m"
+
+- name: "PVE host | Host backups of this node on the datastore"
+  ansible.builtin.command:
+    argv: [/usr/bin/proxmox-backup-client, snapshot, list, --repository, "{{ pve_host_cb_repository }}", --output-format, json]
+  environment:
+    PBS_PASSWORD_FILE: "/etc/pve/priv/storage/{{ pve_host_config_backup_storage }}.pw"
+    PBS_FINGERPRINT: "{{ pve_host_cb_fingerprint }}"
+  register: pve_host_cb_snapshots
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "PVE host | First export now (none exists yet) — the timer takes over"
+  ansible.builtin.systemd:
+    name: pve-config-backup.service
+    state: started
+  when:
+    - not ansible_check_mode   # --check never wrote the unit, so there is nothing to start yet
+    - pve_host_cb_snapshots.rc == 0
+    - (pve_host_cb_snapshots.stdout | from_json | selectattr('backup-type', 'equalto', 'host')
+       | selectattr('backup-id', 'equalto', pve_host_node) | list | length) == 0
+  changed_when: true

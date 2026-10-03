@@ -1,0 +1,81 @@
+---
+- name: "Ladder | A package and a declared release are required"
+  ansible.builtin.assert:
+    that:
+      - apt_release_ladder_package | length > 0
+      - apt_release_ladder_version | length > 0
+    fail_msg: "apt_release_ladder needs apt_release_ladder_package and apt_release_ladder_version"
+    quiet: true
+
+- name: "Ladder | Refresh the package index"
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 600
+  changed_when: false
+
+- name: "Ladder | Running release, repository candidate, pending upgrades"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: >-
+      set -o pipefail;
+      echo "running=$(dpkg-query -W -f '${Version}' {{ apt_release_ladder_package }})";
+      echo "candidate=$(apt-cache policy {{ apt_release_ladder_package }} | awk '/Candidate/{print $2}')";
+      echo "pending=$(apt list --upgradable 2>/dev/null | grep -v Listing | cut -d/ -f1 | paste -sd' ')"
+  register: apt_release_ladder_state
+  changed_when: false
+  check_mode: false
+
+- name: "Ladder | Report — {{ apt_release_ladder_service }}"
+  ansible.builtin.debug:
+    msg: "{{ apt_release_ladder_state.stdout_lines + ['declared=' ~ apt_release_ladder_version] }}"
+
+- name: "Ladder | The pin is the repository's candidate (move the pin first, never fall behind silently)"
+  ansible.builtin.assert:
+    that: (apt_release_ladder_state.stdout | regex_search('candidate=(\S+)', '\1') | first) == apt_release_ladder_version
+    fail_msg: >-
+      the repository offers {{ apt_release_ladder_state.stdout | regex_search('candidate=(\S+)', '\1') | first }}
+      while the pin says {{ apt_release_ladder_version }} — review the release notes and move the pin
+    quiet: true
+  when: apt_release_ladder_apply | bool
+
+- name: "Ladder | Full upgrade to the declared release (held packages stay held)"
+  ansible.builtin.apt:
+    upgrade: full
+    autoremove: true
+  when:
+    - apt_release_ladder_apply | bool
+    - (apt_release_ladder_state.stdout | regex_search('running=(\S+)', '\1') | first) != apt_release_ladder_version
+      or (apt_release_ladder_state.stdout is search('pending=.+'))
+
+- name: "Ladder | Release after the upgrade"
+  ansible.builtin.command:
+    cmd: dpkg-query -W -f '${Version}' {{ apt_release_ladder_package }}
+  register: apt_release_ladder_after
+  changed_when: false
+  check_mode: false
+
+- name: "Ladder | On the pin"
+  ansible.builtin.assert:
+    that: apt_release_ladder_after.stdout == apt_release_ladder_version
+    fail_msg: "{{ apt_release_ladder_package }} is {{ apt_release_ladder_after.stdout }}, declared {{ apt_release_ladder_version }}"
+    quiet: true
+  when: apt_release_ladder_apply | bool
+
+- name: "Ladder | A staged kernel waits for a reboot?"
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: apt_release_ladder_rr
+
+- name: "Ladder | Reboot state"
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'REBOOT REQUIRED (staged kernel) — run with -e apt_release_ladder_reboot=true in a maintenance window'
+         if apt_release_ladder_rr.stat.exists else 'no reboot pending' }}
+
+- name: "Ladder | Reboot (owner window only)"
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ apt_release_ladder_reboot_timeout }}"
+    post_reboot_delay: 60
+  when:
+    - apt_release_ladder_rr.stat.exists
+    - apt_release_ladder_reboot | bool
