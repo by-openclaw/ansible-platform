@@ -53,17 +53,17 @@
 
 # --- Passexec connect flow: no password prompt, survives container recreate ------
 # pgAdmin runs PasswordExecCommand (cat the passfile) at connect. Populate that
-# passfile from the superuser secret INTO the persistent data volume, then point
+# passfile from the DBA login's secret INTO the persistent data volume, then point
 # the server row at the passexec command. This is what makes the fix durable: an
 # old live-only edit was lost whenever the container was recreated; here every
 # deploy re-asserts both. Idempotent — the passfile is rewritten only when its
 # content drifts (sha256 compare, no secret printed) and the row update only fires
 # on an actual change.
-- name: "servers | Hash the desired superuser password (idempotency probe)"
+- name: "servers | Hash the desired DBA password (idempotency probe)"
   ansible.builtin.set_fact:
-    _pgadmin_pw_sha: "{{ pgadmin_pg_superuser_password | hash('sha256') }}"
+    _pgadmin_pw_sha: "{{ pgadmin_pg_dba_password | hash('sha256') }}"
   no_log: true
-  when: pgadmin_pg_superuser_password is defined
+  when: pgadmin_pg_dba_password is defined
 
 - name: "servers | Read the current passfile hash inside the container"
   community.docker.docker_container_exec:
@@ -75,7 +75,7 @@
   register: pgadmin_passfile_now
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  when: pgadmin_pg_superuser_password is defined
+  when: pgadmin_pg_dba_password is defined
 
 # Write via the exec module's stdin (password never appears in argv / ps / logs)
 # AND as root — the image's default exec user is the unprivileged `pgadmin`, which
@@ -90,12 +90,12 @@
       sh -c "cat > {{ pgadmin_pg_passfile_container }}
       && chown pgadmin {{ pgadmin_pg_passfile_container }}
       && chmod 600 {{ pgadmin_pg_passfile_container }}"
-    stdin: "{{ pgadmin_pg_superuser_password }}"
+    stdin: "{{ pgadmin_pg_dba_password }}"
     stdin_add_newline: false
   no_log: true
   changed_when: true
   when:
-    - pgadmin_pg_superuser_password is defined
+    - pgadmin_pg_dba_password is defined
     - (pgadmin_passfile_now.stdout | default('absent')) != _pgadmin_pw_sha
 
 # (passexec_cmd is set per-user by pg_provision.py above — no separate task needed.)

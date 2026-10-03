@@ -110,6 +110,9 @@
       containers:
         - name: gitlab-runner
           image: "{{ gitlab_runner_image }}"
+          published:
+            - "{{ hostvars[inventory_hostname].ansible_host }}:{{ gitlab_runner_metrics_port }}:{{ gitlab_runner_metrics_port }}"   # /metrics (INF-33)
+          log_driver: journald   # container log -> journal -> promtail -> Loki (INF-27); job traces live in GitLab
           volumes:
             - /etc/gitlab-runner:/etc/gitlab-runner
             - /var/run/docker.sock:/var/run/docker.sock   # the docker executor runs jobs on this host's engine
@@ -124,3 +127,16 @@
     - "'is alive' not in gitlab_runner_verify.stdout and 'Verifying' not in gitlab_runner_verify.stdout and gitlab_runner_verify.rc != 0"
     # a dry-run of the switch-over: the container it would create does not exist yet
     - not (ansible_check_mode and 'No such container' in (gitlab_runner_verify.stderr | default('')))
+
+# --- 5. Image hygiene (roles/host_job) ------------------------------------------
+- name: "Runner | Weekly prune of unused job images (roles/host_job)"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: docker-image-prune
+    host_job_description: "Prune job images unused for {{ gitlab_runner_image_prune_age }} (the executor pulls every run)"
+    host_job_exec:
+      - "/usr/bin/docker image prune -af --filter until={{ gitlab_runner_image_prune_age }}"
+    host_job_on_calendar: "{{ gitlab_runner_image_prune_on_calendar }}"
+    host_job_timeout: 30m
+  when: gitlab_runner_image_prune_enabled | bool

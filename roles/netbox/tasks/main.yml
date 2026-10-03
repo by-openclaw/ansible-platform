@@ -20,6 +20,7 @@
       backend_url: "http://{{ netbox_listen_ip }}:{{ netbox_host_port }}"
       exposure: internal
       db: postgres               # netbox / netbox / {env}/netbox/db-pgsql — the live DB
+      db_extensions: [ltree]     # NetBox 4.7+ (trusted extension; roles/postgres_db creates it)
       mailbox: true
       sso_slug: "{{ netbox_oidc_app_slug }}"
       containers:
@@ -47,3 +48,7 @@
 - name: "NetBox answers, and all three containers are Up"
   ansible.builtin.import_tasks: verify.yml
   tags: [netbox, container]
+
+- name: "Break-glass token + superuser reconcile (people.yml is the source)"
+  ansible.builtin.import_tasks: rbac.yml
+  tags: [netbox, rbac]

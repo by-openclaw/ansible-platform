@@ -39,6 +39,10 @@
   when: harbor_oidc_enabled | bool
   tags: [harbor, oidc]
 
+- name: "Post-install — system settings + schedules the role owns"
+  ansible.builtin.import_tasks: settings.yml
+  tags: [harbor, settings]
+
 - name: "Configure pull-through proxy caches (Docker Hub etc.)"
   ansible.builtin.import_tasks: proxy-cache.yml
   when: (harbor_proxy_caches | default([])) | length > 0

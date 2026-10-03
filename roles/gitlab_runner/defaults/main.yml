@@ -23,7 +23,15 @@ gitlab_runner_token_vault_path: "{{ platform_env }}/gitlab/runner-token"
 
 # --- Version pins (NEVER unpinned / :latest) ----------------------------------
 # renovate: datasource=docker depName=gitlab/gitlab-runner
-gitlab_runner_image: "gitlab/gitlab-runner:v19.4.0"   # exact pin — the version the native install ran
+gitlab_runner_image: "gitlab/gitlab-runner:v19.4.1"   # exact pin; tracks the GitLab minor (19.4.x)
+# --- Metrics (INF-33): the runner's Prometheus listener, published on the SVC address for the
+# monitoring host (catalog metrics_port; DOCKER-USER rule from `monitoring`).
+gitlab_runner_metrics_port: 9252
+# --- Image hygiene: the executor pulls job images every run (pull_policy always) and never removes
+# them; a weekly prune of images unused for this long keeps the disk from filling (roles/host_job).
+gitlab_runner_image_prune_enabled: true
+gitlab_runner_image_prune_age: "168h"
+gitlab_runner_image_prune_on_calendar: "Sun *-*-* 04:00:00"
 
 # --- Executor / config.toml ---------------------------------------------------
 gitlab_runner_concurrent: 4
