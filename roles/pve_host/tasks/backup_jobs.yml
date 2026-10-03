@@ -25,12 +25,17 @@
   ansible.builtin.command:
     argv: >-
       {{ (['pvesh', 'set', '/cluster/backup/' ~ pve_host_nfs_job_now[0].id] if _present else ['pvesh', 'create', '/cluster/backup'])
-         + (_keys | map('regex_replace', '^', '--') | zip(_keys | map('extract', pve_host_nfs_backup_job) | map('string')) | flatten) }}
+         + (_keys | map('regex_replace', '^', '--') | zip(_keys | map('extract', pve_host_nfs_backup_job) | map('string')) | flatten)
+         + (['--prune-backups', _want_prune] if _want_prune else []) }}
   vars:
     _present: "{{ pve_host_nfs_job_now | length == 1 }}"
     _keys: "{{ pve_host_nfs_backup_job.keys() | list }}"
     _live: "{{ pve_host_nfs_job_now[0] if _present else {} }}"
     _want: "{{ _keys | map('extract', pve_host_nfs_backup_job) | map('string') | map('lower') | list }}"
     _have: "{{ _keys | map('extract', dict(_keys | zip(_keys | map('regex_replace', '^.*$', ''))) | combine(_live)) | map('string') | map('lower') | list }}"
-  when: not _present or _want != _have
+    # Retention: PVE returns the property as a mapping or as "k=v,k=v" — both compared as a sorted "k=v" list.
+    _want_prune: "{{ pve_host_nfs_backup_prune | default({}) | dictsort | map('join', '=') | join(',') }}"
+    _live_prune: "{{ _live['prune-backups'] | default('') }}"
+    _have_prune: "{{ (_live_prune | dictsort | map('join', '=') | join(',')) if _live_prune is mapping else (_live_prune | string | split(',') | sort | join(',')) }}"
+  when: not _present or _want != _have or _want_prune != _have_prune
   changed_when: true
