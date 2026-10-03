@@ -58,6 +58,25 @@
     force: true    # --check on a fresh host: the binary is not downloaded yet, the link target may be absent
   loop: [kubectl, crictl, ctr]
 
+- name: "k3s | API audit log directory + policy (SEC-23 / INF-29)"
+  ansible.builtin.file:
+    path: "{{ k3s_audit_log_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  when: k3s_audit_enabled | bool
+
+- name: "k3s | API audit policy"
+  ansible.builtin.template:
+    src: audit-policy.yaml.j2
+    dest: /etc/rancher/k3s/audit-policy.yaml
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart k3s
+  when: k3s_audit_enabled | bool
+
 - name: "k3s | Server configuration"
   ansible.builtin.template:
     src: config.yaml.j2
@@ -106,6 +125,30 @@
   changed_when: false
   check_mode: false
   when: not ansible_check_mode
+
+# Pod Security Admission: enforce + warn at the declared level per namespace (idempotent labels).
+- name: "k3s | Pod Security Admission labels today"
+  ansible.builtin.command:
+    argv: [kubectl, get, ns, -o, json]
+  register: k3s_ns_now
+  changed_when: false
+  check_mode: false
+
+- name: "k3s | Pod Security Admission per namespace (enforce + warn)"
+  ansible.builtin.command:
+    argv: [kubectl, label, ns, "{{ item.key }}", "pod-security.kubernetes.io/enforce={{ item.value }}", "pod-security.kubernetes.io/warn={{ item.value }}", --overwrite]
+  loop: "{{ k3s_pod_security | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}={{ item.value }}"
+  vars:
+    k3s_ns_labels: >-
+      {{ (k3s_ns_now.stdout | from_json)['items'] | selectattr('metadata.name', 'equalto', item.key)
+         | map(attribute='metadata.labels', default={}) | first | default({}) }}
+  when:
+    - (k3s_ns_now.stdout | from_json)['items'] | selectattr('metadata.name', 'equalto', item.key) | list | length > 0
+    - k3s_ns_labels['pod-security.kubernetes.io/enforce'] | default('') != item.value
+      or k3s_ns_labels['pod-security.kubernetes.io/warn'] | default('') != item.value
+  changed_when: true
 
 - name: "k3s | CI deployers per namespace"
   ansible.builtin.include_tasks: ci-namespace.yml

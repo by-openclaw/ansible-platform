@@ -143,8 +143,13 @@ crowdsec_retired_acquisitions:
 crowdsec_whitelist_cidrs: "{{ platform_trusted_cidrs | default([]) }}"
 
 # Host firewall (ufw) rules for this role's listeners (host network) — applied by roles/host_firewall when ufw is active
+crowdsec_metrics_port: 6060                 # Prometheus exporter (INF-33) — scraped by the monitoring host only
 crowdsec_firewall_rules:
   - { port: "{{ crowdsec_lapi_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "CrowdSec LAPI (agents, bouncers)" }
+  - port: "{{ crowdsec_metrics_port }}"
+    proto: tcp
+    from: "{{ groups['monitoring'] | map('extract', hostvars, 'ansible_host') | list }}"
+    comment: "CrowdSec /metrics (Prometheus)"
   - { port: "{{ crowdsec_appsec_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "CrowdSec AppSec (Traefik)" }
 # One rule per syslog feed, from the firewall only.
 crowdsec_feed_firewall_rules: >-

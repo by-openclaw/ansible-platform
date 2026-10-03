@@ -56,7 +56,7 @@ traefik_hsts_preload: false
 
 # Traefik binary (PINNED — never :latest, per platform standard)
 # renovate: datasource=github-releases depName=traefik/traefik
-traefik_version: "v3.7.11"
+traefik_version: "v3.7.13"   # 2026-09-30 (3.7 line)
 traefik_image: "traefik:{{ traefik_version }}"   # the official image, pinned (the version the binary ran)
 
 # Layout
@@ -103,8 +103,21 @@ traefik_crowdsec_update_max_failure: 3
 traefik_crowdsec_keyfile: "/etc/traefik/crowdsec-lapi.key"
 traefik_crowdsec_vault_path: "{{ crowdsec_bouncer_vault_paths.traefik }}"   # api_key for the Traefik bouncer
 traefik_tls_min_version: "VersionTLS12"   # min TLS 1.2 on every service (SEC/TLS baseline)
+# Response headers on every HTTPS response (the `hsts` middleware of the file provider, entry-point wide):
+# HSTS above, plus nosniff and a referrer policy. X-Frame-Options stays per application
+# (draw.io is embedded).
+traefik_headers_nosniff: true
+traefik_headers_referrer_policy: "strict-origin-when-cross-origin"
+# Prometheus metrics (INF-33): a dedicated entry point on the host network, reachable from the
+# monitoring host only (host firewall); the catalog row carries the port → job `traefik`.
+traefik_metrics_enabled: true
+traefik_metrics_port: 8082
 
 # Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
 traefik_firewall_rules:
   - { port: 80, proto: tcp, comment: "Traefik public entry (HTTP → HTTPS redirect)" }
   - { port: 443, proto: tcp, comment: "Traefik public entry (TLS)" }
+  - port: "{{ traefik_metrics_port }}"
+    proto: tcp
+    from: "{{ groups['monitoring'] | map('extract', hostvars, 'ansible_host') | list }}"
+    comment: "Traefik /metrics (Prometheus)"
