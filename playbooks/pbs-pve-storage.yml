@@ -209,6 +209,27 @@
         - "'already defined' not in (r_add.stderr | default(''))"
       when: pbs_pve_storage_id not in r_pvesm.stdout
 
+    # Converge the pinned fingerprint on an EXISTING storage: `pvesm add` only sets it at creation.
+    # When the server's certificate changes (the wildcard, each renewal) the storage would stay
+    # pinned to the old one and go inactive ("fingerprint … not verified") — found 2026-10-03.
+    - name: "PVE-wire | Fingerprint pinned on the storage today"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -o pipefail
+          awk -v id="{{ pbs_pve_storage_id }}" '$1 == "pbs:" {f = ($2 == id)} f && $1 == "fingerprint" {print $2}' /etc/pve/storage.cfg
+      register: r_fp_now
+      check_mode: false  # read-only probe
+      changed_when: false
+
+    - name: "PVE-wire | The storage pins the certificate the server presents now"
+      ansible.builtin.command:
+        argv: [pvesm, set, "{{ pbs_pve_storage_id }}", --fingerprint, "{{ pbs_fp }}"]
+      when:
+        - pbs_fp | length > 0
+        - (r_fp_now.stdout | trim | lower) != (pbs_fp | lower)
+      changed_when: true
+
     # Converge credentials on an EXISTING storage (e.g. the backup-user rename):
     # pvesm add can't update; compare the configured username and set on drift.
     - name: "PVE-wire | Current storage username"

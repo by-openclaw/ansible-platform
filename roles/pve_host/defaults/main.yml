@@ -147,7 +147,15 @@ pve_host_service_accounts:
 # --- UI through Traefik (internal / admin-only) ------------------------------
 pve_host_route_enabled: true
 pve_host_fqdn: "{{ pve_host_oidc_slug }}.{{ pve_host_domain }}"
-pve_host_backend_url: "https://{{ ansible_host }}:{{ pve_host_ui_port }}"
+# The console certificate (security/0004: no self-signed certificate): pveproxy serves the
+# platform wildcard, distributed like every other consumer's copy (roles/tls_cert, refreshed by
+# playbooks/certs-sync.yml). The edge then VERIFIES the backend, by the node's own name.
+pve_host_console_cert: true
+pve_host_node_fqdn: "{{ inventory_hostname }}.{{ platform_domain }}"
+pve_host_cert_dir: "/etc/ssl/{{ platform_org }}"
+pve_host_cert_crt: "{{ pve_host_cert_dir }}/wildcard.crt"
+pve_host_cert_key: "{{ pve_host_cert_dir }}/wildcard.key"
+pve_host_backend_url: "https://{{ pve_host_node_fqdn if pve_host_console_cert | bool else ansible_host }}:{{ pve_host_ui_port }}"
 
 # --- netfilter modules for the GUESTS ---------------------------------------------------
 # Unprivileged containers cannot load kernel modules; their ufw/iptables rules need the

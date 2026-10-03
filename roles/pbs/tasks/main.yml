@@ -45,6 +45,11 @@
   ansible.builtin.import_tasks: notify.yml
   tags: [pbs, notify]
 
+- name: "PBS | API/UI certificate (the platform wildcard)"
+  ansible.builtin.import_tasks: tls.yml
+  when: pbs_console_cert | bool
+  tags: [pbs, tls]
+
 - name: "PBS | Publish the web UI via Traefik (internal / VPN-only)"
   ansible.builtin.include_role:
     name: traefik_route
@@ -54,7 +59,7 @@
     traefik_route_name: pbs
     traefik_route_fqdn: "{{ pbs_fqdn }}"
     traefik_route_backend_url: "{{ pbs_traefik_backend_url }}"
-    traefik_route_backend_insecure_skip_verify: true   # PBS serves its own self-signed TLS on 8007
+    traefik_route_backend_insecure_skip_verify: "{{ not (pbs_console_cert | bool) }}"   # verified once the proxy serves the wildcard
     traefik_route_internal_only: true
     # internal_cidrs (LAN + VPN + loopback) from the role default
   when: pbs_traefik_enabled | bool

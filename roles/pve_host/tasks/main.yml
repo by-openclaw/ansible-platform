@@ -41,6 +41,11 @@
   ansible.builtin.import_tasks: firewall.yml
   tags: [pve_host, firewall]
 
+- name: "PVE host | Console certificate (the platform wildcard)"
+  ansible.builtin.import_tasks: tls.yml
+  when: pve_host_console_cert | bool
+  tags: [pve_host, tls]
+
 - name: "PVE host | UI route through Traefik"
   ansible.builtin.include_role:
     name: traefik_route
@@ -50,7 +55,7 @@
     traefik_route_name: "{{ pve_host_oidc_slug }}"
     traefik_route_fqdn: "{{ pve_host_fqdn }}"
     traefik_route_backend_url: "{{ pve_host_backend_url }}"
-    traefik_route_backend_insecure_skip_verify: true   # pveproxy serves its own certificate
+    traefik_route_backend_insecure_skip_verify: "{{ not (pve_host_console_cert | bool) }}"   # verified once pveproxy serves the wildcard
     traefik_route_internal_only: true
   when: pve_host_route_enabled | bool
   tags: [pve_host, route]

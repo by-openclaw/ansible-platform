@@ -33,3 +33,38 @@
       ansible.builtin.include_role:
         name: redis
         tasks_from: tls.yml
+
+- name: Sync wildcard cert to the hypervisor console (pveproxy)
+  hosts: proxmox_nodes
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Refresh wildcard cert (Proxmox VE console)"
+      ansible.builtin.include_role:
+        name: pve_host
+        tasks_from: tls.yml
+
+- name: Sync wildcard cert to the backup server (proxmox-backup-proxy)
+  hosts: pbs
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Refresh wildcard cert (PBS API/UI)"
+      ansible.builtin.include_role:
+        name: pbs
+        tasks_from: tls.yml
+
+# The hypervisor pins the backup server by fingerprint: after a new certificate the storage
+# definition and the configuration-export unit must carry the new one — same run.
+- name: "Hypervisor trusts the backup server's current certificate (storage fingerprint)"
+  ansible.builtin.import_playbook: pbs-pve-storage.yml
+
+- name: Configuration export unit carries the current fingerprint
+  hosts: proxmox_nodes
+  become: true
+  gather_facts: true
+  tasks:
+    - name: "Refresh the configuration-export job (fingerprint from the storage definition)"
+      ansible.builtin.include_role:
+        name: pve_host
+        tasks_from: config_backup.yml
