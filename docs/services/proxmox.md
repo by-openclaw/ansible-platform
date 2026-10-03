@@ -22,3 +22,5 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: proxmox`). R
 ## Backup (infra/0008)
 
 Class A (`docs/backup.md`): the hypervisor's configuration — `/etc/pve`, `/etc/network`, `/etc/apt` — exported daily (04:30) as a PBS **host backup** of the node (`pve-config-backup.timer`), encrypted with the PBS storage's key, with the storage's token; verified by `proxmox-backup-client snapshot list`. The guests are backed up by the two vzdump jobs (NAS 05:00 keep-all — retention = owner item; PBS 03:30, pruned on PBS, replicated to S3). Restore = reinstall + `pve-host.yml`, then `proxmox-backup-client restore host/<node>/<snapshot> pve-etc.pxar /etc/pve` (pmxcfs stopped) and the guests from PBS.
+
+The guests' NAS copy (job at 05:00 on the NFS storage) keeps **7 daily, 4 weekly and 6 monthly** backups per guest (`pve_host_nfs_backup_prune`, owner decision 2026-10-03); the job prunes after each run. Backups of guests that no longer exist are not pruned by the job.

@@ -57,6 +57,13 @@ pve_host_nfs_backup_job:
   mailto: "{{ platform_ops_email }}"
   node: "{{ pve_host_node }}"
   notes-template: "Backup of {{ '{{' }}guestname{{ '}}' }} (VMID {{ '{{' }}vmid{{ '}}' }}) on node {{ '{{' }}node{{ '}}' }} - {{ platform_company | upper }} automated backup"
+# Retention of the NAS copy (infra/0008; owner decision 2026-10-03): per guest, the job keeps
+# 7 daily, 4 weekly and 6 monthly backups and prunes the rest after each run. It overrides the
+# storage's `keep-all`; backups of guests that no longer exist are not touched (no run = no prune).
+pve_host_nfs_backup_prune:
+  keep-daily: 7
+  keep-weekly: 4
+  keep-monthly: 6
 
 # --- Proxmox firewall (datacenter + host) ------------------------------------
 pve_host_firewall_enabled: true
