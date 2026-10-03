@@ -17,8 +17,9 @@ authentik_oidc_apps:
     launch_url: "https://{{ platform_service_fqdns.vault }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/hashicorp-vault.svg"
     name: "Vault"
-    group: "{{ platform_service_groups.vault.admin }}"
+    group: "{{ platform_service_groups.vault.admin }}"             # ACCESS group — only members may SSO into Vault
     vault_path: "{{ platform_env }}/vault/oidc"
+    restrict_to_group: true         # IdP-enforced: only vault-admins can log in (Vault maps the same group to `admins`)
     redirect_uris:
       - "https://{{ platform_service_fqdns.vault }}/ui/vault/auth/oidc/oidc/callback"
       - "http://localhost:8250/oidc/callback"
