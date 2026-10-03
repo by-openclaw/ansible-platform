@@ -25,6 +25,15 @@
     label: "{{ item.name }}"
   register: register_docs
 
+- name: "Register | ADR compliance records per service (docs/audits/<name>-<date>.md)"
+  ansible.builtin.find:
+    paths: "{{ register_audits_dir }}"
+    patterns: "{{ item.name }}-20??-??-??.md"
+  loop: "{{ platform_services }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: register_audits
+
 - name: "Register | Render docs/register.md"
   ansible.builtin.template:
     src: register.md.j2

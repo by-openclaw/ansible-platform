@@ -3,16 +3,17 @@
 
 Generated {{ '%Y-%m-%d' | strftime }} · {{ platform_services | length }} services · owner {{ register_owner.name }} (`{{ register_owner.username }}`, admin identity `adm_{{ register_owner.username }}`) · exposure classes: public {{ platform_services | selectattr('exposure', 'equalto', 'public') | list | length }}, private {{ platform_services | selectattr('exposure', 'equalto', 'private') | list | length }}, admin {{ platform_services | selectattr('exposure', 'equalto', 'admin') | list | length }}
 
-Columns: **Pin** = the role variable's value (pinned = live is the contract); **Docs** = `docs/services/<name>.md` present; **Pass** = tuning-pass parts closed (footprint / hardening / integration, #512); **NIS2** = filled from the compliance registry once CISO Assistant runs.
+Columns: **Pin** = the role variable's value (pinned = live is the contract); **Docs** = `docs/services/<name>.md` present; **Audit** = the latest ADR compliance record (`docs/audits/<name>-<date>.md`, checklist `docs/audits/adr-compliance-checklist.md`); **Pass** = tuning-pass parts closed (footprint / hardening / integration, #512); **NIS2** = filled from the compliance registry once CISO Assistant runs.
 
-| Service | Role / playbook | Host | FQDN | Exposure | SSO | DB | Pin | Backup | Monitoring | Owner | Vendor docs | Docs | Pass | NIS2 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Service | Role / playbook | Host | FQDN | Exposure | SSO | DB | Pin | Backup | Monitoring | Owner | Vendor docs | Docs | Audit | Pass | NIS2 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 {% for s in platform_services %}
 {%- set rv = lookup('vars', 'register_role_' ~ (s.role | default('', true)), default={}) if s.role else {} -%}
 {%- set pin = (hostvars[s.host][s.pin] | default('—')) if (s.pin and s.pin_source | default('role') == 'inventory') else ((rv[s.pin] | default('—')) if (s.pin and rv) else '—') -%}
 {%- set doc = (register_docs.results | selectattr('item.name', 'equalto', s.name) | map(attribute='stat.exists') | first) -%}
+{%- set aud = (register_audits.results | selectattr('item.name', 'equalto', s.name) | map(attribute='files') | first | map(attribute='path') | map('basename') | sort | last | default('')) -%}
 {%- set pss = register_tuning_passes[s.name] | default({}) -%}
-| {{ s.name }}{{ ' _(planned)_' if s.state | default('') == 'planned' else '' }} | `{{ s.role | default('—', true) }}` / `{{ s.playbook | default('—', true) }}` | `{{ s.host | default('—', true) }}` | {{ (s.fqdn ~ '.<domain>') if s.fqdn else '—' }} | {{ s.exposure }} | {{ s.sso }} | {{ s.db }} | `{{ pin }}` | {{ s.backup | join(', ') }} | {{ s.monitoring | join(', ') }} | {{ (platform_people | selectattr('username', 'equalto', s.owner) | map(attribute='name') | first) if s.owner is defined else register_owner.name }} | {{ ('[' ~ s.vendor.name ~ '](' ~ s.vendor.docs ~ ')') if s.vendor.docs else s.vendor.name }} | {{ 'yes' if doc else 'no' }} | {{ pss.keys() | list | join(', ') if pss else '—' }} | — |
+| {{ s.name }}{{ ' _(planned)_' if s.state | default('') == 'planned' else '' }} | `{{ s.role | default('—', true) }}` / `{{ s.playbook | default('—', true) }}` | `{{ s.host | default('—', true) }}` | {{ (s.fqdn ~ '.<domain>') if s.fqdn else '—' }} | {{ s.exposure }} | {{ s.sso }} | {{ s.db }} | `{{ pin }}` | {{ s.backup | join(', ') }} | {{ s.monitoring | join(', ') }} | {{ (platform_people | selectattr('username', 'equalto', s.owner) | map(attribute='name') | first) if s.owner is defined else register_owner.name }} | {{ ('[' ~ s.vendor.name ~ '](' ~ s.vendor.docs ~ ')') if s.vendor.docs else s.vendor.name }} | {{ 'yes' if doc else 'no' }} | {{ ('[' ~ (aud | regex_search('20[0-9]{2}-[0-9]{2}-[0-9]{2}')) ~ '](audits/' ~ aud ~ ')') if aud else '—' }} | {{ pss.keys() | list | join(', ') if pss else '—' }} | — |
 {% endfor %}
 
 ## Reading the register
