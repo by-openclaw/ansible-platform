@@ -1,0 +1,25 @@
+---
+# ==============================================================================
+# Playbook: pve-host-upgrade.yml — move the hypervisor to the declared release
+# (roles/pve_host `pve_host_version`) through roles/apt_release_ladder.
+#   Report:  ansible-playbook playbooks/pve-host-upgrade.yml
+#   Apply:   ansible-playbook playbooks/pve-host-upgrade.yml -e apt_release_ladder_apply=true
+#            (pveproxy/pvedaemon restart = a UI blip; guests untouched)
+#   Reboot:  ... -e apt_release_ladder_apply=true -e apt_release_ladder_reboot=true
+#            (a staged kernel; every guest goes down with the node — the owner's window)
+# ==============================================================================
+- name: "Proxmox VE — release ladder to the declared pve-manager"
+  hosts: proxmox_nodes
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: "Ladder | The declared release (roles/pve_host defaults, namespaced)"
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../roles/pve_host/defaults/main.yml"
+        name: pve_host_defaults
+  roles:
+    - role: apt_release_ladder
+      vars:
+        apt_release_ladder_service: "Proxmox VE"
+        apt_release_ladder_package: pve-manager
+        apt_release_ladder_version: "{{ pve_host_defaults.pve_host_version }}"
