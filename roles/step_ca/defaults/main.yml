@@ -7,7 +7,11 @@
 # (Arista PoE campus + UniFi → Authentik/RADIUS), mTLS between infra devices,
 # and machine identity. step-ca does NOT issue web-facing service certs and does
 # NOT replace LE.
-step_ca_image: "smallstep/step-ca:0.28.4"     # pinned, never :latest
+step_ca_image: "smallstep/step-ca:0.30.2"     # pinned, never :latest (2026-09: 0.30 line)
+# The CA state volume on the host (the image runs as `step`, uid/gid 1000): the key password
+# copied there by the image's first-boot init must not be world-readable.
+step_ca_volume_name: "step-ca-data"
+step_ca_uid: 1000
 step_ca_listen_ip: "{{ hostvars[groups['step_ca'] | first].ansible_host }}"
 step_ca_port: 9000
 step_ca_fqdn: "{{ platform_service_fqdns['step-ca'] }}"

@@ -33,7 +33,7 @@
 
 - name: "Step-ca | Named docker volume for the CA state"
   community.docker.docker_volume:
-    name: step-ca-data
+    name: "{{ step_ca_volume_name }}"
 
 # --- the platform concerns via the golden-path scaffold: the container, the route
 # (Traefik verifies the CA's own certificate with the internal root, #383), the mailbox.
@@ -58,7 +58,7 @@
             - "{{ step_ca_listen_ip }}:{{ step_ca_port }}:9000"
             - "127.0.0.1:{{ step_ca_port }}:9000"
           volumes:
-            - "step-ca-data:/home/step"
+            - "{{ step_ca_volume_name }}:/home/step"
             - "{{ step_ca_build_dir }}/init/password:/run/init-pw:ro"
           healthcheck:
             test: ["CMD-SHELL", "curl -fsk https://127.0.0.1:9000/health >/dev/null || exit 1"]
@@ -72,6 +72,16 @@
             DOCKER_STEPCA_INIT_PROVISIONER_NAME: "{{ step_ca_provisioner }}"
             DOCKER_STEPCA_INIT_ACME: "true"
             DOCKER_STEPCA_INIT_PASSWORD_FILE: "/run/init-pw"
+
+# The image's first-boot init copies the key password into the state volume world-readable
+# (0644): only the CA's own user may read it (SEC-01).
+- name: "Step-ca | The key password inside the state volume is 0600 to the CA user"
+  ansible.builtin.file:
+    path: "/var/lib/docker/volumes/{{ step_ca_volume_name }}/_data/secrets/password"
+    owner: "{{ step_ca_uid }}"
+    group: "{{ step_ca_uid }}"
+    mode: "0600"
+    state: file
 
 - name: "Step-ca | Wait for the CA health endpoint"
   ansible.builtin.uri:
