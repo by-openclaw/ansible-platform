@@ -44,3 +44,13 @@ Method: roles/contract_audit (PASS=10 FAIL=0 SKIP=23) + manual walk on the live 
 | backup | INF-41–43 | PASS / OWNER | `pg-backup.timer` 02:00 (last run 2026-10-03 02:00 rc=0; 4 daily dumps ≈ 42 MB each, 7 d retention) in the PBS image (encrypted, S3 replica); gap 5 |
 | pins | GIT-01–05 | PASS | `postgres:17.11`, exporter `v0.19.0` |
 | contract | SVC-23 | PASS | `check_service_contract.py` 32/32 |
+
+## Closure — 2026-10-03
+
+| Outcome | Gaps |
+|---|---|
+| **Fixed, applied ×2 (`changed=0`), verified** | 1 (`log_statement = ddl`, `log_disconnections = on` live: a probe `CREATE/DROP TABLE` shows in the server log, session ends are logged), 2 (`ssl_ciphers = HIGH:!aNULL:!MD5:!3DES:!RC4`; every client session back on TLS after the one restart — authentik, gitlab, grafana, grc, harbor, netbird, vaultwarden, the exporter), 3 (service page) |
+| **Decision pending (owner)** | 4 (register OH-19 in #724), 5 (`data_checksums` — a maintenance window) |
+| **Platform passes** | 6 (tuning: `shared_buffers`), 7 (read-only rootfs, NetBox, per-database alert rules) |
+
+Idempotence: `postgresql.yml` from the branch — `changed=1` (the container with the three flags; one restart at 11:23Z, ≈10 s) then `changed=0`; exporter `pg_up 1`; no HTTP probe failing afterwards; `main` = `changed=0` after the merge.
