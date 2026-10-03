@@ -47,3 +47,13 @@ Method: roles/contract_audit (PASS=10 FAIL=0 SKIP=23) + manual walk on the live 
 | backup | INF-41 | PASS | PBS ct 571: 21 snapshots, latest 2026-10-02T02:54Z (10.2 GB); replays replicated off-site with the bucket |
 | pins | GIT-01–05 | PASS | every image pinned (`v4.10.19-ce`, `postgres:16`, `redis:7-alpine`) |
 | contract | SVC-23 | PASS | `check_service_contract.py` 32/32; `contract_audit` PASS=10 FAIL=0 |
+
+## Closure — 2026-10-03
+
+| Outcome | Gaps |
+|---|---|
+| **Fixed, applied ×2 (`changed=0`), verified** | 1 (the Redis password rotated in Vault and handed to `redis-server` through `$REDIS_PASSWORD` — the container's command line carries no literal; `redis-cli … ping` with the environment value → `PONG`; the seven containers recreated once, core/lion/web/postgres/redis healthy), 2 (SMTP from the one mailbox document: the reconcile reports `email: SMTP -> mail.<domain>:587 as jumpserver@<domain>`), 3 (service page) |
+| **Decision pending (owner)** | 4 (register OH-15 in #724), 5 (v5.0.0 — a major: evaluate) |
+| **Platform passes / notes** | 6 (metrics behind an API key — monitoring pass), 7 (read-only rootfs, NetBox, per-service alert rules) |
+
+Idempotence: `jumpserver.yml` from the branch — `changed=3` (containers) then `changed=0`; `main` = `changed=0` after the merge. Found on the way: a `# pragma` comment inside a folded block scalar is part of the Jinja expression (the first apply stopped at the email config; fixed with `dict`/`zip`).
