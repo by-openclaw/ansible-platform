@@ -48,3 +48,12 @@ Method: roles/contract_audit (PASS=11 FAIL=0 SKIP=22) + manual walk on the live 
 | backup | INF-41–43 | PASS | PBS ct 580: 21 snapshots, latest 2026-10-02T03:01Z (20.7 GB); Grafana DB in the cluster dump; Loki in the replicated bucket; the TSDB (6.8 GB, 15 d) is recreated by scraping |
 | pins | GIT-01–05 | GAP → fixed | gap 1 |
 | contract | SVC-23 | PASS | `check_service_contract.py` 32/32; `contract_audit` PASS=11 FAIL=0 |
+
+## Closure — 2026-10-03
+
+| Outcome | Gaps |
+|---|---|
+| **Fixed, applied ×2 (`changed=0`), verified** | 1 (Prometheus `v3.13.4`, Alertmanager `v0.34.1`, Loki `0.28.0`, Grafana `13.2.3` — the five containers recreated once; every scrape target back up after the ~1 min gap), 2 (Prometheus, Alertmanager, Loki and Grafana on journald), 3 (job `monitoring` 4/4 up — Alertmanager, Loki, Grafana, Blackbox scraped on their loopback listeners), 4 (service page) |
+| **Platform passes** | 5 (per-service alert rules and dashboards — the monitoring pass after the walk; today's 14 platform rules unchanged), 6 (read-only rootfs, NetBox) |
+
+Idempotence: `monitoring.yml` from the branch — `changed=5` (containers) then `changed=0`; `main` = `changed=0` after the merge. The branch carried the catalog rows merged during the walk (gitlab, gitlab-runner, netbird, netbox, harbor, jitsi, nextcloud): their jobs are up in the same Prometheus.
