@@ -1,0 +1,14 @@
+---
+# ==============================================================================
+# proxmox_nodes — the hypervisor's own logs to Loki (infra/0007 INF-27/29): the UI/API access
+# log and the task log carry the audit label (who did what on the hypervisor); the datacenter
+# firewall log (drops, log_level_in info) the default class. Read ACLs for promtail on the trees.
+# ==============================================================================
+promtail_extra_file_jobs:
+  - {name: pve_access, path: "/var/log/pveproxy/access.log", audit: true}
+  - {name: pve_tasks, path: "/var/log/pve/tasks/index", audit: true}
+  - {name: pve_firewall, path: "/var/log/pve-firewall.log"}
+promtail_acl_dirs:
+  - /var/log/pveproxy
+  - /var/log/pve
+  - /var/log/pve-firewall.log

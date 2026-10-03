@@ -1,4 +1,31 @@
-# Wazuh — Setup Runbook
+# Wazuh — service page + setup runbook
+
+Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: wazuh`). Role `roles/wazuh` (server) + `roles/wazuh_agent` (every guest), play `playbooks/wazuh.yml`, guest `lxc-wazuh-01` (ct 512). Audit: [`docs/audits/wazuh-2026-10-02.md`](../audits/wazuh-2026-10-02.md). The setup runbook follows below.
+
+## Identity (identity/0002 §per-tool identity doc)
+
+1. **ADR:** `identity/0001-authentication` — the dashboard authenticates people with OpenSearch Security's OpenID against Authentik (`groups` claim); the manager API and the indexer are reached by the components (internal users) and by the role only.
+2. **Authentik application:** OIDC, slug `wazuh` (`group_vars/all/sso.yml`).
+3. **Access model:** members of the platform admins group are dashboard admins (roles mapping); agents enrol with the authd password from Vault; the API user `wazuh-wui` and the indexer `admin` are internal, break-glass = the indexer `admin` with its password in Vault.
+4. **Vault paths:** `secret/{env}/wazuh/admin`, `wazuh/dashboard`, `wazuh/api`, `wazuh/agent-enrol`, `wazuh/oidc` (`roles/authentik`).
+5. **Ansible adapter + vars:** `roles/wazuh` (`defaults/main.yml`: pin, ports, heap, groups; the compose, manager, indexer, dashboard and security templates), `roles/wazuh_agent` (pinned package, enrolment, groups); `service_scaffold` for route, SSO, Vault paths and the teardown note.
+6. **Removal notes:** `playbooks/decommission-service.yml` (`tasks/absent.yml`); class B — the indexer volume is the security record (alerts, FIM history, vulnerabilities) and is kept (`keep_volumes`).
+
+## Notifications (services/0005)
+
+1. **Transport:** none from the manager — its `maild` cannot authenticate and the zone's DMARC is `p=reject`, so mail alerts stay off (declared in `ossec.conf`); `mailbox: false` (the `wazuh@<domain>` mailbox minted earlier stays at Mailcow, never deleted).
+2. **What is sent:** nothing by mail; alerts, vulnerabilities and FIM events are in the dashboard.
+3. **Alerting path:** Prometheus blackbox `https://wazuh.<domain>/` → Alertmanager → Discord/mail (platform); Wazuh-specific alerts to channels (agent disconnected, level ≥ 12 events) = platform item (an Alertmanager integration or the host relay).
+4. **Logs:** the three containers → journald → promtail → Loki; the manager's `alerts.json` + archives stay in the indexer (the security record, 90 d class is the indexer's own retention).
+5. **Operator contact:** `docs/register.md` row.
+
+## Backup (infra/0008)
+
+Class B (`docs/backup.md`): the indexer data volume (the security record) and the manager state in PBS (daily, ct 512 — 11 snapshots since the 2026-09-20 rebuild); the internal PKI and configuration are role-generated. Restore = play + PBS volume.
+
+---
+
+# Setup runbook
 
 Security monitoring for every guest: file integrity, log analysis, system inventory, vulnerability detection, security configuration assessment. Answers NIS2 Art. 21 (incident handling, monitoring) and the ISO 27001 A.8.15/A.8.16 lines of the security-stack document.
 
