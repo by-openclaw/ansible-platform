@@ -1,0 +1,22 @@
+---
+# One declared API token that does not exist: minted once, its value written to Vault
+# (`{{ pve_host_tokens_vault_prefix }}/<user>-<id>`), never printed. Loop var: pve_tok {user, id}.
+- name: "PVE host | Mint the privilege-separated token: {{ pve_tok.user ~ '!' ~ pve_tok.id }}"
+  ansible.builtin.command:
+    argv: [pveum, user, token, add, "{{ pve_tok.user }}", "{{ pve_tok.id }}", --privsep, "1", --output-format, json]
+  register: pve_host_tok_new
+  no_log: true
+  changed_when: true
+
+- name: "PVE host | Store the token in Vault: {{ pve_tok.user ~ '!' ~ pve_tok.id }}"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ pve_host_tokens_vault_prefix }}/{{ pve_tok.user | regex_replace('@.*$', '') }}-{{ pve_tok.id }}"
+    vault_secret_init:
+      user: "{{ pve_tok.user }}"
+      tokenid: "{{ pve_tok.user }}!{{ pve_tok.id }}"
+      secret: "{{ (pve_host_tok_new.stdout | from_json).value }}"   # pragma: allowlist secret
+    vault_secret_force_fields:
+      secret: "{{ (pve_host_tok_new.stdout | from_json).value }}"   # pragma: allowlist secret
+  when: not ansible_check_mode

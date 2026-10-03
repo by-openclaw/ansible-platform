@@ -1,0 +1,17 @@
+---
+# ==============================================================================
+# Role: apt_release_ladder — move a host-native product (Proxmox VE, Proxmox Backup Server, …)
+# to its DECLARED release through apt. One owner for the concern "a native service's release":
+# the service role declares the pin (`<svc>_version`), this role reports the drift, applies the
+# upgrade on demand and never reboots on its own.
+#   report:  the default — current release, repository candidate, pending packages, declared pin
+#   apply:   -e apt_release_ladder_apply=true  → apt full-upgrade (held packages stay held)
+#   reboot:  -e apt_release_ladder_reboot=true → only when the host says a reboot is required
+#            (a hypervisor takes every guest down with it: the owner's window)
+# ==============================================================================
+apt_release_ladder_package: ""      # REQUIRED — the package whose version is the release (pve-manager, proxmox-backup-server)
+apt_release_ladder_version: ""      # REQUIRED — the declared release (the service role's pin)
+apt_release_ladder_service: "{{ apt_release_ladder_package }}"
+apt_release_ladder_apply: false
+apt_release_ladder_reboot: false
+apt_release_ladder_reboot_timeout: 900

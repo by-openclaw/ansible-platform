@@ -116,6 +116,7 @@
       containers:
         - name: "{{ ciso_assistant_backend_container }}"   # API + migrations on start
           image: "{{ ciso_assistant_backend_image }}"
+          log_driver: journald
           user: "1001:1001"
           published:
             # the browser talks to the API directly (upstream's design), so Traefik must reach it
@@ -132,6 +133,7 @@
             start_period: 90s
         - name: "{{ ciso_assistant_worker_container }}"    # task worker: same image, Huey
           image: "{{ ciso_assistant_backend_image }}"
+          log_driver: journald
           user: "1001:1001"
           volumes:
             - "{{ ciso_assistant_data_dir }}:/code/db"
@@ -140,6 +142,7 @@
           entrypoint: ["python", "manage.py", "run_huey", "-w", "2", "--scheduler-interval", "60"]
         - name: "{{ ciso_assistant_frontend_container }}"
           image: "{{ ciso_assistant_frontend_image }}"
+          log_driver: journald
           published:
             - "{{ ciso_assistant_listen_ip }}:{{ ciso_assistant_frontend_port }}:{{ ciso_assistant_frontend_container_port }}"
           env:

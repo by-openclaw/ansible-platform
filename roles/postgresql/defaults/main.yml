@@ -36,6 +36,12 @@ pg_max_connections: 200
 # ceiling is approached the client that opened the connections is named — without it,
 # only the victims' errors are visible. Restart-required setting.
 pg_log_connections: true
+# Audit trail of the cluster (SEC-23 / INF-29): session ends and every DDL statement in the server
+# log (journald → Loki); DML stays out (volume, PII). Who connected = log_connections above.
+pg_log_disconnections: true
+pg_log_statement: "ddl"
+# TLS: the server picks the cipher; no 3DES/RC4/MD5 suites offered (TLS 1.2 floor above).
+pg_ssl_ciphers: "HIGH:!aNULL:!MD5:!3DES:!RC4"
 
 # Host dirs bind-mounted into the container (same path inside).
 pg_conf_host_dir: "/etc/postgres/conf"     # pg_hba.conf

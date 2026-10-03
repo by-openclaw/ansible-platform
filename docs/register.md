@@ -26,18 +26,18 @@ Columns: **Pin** = the role variable's value (pinned = live is the contract); **
 | diagrams | `diagrams` / `diagrams.yml` | `lxc-diagrams-01` | diagrams.<domain> | private | forwardauth | none | `yuzutech/kroki:0.32.1` | pbs | node, cadvisor, probe | Youssef Boujraf | [Kroki](https://docs.kroki.io/) | no | — | — |
 | pgadmin | `pgadmin` / `pgadmin.yml` | `lxc-pgadmin-01` | pgadmin.<domain> | private | oidc | shared-pg | `dpage/pgadmin4:9.18` | pbs | node, cadvisor, probe | Youssef Boujraf | [pgAdmin](https://www.pgadmin.org/docs/) | no | — | — |
 | jumpserver | `jumpserver` / `jumpserver.yml` | `lxc-jumpserver-01` | jumpserver.<domain> | private | oidc | own | `v4.10.19-ce` | pbs, app-native | node, cadvisor, probe | Youssef Boujraf | [JumpServer CE](https://docs.jumpserver.org/) | no | — | — |
-| proxmox | `pve_host` / `pve-host.yml` | `srv-proxmox-poc-01` | proxmox.<domain> | admin | oidc | none | `—` | config-export | node | Youssef Boujraf | [Proxmox VE](https://pve.proxmox.com/pve-docs/) | no | — | — |
+| proxmox | `pve_host` / `pve-host.yml` | `srv-proxmox-poc-01` | proxmox.<domain> | admin | oidc | none | `9.2.21` | config-export | node | Youssef Boujraf | [Proxmox VE](https://pve.proxmox.com/pve-docs/) | no | — | — |
 | pbs | `pbs` / `pbs.yml` | `vm-pbs-01` | pbs.<domain> | admin | oidc | none | `—` | nfs | node, probe | Youssef Boujraf | [Proxmox Backup Server](https://pbs.proxmox.com/docs/) | no | — | — |
 | vault | `vault` / `vault.yml` | `lxc-vault-01` | vault.<domain> | admin | oidc | none | `hashicorp/vault:2.0.4` | pbs, raft-snapshot | node, cadvisor, probe | Youssef Boujraf | [HashiCorp Vault](https://developer.hashicorp.com/vault/docs) | no | — | — |
 | opnsense | `opnsense` / `opnsense.yml` | `vm-opns-01` | — | admin | local | none | `26.7.4` | pbs, config-export | probe | Youssef Boujraf | [OPNsense](https://docs.opnsense.org/) | yes | — | — |
 | traefik | `traefik` / `traefik.yml` | `lxc-traefik-01` | traefik.<domain> | admin | oidc | none | `v3.7.13` | pbs | node, cadvisor, probe, metrics | Youssef Boujraf | [Traefik](https://doc.traefik.io/traefik/) | no | — | — |
-| crowdsec | `crowdsec` / `crowdsec.yml` | `lxc-crowdsec-01` | — | admin | none | none | `—` | pbs | node | Youssef Boujraf | [CrowdSec](https://docs.crowdsec.net/) | no | — | — |
-| k3s | `k3s` / `k3s.yml` | `vm-k3s-01` | k3s.<domain> | admin | forwardauth | none | `v1.37.0+k3s1` | pbs | node, probe | Youssef Boujraf | [k3s](https://docs.k3s.io/) | no | — | — |
+| crowdsec | `crowdsec` / `crowdsec.yml` | `lxc-crowdsec-01` | — | admin | none | none | `v1.8.1` | pbs | node, cadvisor, metrics | Youssef Boujraf | [CrowdSec](https://docs.crowdsec.net/) | no | — | — |
+| k3s | `k3s` / `k3s.yml` | `vm-k3s-01` | k3s.<domain> | admin | forwardauth | none | `v1.37.1+k3s1` | pbs | node, probe | Youssef Boujraf | [k3s](https://docs.k3s.io/) | no | — | — |
 | postgresql | `postgresql` / `postgresql.yml` | `lxc-pgsql-01` | — | admin | none | own | `postgres:17.11` | pbs, pg-dump | node, cadvisor | Youssef Boujraf | [PostgreSQL](https://www.postgresql.org/docs/17/) | no | footprint | — |
-| redis | `redis` / `redis.yml` | `lxc-redis-01` | — | admin | none | none | `redis:8.10.0` | pbs | node, cadvisor | Youssef Boujraf | [Redis](https://redis.io/docs/) | no | — | — |
-| step-ca | `step_ca` / `step-ca.yml` | `lxc-stepca-01` | ca.<domain> | admin | none | none | `smallstep/step-ca:0.28.4` | pbs | node, cadvisor | Youssef Boujraf | [step-ca](https://smallstep.com/docs/step-ca/) | no | — | — |
+| redis | `redis` / `redis.yml` | `lxc-redis-01` | — | admin | none | none | `redis:8.10.2` | pbs | node, cadvisor | Youssef Boujraf | [Redis](https://redis.io/docs/) | no | — | — |
+| step-ca | `step_ca` / `step-ca.yml` | `lxc-stepca-01` | ca.<domain> | admin | none | none | `smallstep/step-ca:0.30.2` | pbs | node, cadvisor | Youssef Boujraf | [step-ca](https://smallstep.com/docs/step-ca/) | no | — | — |
 | adguard | `adguard` / `adguard-prod.yml` | `vm-adguard-01` | — | admin | local | none | `0.107.79` | pbs | node, probe | Youssef Boujraf | [AdGuard Home](https://github.com/AdguardTeam/AdGuardHome/wiki) | no | — | — |
-| warden | `warden` / `warden.yml` | `lxc-warden-01` | — | admin | none | none | `—` | pbs | node | Youssef Boujraf | platform (cold-start reconciler) | no | — | — |
+| warden | `warden` / `warden.yml` | `lxc-warden-01` | — | admin | none | none | `community-ee-minimal:2.20.6-1` | pbs | node | Youssef Boujraf | platform (cold-start reconciler) | no | — | — |
 | ciso-assistant _(planned)_ | `—` / `—` | `—` | grc.<domain> | private | oidc | shared-pg | `—` | pbs, pg-dump | node, cadvisor, probe | Youssef Boujraf | [CISO Assistant](https://intuitem.gitbook.io/ciso-assistant/) | no | — | — |
 
 ## Reading the register
