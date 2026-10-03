@@ -1,0 +1,26 @@
+---
+# ==============================================================================
+# Playbook: pbs-upgrade.yml — move Proxmox Backup Server to the declared release
+# (roles/pbs `pbs_version`) through roles/apt_release_ladder.
+#   Report:  ansible-playbook playbooks/pbs-upgrade.yml
+#   Apply:   ansible-playbook playbooks/pbs-upgrade.yml -e apt_release_ladder_apply=true
+#            (proxmox-backup-proxy restarts: running backup/verify tasks are interrupted —
+#            never inside the backup 03:30Z or verify 21:00Z windows)
+#   Reboot:  ... -e apt_release_ladder_apply=true -e apt_release_ladder_reboot=true
+#            (a staged kernel; the VM is back in about a minute, no guest depends on it at runtime)
+# ==============================================================================
+- name: "Proxmox Backup Server — release ladder to the declared proxmox-backup-server"
+  hosts: pbs
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: "Ladder | The declared release (roles/pbs defaults, namespaced)"
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../roles/pbs/defaults/main.yml"
+        name: pbs_defaults
+  roles:
+    - role: apt_release_ladder
+      vars:
+        apt_release_ladder_service: "Proxmox Backup Server"
+        apt_release_ladder_package: proxmox-backup-server
+        apt_release_ladder_version: "{{ pbs_defaults.pbs_version }}"
