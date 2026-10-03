@@ -53,3 +53,7 @@ Method: roles/contract_audit (PASS=10 FAIL=0 SKIP=23) + manual walk on the live 
 | **Platform passes** | 5 (read-only rootfs, NetBox) |
 
 Idempotence: `seaweedfs.yml` from the branch — `changed=1` (the admin console recreated with the credential in its environment) then `changed=0` ×2; `main` = `changed=0` after the merge. Found on the way: `4.48` refuses to start the console when `-adminUser` is empty (`4.47` accepted it) — surfaced because a `vault_secret` force-write had wiped the console document's other fields (#753; recovered from the version history); the `vault_secret` role now merges.
+
+## Owner decisions applied after the closure
+
+- **2026-10-03 window — gap 2:** the ZFS dataset quota of `/data` raised from 250 G to **500 G** (`seaweedfs_zfs_mounts`; the pool had 1.46 T free): `/data` went from 85 % to 43 % used. Online change, no restart.
