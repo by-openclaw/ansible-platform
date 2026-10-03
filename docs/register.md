@@ -37,7 +37,7 @@ Columns: **Pin** = the role variable's value (pinned = live is the contract); **
 | redis | `redis` / `redis.yml` | `lxc-redis-01` | — | admin | none | none | `redis:8.10.0` | pbs | node, cadvisor | Youssef Boujraf | [Redis](https://redis.io/docs/) | no | — | — |
 | step-ca | `step_ca` / `step-ca.yml` | `lxc-stepca-01` | ca.<domain> | admin | none | none | `smallstep/step-ca:0.28.4` | pbs | node, cadvisor | Youssef Boujraf | [step-ca](https://smallstep.com/docs/step-ca/) | no | — | — |
 | adguard | `adguard` / `adguard-prod.yml` | `vm-adguard-01` | — | admin | local | none | `0.107.79` | pbs | node, probe | Youssef Boujraf | [AdGuard Home](https://github.com/AdguardTeam/AdGuardHome/wiki) | no | — | — |
-| warden | `warden` / `warden.yml` | `lxc-warden-01` | — | admin | none | none | `—` | pbs | node | Youssef Boujraf | platform (cold-start reconciler) | no | — | — |
+| warden | `warden` / `warden.yml` | `lxc-warden-01` | — | admin | none | none | `community-ee-minimal:2.20.6-1` | pbs | node | Youssef Boujraf | platform (cold-start reconciler) | no | — | — |
 | ciso-assistant _(planned)_ | `—` / `—` | `—` | grc.<domain> | private | oidc | shared-pg | `—` | pbs, pg-dump | node, cadvisor, probe | Youssef Boujraf | [CISO Assistant](https://intuitem.gitbook.io/ciso-assistant/) | no | — | — |
 
 ## Reading the register
