@@ -22,3 +22,9 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: pbs`). Role 
 ## Backup (infra/0008)
 
 PBS is the backup system: datastore `pbs-datastore` S3-backed on SeaweedFS (bucket replicated to the off-site S3 = 3-2-1 with the NAS copy), every snapshot client-side encrypted (key in Vault), prune daily (keep 3/14/8/6), GC daily, verify 21:00 with re-verification after 30 days. Its own state: `/etc/proxmox-backup` (users, ACLs, jobs, datastore definition) inside the VM image → the NAS vzdump job (05:00); the datastore needs no backup of its own (it is the backup). Restore of PBS = redeploy the VM + `pbs.yml` + `pbs-pve-storage.yml`; the S3-backed datastore re-attaches to the bucket with the key from Vault.
+
+### Operating rule — no S3 or edge restart while PBS reads
+
+The datastore reads its chunks from S3 **through the edge** (`s3.<domain>` on Traefik → SeaweedFS). A restart of the S3 server or of the edge during the nightly verify (21:00–22:30Z), the backup run (03:30Z) or a manual verify makes chunk reads fail and marks healthy snapshots `failed` (read errors, not corruption — 2026-10-02 and 2026-10-03, see `docs/audits/pbs-2026-10-03.md`). Applies of `seaweedfs.yml` and `traefik.yml` that recreate a container stay outside those windows.
+
+A snapshot marked `failed` is not picked up again by the verify job: the job skips every snapshot that already carries a verification state until it is outdated (30 days). Re-verify it on its own with `ignore-verified` off (datastore verify API, `backup-type` / `backup-id` / `backup-time` of that snapshot), then confirm that every snapshot reports `ok`.
