@@ -92,6 +92,7 @@
         - name: "{{ grafana_container }}"
           image: "{{ grafana_image }}"
           network_mode: host
+          log_driver: journald   # container log -> journal -> promtail -> Loki (INF-27)
           user: "{{ grafana_account_user.uid | default(0) }}:{{ grafana_account_user.group | default(0) }}"
           volumes:
             - "{{ grafana_config_dir }}:{{ grafana_config_dir }}:ro"
