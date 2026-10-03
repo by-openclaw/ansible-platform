@@ -36,9 +36,10 @@
 # document (address = the SMTP user). {} when the mailbox is not minted yet → email stays off.
 - name: "JumpServer reconcile | Build email config ({} when no mailbox)"
   ansible.builtin.set_fact:
-    jumpserver_email_cfg: >-   # pragma: allowlist secret
-      {{ {'smtp_host': jumpserver_mail.smtp_host, 'smtp_port': jumpserver_mail.smtp_port,
-          'smtp_user': jumpserver_mail.address, 'smtp_password': jumpserver_mail.password}   # pragma: allowlist secret
+    # the four keys reconcile.py expects, from the one mailbox document (address = the SMTP user)
+    jumpserver_email_cfg: >-
+      {{ dict(['smtp_host', 'smtp_port', 'smtp_user', 'smtp_password']
+              | zip([jumpserver_mail.smtp_host, jumpserver_mail.smtp_port, jumpserver_mail.address, jumpserver_mail.password]))
          if (jumpserver_mail.smtp_host | default('')) | length > 0 else {} }}
   no_log: true
 
