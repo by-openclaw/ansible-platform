@@ -71,6 +71,15 @@ groups:
           summary: "{{ '{{' }} $labels.instance {{ '}}' }} has {{ '{{' }} $value | humanizePercentage {{ '}}' }} memory available"
           description: "{{ '{{' }} $labels.instance {{ '}}' }} has had less than {{ (prometheus_alert_mem_free_ratio * 100) | int }} % of its memory available for 10 min: the kernel is about to kill processes or the host is swapping."
           runbook: "Look at the top consumers (docker stats / top); restart the leaking service or raise the guest's memory through the infra repo."
+      - alert: ZfsPoolNotOnline
+        # one alert per pool: every LXC of the node reports the node's pool state too
+        expr: max by (zpool, state) (node_zfs_zpool_state{state!="online"}) == 1
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "ZFS pool {{ '{{' }} $labels.zpool {{ '}}' }} is {{ '{{' }} $labels.state {{ '}}' }}"
+          description: "The pool is not ONLINE: a disk failed or was removed and a mirror runs without redundancy (2026-10-03: a drive of the hypervisor's pool failed and nothing alerted). A second failure in the same mirror loses the pool — every guest disk and the object storage."
+          runbook: "On the node: `zpool status -x` names the device; replace the physical disk, then `zpool replace <pool> <old> <new>` and watch the resilver. Do not reboot the node before the replacement (a Smart Array with a failed logical drive can stop at the boot prompt)."
       - alert: AlertmanagerUnreachable
         expr: prometheus_notifications_alertmanagers_discovered < 1
         for: 5m

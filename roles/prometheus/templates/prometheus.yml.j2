@@ -5,6 +5,20 @@
 {%     if h not in node_hosts %}{{ node_hosts.append(h) or "" }}{% endif %}
 {%   endfor %}
 {% endfor %}
+{# the pacemaker rule: keep-list (and label drops) of a job, when one is declared #}
+{% macro keep_only(job) %}
+{% if prometheus_keep[job] is defined %}
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: '{{ prometheus_keep[job] | join('|') }}'
+        action: keep
+{% for d in prometheus_drop[job] | default([]) %}
+      - source_labels: [{{ d.labels | join(', ') }}]
+        regex: '{{ d.regex }}'
+        action: drop
+{% endfor %}
+{% endif %}
+{% endmacro %}
 global:
   scrape_interval: {{ prometheus_scrape_interval }}
   evaluation_interval: {{ prometheus_scrape_interval }}
@@ -26,7 +40,7 @@ scrape_configs:
 
 {# the rest of the stack on this host (alertmanager, loki, grafana, blackbox) — INF-33 #}
   - job_name: monitoring
-    static_configs:
+{{ keep_only('monitoring') }}    static_configs:
 {% for t in prometheus_self_targets %}
       - targets: ['{{ t.target }}']
         labels:
@@ -35,7 +49,7 @@ scrape_configs:
 {% endfor %}
 
   - job_name: node
-    static_configs:
+{{ keep_only('node') }}    static_configs:
 {% for h in node_hosts | sort %}
       - targets: ['{{ hostvars[h].ansible_host }}:{{ prometheus_node_exporter_port }}']
         labels:
@@ -44,7 +58,7 @@ scrape_configs:
 
   - job_name: cadvisor
     scrape_interval: 30s
-    static_configs:
+{{ keep_only('cadvisor') }}    static_configs:
 {% for h in (groups[prometheus_cadvisor_group] | default([])) | sort %}
       - targets: ['{{ hostvars[h].ansible_host }}:{{ prometheus_cadvisor_port }}']
         labels:
@@ -63,7 +77,7 @@ scrape_configs:
 
 {% for svc in prometheus_app_metrics | sort(attribute='name') %}
   - job_name: {{ svc.name }}
-    static_configs:
+{{ keep_only(svc.name) }}    static_configs:
 {# one listener (metrics_port) or several (metrics_ports: one per server process, e.g. NetBird) #}
       - targets: [{% for p in (svc.metrics_ports | default([svc.metrics_port])) %}'{{ hostvars[svc.host].ansible_host }}:{{ p }}'{{ ', ' if not loop.last }}{% endfor %}]
         labels:

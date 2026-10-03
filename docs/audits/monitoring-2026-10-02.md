@@ -57,3 +57,8 @@ Method: roles/contract_audit (PASS=11 FAIL=0 SKIP=22) + manual walk on the live 
 | **Platform passes** | 5 (per-service alert rules and dashboards — the monitoring pass after the walk; today's 14 platform rules unchanged), 6 (read-only rootfs, NetBox) |
 
 Idempotence: `monitoring.yml` from the branch — `changed=5` (containers) then `changed=0`; `main` = `changed=0` after the merge. The branch carried the catalog rows merged during the walk (gitlab, gitlab-runner, netbird, netbox, harbor, jitsi, nextcloud): their jobs are up in the same Prometheus.
+
+## Owner decisions applied after the closure
+
+- **2026-10-03 — gap 5 (per-service alert rules and dashboards) is closed by direction, not by adding:** the owner asked for the liveness set only ("the mandatory signals, like a pacemaker"; no metric garbage). Measured: 244,000 series, 94 % from three jobs (node 53 %, gitlab 24 %, cadvisor 16 %), while the rules read ten families and no dashboard read the rest. `prometheus_keep` now keeps per job what the rules and basic capacity views need: ≈25,500 samples kept per scrape of ≈185,000 offered; 126/126 targets up; 15 rules healthy.
+- **One rule added — `ZfsPoolNotOnline`:** a disk of the hypervisor's pool failed on 2026-10-03 at 16:56Z and nothing alerted. The rule fires once per pool (every LXC of the node reports the pool state too) and fired for `tank` as soon as it was loaded.
