@@ -54,3 +54,7 @@ Method: roles/contract_audit (PASS=10 FAIL=0 SKIP=23) + manual walk on the live 
 | **Platform passes** | 6 (tuning: `shared_buffers`), 7 (read-only rootfs, NetBox, per-database alert rules) |
 
 Idempotence: `postgresql.yml` from the branch — `changed=1` (the container with the three flags; one restart at 11:23Z, ≈10 s) then `changed=0`; exporter `pg_up 1`; no HTTP probe failing afterwards; `main` = `changed=0` after the merge.
+
+## Owner decisions applied after the closure
+
+- **2026-10-03 window — gap 5:** `data_checksums = on`. `pg_data_checksums: true` in the role; `tasks/checksums.yml` converted the cluster once (fresh `pg_dumpall` first; clean stop, control file "shut down", `pg_checksums --enable`: 20,241 files, 70,395 blocks; database back after ≈4 min); new clusters are initialised with `--data-checksums`; every run asserts the live setting. `postgresql.yml` `changed=3` then `changed=0`; 126/126 targets and 44/44 probes up afterwards.

@@ -19,6 +19,14 @@ pg_port: 5432
 pg_data_volume: "pgdata"
 pg_uid: 999                       # postgres uid inside the official image
 
+# Data checksums (INF-43, integrity at rest): every page carries a checksum, so silent disk
+# corruption is detected on read instead of being served. A new cluster is initialised with them
+# (POSTGRES_INITDB_ARGS); an existing cluster without them is converted ONCE by
+# tasks/checksums.yml — `pg_checksums --enable` on the cleanly stopped cluster (a restart of the
+# database: every consumer reconnects), then the role asserts `data_checksums = on` on every run.
+pg_data_checksums: true
+pg_stop_timeout: 120              # seconds for a clean shutdown before the offline conversion
+
 # GitLab's schema loads in ONE transaction that acquires a lock per object; with
 # 19.x's many partitioned tables it exceeds the default max_locks_per_transaction
 # (64) → "out of shared memory / increase max_locks_per_transaction" on schema

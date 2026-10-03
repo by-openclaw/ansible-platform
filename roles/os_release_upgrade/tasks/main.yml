@@ -1,0 +1,114 @@
+---
+- name: "OS release | Release the guest runs"
+  ansible.builtin.setup:
+    gather_subset: [min, mounts]
+
+- name: "OS release | Report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ ansible_distribution }} {{ ansible_distribution_release }}
+      ({{ ansible_distribution_version }}), kernel {{ ansible_kernel }} —
+      declared {{ os_release_upgrade_from }} → {{ os_release_upgrade_to }},
+      apply={{ os_release_upgrade_apply | bool }}
+
+# Decided ONCE, before the work: the facts are gathered again after the reboot, and a condition
+# on the live release would then skip the proof and the cleanup.
+- name: "OS release | Is there a release to move to?"
+  ansible.builtin.set_fact:
+    os_release_upgrade_needed: "{{ ansible_distribution_release != os_release_upgrade_to }}"
+
+- name: "OS release | Upgrade one release forward"
+  when: os_release_upgrade_needed | bool
+  block:
+    - name: "OS release | Only {{ os_release_upgrade_from }} → {{ os_release_upgrade_to }} (no jump, Debian only)"
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == 'Debian'
+          - ansible_distribution_release == os_release_upgrade_from
+        fail_msg: "{{ inventory_hostname }} runs {{ ansible_distribution }} {{ ansible_distribution_release }}, not {{ os_release_upgrade_from }}"
+        quiet: true
+
+    - name: "OS release | Room for the download on /"
+      ansible.builtin.assert:
+        that: (ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | first | int) > (os_release_upgrade_min_free_mb | int) * 1048576
+        fail_msg: "less than {{ os_release_upgrade_min_free_mb }} MiB free on /"
+        quiet: true
+
+    - name: "OS release | Fully updated on {{ os_release_upgrade_from }} first"
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: full
+      when: os_release_upgrade_apply | bool
+
+    - name: "OS release | Source files that exist"
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ os_release_upgrade_source_files }}"
+      register: os_release_upgrade_sources
+
+    - name: "OS release | Switch the Debian suites to {{ os_release_upgrade_to }}"
+      ansible.builtin.replace:
+        path: "{{ item.item }}"
+        regexp: '\b{{ os_release_upgrade_from }}\b'
+        replace: "{{ os_release_upgrade_to }}"
+      loop: "{{ os_release_upgrade_sources.results | selectattr('stat.exists') | list }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: os_release_upgrade_apply | bool
+
+    - name: "OS release | Package index of {{ os_release_upgrade_to }}"
+      ansible.builtin.apt:
+        update_cache: true
+      when: os_release_upgrade_apply | bool
+
+    # Everything is fetched BEFORE anything is replaced: a resolver or a network service that
+    # restarts during the upgrade cannot leave the guest half-upgraded for want of a package.
+    - name: "OS release | Download every package first"
+      ansible.builtin.command:
+        argv: [apt-get, --yes, --download-only, dist-upgrade]
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      register: os_release_upgrade_download
+      changed_when: "'0 upgraded, 0 newly installed' not in os_release_upgrade_download.stdout"
+      when: os_release_upgrade_apply | bool
+
+    - name: "OS release | dist-upgrade (local configuration files are kept)"
+      ansible.builtin.apt:
+        upgrade: dist
+        dpkg_options: "force-confdef,force-confold"
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+        APT_LISTCHANGES_FRONTEND: none
+        NEEDRESTART_MODE: a
+      async: "{{ os_release_upgrade_timeout }}"
+      poll: 20
+      when: os_release_upgrade_apply | bool
+
+    - name: "OS release | Reboot into the new release"
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ os_release_upgrade_reboot_timeout }}"
+        post_reboot_delay: 30
+      when: os_release_upgrade_apply | bool
+
+    - name: "OS release | Release after the reboot"
+      ansible.builtin.setup:
+        gather_subset: [min]
+      when: os_release_upgrade_apply | bool
+
+- name: "OS release | On {{ os_release_upgrade_to }}"
+  ansible.builtin.assert:
+    that: ansible_distribution_release == os_release_upgrade_to
+    fail_msg: "{{ inventory_hostname }} still reports {{ ansible_distribution_release }}"
+    quiet: true
+  when: os_release_upgrade_apply | bool
+
+- name: "OS release | Remove what the old release left behind"
+  ansible.builtin.apt:
+    autoremove: true
+    purge: true
+  when: os_release_upgrade_apply | bool
+
+- name: "OS release | Result"
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ ansible_distribution }} {{ ansible_distribution_release }} ({{ ansible_distribution_version }}), kernel {{ ansible_kernel }}"
+  when: os_release_upgrade_apply | bool

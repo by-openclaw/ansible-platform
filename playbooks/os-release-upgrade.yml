@@ -1,0 +1,100 @@
+---
+# ==============================================================================
+# Playbook: os-release-upgrade.yml — move Debian VM guests one release forward in
+# place (roles/os_release_upgrade), with a hypervisor snapshot as the rollback.
+#   Report:  ansible-playbook playbooks/os-release-upgrade.yml -e os_release_upgrade_hosts=vm-x-01
+#   Apply:   ... -e os_release_upgrade_hosts=vm-x-01 -e os_release_upgrade_apply=true
+#            (a maintenance window: the guest reboots; one guest at a time)
+#   Rollback: `qm rollback <vmid> <snapshot>` on the node (the snapshot name is printed).
+#   Cleanup:  ... -e os_release_upgrade_hosts=vm-x-01 -e os_release_upgrade_snapshot=absent
+# Afterwards run the guest's own playbook and the fleet baseline with `-l <guest>`.
+# ==============================================================================
+- name: "OS release — hypervisor snapshot of each guest (the rollback)"
+  hosts: proxmox_nodes
+  gather_facts: false
+  vars:
+    ansible_user: "{{ platform_pve_root_user }}"
+    ansible_ssh_private_key_file: "{{ platform_pve_root_key }}"
+    ansible_become: false
+    os_release_upgrade_snapshot: present
+    os_release_upgrade_snapshot_name: "pre_{{ os_release_upgrade_to | default('trixie') }}"
+  tasks:
+    - name: "Snapshot | The guests to upgrade are named"
+      ansible.builtin.assert:
+        that: os_release_upgrade_hosts is defined and os_release_upgrade_hosts | length > 0
+        fail_msg: "pass -e os_release_upgrade_hosts=<guest>[,<guest>]"
+        quiet: true
+
+    - name: "Snapshot | VMs on this node (VMID by name — Terraform owns the ids)"
+      ansible.builtin.command:
+        cmd: qm list
+      register: os_release_upgrade_qm
+      changed_when: false
+      check_mode: false   # read-only probe
+
+    - name: "Snapshot | Resolve each guest's VMID"
+      ansible.builtin.set_fact:
+        os_release_upgrade_vmids: >-
+          {%- set ids = {} -%}
+          {%- for line in os_release_upgrade_qm.stdout_lines[1:] -%}
+            {%- set f = line.split() -%}{%- set _ = ids.update({f[1]: f[0]}) -%}
+          {%- endfor -%}
+          {%- set out = {} -%}
+          {%- for g in os_release_upgrade_hosts.split(',') -%}
+            {%- set _ = out.update({g: ids.get(g, '')}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: "Snapshot | Every guest is a VM of this node"
+      ansible.builtin.assert:
+        that: os_release_upgrade_vmids.values() | select('equalto', '') | list | length == 0
+        fail_msg: "no VM on this node for: {{ os_release_upgrade_vmids | dict2items | selectattr('value', 'equalto', '') | map(attribute='key') | list }}"
+        quiet: true
+
+    - name: "Snapshot | Snapshots each guest carries"
+      ansible.builtin.command:
+        argv: [qm, listsnapshot, "{{ item.value }}"]
+      loop: "{{ os_release_upgrade_vmids | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: os_release_upgrade_snaps
+      changed_when: false
+      check_mode: false   # read-only probe
+
+    - name: "Snapshot | Take {{ os_release_upgrade_snapshot_name }} (disk only) before the upgrade"
+      ansible.builtin.command:
+        argv:
+          - qm
+          - snapshot
+          - "{{ item.item.value }}"
+          - "{{ os_release_upgrade_snapshot_name }}"
+          - --description
+          - "before the in-place release upgrade (playbooks/os-release-upgrade.yml)"
+      loop: "{{ os_release_upgrade_snaps.results }}"
+      loop_control:
+        label: "{{ item.item.key }} (vm {{ item.item.value }})"
+      when:
+        - os_release_upgrade_apply | default(false) | bool
+        - os_release_upgrade_snapshot == 'present'
+        - os_release_upgrade_snapshot_name not in item.stdout
+      changed_when: true
+
+    - name: "Snapshot | Remove {{ os_release_upgrade_snapshot_name }} (the upgrade is accepted)"
+      ansible.builtin.command:
+        argv: [qm, delsnapshot, "{{ item.item.value }}", "{{ os_release_upgrade_snapshot_name }}"]
+      loop: "{{ os_release_upgrade_snaps.results }}"
+      loop_control:
+        label: "{{ item.item.key }} (vm {{ item.item.value }})"
+      when:
+        - os_release_upgrade_snapshot == 'absent'
+        - os_release_upgrade_snapshot_name in item.stdout
+      changed_when: true
+
+- name: "OS release — in-place upgrade, one guest at a time"
+  hosts: "{{ os_release_upgrade_hosts | default('none') }}"
+  become: true
+  gather_facts: false
+  serial: 1
+  roles:
+    - role: os_release_upgrade
+      when: os_release_upgrade_snapshot | default('present') == 'present'

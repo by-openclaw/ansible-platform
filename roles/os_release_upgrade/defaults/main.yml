@@ -1,0 +1,19 @@
+---
+# ==============================================================================
+# Role: os_release_upgrade — move a Debian guest ONE release forward in place
+# (n → n+1, never a jump), the way the Debian release notes describe it: fully
+# updated on the current release, suites switched, packages pre-downloaded,
+# dist-upgrade keeping the local configuration files, reboot, proof.
+# Report by default; `os_release_upgrade_apply=true` does the work. The
+# hypervisor snapshot taken by playbooks/os-release-upgrade.yml is the rollback.
+# ==============================================================================
+os_release_upgrade_from: bookworm
+os_release_upgrade_to: trixie
+os_release_upgrade_apply: false
+# The Debian sources of the cloud image (deb822); legacy one-line files are covered too.
+os_release_upgrade_source_files:
+  - /etc/apt/sources.list.d/debian.sources
+  - /etc/apt/sources.list
+os_release_upgrade_min_free_mb: 3072          # on / before the download
+os_release_upgrade_timeout: 5400              # seconds for the dist-upgrade itself
+os_release_upgrade_reboot_timeout: 900

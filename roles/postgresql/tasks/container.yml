@@ -29,6 +29,8 @@
             POSTGRES_USER: "postgres"
             POSTGRES_DB: "postgres"
             PGDATA: "/var/lib/postgresql/data/pgdata"
+            # A NEW cluster is initialised with data checksums (an existing one: tasks/checksums.yml).
+            POSTGRES_INITDB_ARGS: "{{ '--data-checksums' if pg_data_checksums | bool else '' }}"
           # HA-adoptable settings + TLS + our pg_hba, passed as server flags so we don't
           # manage a full postgresql.conf. listen_addresses=* is safe: only the bound
           # published ports are reachable.
@@ -80,3 +82,14 @@
   delay: 3
   until: pg_ready.rc == 0
   changed_when: false
+
+- name: "container | Data checksums as declared"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ pg_container_name }}", psql, -U, postgres, -Atc, "show data_checksums"]
+  register: pg_checksums_live
+  changed_when: false
+  check_mode: false   # read-only probe
+  failed_when: >-
+    not ansible_check_mode and
+    (pg_checksums_live.rc != 0 or
+     (pg_checksums_live.stdout | trim) != ('on' if pg_data_checksums | bool else 'off'))
