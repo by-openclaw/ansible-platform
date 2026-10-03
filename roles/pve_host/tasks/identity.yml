@@ -83,6 +83,80 @@
   no_log: true
 
 # --- ACLs (presence only; undeclared ACLs are reported by the audit, never deleted here) ---
+# --- custom roles: exact privilege set ---------------------------------------------------
+- name: "PVE host | Roles today"
+  ansible.builtin.command:
+    argv: [pveum, role, list, --output-format, json]
+  register: pve_host_roles_now
+  changed_when: false
+  check_mode: false
+
+- name: "PVE host | Declared custom roles present with their exact privileges"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['pveum', 'role', ('modify' if (item.key in (pve_host_roles_now.stdout | from_json | map(attribute='roleid') | list)) else 'add'),
+          item.key, '--privs', item.value | sort | join(',')] }}
+  loop: "{{ pve_host_roles | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  vars:
+    pve_host_role_privs_now: >-
+      {{ (pve_host_roles_now.stdout | from_json | selectattr('roleid', 'equalto', item.key) | map(attribute='privs') | first | default(''))
+         | split(',') | map('trim') | reject('equalto', '') | sort | list }}
+  when: pve_host_role_privs_now != (item.value | sort | list)
+  changed_when: true
+
+# --- service accounts (local pve realm): user, tokens, ACLs -----------------------------------
+- name: "PVE host | Declared service accounts present (no password — their tokens are the credential)"
+  ansible.builtin.command:
+    argv: [pveum, user, add, "{{ item.user }}", --comment, "{{ item.comment }}"]
+  loop: "{{ pve_host_service_accounts }}"
+  loop_control:
+    label: "{{ item.user }}"
+  when: item.user not in (pve_host_users.stdout | from_json | map(attribute='userid') | list)
+  changed_when: true
+
+- name: "PVE host | Tokens today, per service account"
+  ansible.builtin.command:
+    argv: [pveum, user, token, list, "{{ item.user }}", --output-format, json]
+  loop: "{{ pve_host_service_accounts }}"
+  loop_control:
+    label: "{{ item.user }}"
+  register: pve_host_tokens_now
+  changed_when: false
+  failed_when: false   # a user created only in this dry-run has no token list yet
+  check_mode: false
+
+- name: "PVE host | Declared ACL set + the tokens that do not exist yet"
+  ansible.builtin.set_fact:
+    pve_host_acls_declared: "{{ pve_host_acls_declared | default(pve_host_acls) + pve_host_sa_acls }}"
+    pve_host_tokens_missing: "{{ pve_host_tokens_missing | default([]) + pve_host_sa_missing }}"
+  loop: "{{ pve_host_service_accounts }}"
+  loop_control:
+    label: "{{ item.user }}"
+    index_var: pve_host_sa_i
+  vars:
+    pve_host_sa_now: "{{ (pve_host_tokens_now.results[pve_host_sa_i].stdout | default('[]', true)) | from_json | map(attribute='tokenid') | list }}"
+    pve_host_sa_acls: >-
+      {%- set out = [] -%}
+      {%- for a in item.acls | default([]) -%}{%- set _ = out.append({'path': a.path, 'role': a.role, 'kind': 'user', 'ugid': item.user}) -%}{%- endfor -%}
+      {%- for t in item.tokens | default([]) -%}{%- for a in t.acls | default([]) -%}
+      {%- set _ = out.append({'path': a.path, 'role': a.role, 'kind': 'token', 'ugid': item.user ~ '!' ~ t.id}) -%}
+      {%- endfor -%}{%- endfor -%}
+      {{ out }}
+    pve_host_sa_missing: >-
+      {%- set out = [] -%}
+      {%- for t in item.tokens | default([]) if t.id not in pve_host_sa_now -%}{%- set _ = out.append({'user': item.user, 'id': t.id}) -%}{%- endfor -%}
+      {{ out }}
+
+- name: "PVE host | Mint the missing tokens (once; value → Vault, never printed)"
+  ansible.builtin.include_tasks: token_mint.yml
+  loop: "{{ pve_host_tokens_missing | default([]) }}"
+  loop_control:
+    loop_var: pve_tok
+    label: "{{ pve_tok.user }}!{{ pve_tok.id }}"
+
+# --- ACLs: the declared set is present; undeclared entries on the declared identities go --------
 - name: "PVE host | ACLs today"
   ansible.builtin.command:
     argv: [pveum, acl, list, --output-format, json]
@@ -92,12 +166,31 @@
 
 - name: "PVE host | Declared ACLs present"
   ansible.builtin.command:
-    argv: "{{ ['pveum', 'acl', 'modify', item.path, '--roles', item.role] + (['--users', item.ugid] if item.kind == 'user' else ['--groups', item.ugid]) }}"
-  loop: "{{ pve_host_acls }}"
+    argv: >-
+      {{ ['pveum', 'acl', 'modify', item.path, '--roles', item.role]
+         + ({'user': ['--users', item.ugid], 'group': ['--groups', item.ugid], 'token': ['--tokens', item.ugid]}[item.kind]) }}
+  loop: "{{ pve_host_acls_declared | default(pve_host_acls) }}"
   loop_control:
     label: "{{ item.path }} {{ item.role }} {{ item.ugid }}"
   when: >-
     (pve_host_acl.stdout | from_json)
     | selectattr('path', 'equalto', item.path) | selectattr('roleid', 'equalto', item.role)
     | selectattr('ugid', 'equalto', item.ugid) | list | length == 0
+  changed_when: true
+
+- name: "PVE host | ACL entries on the declared identities that are not declared (least privilege) — removed"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['pveum', 'acl', 'delete', item.path, '--roles', item.roleid]
+         + (['--tokens', item.ugid] if '!' in item.ugid else (['--groups', item.ugid] if item.type == 'group' else ['--users', item.ugid])) }}
+  loop: >-
+    {{ pve_host_acl.stdout | from_json
+       | selectattr('ugid', 'in', (pve_host_acls_declared | default(pve_host_acls)) | map(attribute='ugid') | list) | list }}
+  loop_control:
+    label: "{{ item.path }} {{ item.roleid }} {{ item.ugid }}"
+  vars:
+    pve_host_acl_keep_roles: >-
+      {{ (pve_host_acls_declared | default(pve_host_acls)) | selectattr('ugid', 'equalto', item.ugid)
+         | selectattr('path', 'equalto', item.path) | map(attribute='role') | list }}
+  when: item.roleid not in pve_host_acl_keep_roles
   changed_when: true
