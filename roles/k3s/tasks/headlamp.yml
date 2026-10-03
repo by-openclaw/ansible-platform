@@ -1,0 +1,46 @@
+---
+# Headlamp (web UI, in the cluster, OIDC) — infra/0001 §1. The OIDC client was resolved before
+# the server configuration (the API server needs its client id): k3s_headlamp_oidc.
+- name: "Headlamp | The OIDC client exists (the authentik play mints it)"
+  ansible.builtin.assert:
+    that:
+      - k3s_headlamp_oidc.client_id | default('') | length > 0
+      - k3s_headlamp_oidc.client_secret | default('') | length > 0
+    fail_msg: "no OIDC client at {{ k3s_headlamp_vault_path }} — run playbooks/authentik.yml first (sso.yml declares the `{{ k3s_headlamp_oidc_slug }}` application)"
+    quiet: true
+  no_log: true
+
+- name: "Headlamp | Manifests"
+  ansible.builtin.template:
+    src: headlamp.yaml.j2
+    dest: /etc/rancher/k3s/headlamp.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: "Headlamp | Apply (kubectl, server-side idempotent)"
+  ansible.builtin.command:
+    cmd: kubectl apply -f /etc/rancher/k3s/headlamp.yaml
+  register: k3s_headlamp_apply
+  changed_when: "' created' in k3s_headlamp_apply.stdout or ' configured' in k3s_headlamp_apply.stdout"
+
+- name: "Headlamp | Rolled out"
+  ansible.builtin.command:
+    cmd: kubectl -n {{ k3s_headlamp_namespace }} rollout status deployment/headlamp --timeout=240s
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: "Headlamp | Route on the platform Traefik (internal only; the application does OIDC itself)"
+  ansible.builtin.include_role:
+    name: traefik_route
+    apply:
+      tags: [route]
+  vars:
+    traefik_route_name: headlamp
+    traefik_route_fqdn: "{{ k3s_headlamp_fqdn }}"
+    traefik_route_backend_url: "http://{{ k3s_node_ip }}:{{ k3s_ingress_http_port }}"
+    traefik_route_internal_only: true
+    traefik_route_forward_auth: false
+  tags: [route]

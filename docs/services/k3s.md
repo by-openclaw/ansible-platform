@@ -22,3 +22,9 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: k3s`). Role 
 ## Backup (infra/0008)
 
 Class B (`docs/backup.md`): the cluster datastore (sqlite) and the certificates in the PBS guest image (daily); workloads are redeployable from their repositories (demo pipeline). Restore = PBS image, or `k3s.yml` + the CI pipelines.
+
+## Operations: Headlamp (web UI) and k9s (CLI) — infra/0001 §1
+
+- **Headlamp** `headlamp.<domain>` (internal only): runs in the cluster (namespace `headlamp`, Pod Security `restricted`, read-only root filesystem) and has **no rights of its own**. A person signs in through Authentik (OIDC application `headlamp`, restricted to the platform admins group); the API server validates that token itself (`kube-apiserver --oidc-*`, users and groups prefixed `oidc:`), and the cluster binds the group `oidc:<platform admins>` to `cluster-admin`. Every action appears in the API audit log under the person's name. Client id and secret: Vault `secret/{env}/k3s/headlamp-oidc` (minted by the authentik play — run it before `k3s.yml` on a new platform).
+- **k9s** on the node (`/usr/local/bin/k9s`, pinned release, checksum verified): the terminal UI on the node's admin kubeconfig — break-glass and day-to-day CLI through the bastion.
+- Portainer keeps its agent in the cluster for the container console; Headlamp is the Kubernetes-native view (workloads, RBAC, events, logs).
