@@ -69,6 +69,7 @@
         - name: "{{ loki_container }}"
           image: "{{ loki_image }}"
           network_mode: host
+          log_driver: journald   # container log -> journal -> promtail -> Loki (INF-27)
           user: "{{ loki_account_user.uid | default(0) }}:{{ loki_account_user.group | default(0) }}"
           command: ["-config.file={{ loki_config_dir }}/config.yml"]
           volumes:
