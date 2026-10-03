@@ -16,6 +16,22 @@ rules:
     resources:
       - group: ""
         resources: ["nodes", "nodes/status", "pods", "pods/status", "configmaps", "secrets", "services", "endpoints"]
+  # the control plane's own heartbeat and bookkeeping: leases, events, and the reads of the
+  # system components (they are not "who did what" — and they are most of the volume)
+  - level: None
+    resources:
+      - group: "coordination.k8s.io"
+        resources: ["leases"]
+      - group: ""
+        resources: ["events"]
+      - group: "events.k8s.io"
+        resources: ["events"]
+  - level: None
+    users: ["system:kube-controller-manager", "system:kube-scheduler", "system:k3s-supervisor", "k3s-cloud-controller-manager", "system:apiserver"]
+    verbs: ["get", "list", "watch"]
+  - level: None
+    userGroups: ["system:serviceaccounts:kube-system"]
+    verbs: ["get", "list", "watch"]
   # secrets, configmaps, tokens: who touched them (names), never the content
   - level: Metadata
     resources:
