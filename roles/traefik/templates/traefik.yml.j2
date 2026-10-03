@@ -31,9 +31,23 @@ entryPoints:
         readTimeout: "0s"
         writeTimeout: "0s"
         idleTimeout: "0s"
+{% if traefik_metrics_enabled | default(false) %}
+  # Prometheus scrape entry point (INF-33) — the host firewall admits the monitoring host only.
+  metrics:
+    address: ":{{ traefik_metrics_port }}"
+{% endif %}
 
 api:
   dashboard: true
+{% if traefik_metrics_enabled | default(false) %}
+
+metrics:
+  prometheus:
+    entryPoint: metrics
+    addEntryPointsLabels: true
+    addRoutersLabels: true
+    addServicesLabels: true
+{% endif %}
 
 providers:
   file:
