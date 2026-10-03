@@ -1,0 +1,41 @@
+# Managed by Ansible (role: k3s). Kubernetes API audit policy — who did what, never the bodies of
+# secrets. Metadata for everything, RequestResponse for nothing (SEC-23 / INF-29).
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages: ["RequestReceived"]
+rules:
+  # health/discovery noise is not audit material
+  - level: None
+    nonResourceURLs: ["/healthz*", "/readyz*", "/livez*", "/version", "/openapi/*", "/api", "/apis", "/metrics"]
+  - level: None
+    users: ["system:kube-proxy", "system:apiserver"]
+    verbs: ["watch", "get", "list"]
+  - level: None
+    userGroups: ["system:nodes"]
+    verbs: ["get", "list", "watch"]
+    resources:
+      - group: ""
+        resources: ["nodes", "nodes/status", "pods", "pods/status", "configmaps", "secrets", "services", "endpoints"]
+  # the control plane's own heartbeat and bookkeeping: leases, events, and the reads of the
+  # system components (they are not "who did what" — and they are most of the volume)
+  - level: None
+    resources:
+      - group: "coordination.k8s.io"
+        resources: ["leases"]
+      - group: ""
+        resources: ["events"]
+      - group: "events.k8s.io"
+        resources: ["events"]
+  - level: None
+    users: ["system:kube-controller-manager", "system:kube-scheduler", "system:k3s-supervisor", "k3s-cloud-controller-manager", "system:apiserver"]
+    verbs: ["get", "list", "watch"]
+  - level: None
+    userGroups: ["system:serviceaccounts:kube-system"]
+    verbs: ["get", "list", "watch"]
+  # secrets, configmaps, tokens: who touched them (names), never the content
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["secrets", "configmaps", "serviceaccounts/token"]
+  # everything else: metadata of every request
+  - level: Metadata
