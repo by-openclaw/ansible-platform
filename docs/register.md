@@ -31,7 +31,7 @@ Columns: **Pin** = the role variable's value (pinned = live is the contract); **
 | vault | `vault` / `vault.yml` | `lxc-vault-01` | vault.<domain> | admin | oidc | none | `hashicorp/vault:2.0.4` | pbs, raft-snapshot | node, cadvisor, probe | Youssef Boujraf | [HashiCorp Vault](https://developer.hashicorp.com/vault/docs) | no | — | — |
 | opnsense | `opnsense` / `opnsense.yml` | `vm-opns-01` | — | admin | local | none | `26.7.4` | pbs, config-export | probe | Youssef Boujraf | [OPNsense](https://docs.opnsense.org/) | yes | — | — |
 | traefik | `traefik` / `traefik.yml` | `lxc-traefik-01` | traefik.<domain> | admin | oidc | none | `v3.7.11` | pbs | node, cadvisor, probe | Youssef Boujraf | [Traefik](https://doc.traefik.io/traefik/) | no | — | — |
-| crowdsec | `crowdsec` / `crowdsec.yml` | `lxc-crowdsec-01` | — | admin | none | none | `—` | pbs | node | Youssef Boujraf | [CrowdSec](https://docs.crowdsec.net/) | no | — | — |
+| crowdsec | `crowdsec` / `crowdsec.yml` | `lxc-crowdsec-01` | — | admin | none | none | `v1.8.1` | pbs | node, cadvisor, metrics | Youssef Boujraf | [CrowdSec](https://docs.crowdsec.net/) | no | — | — |
 | k3s | `k3s` / `k3s.yml` | `vm-k3s-01` | k3s.<domain> | admin | forwardauth | none | `v1.37.0+k3s1` | pbs | node, probe | Youssef Boujraf | [k3s](https://docs.k3s.io/) | no | — | — |
 | postgresql | `postgresql` / `postgresql.yml` | `lxc-pgsql-01` | — | admin | none | own | `postgres:17.11` | pbs, pg-dump | node, cadvisor | Youssef Boujraf | [PostgreSQL](https://www.postgresql.org/docs/17/) | no | footprint | — |
 | redis | `redis` / `redis.yml` | `lxc-redis-01` | — | admin | none | none | `redis:8.10.0` | pbs | node, cadvisor | Youssef Boujraf | [Redis](https://redis.io/docs/) | no | — | — |
