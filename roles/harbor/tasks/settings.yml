@@ -1,0 +1,109 @@
+---
+# ==============================================================================
+# harbor | settings — system settings and schedules the role owns (API, idempotent:
+# GET → compare → PUT/POST only on drift). Needs the admin password (secrets.yml).
+#   * configurations: project creation admin-only, audit log forwarded to the log
+#     sidecar (→ /var/log/harbor/audit.log → promtail, `audit` label)
+#   * the default `library` project private
+#   * schedules: garbage collection (S3 blobs, untagged), scan-all (Trivy), audit purge
+# ==============================================================================
+- name: "Settings | Current configurations"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/configurations"
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  register: harbor_settings_now
+  check_mode: false  # read-only probe
+  changed_when: false
+  no_log: true
+
+- name: "Settings | Desired configuration values"
+  ansible.builtin.set_fact:
+    harbor_settings_desired:
+      project_creation_restriction: "{{ harbor_project_creation_restriction }}"
+      audit_log_forward_endpoint: "{{ harbor_audit_log_forward_endpoint }}"
+    harbor_settings_drift: >-
+      {{ (harbor_settings_now.json.project_creation_restriction.value | default('')) != harbor_project_creation_restriction
+         or (harbor_settings_now.json.audit_log_forward_endpoint.value | default('')) != harbor_audit_log_forward_endpoint }}
+
+- name: "Settings | Apply the configuration values (on drift)"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/configurations"
+    method: PUT
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: "{{ harbor_settings_desired }}"
+    status_code: [200]
+  no_log: true
+  changed_when: true
+  when: harbor_settings_drift | bool
+
+- name: "Settings | The default library project"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/projects/library"
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    status_code: [200, 404]
+  register: harbor_library_now
+  check_mode: false  # read-only probe
+  changed_when: false
+  no_log: true
+
+- name: "Settings | The library project private (on drift)"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/projects/library"
+    method: PUT
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: {metadata: {public: "{{ harbor_library_project_public | bool | lower }}"}}
+    status_code: [200]
+  no_log: true
+  changed_when: true
+  when:
+    - harbor_library_now.status == 200
+    - (harbor_library_now.json.metadata.public | default('true')) != (harbor_library_project_public | bool | lower)
+
+# --- Schedules (an unset schedule answers an empty body; create = POST, change = PUT) ---------
+- name: "Settings | Current schedules"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/system/{{ item.key }}/schedule"
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+  loop: "{{ harbor_schedules | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: harbor_schedules_now
+  check_mode: false  # read-only probe
+  changed_when: false
+  no_log: true
+  vars:
+    harbor_schedules: "{{ harbor_schedule_specs }}"
+
+- name: "Settings | Set the schedules (on drift)"
+  ansible.builtin.uri:
+    url: "http://{{ harbor_listen_ip }}:{{ harbor_host_port }}/api/v2.0/system/{{ item.item.key }}/schedule"
+    method: "{{ 'PUT' if (item.content | default('') | trim | length > 2) else 'POST' }}"
+    user: admin
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: "{{ item.item.value }}"
+    status_code: [200, 201]
+  loop: "{{ harbor_schedules_now.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  no_log: true
+  changed_when: true
+  vars:
+    harbor_schedule_cron_now: "{{ (((item.content | default('') | trim) or '{}') | from_json).schedule.cron | default('') }}"
+  when: harbor_schedule_cron_now != item.item.value.schedule.cron

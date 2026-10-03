@@ -175,7 +175,8 @@
           image: "{{ jumpserver_image_redis }}"
           hostname: jms-redis
           restart_policy: always
-          command: ["redis-server", "--requirepass", "{{ jumpserver_secret.redis_password }}", "--appendonly", "yes"]
+          # the password reaches redis through its environment, not as a visible argument (SEC-17)
+          command: ["sh", "-c", "exec redis-server --requirepass \"$REDIS_PASSWORD\" --appendonly yes"]
           env:
             TZ: "{{ jumpserver_tz }}"
             REDIS_PASSWORD: "{{ jumpserver_secret.redis_password }}"

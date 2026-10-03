@@ -36,7 +36,8 @@ Guest images capture everything on the rootfs and named docker volumes.
 | **seaweedfs** | **C ⚠** | `/data` = ZFS `tank/data/seaweedfs` **bind-mount — NOT in vzdump** | offsite `filer.backup` → Contabo is the backup; ZFS dataset via `pve_zfs_mount` | restore from Contabo bucket sync; the guest itself is disposable (class D) |
 | **harbor** | **A + C** | metadata in cluster PG; blobs on S3; `/data/harbor` = logs/trivy cache | PG dump (postgresql) + S3 offsite; local `/data/harbor` disposable | recreate guest (play) + PG restore; blobs already in S3 |
 | **grc** (CISO Assistant) | **A + C** | posture data (frameworks, perimeters, applied controls) in cluster PG; evidence on S3 bucket `grc`; `/opt/ciso-assistant` = scratch + the generated IdP signing key | PG dump (postgresql) + S3 offsite + guest image in PBS | play + PG restore; evidence follows the bucket |
-| **nextcloud** | **A + C** | DB in cluster PG; files on S3 primary; `nextcloud-app` volume (config) | PG dump + S3 offsite + volume in PBS | play + PG restore; `config.php` from volume/PBS |
+| **nextcloud** | **A + C** | DB in cluster PG; files on S3 primary (external provider); `nextcloud-app` volume (config) | PG dump + **daily mirror of the files bucket into the platform S3** (`seaweedfs_mirrors`, changed/deleted objects kept 30 d in `-trash`) + volume in PBS | play + PG restore; `config.php` from volume/PBS; files: point the object store at the mirror bucket (or `rclone sync` back) |
+| **collab** (ONLYOFFICE Docs, Talk HPB/TURN, recording, whiteboard) | **B** | stateless backends: document cache + fonts, recording temp (uploaded to Nextcloud when the call ends), whiteboard room state; secrets in Vault | guest in PBS (daily) | play (secrets re-read from Vault); nothing to restore but the guest |
 | **netbox** | **A** | DB in cluster PG; `netbox-media` volume | PG dump + volume in PBS | play + PG restore |
 | **authentik** | **A + D** | DB in cluster PG; media/templates volumes; blueprints = code | PG dump + volumes in PBS | play (blueprints re-render) + PG restore |
 | **vaultwarden** | **A** | DB in cluster PG; `vaultwarden-data` (attachments/sends) | PG dump + volume in PBS | play + PG restore + volume |
@@ -47,7 +48,7 @@ Guest images capture everything on the rootfs and named docker volumes.
 | **jitsi** | **D** | none — stateless (no recordings); config + secrets regenerable | code (role) + Vault `prod/jitsi/secrets`; LXC in the guest jobs | redeploy `playbooks/jitsi.yml` |
 | **step-ca** | **A ⚠** | `step-ca-data` volume (CA keys) | volume in PBS; CA password + root fingerprint in Vault | **volume + Vault password = the CA.** Lose both = re-init a new CA |
 | **crowdsec** | **A** | LAPI sqlite (machines/bouncers) | PBS guest image; decisions ephemeral | play re-enrols agents/bouncers |
-| **netbird** | **A** | mgmt store (`sqlite`) volume | PBS guest image | play + volume |
+| **netbird** | **A** | stores `netbird` + `netbird_events` on the shared PostgreSQL (daily `pg_dumpall`); `netbird-mgmt`/`netbird-signal` volumes (GeoLite only) | PBS guest image + the cluster DB dump | play + DB restore |
 | **grafana** | **A + D** | dashboards/config as code; `grafana` DB in cluster PG | PG dump | play + PG restore |
 | **prometheus / loki** | **E** | TSDB / WAL scratch (`/var/lib/loki` = cache only) | none — retention window, rebuilds | play |
 | **redis** | **E** | cache only | none | play |

@@ -40,13 +40,20 @@ nextcloud_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"
 # so Redis is configured via a mounted config.php snippet with ssl_context.
 nextcloud_redis_host: "{{ groups['redis'] | first }}.{{ platform_domain }}"
 nextcloud_redis_port: 6379
+nextcloud_redis_db: "{{ platform_redis_databases.nextcloud }}"   # own DB index on the shared Redis (group_vars/all/redis.yml allocation table, SVC-27)
+
+# Application metrics (INF-35): the serverinfo API scraped by nextcloud-exporter, a sidecar on
+# this host; Prometheus finds it through the catalog's `metrics_port` (data-driven job).
+nextcloud_exporter_image: "xperimental/nextcloud-exporter:0.9.1"
+nextcloud_metrics_port: 9205
+nextcloud_vault_serverinfo_path: "{{ platform_env }}/nextcloud/serverinfo"   # token (get-or-create here), read by the exporter + set via occ
 
 # Contabo S3 — PRIMARY object storage (bucket precreated out-of-band).
-nextcloud_s3_bucket: "nextcloud-data"
-nextcloud_s3_host: "eu2.contabostorage.com"
+nextcloud_s3_bucket: "{{ platform_nextcloud_bucket }}"            # group_vars/all/objectstore.yml — one definition (the mirror job reads it too)
+nextcloud_s3_host: "{{ platform_external_s3.contabo.host }}"
 nextcloud_s3_port: 443
 nextcloud_s3_ssl: "true"
-nextcloud_s3_region: "eu2"
+nextcloud_s3_region: "{{ platform_external_s3.contabo.region }}"
 nextcloud_s3_usepath_style: "true"   # Contabo requires path-style addressing
 nextcloud_s3_autocreate: "false"     # we precreate the bucket
 
@@ -54,7 +61,7 @@ nextcloud_s3_autocreate: "false"     # we precreate the bucket
 nextcloud_vault_admin_path: "{{ platform_env }}/nextcloud/admin"      # admin_user + admin_password (+url); get-or-create
 nextcloud_vault_db_path: "{{ platform_env }}/nextcloud/db-pgsql"      # minted by postgres_db (Vault mode)
 nextcloud_vault_redis_path: "{{ platform_env }}/redis/admin"          # shared Redis requirepass (owner: roles/redis)
-nextcloud_vault_s3_path: "{{ platform_env }}/backup/s3-contabo"       # Contabo primary storage creds (until the SeaweedFS move)
+nextcloud_vault_s3_path: "{{ platform_external_s3.contabo.vault_path }}"   # Contabo primary storage creds (until the SeaweedFS move)
 nextcloud_vault_oidc_path: "{{ platform_env }}/nextcloud/oidc"        # minted by roles/authentik (Vault-native app)
 
 # Initial local break-glass admin (kept alongside SSO as the break-glass login).
@@ -141,11 +148,8 @@ nextcloud_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
 nextcloud_oidc_app_slug: "nextcloud"
 nextcloud_oidc_provider_id: "authentik"
 
-# --- Outbound email (Resend SMTP) -----------------------------------------------
-# Same Resend relay the other cluster apps send through (vault/authentik/… —
-# verified working). Configured via occ (the official image has no mail_* env).
-# RETIRED (2026-09-01): Resend replaced by the nextcloud@ service mailbox
-# (Vault {env}/mail/nextcloud). Resend creds stay in Vault resend/by-research.
+# --- Outbound email: the nextcloud@ service mailbox (Vault {env}/mail/nextcloud, roles/mailbox) ---
+# Resend is retired (2026-09-01; records and references gone 2026-10-02).
 
 # --- Sharing policy (public links: expiry + password + share-by-email) ----------
 # "share with expiration + password + email" — applied to public link shares.

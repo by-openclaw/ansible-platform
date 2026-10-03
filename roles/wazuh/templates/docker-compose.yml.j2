@@ -6,6 +6,8 @@ services:
     image: {{ wazuh_manager_image }}
     hostname: wazuh.manager
     restart: always
+    logging:
+      driver: journald   # container log -> journal -> promtail -> Loki (INF-27)
     ulimits:   # no memlock (unprivileged LXC refuses RLIMIT_MEMLOCK=unlimited, runc "rlimit type 8"); nofile must stay <= the guest hard limit (rlimit type 7)
       nofile: { soft: {{ wazuh_manager_nofile }}, hard: {{ wazuh_manager_nofile }} }
     ports:
@@ -44,6 +46,8 @@ services:
     image: {{ wazuh_indexer_image }}
     hostname: wazuh.indexer
     restart: always
+    logging:
+      driver: journald   # container log -> journal -> promtail -> Loki (INF-27)
     ports:
       - "127.0.0.1:{{ wazuh_indexer_port }}:9200"
     environment:
@@ -67,6 +71,8 @@ services:
     image: {{ wazuh_dashboard_image }}
     hostname: wazuh.dashboard
     restart: always
+    logging:
+      driver: journald   # container log -> journal -> promtail -> Loki (INF-27)
     ports:
       - "{{ wazuh_listen_ip }}:{{ wazuh_dashboard_port }}:5601"
     environment:

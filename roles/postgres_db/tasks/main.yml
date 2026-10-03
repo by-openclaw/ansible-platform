@@ -84,6 +84,7 @@
   register: postgres_db_exists
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
+  when: postgres_db_name | length > 0
 
 - name: "Postgresdb | Create database (UTF-8) {{ postgres_db_name }}"
   ansible.builtin.command:
@@ -91,5 +92,97 @@
       docker exec {{ postgres_db_container }} createdb -U postgres -O {{ postgres_db_user }}
       -E UTF8 -T template0 --lc-collate=C.UTF-8 --lc-ctype=C.UTF-8 {{ postgres_db_name }}
   delegate_to: "{{ postgres_db_host }}"
-  when: postgres_db_exists.stdout | trim != '1'
+  when:
+    - postgres_db_name | length > 0
+    - postgres_db_exists.stdout | default('') | trim != '1'
+  changed_when: true
+
+# --- Extensions the consumer declared (superuser; created once, never dropped) -------------
+- name: "Postgresdb | Installed extensions of {{ postgres_db_name }}"
+  ansible.builtin.command:
+    cmd: docker exec {{ postgres_db_container }} psql -tAU postgres -d {{ postgres_db_name }} -c "SELECT extname FROM pg_extension"
+  delegate_to: "{{ postgres_db_host }}"
+  register: postgres_db_ext_now
+  check_mode: false  # read-only probe (a database created only in this dry-run answers nothing)
+  changed_when: false
+  failed_when: false
+  when: postgres_db_name | length > 0 and postgres_db_extensions | length > 0
+
+- name: "Postgresdb | Create the declared extensions in {{ postgres_db_name }}"
+  ansible.builtin.command:
+    cmd: docker exec {{ postgres_db_container }} psql -U postgres -d {{ postgres_db_name }} -c "CREATE EXTENSION IF NOT EXISTS {{ item }}"
+  delegate_to: "{{ postgres_db_host }}"
+  loop: "{{ postgres_db_extensions }}"
+  when: postgres_db_name | length > 0 and item not in (postgres_db_ext_now.stdout_lines | default([]))
+  changed_when: true
+
+# --- Memberships the consumer declared (GRANT role TO login; never revoked here) ------------
+- name: "Postgresdb | Current memberships of {{ postgres_db_user }}"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ postgres_db_container }} psql -tAU postgres -d postgres
+      -c "SELECT r.rolname FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid
+          JOIN pg_roles u ON u.oid = m.member WHERE u.rolname = '{{ postgres_db_user }}'"
+  delegate_to: "{{ postgres_db_host }}"
+  register: postgres_db_members_now
+  check_mode: false  # read-only probe (the login may not exist yet under --check: empty answer)
+  changed_when: false
+  failed_when: false
+  when: postgres_db_memberships | length > 0
+
+- name: "Postgresdb | Grant the missing memberships to {{ postgres_db_user }}"
+  ansible.builtin.command:
+    cmd: docker exec {{ postgres_db_container }} psql -U postgres -d postgres -c "GRANT {{ item }} TO {{ postgres_db_user }}"
+  delegate_to: "{{ postgres_db_host }}"
+  loop: "{{ postgres_db_memberships }}"
+  when: item not in (postgres_db_members_now.stdout_lines | default([]))
+  changed_when: true
+
+# --- CONNECT: a cluster-tooling login reaches every database (service databases revoke PUBLIC) -
+- name: "Postgresdb | Databases the login cannot connect to yet: {{ postgres_db_user }}"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ postgres_db_container }} psql -tAU postgres -d postgres
+      -c "SELECT datname FROM pg_database WHERE NOT datistemplate
+          AND NOT has_database_privilege('{{ postgres_db_user }}', datname, 'CONNECT')"
+  delegate_to: "{{ postgres_db_host }}"
+  register: postgres_db_connect_missing
+  check_mode: false  # read-only probe
+  changed_when: false
+  failed_when: false  # the login does not exist yet under --check
+  when: postgres_db_connect_all | bool
+
+- name: "Postgresdb | Grant CONNECT on every database to {{ postgres_db_user }}"
+  ansible.builtin.command:
+    cmd: docker exec {{ postgres_db_container }} psql -U postgres -d postgres -c "GRANT CONNECT ON DATABASE {{ item }} TO {{ postgres_db_user }}"
+  delegate_to: "{{ postgres_db_host }}"
+  loop: "{{ postgres_db_connect_missing.stdout_lines | default([]) }}"
+  when:
+    - postgres_db_connect_all | bool
+    - postgres_db_connect_missing.rc | default(1) == 0
+  changed_when: true
+
+# --- This database: the platform's DBA logins may CONNECT (whether created before or after it) -
+- name: "Postgresdb | DBA logins that exist but cannot connect to {{ postgres_db_name }}"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ postgres_db_container }} psql -tAU postgres -d postgres
+      -c "SELECT rolname FROM pg_roles
+          WHERE rolname = ANY(string_to_array('{{ postgres_db_dba_logins.values() | join(',') }}', ','))
+          AND NOT has_database_privilege(rolname, '{{ postgres_db_name }}', 'CONNECT')"
+  delegate_to: "{{ postgres_db_host }}"
+  register: postgres_db_dba_missing
+  check_mode: false  # read-only probe
+  changed_when: false
+  failed_when: false  # the database does not exist yet under --check
+  when: postgres_db_name | length > 0 and postgres_db_dba_logins | length > 0
+
+- name: "Postgresdb | Grant CONNECT to the DBA logins on {{ postgres_db_name }}"
+  ansible.builtin.command:
+    cmd: docker exec {{ postgres_db_container }} psql -U postgres -d postgres -c "GRANT CONNECT ON DATABASE {{ postgres_db_name }} TO {{ item }}"
+  delegate_to: "{{ postgres_db_host }}"
+  loop: "{{ postgres_db_dba_missing.stdout_lines | default([]) }}"
+  when:
+    - postgres_db_name | length > 0
+    - postgres_db_dba_missing.rc | default(1) == 0
   changed_when: true

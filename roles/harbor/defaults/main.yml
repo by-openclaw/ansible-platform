@@ -61,6 +61,32 @@ harbor_oidc_auto_onboard: true
 
 # --- Trivy vulnerability scanner ----------------------------------------------
 harbor_trivy_enabled: true
+# --- Metrics (INF-33): Harbor's exporter behind its nginx on this port (published by the compose
+# file on every address; the DOCKER-USER catalog admits the monitoring host only; catalog metrics_port).
+harbor_metrics_enabled: true
+harbor_metrics_port: 9090
+# --- System settings owned by the role (every setting in Ansible; API, idempotent) -----------------
+harbor_project_creation_restriction: "adminonly"     # projects come from the role (CI, proxy caches), not from users
+harbor_audit_log_forward_endpoint: "harbor-log:10514" # audit log -> the log sidecar -> /var/log/harbor/audit.log -> promtail (audit label)
+harbor_library_project_public: false                # the default `library` project stays private (nothing publishes there)
+# Schedules: Harbor cron = 6 fields (seconds first). GC frees S3 blobs (untagged too); scan-all keeps
+# Trivy results current (SEC-21); the audit purge keeps 180 days in the database (SEC-24).
+harbor_gc_schedule: "0 0 4 * * 0"                   # weekly, Sunday 04:00
+harbor_gc_delete_untagged: true
+harbor_scan_all_schedule: "0 0 2 * * *"             # daily 02:00
+harbor_audit_purge_schedule: "0 0 5 * * 0"          # weekly, Sunday 05:00
+harbor_audit_retention_hours: 4320                  # 180 days
+harbor_audit_purge_event_types: "create_artifact,delete_artifact,pull_artifact"   # Harbor ≥ 2.10 event types (the old include_operations is gone)
+# The schedule documents the API takes (tasks/settings.yml) — derived from the knobs above.
+harbor_schedule_specs:
+  gc:
+    schedule: {type: Custom, cron: "{{ harbor_gc_schedule }}"}
+    parameters: {delete_untagged: "{{ harbor_gc_delete_untagged | bool }}", dry_run: false, workers: 1}
+  scanAll:
+    schedule: {type: Custom, cron: "{{ harbor_scan_all_schedule }}"}
+  purgeaudit:
+    schedule: {type: Custom, cron: "{{ harbor_audit_purge_schedule }}"}
+    parameters: {audit_retention_hour: "{{ harbor_audit_retention_hours | int }}", include_event_types: "{{ harbor_audit_purge_event_types }}", dry_run: false}
 
 # --- Pull-through proxy caches (replace Docker Hub etc.) -----------------------
 # A proxy-cache project mirrors an upstream registry: the first pull fetches +

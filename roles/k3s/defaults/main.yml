@@ -7,9 +7,9 @@
 # namespace-scoped deployer → k3s ingress (embedded Traefik, HTTP only) ←
 # platform Traefik (TLS, SSO forwardAuth) per app route.
 # ==============================================================================
-k3s_version: "v1.37.0+k3s1"
+k3s_version: "v1.37.1+k3s1"   # 2026-09-25 (1.37 line)
 # release checksum (sha256sum-amd64.txt), not a secret
-k3s_sha256: "39eed8f53f277497dfc2542f66eab0ed68a94dfc598946dbebfb50366916c7a2"  # pragma: allowlist secret
+k3s_sha256: "92b94582eb7b34a8cf532e6006842b9ed215a6783cf56a3dd6271fd35243b2c0"  # pragma: allowlist secret
 k3s_download_url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_version | urlencode }}/k3s"
 k3s_env: "{{ platform_env }}"
 k3s_node_ip: "{{ ansible_host }}"
@@ -20,6 +20,20 @@ k3s_ingress_http_port: 80                              # embedded Traefik (servi
 k3s_cluster_cidr: "{{ platform_k3s_cluster_cidr4 }}"
 k3s_service_cidr: "{{ platform_k3s_service_cidr4 }}"
 k3s_disable: ["metrics-server"]                        # keep traefik + servicelb + local-storage + coredns
+# API audit log (SEC-23/INF-29): every request at Metadata level, the secrets/configmaps bodies never
+# logged (RequestResponse omitted on purpose); rotated by the apiserver, shipped by promtail with the
+# audit label (group_vars/k3s.yml).
+k3s_audit_enabled: true
+k3s_audit_log_dir: /var/log/k3s
+k3s_audit_log_maxage: 30
+k3s_audit_log_maxbackup: 10
+k3s_audit_log_maxsize: 100
+# Pod Security Admission per namespace (enforce + warn): the platform apps are restricted; the
+# kube-system and agent namespaces stay at the default (vendor images need baseline/privileged).
+k3s_pod_security:
+  demo: restricted
+  default: restricted
+  portainer-agent: baseline
 # Registry mirrors: Docker Hub through the Harbor pull-through cache (rate limits, on-net, scanned)
 k3s_registry_mirrors:
   - { upstream: "docker.io", endpoint: "https://{{ platform_service_fqdns.harbor }}", rewrite_from: "^(.*)$", rewrite_to: "dockerhub/$1" }

@@ -38,6 +38,7 @@
     postgres_db_vault_path: "{{ service_scaffold_env }}/{{ service_scaffold_def.name }}/db-pgsql"
     postgres_db_name: "{{ service_scaffold_def.name }}"
     postgres_db_user: "{{ service_scaffold_def.name }}"
+    postgres_db_extensions: "{{ service_scaffold_def.db_extensions | default([]) }}"
   when: (service_scaffold_def.db | default('none')) == 'postgres'
 
 - name: "Scaffold | Provision the SeaweedFS S3 bucket + scoped identity"
@@ -96,6 +97,7 @@
     # Pair with an authentik_proxy_apps entry whose slug == the route name.
     traefik_route_forward_auth: "{{ scaffold_route.forward_auth | default(service_scaffold_def.forward_auth | default(false)) | bool }}"
     traefik_route_backend_root_ca_file: "{{ scaffold_route.backend_root_ca_file | default(service_scaffold_def.backend_root_ca_file | default('')) }}"
+    traefik_route_endpoints: "{{ scaffold_route.endpoints | default(service_scaffold_def.endpoints | default([])) }}"
   # A service may publish more than one name (diagrams serves kroki, plantuml and drawio).
   # `routes` is the general form; a contract that names a single fqdn/backend_url is treated
   # as one route so the common case stays a single line.

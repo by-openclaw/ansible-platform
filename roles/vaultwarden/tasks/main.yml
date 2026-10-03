@@ -22,6 +22,10 @@
       db: postgres               # vaultwarden / vaultwarden / {env}/vaultwarden/db-pgsql — the live DB
       mailbox: true
       sso_slug: "{{ vaultwarden_oidc_app_slug }}"
+      # /admin is the break-glass panel (ADMIN_TOKEN): internal + admin sources only, the app stays public
+      endpoints:
+        - {name: admin, path_prefixes: ["/admin"], backend_url: "http://{{ vaultwarden_listen_ip }}:{{ vaultwarden_host_port }}", priority: 90, admin_only: true}
+        - {name: app, backend_url: "http://{{ vaultwarden_listen_ip }}:{{ vaultwarden_host_port }}", priority: 1}
       containers:
         - name: "{{ vaultwarden_container_name }}"
           image: "{{ vaultwarden_image }}"

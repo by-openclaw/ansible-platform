@@ -2529,11 +2529,13 @@ opn_unbound:
     domain: "{{ platform_domain }}"
     rr: A
     server: 10.6.239.196
+    addptr: true   # NAM-08: secondary FW address — no asset entry can carry it, so this name owns the PTR
     description: 'The firewall itself (OOB v4) — its ACME certificate is issued for this name'
   - hostname: fw
     domain: "{{ platform_domain }}"
     rr: AAAA
     server: 'fd06:224::1'
+    addptr: true   # NAM-08: secondary FW address — no asset entry can carry it, so this name owns the PTR
     description: 'The firewall itself (OOB v6)'
   - hostname: gitlab-ssh
     domain: "{{ platform_domain }}"
@@ -3016,13 +3018,20 @@ opn_dnscrypt_proxy:
 # description).
 # ==============================================================================
 opn_syslog_destinations:
+# The CrowdSec destination carries ONLY Suricata (`program: suricata`, audit #21 2026-10-02): with every
+# firewall program on that UDP socket (~7 filterlog lines/s, bursty) its receive buffer overflowed during
+# scan bursts — exactly when an alert is emitted — and the ~1.3 KB EVE frame was the datagram dropped
+# (`UdpRcvbufErrors`). Loki keeps receiving everything over TCP on 1514.
   - {description: 'Loki — promtail syslog listener (all logs, RFC5424/TCP)', hostname: 10.1.3.230, syslog_port: '1514', transport: tcp4, rfc5424: true, enabled: true, state: present, ref: {adr: 'services/0006#logging', lib_manager: SyslogDestManager, ansible_module: by_systems.opnsense.opnsense_syslog_dest}}
   # services/0010 §1: the same stream to the CrowdSec engine (Suricata EVE → suricata-alerts scenario)
-  - {description: 'CrowdSec — Suricata EVE feed (all logs, RFC5424/UDP)', hostname: 10.1.3.190, syslog_port: '1515', transport: udp4, rfc5424: true, enabled: true, state: present, ref: {adr: 'services/0010#§1-engine', lib_manager: SyslogDestManager, ansible_module: by_systems.opnsense.opnsense_syslog_dest}}
+  # retired name (destinations match by description): the former CrowdSec entry forwarded every program; declared
+  # absent so the live firewall drops it (2026-10-02, #21) — never just removed from the catalog
+  - {description: 'CrowdSec — Suricata EVE feed (all logs, RFC5424/UDP)', hostname: 10.1.3.190, syslog_port: '1515', transport: udp4, rfc5424: true, enabled: true, state: absent, ref: {adr: 'services/0010#§1-engine', lib_manager: SyslogDestManager, ansible_module: by_systems.opnsense.opnsense_syslog_dest}}
+  - {description: 'CrowdSec — Suricata EVE feed (program suricata only, RFC5424/UDP)', hostname: 10.1.3.190, syslog_port: '1515', transport: udp4, rfc5424: true, program: suricata, enabled: true, state: present, ref: {adr: 'services/0010#§1-engine', lib_manager: SyslogDestManager, ansible_module: by_systems.opnsense.opnsense_syslog_dest}}
 
 # ------------------------------------------------------------------------------
 # Monit remote-host probes (roles/opnsense/tasks/monit.yml) — SVC daemons the FW can
-# reach and alert on through the same Resend mail as the process checks. Added after
+# reach and alert on through the same service mailbox as the process checks. Added after
 # the 2026-09-18 resolver outage (#424): AdGuard was down 12 h and surfaced only as
 # "everything is slow". Addresses = the platform resolver (host4/host6_adguard).
 # ------------------------------------------------------------------------------

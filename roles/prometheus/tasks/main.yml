@@ -93,6 +93,7 @@
         - name: "{{ prometheus_container }}"
           image: "{{ prometheus_image }}"
           network_mode: host
+          log_driver: journald   # container log -> journal -> promtail -> Loki (INF-27)
           user: "{{ prometheus_account_user.uid | default(0) }}:{{ prometheus_account_user.group | default(0) }}"
           command:
             - "--config.file={{ prometheus_config_dir }}/prometheus.yml"

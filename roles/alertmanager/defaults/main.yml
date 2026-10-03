@@ -1,12 +1,12 @@
 ---
 # ==============================================================================
 # Role: alertmanager — Prometheus Alertmanager on lxc-monitoring-01 (a container:
-# the pinned official image, host network, loopback). Receivers: mail through the platform relay (same secret and
-# recipient as the firewall's Monit alerts) + a Discord channel webhook. Both
-# secrets are READ from Vault (minted elsewhere: monit/smtp-resend, discord_guild).
+# the pinned official image, host network, loopback). Receivers: mail through the monitoring@
+# service mailbox (Mailcow; recipient = the central alerts@ sink, like the firewall's Monit)
+# + a Discord channel webhook. Both secrets are READ from Vault (roles/mailbox, discord_guild).
 # ==============================================================================
 # renovate: datasource=docker depName=prom/alertmanager
-alertmanager_version: "v0.28.1"   # what the Debian package ran
+alertmanager_version: "v0.34.1"   # current; the config is unchanged across 0.29–0.34
 alertmanager_image: "prom/alertmanager:{{ alertmanager_version }}"
 alertmanager_container: alertmanager
 # Runs as the prometheus account (roles/prometheus creates it; the config is group-readable).

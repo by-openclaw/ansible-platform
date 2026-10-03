@@ -1,0 +1,23 @@
+---
+# Nextcloud guest (group `nextcloud`) — values the service's OWN role and the concern roles that run
+# on this host (promtail, crowdsec_agent) both need. One definition here; roles/nextcloud reads the
+# volume name from this variable (its default only repeats it for the role's documentation).
+nextcloud_app_volume: nextcloud-app
+# The application log (audit gap 4, docs/audits/nextcloud-2026-10-02.md): Nextcloud writes it into
+# the data directory of the app volume (`log_type` file). Two consumers tail it on the host:
+nextcloud_app_log: "/var/lib/docker/volumes/{{ nextcloud_app_volume }}/_data/data/nextcloud.log"
+
+# promtail → Loki with the `audit` label (login failures, admin actions are in this stream).
+promtail_extra_file_jobs:
+  - {name: nextcloud_app, path: "{{ nextcloud_app_log }}", audit: true}
+promtail_acl_dirs:
+  - "/var/lib/docker/volumes/{{ nextcloud_app_volume }}/_data/data"
+promtail_acl_traverse:
+  - /var/lib/docker                      # 0710 — promtail needs x here to reach the volume at all
+
+# CrowdSec agent: the hub's Nextcloud collection (login brute-force scenarios) on the same file;
+# decisions reach the Traefik bouncer like every other scenario.
+crowdsec_agent_extra_collections:
+  - crowdsecurity/nextcloud
+crowdsec_agent_file_sources:
+  - {name: nextcloud, paths: ["{{ nextcloud_app_log }}"], type: nextcloud}

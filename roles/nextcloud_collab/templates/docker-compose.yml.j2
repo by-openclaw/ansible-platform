@@ -6,6 +6,7 @@ services:
     # only relay peer, so the relay range never leaves the container (AIO pattern).
     image: {{ nextcloud_collab_talk_image }}
     restart: unless-stopped
+    logging: {driver: journald}   # explicit: a container keeps the driver it was created with, the daemon default is not enough
     ports:
       - "{{ nextcloud_collab_turn_port }}:{{ nextcloud_collab_turn_port }}/tcp"
       - "{{ nextcloud_collab_turn_port }}:{{ nextcloud_collab_turn_port }}/udp"
@@ -15,6 +16,7 @@ services:
   talk-recording:
     image: {{ nextcloud_collab_recording_image }}
     restart: unless-stopped
+    logging: {driver: journald}   # explicit: a container keeps the driver it was created with, the daemon default is not enough
     ports:
       - "{{ nextcloud_collab_bind_ip }}:{{ nextcloud_collab_recording_port }}:1234"
     env_file: [recording.env]
@@ -25,6 +27,7 @@ services:
   whiteboard:
     image: {{ nextcloud_collab_whiteboard_image }}
     restart: unless-stopped
+    logging: {driver: journald}   # explicit: a container keeps the driver it was created with, the daemon default is not enough
     ports:
       - "{{ nextcloud_collab_bind_ip }}:{{ nextcloud_collab_whiteboard_port }}:3002"
     env_file: [whiteboard.env]

@@ -1,0 +1,59 @@
+---
+# One mirror: destination bucket + trash bucket with a scoped identity, source credentials from
+# Vault, an env file rclone reads its two remotes from (nothing on a command line), the timer.
+- name: "SeaweedFS mirror | Destination buckets + scoped identity — {{ seaweedfs_mirror.name }}"
+  ansible.builtin.include_role:
+    name: seaweedfs_bucket
+  vars:
+    seaweedfs_bucket_identity: "mirror-{{ seaweedfs_mirror.name }}"
+    seaweedfs_bucket_names: ["{{ seaweedfs_mirror.bucket }}", "{{ seaweedfs_mirror.bucket }}-trash"]
+    seaweedfs_bucket_vault_path: "{{ platform_env }}/seaweedfs/mirror-{{ seaweedfs_mirror.name }}"
+
+- name: "SeaweedFS mirror | Keep the destination identity — {{ seaweedfs_mirror.name }}"
+  ansible.builtin.set_fact:
+    seaweedfs_mirror_dst: "{{ seaweedfs_bucket_key }}"
+  no_log: true
+
+- name: "SeaweedFS mirror | Source credentials, from Vault — {{ seaweedfs_mirror.name }}"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ seaweedfs_mirror.source.vault_path }}"
+
+- name: "SeaweedFS mirror | Keep the source credentials — {{ seaweedfs_mirror.name }}"
+  ansible.builtin.set_fact:
+    seaweedfs_mirror_src: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "SeaweedFS mirror | rclone remotes (env file, root only) — {{ seaweedfs_mirror.name }}"
+  ansible.builtin.template:
+    src: mirror.env.j2
+    dest: "{{ seaweedfs_mirror_env_dir }}/{{ seaweedfs_mirror.name }}.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: "SeaweedFS mirror | Timer (roles/host_job) — {{ seaweedfs_mirror.name }}"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: "s3-mirror-{{ seaweedfs_mirror.name }}"
+    host_job_description: >-
+      Mirror {{ seaweedfs_mirror.source_bucket }} from {{ seaweedfs_mirror.source.host }}
+      into the platform S3 ({{ seaweedfs_mirror.bucket }})
+    host_job_on_calendar: "{{ seaweedfs_mirror.schedule }}"
+    host_job_wants_network: true
+    host_job_timeout: "6h"
+    host_job_exec:
+      # the date in the trash prefix needs a shell; every credential stays in the env file
+      - >-
+        /bin/sh -c '/usr/bin/docker run --rm --name s3-mirror-{{ seaweedfs_mirror.name }} --network host
+        --env-file {{ seaweedfs_mirror_env_dir }}/{{ seaweedfs_mirror.name }}.env {{ seaweedfs_mirror_image }}
+        sync src:{{ seaweedfs_mirror.source_bucket }} dst:{{ seaweedfs_mirror.bucket }}
+        --backup-dir dst:{{ seaweedfs_mirror.bucket }}-trash/$$(date +%%F)
+        --fast-list --checksum --transfers {{ seaweedfs_mirror_transfers }} --stats-one-line -v'
+      - >-
+        /usr/bin/docker run --rm --name s3-mirror-{{ seaweedfs_mirror.name }}-purge --network host
+        --env-file {{ seaweedfs_mirror_env_dir }}/{{ seaweedfs_mirror.name }}.env {{ seaweedfs_mirror_image }}
+        delete dst:{{ seaweedfs_mirror.bucket }}-trash --min-age {{ seaweedfs_mirror.keep_deleted_days }}d --rmdirs -v

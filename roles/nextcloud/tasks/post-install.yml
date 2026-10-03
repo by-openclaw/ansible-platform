@@ -20,6 +20,13 @@
       redis port --type=integer --value="{{ nextcloud_redis_port }}"
   changed_when: true
 
+- name: "post-install | Configure Redis DB index (allocation table)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      redis dbindex --type=integer --value="{{ nextcloud_redis_db }}"
+  changed_when: true
+
 - name: "post-install | Configure Redis password"
   ansible.builtin.command:
     cmd: >-
@@ -134,8 +141,7 @@
   changed_when: false   # declarative upsert (same inputs converge to same state)
   when: nextcloud_oidc is defined
 
-# --- Outbound email (Resend SMTP) ---------------------------------------------
-# Same relay the other cluster apps send through (verified). Stored in config.php
+# --- Outbound email: the nextcloud@ service mailbox (Mailcow, STARTTLS 587). Stored in config.php
 # DB password rotation (SVC-28/SEC-09): config.php owns dbpassword after the
 # first-run install — the env var no longer applies. Converge it to the current
 # credential so a rotation only needs the play rerun (learned 2026-09-02: a
@@ -299,6 +305,23 @@
 - name: "post-install | Update mimetype JS"
   ansible.builtin.command:
     cmd: docker exec -u www-data nextcloud php occ maintenance:mimetype:update-js
+  changed_when: true
+
+# Optional DB indices that apps and upgrades add later (setupchecks ⚠ "missing indices");
+# occ only prints "Adding" lines when it created one, "Done" otherwise.
+- name: "post-install | Add missing optional DB indices"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ db:add-missing-indices
+  register: nextcloud_db_indices
+  changed_when: "'Adding' in nextcloud_db_indices.stdout"
+
+# Metrics: the serverinfo app accepts the token as the NC-Token header (nextcloud-exporter).
+- name: "post-install | Serverinfo token for the metrics exporter"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:app:set serverinfo token
+      --value="{{ nextcloud_serverinfo_token }}"
+  no_log: true
   changed_when: true
 
 # --- assertions ---------------------------------------------------------------

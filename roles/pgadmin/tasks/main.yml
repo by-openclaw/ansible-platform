@@ -4,9 +4,34 @@
 # to roles/service_scaffold: state database (postgres_db), mailbox, the container,
 # the Traefik route (internal-only), and the SSO registration it asserts.
 # ==============================================================================
-- name: "Secrets for pgAdmin (admin login, OIDC client, PG superuser)"
+- name: "Secrets for pgAdmin (admin login, OIDC client, the DBA login)"
   ansible.builtin.import_tasks: secrets.yml
   tags: [pgadmin, secrets]
+
+# The login pgAdmin connects with: roles/postgres_db in role-only mode (no database of its own)
+# — created once, password kept equal to Vault, the predefined read/monitor/maintain memberships,
+# CONNECT on every database. Least privilege (SVC-29/31): the superuser stays break-glass.
+- name: "The DBA login on the cluster (roles/postgres_db, role-only)"
+  ansible.builtin.include_role:
+    name: postgres_db
+    apply:
+      tags: [pgadmin, servers]
+  vars:
+    postgres_db_name: ""
+    postgres_db_user: "{{ pgadmin_dba_user }}"
+    postgres_db_vault_path: "{{ pgadmin_dba_vault_path }}"
+    postgres_db_memberships: "{{ pgadmin_dba_memberships }}"
+    postgres_db_connect_all: true
+  when: pgadmin_register_pg_server | bool
+  tags: [pgadmin, servers]
+
+# Bound here, before the scaffold's db step re-sets postgres_db_password for the state database.
+- name: "Bind the DBA password for the passexec file"
+  ansible.builtin.set_fact:
+    pgadmin_pg_dba_password: "{{ postgres_db_password }}"
+  no_log: true
+  when: pgadmin_register_pg_server | bool
+  tags: [pgadmin, servers]
 
 - name: "Shared PostgreSQL connection for pgAdmin (servers.json, mounted)"
   ansible.builtin.import_tasks: servers.yml

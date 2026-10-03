@@ -24,6 +24,16 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:{{ prometheus_port }}']
 
+{# the rest of the stack on this host (alertmanager, loki, grafana, blackbox) — INF-33 #}
+  - job_name: monitoring
+    static_configs:
+{% for t in prometheus_self_targets %}
+      - targets: ['{{ t.target }}']
+        labels:
+          instance: "{{ inventory_hostname }}"
+          component: "{{ t.name }}"
+{% endfor %}
+
   - job_name: node
     static_configs:
 {% for h in node_hosts | sort %}
@@ -54,7 +64,8 @@ scrape_configs:
 {% for svc in prometheus_app_metrics | sort(attribute='name') %}
   - job_name: {{ svc.name }}
     static_configs:
-      - targets: ['{{ hostvars[svc.host].ansible_host }}:{{ svc.metrics_port }}']
+{# one listener (metrics_port) or several (metrics_ports: one per server process, e.g. NetBird) #}
+      - targets: [{% for p in (svc.metrics_ports | default([svc.metrics_port])) %}'{{ hostvars[svc.host].ansible_host }}:{{ p }}'{{ ', ' if not loop.last }}{% endfor %}]
         labels:
           instance: "{{ svc.host }}"
 {% endfor %}

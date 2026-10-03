@@ -32,6 +32,10 @@
         server: "{{ item.server }}"
         description: "{{ item.description | default('split-DNS (catalog)') }}"
         enabled: true
+        # NAM-08: OPNsense emits ONE PTR per address, from the first override that asks for it. Only an
+        # asset FQDN (naming/0001: vm-/lxc-/srv-) owns the PTR; service names on the same address do
+        # not. An entry may say so itself (`addptr:`), e.g. a secondary address with no asset entry.
+        addptr: "{{ item.addptr | default(item.hostname is match('^(vm|lxc|srv)-')) }}"
         state: "{{ item.state | default('present') }}"   # retired names are declared absent in the catalog (never just removed)
       loop: "{{ opn_unbound.host_overrides | default([]) }}"
       loop_control:

@@ -49,6 +49,27 @@
   ansible.builtin.import_tasks: backup_jobs.yml
   tags: [pve_host, backup]
 
+- name: The configuration export to PBS (declared, first run proven)
+  ansible.builtin.import_tasks: config_backup.yml
+  when: pve_host_config_backup_enabled | bool
+  tags: [pve_host, backup]
+
+- name: "PVE host | Release drift (the ladder playbooks/pve-host-upgrade.yml moves the node)"
+  ansible.builtin.command:
+    cmd: dpkg-query -W -f '${Version}' pve-manager
+  register: pve_host_pve_manager_now
+  changed_when: false
+  check_mode: false
+  tags: [pve_host, release]
+
+- name: "PVE host | Report the release against the pin"
+  ansible.builtin.debug:
+    msg: >-
+      pve-manager {{ pve_host_pve_manager_now.stdout }} — declared {{ pve_host_version }}
+      {{ '(on the pin)' if pve_host_pve_manager_now.stdout == pve_host_version else
+         '→ DRIFT: run playbooks/pve-host-upgrade.yml -e apt_release_ladder_apply=true' }}
+  tags: [pve_host, release]
+
 - name: Guest netfilter logging (DOCKER-USER audit in LXCs)
   ansible.builtin.import_tasks: netfilter_log.yml
   tags: [pve_host, netfilter]

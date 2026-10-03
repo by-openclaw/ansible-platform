@@ -1,0 +1,22 @@
+---
+# External bucket mirrors (seaweedfs_mirrors). Looped include_tasks so each entry's facts are its
+# own (a looped include_role registers nothing per item).
+- name: "SeaweedFS mirrors | Pull the pinned rclone image"
+  community.docker.docker_image:
+    name: "{{ seaweedfs_mirror_image }}"
+    source: pull
+
+- name: "SeaweedFS mirrors | Env file directory (root only)"
+  ansible.builtin.file:
+    path: "{{ seaweedfs_mirror_env_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: "SeaweedFS mirrors | One timer per mirror"
+  ansible.builtin.include_tasks: mirror.yml
+  loop: "{{ seaweedfs_mirrors }}"
+  loop_control:
+    loop_var: seaweedfs_mirror
+    label: "{{ seaweedfs_mirror.name }}"

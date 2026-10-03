@@ -21,20 +21,8 @@
   gather_facts: true
   serial: 1
   any_errors_fatal: true
+  # Per-group collections and log sources are inventory data (group_vars/<group>.yml:
+  # crowdsec_agent_extra_collections, crowdsec_agent_docker_sources, crowdsec_agent_file_sources) —
+  # a role-level `vars:` here would silently override them (role vars beat group_vars).
   roles:
-    - role: crowdsec_agent
-      vars:
-        # Service-specific parsers, added on top of the linux/sshd baseline.
-        crowdsec_agent_extra_collections: >-
-          {{ ['crowdsecurity/nginx'] if 'traefik' in group_names
-             else ['crowdsecurity/postfix', 'crowdsecurity/dovecot'] if 'mailcow' in group_names
-             else [] }}
-        # mailcow's postfix/dovecot run as containers logging to stdout in
-        # syslog format. Read them through the docker datasource so the postfix
-        # collection above actually has something to parse.
-        crowdsec_agent_docker_sources: >-
-          {{ [{'name': 'mailcow',
-               'containers': ['mailcowdockerized-postfix-mailcow-1',
-                              'mailcowdockerized-dovecot-mailcow-1'],
-               'type': 'syslog'}]
-             if 'mailcow' in group_names else [] }}
+    - crowdsec_agent

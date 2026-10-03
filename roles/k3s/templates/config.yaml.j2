@@ -16,3 +16,11 @@ secrets-encryption: true
 # API anonymously — with it off, controllers never start ("failed waiting on CRD helmchartconfigs").
 kubelet-arg:
   - "protect-kernel-defaults=true"
+{% if k3s_audit_enabled | bool %}
+kube-apiserver-arg:
+  - "audit-log-path={{ k3s_audit_log_dir }}/audit.log"
+  - "audit-policy-file=/etc/rancher/k3s/audit-policy.yaml"
+  - "audit-log-maxage={{ k3s_audit_log_maxage }}"
+  - "audit-log-maxbackup={{ k3s_audit_log_maxbackup }}"
+  - "audit-log-maxsize={{ k3s_audit_log_maxsize }}"
+{% endif %}

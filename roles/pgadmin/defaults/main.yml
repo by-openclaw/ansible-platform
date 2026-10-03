@@ -4,7 +4,7 @@
 # Internal-only DB admin UI, fronted by Traefik (wildcard TLS + ipAllowList).
 # Connects to Postgres over TLS (sslmode=verify-full, public LE CA).
 # ==============================================================================
-pgadmin_image: "dpage/pgadmin4:9.17"   # exact pin — bump deliberately
+pgadmin_image: "dpage/pgadmin4:9.18"   # exact pin — bump deliberately (2026-09-17)
 
 pgadmin_fqdn: "{{ platform_service_fqdns.pgadmin }}"
 
@@ -40,20 +40,26 @@ pgadmin_pg_server_name: "{{ platform_org | upper }} PostgreSQL"
 pgadmin_pg_host: "{{ groups['postgresql'] | first }}.{{ platform_domain }}"   # FQDN so verify-full matches the cert
 pgadmin_pg_port: 5432
 pgadmin_pg_maintenance_db: "postgres"
-pgadmin_pg_username: "postgres"                   # superuser → sees all service DBs
+# The login pgAdmin connects with: a dedicated DBA role (least privilege, services/0004 SVC-29/31) —
+# read everything, monitor, maintain (VACUUM/ANALYZE/REINDEX), signal backends; NOT the superuser,
+# whose credential stays break-glass in Vault (psql, audited, rotated after use).
+pgadmin_pg_username: "{{ pgadmin_dba_user }}"
+pgadmin_dba_user: "{{ platform_pg_dba_logins.pgadmin }}"   # group_vars/all/postgresql.yml — the single source (postgres_db grants it CONNECT everywhere)
+pgadmin_dba_vault_path: "{{ platform_env }}/pgadmin/dba"   # minted by the role (get-or-create)  # pragma: allowlist secret
+pgadmin_dba_memberships: [pg_read_all_data, pg_monitor, pg_maintain, pg_signal_backend]   # PostgreSQL 17 predefined roles
 # Shared servers expose shared_username (not username) to non-owner SSO users —
 # must be set or pgAdmin shows "Username must be specified".
-pgadmin_pg_shared_username: "postgres"
+pgadmin_pg_shared_username: "{{ pgadmin_dba_user }}"
 pgadmin_pg_sslmode: "verify-full"
 pgadmin_servers_host_path: "/etc/pgadmin/servers.json"
 # The shared server connects WITHOUT prompting for the postgres password: pgAdmin
 # runs a "password exec command" at connect time that cats a file in the (persistent)
-# data volume. That file is populated at deploy from the superuser secret — so the
+# data volume. That file is populated at deploy from the DBA login's secret — so the
 # password is never baked into servers.json and is re-asserted after any container
 # recreate (which is what made the old live-only fix regress on restart).
 # Source of truth for the superuser password (fabric secret; Vault migration = TODO,
 # tracked platform-wide for ALL db-pgsql-*.json, not just pgAdmin).
-pgadmin_pg_superuser_vault_path: "{{ platform_env }}/postgres/superuser"  # pragma: allowlist secret
+# ({env}/postgres/superuser is no longer read by this role — SVC-31: the superuser is break-glass only)
 pgadmin_pg_passfile_container: "/var/lib/pgadmin/.pgpass-pg"   # in the persistent volume
 pgadmin_pg_passexec_cmd: "/bin/cat {{ pgadmin_pg_passfile_container }}"
 # libpq (used by pgAdmin to reach Postgres) looks for the verify-full CA at

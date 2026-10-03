@@ -194,8 +194,12 @@
         - "-port={{ seaweedfs_admin_port }}"
         - "-master=localhost:{{ seaweedfs_master_port }}"
         - "-dataDir={{ seaweedfs_admin_data_dir }}"
-        - "-adminUser={{ (seaweedfs_console | default({})).username | default('') }}"
-        - "-adminPassword={{ (seaweedfs_console | default({})).password | default('') }}"
+      # The console login reaches the process through its environment (WEED_ADMIN_USER /
+      # WEED_ADMIN_PASSWORD, supported since 4.48) — never as an argument: an argument is
+      # visible in `docker inspect` and in every process list (SEC-17).
+      env:
+        WEED_ADMIN_USER: "{{ (seaweedfs_console | default({})).username | default('') }}"
+        WEED_ADMIN_PASSWORD: "{{ (seaweedfs_console | default({})).password | default('') }}"
       volumes:
         - "{{ seaweedfs_admin_data_dir }}:{{ seaweedfs_admin_data_dir }}"
         - "{{ seaweedfs_config_dir }}:{{ seaweedfs_config_dir }}:ro"
@@ -243,6 +247,10 @@
   until: seaweedfs_s3_ready.status in [200, 403]
   retries: 40
   delay: 3
+
+- name: "SeaweedFS | External bucket mirrors (seaweedfs_mirrors)"
+  ansible.builtin.include_tasks: mirrors.yml
+  when: seaweedfs_mirrors | length > 0
 
 - name: "SeaweedFS | Wait for the admin dashboard to answer"
   ansible.builtin.uri:

@@ -21,3 +21,13 @@ postgres_db_port: 5432
 # INTO Vault on first run (get-or-create). The password is then ALTER'd onto the
 # role every run so a rebuilt/re-pointed app always matches Vault.
 postgres_db_vault_path: ""     # REQUIRED — the role asserts it (no file mode any more)
+postgres_db_extensions: []     # extensions the service needs (CREATE EXTENSION is superuser work here): created once, never dropped
+# --- Role-only mode, memberships, CONNECT (a login for cluster tooling, e.g. pgAdmin's) -------
+# postgres_db_name: "" -> no database: the login is created/kept (password from Vault) and only
+# its memberships + CONNECT grants are reconciled. Never a superuser.
+postgres_db_memberships: []      # roles granted to the login (GRANT x TO login), e.g. the predefined pg_read_all_data; never revoked here
+postgres_db_connect_all: false   # the login may CONNECT to every database of the cluster (service databases revoke PUBLIC)
+# The platform's DBA logins (inventories/<env>/group_vars/all/postgresql.yml, key = service -> login):
+# every database this role creates grants them CONNECT, reconciled on every run — so a login
+# created before a service's database still reaches it. Optional: a tier without DBA tooling has none.
+postgres_db_dba_logins: "{{ platform_pg_dba_logins | default({}) }}"
