@@ -2593,6 +2593,8 @@ opn_unbound:
   - {hostname: office, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
   - {hostname: demo, domain: "{{ platform_domain }}", rr: A, server: 10.1.2.110}            # k3s demo app → Traefik (internal, SSO); <app>.<domain>, one label under the wildcard
   - {hostname: demo, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
+  - {hostname: headlamp, domain: "{{ platform_domain }}", rr: A, server: "{{ hostvars[groups['traefik'] | first].ansible_host }}"}       # Kubernetes UI (k3s) → Traefik, internal, OIDC
+  - {hostname: headlamp, domain: "{{ platform_domain }}", rr: AAAA, server: "{{ hostvars[groups['traefik'] | first].platform_host_v6 }}"}
   - {hostname: portainer, domain: "{{ platform_domain }}", rr: A, server: 10.1.2.110}       # container console (k3s + docker hosts) → Traefik, internal + SSO
   - {hostname: portainer, domain: "{{ platform_domain }}", rr: AAAA, server: 'fd01:2::110'}
   - {hostname: ca, domain: "{{ platform_domain }}", rr: A, server: 10.1.2.110}             # internal CA (step-ca) behind Traefik, internal/VPN only (#383)

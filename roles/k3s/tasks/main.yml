@@ -77,6 +77,20 @@
   notify: Restart k3s
   when: k3s_audit_enabled | bool
 
+# The API server validates the IdP's tokens itself, so it needs the OIDC client id before it starts.
+- name: "k3s | Headlamp's OIDC client (Vault; minted by the authentik play)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ k3s_headlamp_vault_path }}"
+    vault_secret_optional: true
+  when: k3s_headlamp_enabled | bool
+
+- name: "k3s | Bind the OIDC client"
+  ansible.builtin.set_fact:
+    k3s_headlamp_oidc: "{{ vault_secret_result | default({}) if k3s_headlamp_enabled | bool else {} }}"
+  no_log: true
+
 - name: "k3s | Server configuration"
   ansible.builtin.template:
     src: config.yaml.j2
@@ -149,6 +163,34 @@
     - k3s_ns_labels['pod-security.kubernetes.io/enforce'] | default('') != item.value
       or k3s_ns_labels['pod-security.kubernetes.io/warn'] | default('') != item.value
   changed_when: true
+
+- name: "k3s | k9s {{ k3s_k9s_version }} archive (pinned, checksum verified)"
+  ansible.builtin.get_url:
+    url: "{{ k3s_k9s_url }}"
+    dest: "/var/cache/k9s-{{ k3s_k9s_version }}.tar.gz"
+    checksum: "sha256:{{ k3s_k9s_sha256 }}"
+    mode: "0644"
+
+- name: "k3s | k9s binary from the verified archive"
+  ansible.builtin.unarchive:
+    src: "/var/cache/k9s-{{ k3s_k9s_version }}.tar.gz"
+    remote_src: true
+    dest: /usr/local/bin
+    include: [k9s]
+    owner: root
+    group: root
+    mode: "0755"
+    creates: "/usr/local/bin/.k9s-{{ k3s_k9s_version }}"
+
+- name: "k3s | k9s version marker"
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/.k9s-{{ k3s_k9s_version }}"
+    content: "{{ k3s_k9s_sha256 }}\n"
+    mode: "0644"
+
+- name: "k3s | Headlamp (web UI, OIDC)"
+  ansible.builtin.include_tasks: headlamp.yml
+  when: k3s_headlamp_enabled | bool
 
 - name: "k3s | CI deployers per namespace"
   ansible.builtin.include_tasks: ci-namespace.yml

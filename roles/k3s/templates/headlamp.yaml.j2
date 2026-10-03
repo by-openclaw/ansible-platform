@@ -1,0 +1,129 @@
+# Managed by Ansible (role: k3s). Do not edit by hand.
+# Headlamp — the Kubernetes web UI. It has NO rights of its own (the ServiceAccount is bound to
+# nothing): every request to the API carries the signed-in person's OIDC token.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ k3s_headlamp_namespace }}
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: headlamp
+  namespace: {{ k3s_headlamp_namespace }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: headlamp-oidc
+  namespace: {{ k3s_headlamp_namespace }}
+type: Opaque
+# `data` (base64), not `stringData`: kubectl apply reports a stringData Secret as "configured" on every run
+data:
+  OIDC_CLIENT_ID: "{{ k3s_headlamp_oidc.client_id | b64encode }}"
+  OIDC_CLIENT_SECRET: "{{ k3s_headlamp_oidc.client_secret | b64encode }}"
+  OIDC_ISSUER_URL: "{{ k3s_headlamp_oidc_issuer | b64encode }}"
+  OIDC_SCOPES: "{{ 'profile,email' | b64encode }}"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: headlamp
+  namespace: {{ k3s_headlamp_namespace }}
+  labels: {app.kubernetes.io/name: headlamp}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: headlamp}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: headlamp}
+    spec:
+      serviceAccountName: headlamp
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: headlamp
+          image: "{{ k3s_headlamp_image }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-in-cluster"
+            - "-plugins-dir=/headlamp/plugins"
+            - "-oidc-client-id=$(OIDC_CLIENT_ID)"
+            - "-oidc-client-secret=$(OIDC_CLIENT_SECRET)"
+            - "-oidc-idp-issuer-url=$(OIDC_ISSUER_URL)"
+            - "-oidc-scopes=$(OIDC_SCOPES)"
+            # behind the TLS edge the pod sees plain HTTP: the callback it announces is declared
+            - "-oidc-callback-url=https://{{ k3s_headlamp_fqdn }}/oidc-callback"
+          envFrom:
+            - secretRef: {name: headlamp-oidc}
+          ports:
+            - {name: http, containerPort: 4466}
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /, port: http}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: home, mountPath: /home/headlamp}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - {name: home, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: headlamp
+  namespace: {{ k3s_headlamp_namespace }}
+spec:
+  selector: {app.kubernetes.io/name: headlamp}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: headlamp
+  namespace: {{ k3s_headlamp_namespace }}
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: "{{ k3s_headlamp_fqdn }}"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: headlamp, port: {name: http}}
+---
+# The IdP group of the platform admins = cluster-admin (the API server validates the OIDC token).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oidc-platform-admins
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: "{{ k3s_oidc_prefix }}{{ k3s_headlamp_admin_group }}"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin

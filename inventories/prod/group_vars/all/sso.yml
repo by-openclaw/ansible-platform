@@ -23,6 +23,15 @@ authentik_oidc_apps:
     redirect_uris:
       - "https://{{ platform_service_fqdns.vault }}/ui/vault/auth/oidc/oidc/callback"
       - "http://localhost:8250/oidc/callback"
+  - slug: headlamp
+    launch_url: "https://{{ platform_service_fqdns.headlamp }}"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/headlamp.svg"
+    name: "Headlamp (k3s)"
+    group: "{{ platform_admins_group }}"      # the Kubernetes API maps the same group to cluster-admin (roles/k3s)
+    vault_path: "{{ platform_env }}/k3s/headlamp-oidc"
+    restrict_to_group: true         # IdP-enforced: only platform admins get a token the cluster accepts
+    redirect_uris:
+      - "https://{{ platform_service_fqdns.headlamp }}/oidc-callback"
   - slug: pgadmin
     launch_url: "https://{{ platform_service_fqdns.pgadmin }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/pgadmin.svg"
