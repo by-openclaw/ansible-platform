@@ -196,3 +196,10 @@ mailcow_vault_path: "{{ platform_env }}/mailcow/admin"   # DBROOT/DBPASS/REDISPA
 #     Standing up a PUBLIC mail server is outward-facing → keep false until the
 #     NAS export + DNS + FW prerequisites are in place and the deploy is approved.
 mailcow_deploy_stack: false
+
+# --- No mail daemon on the host -------------------------------------------------------------
+# The mail ports belong to mailcow's Postfix container. A host MTA that binds :25 — even on
+# loopback — makes Docker fail to publish the port and the container stays down. On 2026-10-03
+# the in-place move to Debian 13 pulled exim4 in (a Recommends, no MTA was installed on this
+# host) and mail was down until it was removed. These packages are kept absent on the mail host.
+mailcow_host_mta_absent: [exim4, exim4-base, exim4-config, exim4-daemon-light, exim4-daemon-heavy]

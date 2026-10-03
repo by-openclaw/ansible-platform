@@ -18,6 +18,10 @@
 # include_tasks does not pass its tags to the included tasks: without `apply`, a run
 # scoped to --tags compose skipped the whole phase (found during the 2026-09-19 restore,
 # #454). cert.yml and config.yml below already use the same pattern.
+- name: No host mail daemon in front of the stack
+  ansible.builtin.import_tasks: host_mta.yml
+  tags: [mailcow, host_mta]
+
 - name: Bring the mailcow stack up (gated)
   ansible.builtin.include_tasks:
     file: compose.yml
