@@ -1,0 +1,47 @@
+---
+# HPE Smart Array CLI (`ssacli`) from HPE's repository — see defaults. Keys pinned by checksum,
+# the source is a deb822 file that names its own keyring (nothing in the global trust store).
+- name: "PVE host | Keyring directory"
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "PVE host | HPE repository signing keys (pinned checksums)"
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "/etc/apt/keyrings/{{ item.name }}"
+    checksum: "sha256:{{ item.sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ pve_host_hpe_repo_keys }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: "PVE host | deb822 source: HPE Management Component Pack"
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/hpe-mcp.sources
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (role: pve_host). HPE Smart Array CLI.
+      Types: deb
+      URIs: {{ pve_host_hpe_repo_url }}
+      Suites: {{ pve_host_hpe_repo_suite }}
+      Components: non-free
+      Signed-By: {{ pve_host_hpe_repo_keys | map(attribute='name') | map('regex_replace', '^', '/etc/apt/keyrings/') | join(' ') }}
+  register: pve_host_src_hpe
+
+- name: "PVE host | Refresh the package index when the HPE source changed"
+  ansible.builtin.apt:
+    update_cache: true
+  when: pve_host_src_hpe is changed
+
+- name: "PVE host | Smart Array CLI installed"
+  ansible.builtin.apt:
+    name: "{{ pve_host_smartarray_package }}"
+    state: present

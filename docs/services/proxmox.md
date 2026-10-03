@@ -24,3 +24,25 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: proxmox`). R
 Class A (`docs/backup.md`): the hypervisor's configuration — `/etc/pve`, `/etc/network`, `/etc/apt` — exported daily (04:30) as a PBS **host backup** of the node (`pve-config-backup.timer`), encrypted with the PBS storage's key, with the storage's token; verified by `proxmox-backup-client snapshot list`. The guests are backed up by the two vzdump jobs (NAS 05:00 keep-all — retention = owner item; PBS 03:30, pruned on PBS, replicated to S3). Restore = reinstall + `pve-host.yml`, then `proxmox-backup-client restore host/<node>/<snapshot> pve-etc.pxar /etc/pve` (pmxcfs stopped) and the guests from PBS.
 
 The guests' NAS copy (job at 05:00 on the NFS storage) keeps **7 daily, 4 weekly and 6 monthly** backups per guest (`pve_host_nfs_backup_prune`, owner decision 2026-10-03); the job prunes after each run. Backups of guests that no longer exist are not pruned by the job.
+
+## Cold start (found and fixed on 2026-10-03)
+
+- **Boot sequence:** every guest carries `startup: order=N,up=S` from `pve_host_boot_order` (`group_vars/proxmox_nodes.yml`): firewall → resolver → Vault + warden → PostgreSQL, Redis, object storage → edge, sign-in, CrowdSec, CA → monitoring, backup server, mail → the applications, heavy ones spread out. The last guest starts ≈5.5 min after boot. A new guest gets a row in that table (the play lists guests without one). Without the sequence every guest started in the same second (load 270 on 12 CPUs, 17 min to settle).
+- **Routes of the node:** the route to the guest zones is a `post-up` line of the OOB bridge. The role checks that `ifquery` parses it — a line the network tool cannot parse is silently not run at boot (that happened: the edge could not reach the console after the reboot).
+- **After a reboot, check:** `zpool status -x`, every guest running, Vault unsealed (the warden does it within a minute), the firewall health script, Prometheus targets and probes.
+
+## Storage controller (HPE Smart Array P420i, RAID mode)
+
+Every pool disk is a single-drive RAID-0 logical volume; ZFS mirrors pair them. The controller knows bay, health and wear — `ssacli` (installed by the role, `pve_host_smartarray_cli`) reads it:
+
+```
+ssacli ctrl slot=0 pd all show status        # physical drives by bay
+ssacli ctrl slot=0 ld all show status        # logical volumes (one per pool disk)
+ssacli ctrl slot=0 ld <n> show detail        # which array / drive a volume uses
+```
+
+- **A logical volume shows `Failed` while its physical drive is `OK`** (2026-10-03, bay 14, under heavy writes): `ssacli ctrl slot=0 ld <n> modify reenable forced` brings the volume back, ZFS onlines the disk and resilvers from the mirror partner; then `zpool scrub` and read the result. Done on 2026-10-03: resilver 35 s, scrub 393 G with 0 errors.
+- **A physical drive is failed:** replace it in its bay (hot-swap), create its logical volume (`ssacli ctrl slot=0 create type=ld drives=<port:box:bay> raid=0`), then `zpool replace tank <old> <new device>`; wait for the resilver.
+- **Do not reboot the node with a failed logical volume:** the controller can stop at its boot prompt, and the firewall VM lives on this node.
+- Alert: `ZfsPoolNotOnline` (Prometheus) fires when the pool is not ONLINE.
+- Known state: the controller's cache module is "permanently disabled (backup to flash failed)"; drive write cache is off. Several drives carry grown defects (see the 2026-10-03 addendum of the audit record) — a spare 300 GB SAS drive on site is advised.

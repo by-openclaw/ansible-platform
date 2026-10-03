@@ -1,13 +1,16 @@
 ---
 # Persistent: "post-up" lines in the OOB bridge stanza (ifupdown2); immediate: ip route replace.
+# The option line must start with real whitespace. Until 2026-10-03 this task wrote a LITERAL
+# backslash-t (a folded YAML scalar does not interpret escapes): ifupdown2 ignored the line, the
+# "present now" task below re-added the route on every run and hid it — and the reboot of
+# 2026-10-03 came up without the route (the edge could not reach the node's console). The regexp
+# also matches that broken spelling, so the line is repaired in place.
 - name: "PVE host | Static routes persisted in the OOB bridge stanza"
   ansible.builtin.lineinfile:
     path: /etc/network/interfaces
     insertafter: "^iface {{ pve_host_oob_bridge }} inet static"
-    regexp: "^\\s+post-up ip route replace {{ item.dest | regex_escape }} "
-    line: >-
-      \tpost-up ip route replace {{ item.dest }} via {{ item.via }} dev {{ pve_host_oob_bridge }}
-      # {{ item.comment }} (managed by Ansible, roles/pve_host)
+    regexp: '^(\\t|\s+)post-up ip route replace {{ item.dest | regex_escape }} '
+    line: "        post-up ip route replace {{ item.dest }} via {{ item.via }} dev {{ pve_host_oob_bridge }} # {{ item.comment }} (managed by Ansible, roles/pve_host)"
   loop: "{{ pve_host_static_routes }}"
   loop_control:
     label: "{{ item.dest }} via {{ item.via }}"
@@ -31,3 +34,14 @@
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: item.via not in pve_host_route_check.stdout
+
+# The boot-time truth: ifupdown2 must SEE the post-up lines (a line it cannot parse is silently not run).
+- name: "PVE host | ifupdown2 parses every declared route as a post-up of the OOB bridge"
+  ansible.builtin.command:
+    argv: [ifquery, "{{ pve_host_oob_bridge }}"]
+  register: pve_host_route_ifquery
+  check_mode: false  # read-only probe
+  changed_when: false
+  failed_when: >-
+    not ansible_check_mode and
+    (pve_host_static_routes | map(attribute='dest') | reject('in', pve_host_route_ifquery.stdout) | list | length > 0)

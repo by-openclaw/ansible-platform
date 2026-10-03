@@ -12,3 +12,43 @@ promtail_acl_dirs:
   - /var/log/pveproxy
   - /var/log/pve
   - /var/log/pve-firewall.log
+
+# This node is an HPE ProLiant with a Smart Array in RAID mode (each pool disk = one logical volume):
+# the controller CLI is needed to read drive health and to bring a replaced drive online.
+pve_host_smartarray_cli: true
+
+# Cold-start sequence: what the others need comes first; heavy guests are spread out. The sum of
+# the delays is ~5.5 min until the last guest is started; the core (firewall, resolver, secrets,
+# data, edge, sign-in) is up within the first two minutes.
+pve_host_boot_order:
+  - {guest: vm-opns-01-new,      order: 1,  up: 30}   # routing between the zones, DNS upstream
+  - {guest: vm-adguard-01,       order: 2,  up: 10}   # resolver of every guest
+  - {guest: lxc-vault-01,        order: 3,  up: 5}
+  - {guest: lxc-warden-01,       order: 3,  up: 5}    # unseals Vault
+  - {guest: lxc-pgsql-01,        order: 4,  up: 10}
+  - {guest: lxc-redis-01,        order: 4,  up: 5}
+  - {guest: lxc-seaweedfs-01,    order: 4,  up: 10}
+  - {guest: lxc-traefik-01,      order: 5,  up: 5}
+  - {guest: lxc-authentik-01,    order: 5,  up: 20}
+  - {guest: lxc-crowdsec-01,     order: 5,  up: 5}
+  - {guest: lxc-stepca-01,       order: 5,  up: 5}
+  - {guest: lxc-monitoring-01,   order: 6,  up: 10}
+  - {guest: vm-pbs-01,           order: 6,  up: 10}
+  - {guest: vm-mailcow-01,       order: 6,  up: 15}
+  - {guest: lxc-gitlab-01,       order: 7,  up: 30}
+  - {guest: lxc-harbor-01,       order: 8,  up: 15}
+  - {guest: lxc-nextcloud-01,    order: 8,  up: 15}
+  - {guest: lxc-collab-01,       order: 8,  up: 15}
+  - {guest: lxc-wazuh-01,        order: 9,  up: 20}
+  - {guest: lxc-jumpserver-01,   order: 9,  up: 20}
+  - {guest: vm-k3s-01,           order: 10, up: 15}
+  - {guest: vm-gitlab-runner-01, order: 10, up: 10}
+  - {guest: lxc-nbox-01,         order: 10, up: 10}
+  - {guest: lxc-vaultwarden-01,  order: 10, up: 5}
+  - {guest: lxc-netbird-01,      order: 10, up: 5}
+  - {guest: lxc-verdaccio-01,    order: 11, up: 5}
+  - {guest: lxc-diagrams-01,     order: 11, up: 5}
+  - {guest: lxc-pgadmin-01,      order: 11, up: 5}
+  - {guest: lxc-portainer-01,    order: 11, up: 5}
+  - {guest: lxc-grc-01,          order: 11, up: 5}
+  - {guest: lxc-jitsi-01,        order: 11, up: 5}

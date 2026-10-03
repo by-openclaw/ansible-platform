@@ -66,6 +66,22 @@
     traefik_route_forward_auth: false       # Harbor has native OIDC
   tags: [harbor, route]
 
+- name: "Harbor | Cold-start watchdog: start the stack in order after a boot (roles/host_job)"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: harbor-coldstart
+    host_job_description: "Harbor cold start (the log sidecar first, then the stack)"
+    host_job_exec:
+      - "/usr/bin/docker start {{ harbor_coldstart_containers | join(' ') }}"
+    host_job_on_calendar: ""
+    host_job_on_boot_sec: "60"
+    host_job_on_unit_active_sec: "5min"
+    host_job_restart: on-failure
+    host_job_restart_sec: "30"
+    host_job_timeout: 10min
+    host_job_on_failure: false        # retries in place; a Harbor that stays down is the probe's alert
+
 - name: "Harbor | Rotate the syslog-driven component logs"
   ansible.builtin.include_role:
     name: logrotate

@@ -1,0 +1,49 @@
+---
+# Cold-start sequence (pve_host_boot_order): `startup: order=N,up=S` on each guest, set online.
+- name: "PVE host | Guests of this node (id, kind, name, current startup)"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -o pipefail
+      for f in /etc/pve/qemu-server/*.conf /etc/pve/lxc/*.conf; do
+        id=$(basename "$f" .conf)
+        case "$f" in */qemu-server/*) kind=qm; name=$(awk '/^name:/{print $2; exit}' "$f");; *) kind=pct; name=$(awk '/^hostname:/{print $2; exit}' "$f");; esac
+        echo "$id $kind $name $(awk '/^startup:/{print $2; exit}' "$f")"
+      done
+  register: pve_host_boot_guests
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "PVE host | Guest table"
+  ansible.builtin.set_fact:
+    pve_host_boot_table: >-
+      {%- set out = {} -%}
+      {%- for line in pve_host_boot_guests.stdout_lines -%}
+        {%- set f = line.split() -%}
+        {%- set _ = out.update({f[2]: {'id': f[0], 'kind': f[1], 'startup': (f[3] if f | length > 3 else '')}}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: "PVE host | Every guest of the sequence exists on this node"
+  ansible.builtin.assert:
+    that: pve_host_boot_order | map(attribute='guest') | reject('in', pve_host_boot_table.keys()) | list | length == 0
+    fail_msg: "not on this node: {{ pve_host_boot_order | map(attribute='guest') | reject('in', pve_host_boot_table.keys()) | list }}"
+    quiet: true
+
+- name: "PVE host | Set the start order and delay (online, no restart)"
+  ansible.builtin.command:
+    argv:
+      - "{{ pve_host_boot_table[item.guest].kind }}"
+      - set
+      - "{{ pve_host_boot_table[item.guest].id }}"
+      - --startup
+      - "order={{ item.order }},up={{ item.up }}"
+  loop: "{{ pve_host_boot_order }}"
+  loop_control:
+    label: "{{ item.guest }} order={{ item.order }} up={{ item.up }}"
+  when: pve_host_boot_table[item.guest].startup != 'order=' ~ item.order ~ ',up=' ~ item.up
+  changed_when: true
+
+- name: "PVE host | Running guests without a place in the sequence (they start last)"
+  ansible.builtin.debug:
+    msg: "{{ pve_host_boot_table.keys() | reject('in', pve_host_boot_order | map(attribute='guest') | list) | reject('match', '^debian-.*-cloud$') | list }}"

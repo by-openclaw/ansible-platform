@@ -22,3 +22,7 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: harbor`). Ro
 ## Backup (infra/0008)
 
 Class B + C (`docs/backup.md`): metadata in the shared PostgreSQL cluster (daily `pg_dumpall`), blobs in the S3 bucket `harbor-registry` (SeaweedFS, replicated off-site), guest image in PBS (daily, ct 590; `/data` holds only logs and the Trivy cache). Restore = play + database restore; blobs are already there.
+
+## Cold start
+
+Harbor's containers log through the syslog driver to the `harbor-log` sidecar. After a host boot Docker starts them all at once and does not retry the ones that failed to initialise the log driver (2026-10-03: ten containers stayed down after the hypervisor reboot). `harbor-coldstart.timer` (roles/host_job: 60 s after boot, then every 5 min) starts the stack in order, the sidecar first; on a healthy stack it changes nothing.
