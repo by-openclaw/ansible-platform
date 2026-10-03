@@ -1,0 +1,36 @@
+---
+# The console certificate: the wildcard is staged on the node (roles/tls_cert, content-compared),
+# and installed with PVE's own command when pveproxy serves something else. pveproxy restarts
+# (a UI blip); guests are untouched.
+- name: "PVE host | Wildcard certificate staged on the node (roles/tls_cert)"
+  ansible.builtin.include_role:
+    name: tls_cert
+  vars:
+    tls_cert_dir: "{{ pve_host_cert_dir }}"
+    tls_cert_crt: "{{ pve_host_cert_crt }}"
+    tls_cert_key: "{{ pve_host_cert_key }}"
+    tls_cert_key_mode: "0600"
+
+- name: "PVE host | Fingerprints: the staged certificate and the one pveproxy serves"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -o pipefail
+      echo "staged=$(openssl x509 -noout -fingerprint -sha256 -in {{ pve_host_cert_crt }} | cut -d= -f2)"
+      echo "served=$(test -f /etc/pve/local/pveproxy-ssl.pem && openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pveproxy-ssl.pem | cut -d= -f2)"
+  register: pve_host_cert_fp
+  changed_when: false
+  check_mode: false   # read-only probe
+  failed_when: false
+
+- name: "PVE host | Install the wildcard as the console certificate (pveproxy restarts)"
+  ansible.builtin.command:
+    argv: [pvenode, cert, set, "{{ pve_host_cert_crt }}", "{{ pve_host_cert_key }}", --force, "1", --restart, "1"]
+  vars:
+    _staged: "{{ pve_host_cert_fp.stdout_lines | default([]) | select('match', '^staged=') | first | default('staged=') | split('=', 1) | last }}"
+    _served: "{{ pve_host_cert_fp.stdout_lines | default([]) | select('match', '^served=') | first | default('served=') | split('=', 1) | last }}"
+  when:
+    - _staged | length > 0
+    - _staged != _served
+  changed_when: true
+  no_log: true

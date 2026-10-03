@@ -22,3 +22,20 @@ controller_vault_hosts_entry: true        # /etc/hosts pin so the API's TLS name
 controller_manage_agent_service: true
 controller_agent_socket: "{{ ansible_env.HOME }}/.ssh/rune-agent.sock"
 controller_agent_unit_dir: "{{ ansible_env.HOME }}/.config/systemd/user"
+
+# --- Scheduled plays (user systemd timers on the controller) ------------------------------------
+# A play that must run on a schedule and has no host of its own to live on runs here: one oneshot
+# service + timer per job, rendered from this list — no script, output in the user journal
+# (`journalctl --user -u controller-job-<name>`). The repository checkout on `main` is the source.
+# The checkout the scheduled plays run from: the controller's own clone on `main` — a fixed path,
+# never the directory of the play that happens to render the units (that could be a worktree).
+controller_repo_dir: "{{ ansible_env.HOME }}/repos/ansible-platform"
+controller_ansible_bin: "{{ ansible_env.HOME }}/.local/bin/ansible-playbook"
+controller_jobs:
+  # The wildcard certificate is issued on the edge host; PostgreSQL, Redis, the hypervisor console
+  # and the backup server hold COPIES. Until 2026-10-03 nothing refreshed them on a schedule: a
+  # renewal would have left the copies to expire.
+  - name: certs-sync
+    description: "Refresh the wildcard certificate copies on every consumer"
+    on_calendar: "Mon *-*-* 04:17:00 UTC"
+    playbook: "playbooks/certs-sync.yml"

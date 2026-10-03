@@ -68,7 +68,16 @@ pbs_traefik_enabled: true
 # backend verification (internal SVC hop, still TLS-encrypted). Needs the
 # traefik_route insecure-skip-verify option.
 pbs_port: 8007                                   # PBS API/UI (own TLS)
-pbs_traefik_backend_url: "https://{{ ansible_host }}:{{ pbs_port }}"
+# The API/UI certificate (security/0004: no self-signed certificate): the proxy serves the
+# platform wildcard (roles/tls_cert; refreshed by playbooks/certs-sync.yml). The hypervisor pins
+# the server by fingerprint: a new certificate means playbooks/pbs-pve-storage.yml in the same
+# window (certs-sync.yml does both).
+pbs_console_cert: true
+pbs_node_fqdn: "{{ inventory_hostname }}.{{ platform_domain }}"
+pbs_cert_dir: "/etc/ssl/{{ platform_org }}"
+pbs_cert_crt: "{{ pbs_cert_dir }}/wildcard.crt"
+pbs_cert_key: "{{ pbs_cert_dir }}/wildcard.key"
+pbs_traefik_backend_url: "https://{{ pbs_node_fqdn if pbs_console_cert | bool else ansible_host }}:{{ pbs_port }}"
 
 # --- PVE storage wiring + 2nd backup job (delegated to the node) --------------
 pbs_pve_node: "{{ groups['proxmox_nodes'] | first }}"

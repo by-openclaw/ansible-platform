@@ -105,6 +105,38 @@
     - controller_agent_switch | default(false) | bool
     - not ansible_check_mode
 
+- name: "Controller | Scheduled plays: service units"
+  ansible.builtin.template:
+    src: controller-job.service.j2
+    dest: "{{ controller_agent_unit_dir }}/controller-job-{{ item.name }}.service"
+    mode: "0644"
+  loop: "{{ controller_jobs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: controller_job_services
+
+- name: "Controller | Scheduled plays: timers"
+  ansible.builtin.template:
+    src: controller-job.timer.j2
+    dest: "{{ controller_agent_unit_dir }}/controller-job-{{ item.name }}.timer"
+    mode: "0644"
+  loop: "{{ controller_jobs }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.on_calendar }})"
+  register: controller_job_timers
+
+- name: "Controller | Scheduled plays: timers enabled and running"
+  ansible.builtin.systemd_service:
+    name: "controller-job-{{ item.name }}.timer"
+    scope: user
+    enabled: true
+    state: started
+    daemon_reload: "{{ controller_job_services is changed or controller_job_timers is changed }}"
+  loop: "{{ controller_jobs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: not ansible_check_mode
+
 - name: "Controller | Report"
   ansible.builtin.debug:
     msg: >-

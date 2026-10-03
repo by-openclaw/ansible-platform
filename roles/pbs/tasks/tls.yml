@@ -1,0 +1,29 @@
+---
+# The wildcard is staged (roles/tls_cert), then copied to PBS's own files with PBS's ownership
+# (root:backup 0640); the proxy reloads without dropping running tasks.
+- name: "PBS | Wildcard certificate staged on the host (roles/tls_cert)"
+  ansible.builtin.include_role:
+    name: tls_cert
+  vars:
+    tls_cert_dir: "{{ pbs_cert_dir }}"
+    tls_cert_crt: "{{ pbs_cert_crt }}"
+    tls_cert_key: "{{ pbs_cert_key }}"
+    tls_cert_key_mode: "0600"
+
+- name: "PBS | The proxy's certificate and key are the wildcard"
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    remote_src: true
+    owner: root
+    group: backup
+    mode: "0640"
+  loop:
+    - {src: "{{ pbs_cert_crt }}", dest: /etc/proxmox-backup/proxy.pem}
+    - {src: "{{ pbs_cert_key }}", dest: /etc/proxmox-backup/proxy.key}
+  loop_control:
+    label: "{{ item.dest }}"
+  notify: "PBS | Reload the proxy (new certificate)"
+
+- name: "PBS | Apply a new certificate now (the fingerprint is read right after)"
+  ansible.builtin.meta: flush_handlers

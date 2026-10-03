@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# Scheduled play on the controller (roles/controller, controller_jobs). Output: the user journal.
+[Unit]
+Description={{ item.description }}
+After=network-online.target ssh-agent.service
+
+[Service]
+Type=oneshot
+WorkingDirectory={{ controller_repo_dir }}
+Environment=PATH={{ ansible_env.HOME }}/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1 ANSIBLE_FORCE_COLOR=0 ANSIBLE_NOCOLOR=1
+Environment=SSH_AUTH_SOCK={{ controller_agent_socket }}
+ExecStart={{ controller_ansible_bin }} {{ item.playbook }}
+TimeoutStartSec=2h
