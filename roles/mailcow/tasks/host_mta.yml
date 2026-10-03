@@ -1,0 +1,16 @@
+---
+- name: "Mailcow | No mail daemon on the host (the mail ports are the Postfix container's)"
+  ansible.builtin.apt:
+    name: "{{ mailcow_host_mta_absent }}"
+    state: absent
+    purge: true
+    autoremove: true
+
+- name: "Mailcow | Nothing but Docker holds the SMTP port on the host"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: "set -o pipefail; ss -ltnpH 'sport = :25' | grep -v docker-proxy || true"
+  register: mailcow_port25_holders
+  changed_when: false
+  check_mode: false   # read-only probe
+  failed_when: mailcow_port25_holders.stdout | trim | length > 0
