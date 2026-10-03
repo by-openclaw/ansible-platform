@@ -34,7 +34,7 @@ Columns: **Pin** = the role variable's value (pinned = live is the contract); **
 | crowdsec | `crowdsec` / `crowdsec.yml` | `lxc-crowdsec-01` | — | admin | none | none | `—` | pbs | node | Youssef Boujraf | [CrowdSec](https://docs.crowdsec.net/) | no | — | — |
 | k3s | `k3s` / `k3s.yml` | `vm-k3s-01` | k3s.<domain> | admin | forwardauth | none | `v1.37.1+k3s1` | pbs | node, probe | Youssef Boujraf | [k3s](https://docs.k3s.io/) | no | — | — |
 | postgresql | `postgresql` / `postgresql.yml` | `lxc-pgsql-01` | — | admin | none | own | `postgres:17.11` | pbs, pg-dump | node, cadvisor | Youssef Boujraf | [PostgreSQL](https://www.postgresql.org/docs/17/) | no | footprint | — |
-| redis | `redis` / `redis.yml` | `lxc-redis-01` | — | admin | none | none | `redis:8.10.0` | pbs | node, cadvisor | Youssef Boujraf | [Redis](https://redis.io/docs/) | no | — | — |
+| redis | `redis` / `redis.yml` | `lxc-redis-01` | — | admin | none | none | `redis:8.10.2` | pbs | node, cadvisor | Youssef Boujraf | [Redis](https://redis.io/docs/) | no | — | — |
 | step-ca | `step_ca` / `step-ca.yml` | `lxc-stepca-01` | ca.<domain> | admin | none | none | `smallstep/step-ca:0.30.2` | pbs | node, cadvisor | Youssef Boujraf | [step-ca](https://smallstep.com/docs/step-ca/) | no | — | — |
 | adguard | `adguard` / `adguard-prod.yml` | `vm-adguard-01` | — | admin | local | none | `0.107.79` | pbs | node, probe | Youssef Boujraf | [AdGuard Home](https://github.com/AdguardTeam/AdGuardHome/wiki) | no | — | — |
 | warden | `warden` / `warden.yml` | `lxc-warden-01` | — | admin | none | none | `community-ee-minimal:2.20.6-1` | pbs | node | Youssef Boujraf | platform (cold-start reconciler) | no | — | — |
