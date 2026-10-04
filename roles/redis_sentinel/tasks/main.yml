@@ -172,6 +172,13 @@
                 - "/etc/ssl/certs:/etc/ssl/certs:ro"
       tags: [redis_sentinel, container]
 
+    - name: "sentinel | Rotate the Sentinels' password (on request)"
+      ansible.builtin.include_tasks: rotate.yml
+      when:
+        - redis_sentinel_rotate | bool
+        - not ansible_check_mode
+      tags: [redis_sentinel, config]
+
     # Sentinel owns its file once created: what this role declares afterwards is set on the
     # running Sentinel, which records it itself (idempotent — the same commands every run).
     - name: "sentinel | Declared settings on the running Sentinel (check login, detection time)"
