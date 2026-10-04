@@ -36,9 +36,9 @@
     tasks_from: containers
   vars:
     service_scaffold_def:
-      name: authentik-ldap
+      name: "{{ authentik_ldap_container_name }}"
       containers:
-        - name: authentik-ldap
+        - name: "{{ authentik_ldap_container_name }}"
           image: "{{ authentik_ldap_image }}"
           read_only: true                 # SEC-22: it writes to its volumes only
           tmpfs: ["/tmp:rw,size=64m"]
@@ -54,7 +54,7 @@
 
 - name: "ldap | Wait for the outpost to report healthy"
   ansible.builtin.command:
-    cmd: docker inspect --format '{% raw %}{{.State.Health.Status}}{% endraw %}' authentik-ldap
+    cmd: docker inspect --format '{% raw %}{{.State.Health.Status}}{% endraw %}' {{ authentik_ldap_container_name }}
   register: authentik_ldap_health
   until: authentik_ldap_health.stdout | trim == 'healthy'
   retries: 20

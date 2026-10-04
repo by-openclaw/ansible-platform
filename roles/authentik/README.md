@@ -62,6 +62,9 @@ secret is never used by the test.
 
 Signal: `RadiusOutpostDown` (fewer outposts running than instances).
 
+A login takes a few seconds (the flow runs through the outpost; about 6 s measured for the probe):
+set the device's RADIUS timeout to 10 s or more.
+
 A device still needs its own side: the two servers, the shared secret from Vault, and the
 vendor attribute that maps an accepted login to a privilege level (added as a property mapping
 of the provider when the first device is linked).
