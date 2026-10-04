@@ -35,8 +35,14 @@
       failed_when: false
       check_mode: false
 
-    - name: "Offline copies | Refresh (Vault reachable)"
-      when: not (fw_offline_probe.failed | default(false) | bool)
+    # Production only: three of the five files carry no environment in their name (the ISP
+    # allocation, the internal domain, the node's API token). Run with another tier's inventory
+    # this would rewrite PRODUCTION's offline copies from that tier's Vault paths — and a tier
+    # without those paths stopped every firewall play at this step (test tier, 2026-10-04).
+    - name: "Offline copies | Refresh (Vault reachable, production tier)"
+      when:
+        - not (fw_offline_probe.failed | default(false) | bool)
+        - platform_env == 'prod'
       block:
         - name: "Offline copies | Read the sources (Vault, plain reads)"
           ansible.builtin.include_role:
@@ -67,3 +73,8 @@
       ansible.builtin.debug:
         msg: "Vault unreachable (expected mid-rebuild): offline copies not refreshed this run."
       when: fw_offline_probe.failed | default(false) | bool
+
+    - name: "Offline copies | Not the production tier — nothing to refresh"
+      ansible.builtin.debug:
+        msg: "platform_env={{ platform_env }}: the offline copies belong to the production firewall rebuild; left as they are."
+      when: platform_env != 'prod'
