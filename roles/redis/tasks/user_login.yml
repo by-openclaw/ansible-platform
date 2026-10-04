@@ -1,0 +1,20 @@
+---
+# One consumer's login. Separate file: include_role cannot accumulate inside a loop (the role
+# publishes vault_secret_result as a fact, each iteration overwrites the last).
+# Named user_login, not user_secret: the repository ignores every file whose name contains
+# "secret" (only tasks/secrets.yml is re-included), so the first version of this file never
+# reached main and the play failed on its include (2026-10-04).
+- name: "secrets | Login of {{ redis_user.name }} (get-or-create in Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ redis_users_vault_prefix }}/{{ redis_user.name }}"   # pragma: allowlist secret
+    vault_secret_init:
+      username: "{{ redis_user.name }}"
+      password: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+
+- name: "secrets | Keep it: {{ redis_user.name }}"
+  ansible.builtin.set_fact:
+    redis_user_passwords: >-
+      {{ redis_user_passwords | default({}) | combine({redis_user.name: vault_secret_result.password}) }}
+  no_log: true
