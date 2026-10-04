@@ -11,9 +11,10 @@ services/0005 §notifications.md) and points at everything else. Audit: [`audits
    entry in [`inventories/prod/group_vars/all/sso.yml`](../../inventories/prod/group_vars/all/sso.yml)
    (`authentik_oidc_apps` — slug, launch URL, access group, Vault path, redirect URIs;
    `authentik_proxy_apps` — forwardAuth apps). The LDAP outpost serves the directory to tools without
-   OIDC (`roles/authentik/tasks/ldap.yml`). The RADIUS outposts answer administrator logins on
-   network devices (`roles/authentik/tasks/radius.yml`; infrastructure administrators only, second
-   factor required).
+   OIDC (`roles/authentik/tasks/ldap.yml`; provider, bind account and bind flow in one blueprint,
+   `templates/ldap-provider.yaml.j2`; a certificate-verifying bind test on every run). The RADIUS
+   outposts answer administrator logins on network devices (`roles/authentik/tasks/radius.yml`;
+   infrastructure administrators only, second factor required).
 3. **Vault paths:** `secret/prod/authentik/admin` (secret key + bootstrap admin `akadmin`),
    `secret/prod/authentik/db-pgsql` (own PostgreSQL user), `secret/prod/authentik/ldap-outpost`,
    `secret/prod/authentik/radius` (shared secrets, probe password), `secret/prod/authentik/radius-outpost`,

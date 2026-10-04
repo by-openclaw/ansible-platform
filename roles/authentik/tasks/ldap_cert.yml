@@ -100,31 +100,39 @@
     body_format: json
     body: { certificate: "{{ authentik_ldap_cert_pk }}" }
     status_code: [200]
+  register: authentik_ldap_provider_patch
   when:
     - authentik_ldap_provider_get.json.results | length > 0
     - authentik_ldap_provider_get.json.results[0].certificate != authentik_ldap_cert_pk
   no_log: true
   changed_when: true
 
+# The material OR the provider's reference to it: until 2026-10-04 only a changed keypair
+# restarted the outpost, so a re-assigned provider was checked while the outpost still served
+# the previous certificate, and the run failed on the check below.
 - name: "LDAP cert | Restart the LDAP outpost so it serves the new material"
   community.docker.docker_container:
     name: "{{ authentik_ldap_container_name }}"
     state: started
     restart: true
-  when: authentik_ldap_cert_changed | bool
+  when: (authentik_ldap_cert_changed | bool) or (authentik_ldap_provider_patch is changed)
 
 - name: "LDAP cert | Served certificate on :636 matches the wildcard"
   ansible.builtin.shell: |
     set -o pipefail
-    sleep {{ 8 if (authentik_ldap_cert_changed | bool) else 0 }}
     timeout 10 openssl s_client -connect 127.0.0.1:636 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 -enddate
   args: { executable: /bin/bash }
   register: authentik_ldap_cert_served
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  failed_when: >-
-    ((authentik_ldap_cert_served.stdout | regex_search('Fingerprint=([0-9A-Fa-f:]+)', '\\1'))[0] | lower | replace(':', ''))
-    != authentik_ldap_cert_fp
+  # a restarted outpost needs a few seconds before it listens and serves the provider's certificate
+  until: >-
+    authentik_ldap_cert_served.rc == 0 and
+    ((authentik_ldap_cert_served.stdout | regex_search('Fingerprint=([0-9A-Fa-f:]+)', '\\1') | default([''], true))[0] | lower | replace(':', ''))
+    == authentik_ldap_cert_fp
+    or ansible_check_mode
+  retries: 12
+  delay: 5
 
 - name: "LDAP cert | Result"
   ansible.builtin.debug:

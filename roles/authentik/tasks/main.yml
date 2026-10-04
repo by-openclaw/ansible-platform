@@ -20,6 +20,11 @@
   ansible.builtin.import_tasks: containers.yml
   tags: [authentik, container]
 
+- name: The LDAP provider, its application, the bind account and the bind flow (one blueprint)
+  ansible.builtin.import_tasks: ldap_provider.yml
+  when: authentik_ldap_enabled | bool
+  tags: [authentik, ldap]
+
 - name: Run the LDAP outpost (LDAPS for the OPNsense WebGUI)
   ansible.builtin.import_tasks: ldap.yml
   when:
@@ -31,6 +36,13 @@
   ansible.builtin.import_tasks: ldap_cert.yml
   when: inventory_hostname == authentik_first_member
   tags: [authentik, ldap, ldap-cert]
+
+- name: "LDAP bind test — certificate verified, bind with the bind account"
+  ansible.builtin.import_tasks: ldap_bind_test.yml
+  when:
+    - authentik_ldap_enabled | bool
+    - inventory_hostname == authentik_first_member
+  tags: [authentik, ldap, ldap-bind]
 
 - name: Provision per-service OIDC blueprints (SSO)
   ansible.builtin.import_tasks: blueprints.yml

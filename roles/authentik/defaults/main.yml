@@ -127,6 +127,19 @@ authentik_ldap_cert_src_crt: "/etc/lego/cert/certificates/_.{{ platform_domain }
 authentik_ldap_cert_src_key: "/etc/lego/cert/certificates/_.{{ platform_domain }}.key"
 authentik_ldap_container_name: "authentik-ldap"   # outpost container (tasks/ldap.yml)
 
+# The LDAP provider, its application, the bind account and the bind flow: one blueprint
+# (templates/ldap-provider.yaml.j2). Until 2026-10-04 a file of an unmerged branch sat in the
+# blueprint directory and was re-applied every hour: it put the provider back on a self-signed
+# certificate and on the web login flow (second factor — which a bind cannot answer), undoing
+# what tasks/ldap_cert.yml had set.
+authentik_ldap_app_name: "LDAP"
+authentik_ldap_bind_account: "ldapservice"
+authentik_ldap_base_dn: "dc=ldap,{{ platform_domain.split('.') | map('regex_replace', '^', 'dc=') | join(',') }}"
+authentik_ldap_flow: "ldap-authentication"
+authentik_ldap_bind_vault_path: "{{ platform_env }}/authentik/ldap-bind"
+# The name the certificate is checked against by the bind test (the Unbound override of the firewall).
+authentik_ldap_fqdn: "ldap.{{ platform_domain }}"
+
 # ------------------------------------------------------------------------------
 # RADIUS — administrator logins on network devices (switches) against Authentik.
 #

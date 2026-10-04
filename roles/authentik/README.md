@@ -25,6 +25,20 @@ Requires the FW DMZ→SVC `:9000` rule + Unbound override (opnsense catalog).
 
 - `authentik_pg_conn_max_age` (300 s) / `authentik_pg_conn_health_checks`: persistent DB connections — the upstream default closed one after every request (~2 new TLS connections/s here), which is how the shared PostgreSQL ceiling was reached on 2026-09-22.
 
+## LDAP (tools without OIDC — the firewall's WebGUI login)
+
+| What | Where |
+|------|-------|
+| Provider, application, bind account, bind flow | one blueprint, `templates/ldap-provider.yaml.j2` (`tasks/ldap_provider.yml`) |
+| Bind flow | `authentik_ldap_flow`: identification, password, login — no second-factor stage (LDAP cannot carry one), and it runs for an outpost only (`require_outpost`): it cannot be opened in a browser |
+| Certificate | the platform wildcard, assigned through the API and kept in sync (`tasks/ldap_cert.yml`) — never in the blueprint |
+| Outpost | container `authentik-ldap` on the first instance, LDAPS 636 only (`tasks/ldap.yml`) |
+| Test, every run | `tasks/ldap_bind_test.yml`: LDAPS to `authentik_ldap_fqdn`, certificate verified against that name, bind with the bind account |
+
+Authentik re-applies every blueprint file hourly: whatever a blueprint sets wins over an API
+change within the hour. A setting made through the API (the certificate) must therefore not
+appear in any blueprint, and no file may sit in the blueprint directory that this role does not render.
+
 ## RADIUS (administrator logins on network devices)
 
 `tasks/radius.yml`, `templates/radius.yaml.j2`, defaults `authentik_radius_*`. Authentik's own
