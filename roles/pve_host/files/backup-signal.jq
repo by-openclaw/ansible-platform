@@ -1,10 +1,11 @@
 # The backup liveness signal, in the Prometheus text format (roles/pve_host,
 # tasks/backup_signal.yml). Input, slurped in this order: the guests of the cluster,
-# the backup jobs, then the backup content of each target storage.
+# the backup jobs, then the backup content of each target storage ($answers documents in all).
 #   platform_backup_expected               a guest an enabled job covers, per storage
 #   platform_backup_last_timestamp_seconds the start of the newest backup it has there
 #   platform_backup_verify_failed          its snapshots whose verification failed
-.[0] as $guests | .[1] as $jobs | (.[2:] | add // []) as $backups
+(if length != $answers then error("expected \($answers) answers from PVE, got \(length): a read failed") else . end)
+| .[0] as $guests | .[1] as $jobs | (.[2:] | add // []) as $backups
 | def ids: (. // "") | tostring | split(",") | map(select(length > 0));
   ($jobs | map(select((.enabled // 1 | tostring) == "1")) | map(
       . as $j | $guests[] | (.vmid | tostring) as $v
