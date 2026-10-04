@@ -133,7 +133,8 @@ platform_docker_firewall:
   step-ca:
     - {port: 9000, from: [trusted], comment: "step-ca"}
   vault:
-    - {port: 8200, from: [traefik, warden], comment: "Vault API"}
+    - {port: 8200, from: [traefik, warden, vault, monitoring], comment: "Vault API (the edge, the cold-start unsealer, the members: join and request forwarding, the per-member probe)"}
+    - {port: 8201, from: [vault], comment: "Vault cluster port (raft between the members)"}
   vaultwarden:
     - {port: 80, from: [traefik], comment: "Vaultwarden"}
   verdaccio:

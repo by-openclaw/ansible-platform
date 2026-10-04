@@ -105,7 +105,15 @@ http:
     {{ traefik_route_name }}:
       loadBalancer:
         servers:
-          - url: "{{ traefik_route_backend_url }}"
+{% for u in (traefik_route_backend_urls if traefik_route_backend_urls | length > 0 else [traefik_route_backend_url]) %}
+          - url: "{{ u }}"
+{% endfor %}
+{% if traefik_route_health_path | length > 0 %}
+        healthCheck:
+          path: "{{ traefik_route_health_path }}"
+          interval: "{{ traefik_route_health_interval }}"
+          timeout: "{{ traefik_route_health_timeout }}"
+{% endif %}
 {% if traefik_route_backend_insecure_skip_verify | bool or traefik_route_backend_root_ca_file | length > 0 %}
         serversTransport: {{ traefik_route_name }}-transport
 {% endif %}

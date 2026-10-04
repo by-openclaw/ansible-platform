@@ -1,0 +1,14 @@
+---
+# One Vault read of playbooks/ha-drill.yml (include_role in a loop keeps only the last result).
+# Named -login: the repository ignores every file whose name contains "secret".
+- name: "Redis | Read {{ ha_drill_secret.key }}"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ ha_drill_secret.path }}"   # pragma: allowlist secret
+    vault_secret_action: read   # pragma: allowlist secret
+
+- name: "Redis | Keep {{ ha_drill_secret.key }}"
+  ansible.builtin.set_fact:
+    ha_drill_secrets: "{{ ha_drill_secrets | default({}) | combine({ha_drill_secret.key: vault_secret_result.password}) }}"
+  no_log: true
