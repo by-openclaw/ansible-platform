@@ -5,11 +5,12 @@ Authentik **SSO / Identity Provider** on `lxc-authentik-01` (SVC `10.1.3.130`).
 Upgrade = bump `authentik_image` tag.
 
 - depends `base` + `docker`. Includes `postgres_db` to create its own DB+role.
-- **Postgres** over `sslmode=verify-full` (`SSLROOTCERT` = mounted host CA bundle);
-  **Redis** over TLS (`TLS_REQS=required`, password) — both shared cluster svc.
+- **Postgres** over `sslmode=verify-full` (`SSLROOTCERT` = mounted host CA bundle), through
+  the data endpoint. No Redis: since 2025.10 Authentik keeps cache, sessions and tasks in
+  PostgreSQL.
 - Secrets (`AUTHENTIK_SECRET_KEY`, bootstrap admin password + token) generated
   once and stored in the controller secret store (`authentik.json`, `no_log`).
-  DB/Redis passwords loaded from their own secret files.
+  The database password comes from its own Vault document (owner: `postgres_db`).
 - Persistent `media` + `templates` volumes; host CA store mounted; the worker
   gets the Docker socket for outpost management.
 - **Internal-only:** published via `traefik_route` (`authentik.by-research.be`,
