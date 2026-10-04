@@ -2,29 +2,10 @@
 # Cluster-level steps, once (the first member speaks for the cluster). etcdctl runs inside the
 # member's container; the password travels in the task environment (`docker exec -e NAME`
 # forwards it), never on a command line.
-# `endpoint health` needs no credentials: with authentication on, the refused read still proves
-# the member answers and has a leader.
-- name: "cluster | Every member is healthy"
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - "{{ etcd_container_name }}"
-      - etcdctl
-      - "--endpoints={{ etcd_endpoints }}"
-      - "--cacert={{ etcd_ca_bundle }}"
-      - endpoint
-      - health
-  register: etcd_health
-  retries: 20
-  delay: 3
-  until: etcd_health.rc == 0
-  changed_when: false
-  check_mode: false   # read-only probe
-  run_once: true
-
-# With authentication on, an anonymous `auth status` is refused — that refusal IS the answer.
-- name: "cluster | Is authentication enabled?"
+# Is authentication on? Until it is enabled an anonymous `auth status` is answered; afterwards
+# the member refuses it by name ("user name is empty") — that refusal IS the answer. Retried:
+# at a first start the members need a moment to form a quorum.
+- name: "cluster | Is authentication enabled? (anonymous probe)"
   ansible.builtin.command:
     argv:
       - docker
@@ -36,6 +17,11 @@
       - auth
       - status
   register: etcd_auth_probe
+  retries: 20
+  delay: 3
+  until: >-
+    etcd_auth_probe.rc == 0 or
+    'user name is empty' in ((etcd_auth_probe.stderr | default('')) ~ (etcd_auth_probe.stdout | default('')))
   changed_when: false
   failed_when: false
   check_mode: false   # read-only probe
@@ -47,8 +33,36 @@
       {{ etcd_auth_probe.rc != 0 or (etcd_auth_probe.stdout | default('')) is search('Authentication Status: true') }}
   run_once: true
 
+# With authentication on, the health check has to log in too (an anonymous one is refused).
+- name: "cluster | Every member is healthy"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -e
+      - ETCDCTL_USER
+      - -e
+      - ETCDCTL_PASSWORD
+      - "{{ etcd_container_name }}"
+      - etcdctl
+      - "--endpoints={{ etcd_endpoints }}"
+      - "--cacert={{ etcd_ca_bundle }}"
+      - endpoint
+      - health
+  environment:
+    ETCDCTL_USER: "{{ 'root' if etcd_auth_enabled | bool else '' }}"
+    ETCDCTL_PASSWORD: "{{ etcd_root_password if etcd_auth_enabled | bool else '' }}"
+  register: etcd_health
+  retries: 20
+  delay: 3
+  until: etcd_health.rc == 0
+  changed_when: false
+  check_mode: false   # read-only probe
+  run_once: true
+  no_log: true
+
 - name: "cluster | Enable authentication (root user from Vault)"
-  when: not etcd_auth_enabled
+  when: not (etcd_auth_enabled | bool)
   run_once: true
   block:
     - name: "cluster | The root role"

@@ -20,6 +20,7 @@ resolvers platform
     parse-resolv-conf
     hold valid 30s
 
+{% if dbproxy_pg_members | length > 0 %}
 # PostgreSQL: the ONE member whose Patroni answers 200 on /primary. The check speaks HTTPS to
 # the member's REST API and verifies its certificate; the data path is plain TCP (the client's
 # TLS session ends on PostgreSQL).
@@ -33,6 +34,7 @@ listen postgres
     server {{ h }} {{ h }}.{{ platform_domain }}:{{ dbproxy_pg_port }} check-sni {{ h }}.{{ platform_domain }} verifyhost {{ h }}.{{ platform_domain }}
 {% endfor %}
 
+{% endif %}
 {% if dbproxy_redis_members | length > 0 %}
 # Redis: the ONE member that answers role:master. The check speaks TLS, logs in with its own
 # login and reads INFO replication; the data path is plain TCP (the client's TLS session ends

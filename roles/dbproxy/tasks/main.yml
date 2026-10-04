@@ -107,7 +107,7 @@
     (dbproxy_metrics.content | default('')
      | regex_findall('haproxy_server_status\{proxy="postgres",server="[^"]+",state="UP"\} 1') | length) == 1
   check_mode: false   # read-only probe
-  when: not ansible_check_mode
+  when: not ansible_check_mode and dbproxy_pg_members | length > 0
   tags: [dbproxy, verify]
 
 - name: "dbproxy | Exactly one Redis member is routed to (the primary)"
@@ -128,9 +128,12 @@
 - name: "dbproxy | Report"
   ansible.builtin.debug:
     msg: >-
-      endpoint {{ inventory_hostname }}.{{ platform_domain }}:{{ dbproxy_pg_port }} routes to
+      endpoint {{ inventory_hostname }}.{{ platform_domain }} ({{ dbproxy_image }}) —
+      PostgreSQL :{{ dbproxy_pg_port }} routes to
       {{ dbproxy_metrics.content | default('')
-         | regex_findall('haproxy_server_status\{proxy="postgres",server="([^"]+)",state="UP"\} 1') | join(',') }}
-      ({{ dbproxy_image }})
+         | regex_findall('haproxy_server_status\{proxy="postgres",server="([^"]+)",state="UP"\} 1') | join(',') | default('-', true) }};
+      Redis :{{ dbproxy_redis_port }} routes to
+      {{ dbproxy_metrics_redis.content | default('')
+         | regex_findall('haproxy_server_status\{proxy="redis",server="([^"]+)",state="UP"\} 1') | join(',') | default('-', true) }}
   when: not ansible_check_mode
   tags: [dbproxy, verify]
