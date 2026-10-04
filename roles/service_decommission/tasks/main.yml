@@ -112,7 +112,7 @@
         dest: /tmp/.vt
         content: "{{ _vault_root_token }}"
         mode: "0600"
-      delegate_to: "{{ groups['vault'][0] }}"
+      delegate_to: "{{ platform_vault_host | default(groups['vault'][0]) }}"
       no_log: true
 
     - name: "decommission | Stage the archive script on the vault host"
@@ -120,14 +120,14 @@
         src: vault_archive_secret.py
         dest: /tmp/vault_archive_secret.py
         mode: "0644"
-      delegate_to: "{{ groups['vault'][0] }}"
+      delegate_to: "{{ platform_vault_host | default(groups['vault'][0]) }}"
 
     - name: "decommission | Archive the secrets in Vault (-> fabric/archive/)"
       ansible.builtin.command:
         argv: "{{ ['python3', '/tmp/vault_archive_secret.py'] + _svc.secrets }}"
       environment:
         VAULT_ADDR: "{{ platform_vault_addr }}"
-      delegate_to: "{{ groups['vault'][0] }}"
+      delegate_to: "{{ platform_vault_host | default(groups['vault'][0]) }}"
       register: _secarch
       changed_when: "'CHANGED=0' not in _secarch.stdout"
 
@@ -135,7 +135,7 @@
       ansible.builtin.file:
         path: /tmp/.vt
         state: absent
-      delegate_to: "{{ groups['vault'][0] }}"
+      delegate_to: "{{ platform_vault_host | default(groups['vault'][0]) }}"
 
     - name: "decommission | Move the fabric secret files to _stale (controller)"
       ansible.builtin.command:

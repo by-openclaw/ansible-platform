@@ -17,7 +17,12 @@ platform_mail_domain: "by-research.be"
 # source); before it, only the Monit play used platform_mail_domain and every other consumer
 # built alerts@<test zone> — a mailbox that does not exist.
 platform_alert_email: "alerts@{{ platform_mail_domain }}"
-platform_vault_addr: "https://{{ groups['vault'] | first }}.{{ platform_domain }}:8200"
+# The Vault cluster (raft voters). Deploy plays read and write through the container of
+# platform_vault_host: node 1 by default; a standby forwards to the active node, so
+# `-e platform_vault_host=<another member>` keeps deploys working while node 1 is down.
+platform_vault_members: "{{ groups['vault_cluster'] | default(groups['vault']) }}"
+platform_vault_host: "{{ groups['vault'] | first }}"
+platform_vault_addr: "https://{{ platform_vault_host }}.{{ platform_domain }}:8200"
 # Same controller as prod: the Terraform repo and its state-backup Python.
 platform_terraform_repo: "{{ lookup('env', 'HOME') }}/repos/infra-terraform-proxmox"
 # The test tier runs on the prod node, so the node's credentials (the Terraform API

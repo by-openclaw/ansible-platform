@@ -9,39 +9,47 @@
   connection: local
   gather_facts: false
   vars:
-    vault_url: "{{ warden_vault_url }}"
+    vault_urls: {{ warden_vault_urls | to_json }}
     share_file: "{{ warden_share_file }}"
     threshold: {{ warden_key_threshold }}
   tasks:
-    - name: "Wait for the Vault API (any status incl. sealed)"
+    # Every member of the cluster seals when it restarts: each one is asked and unsealed.
+    - name: "Wait for every Vault member's API (any status incl. sealed)"
       ansible.builtin.uri:
-        url: "{{ '{{' }} vault_url {{ '}}' }}/v1/sys/health?sealedcode=503&standbycode=200"
+        url: "{{ '{{' }} item {{ '}}' }}/v1/sys/health?sealedcode=503&standbycode=200"
         status_code: [200, 429, 501, 503]
+      loop: "{{ '{{' }} vault_urls {{ '}}' }}"
       register: health
       retries: 60
       delay: 10
       until: health.status is defined and health.status in [200, 429, 501, 503]
 
-    - name: "Unseal (API body — sealed only)"
+    - name: "Unseal (API body — sealed members only)"
       ansible.builtin.uri:
-        url: "{{ '{{' }} vault_url {{ '}}' }}/v1/sys/unseal"
+        url: "{{ '{{' }} item.0 {{ '}}' }}/v1/sys/unseal"
         method: PUT
         body_format: json
         body:
-          key: "{{ '{{' }} item {{ '}}' }}"
+          key: "{{ '{{' }} item.1 {{ '}}' }}"
         status_code: [200]
-      loop: "{{ '{{' }} (lookup('file', share_file) | from_json).shares[:threshold] {{ '}}' }}"
-      when: health.json.sealed | default(false)
+      loop: >-
+        {{ '{{' }} health.results | selectattr('json', 'defined') | selectattr('json.sealed', 'defined')
+           | selectattr('json.sealed') | selectattr('json.initialized') | map(attribute='item')
+           | product((lookup('file', share_file) | from_json).shares[:threshold]) | list {{ '}}' }}
+      loop_control:
+        label: "{{ '{{' }} item.0 {{ '}}' }}"
       no_log: true
 
-    - name: "Verify unsealed"
+    - name: "Verify every member is unsealed"
       ansible.builtin.uri:
-        url: "{{ '{{' }} vault_url {{ '}}' }}/v1/sys/health"
+        url: "{{ '{{' }} item {{ '}}' }}/v1/sys/health?standbyok=true"
         status_code: [200, 429]
+      loop: "{{ '{{' }} vault_urls {{ '}}' }}"
       register: verify
       retries: 6
       delay: 5
-      until: verify.status in [200, 429]
+      until: verify.status is defined and verify.status in [200, 429]
+      failed_when: false
 
     - name: "Platform probes"
       ansible.builtin.uri:
@@ -62,7 +70,7 @@
     - name: "Summary (journal)"
       ansible.builtin.debug:
         msg: >-
-          WARDEN: vault={{ '{{' }} 'UNSEALED' if verify.status in [200, 429] else 'SEALED' {{ '}}' }}
+          WARDEN: vault members unsealed={{ '{{' }} verify.results | selectattr('status', 'defined') | selectattr('status', 'in', [200, 429]) | list | length {{ '}}' }}/{{ '{{' }} vault_urls | length {{ '}}' }}
           probes={{ '{{' }} probes.results | selectattr('status', 'defined')
             | selectattr('status', 'in', [200, 204, 429]) | list | length {{ '}}' }}/{{ warden_probes | length }}
 

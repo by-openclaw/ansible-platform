@@ -2,6 +2,11 @@
 # Idempotent init + unseal. Unseal keys + root token are stored ONCE in the
 # controller secret store (CRITICAL — never printed). On a container restart
 # Vault seals; this re-unseals from the stored keys.
+#
+# A cluster is initialised ONCE, on its first member, and only when no key is stored yet:
+# a second `operator init` would create another Vault and overwrite the stored keys of the
+# real one. Every other member has no data at its first start: retry_join (vault.hcl) makes
+# it reach a member that answers, and the same keys unseal it — that completes the join.
 - name: "init | Read Vault status (wait for a valid response)"
   ansible.builtin.command:
     cmd: "docker exec {{ vault_container_name }} vault status -format=json"
@@ -17,13 +22,33 @@
   ansible.builtin.set_fact:
     vault_status: "{{ vault_status_raw.stdout | from_json }}"
 
+- name: "init | Are keys stored already?"
+  ansible.builtin.stat:
+    path: "{{ vault_secret_dir }}/{{ vault_init_secret }}"
+  delegate_to: localhost
+  become: false
+  register: vault_init_stored
+  check_mode: false   # read-only probe
+
+- name: "init | An empty first member with stored keys is a lost data directory — restore, never re-initialise"
+  ansible.builtin.assert:
+    that: vault_status.initialized or not vault_init_stored.stat.exists
+    fail_msg: >-
+      {{ inventory_hostname }} reports an uninitialised Vault while keys are stored on the controller:
+      its data is gone. Restore a raft snapshot (roles/vault_backup) — a new init would orphan every secret.
+    quiet: true
+  when: inventory_hostname == vault_first_member
+
 - name: "init | Operator init (first time only)"
   ansible.builtin.command:
     cmd: >-
       docker exec {{ vault_container_name }} vault operator init
       -key-shares={{ vault_key_shares }} -key-threshold={{ vault_key_threshold }} -format=json
   register: vault_init_raw
-  when: not vault_status.initialized
+  when:
+    - not vault_status.initialized
+    - inventory_hostname == vault_first_member
+    - not vault_init_stored.stat.exists
   no_log: true
   changed_when: true
 
@@ -37,7 +62,22 @@
   delegate_to: localhost
   become: false
   no_log: true
-  when: not vault_status.initialized
+  when: vault_init_raw is not skipped
+
+# A joining member: retry_join has reached a member of the cluster once the node reports
+# itself initialised (still sealed — the keys come next).
+- name: "init | The joining member has reached the cluster (retry_join)"
+  ansible.builtin.command:
+    cmd: "docker exec {{ vault_container_name }} vault status -format=json"
+  register: vault_join_raw
+  retries: 40
+  delay: 3
+  until: (vault_join_raw.stdout | trim | length) > 0 and (vault_join_raw.stdout | from_json).initialized
+  changed_when: false
+  failed_when: (vault_join_raw.stdout | trim | length) == 0 or not (vault_join_raw.stdout | from_json).initialized
+  when:
+    - inventory_hostname != vault_first_member
+    - not vault_status.initialized
 
 - name: "init | Load unseal keys from the controller secret"
   ansible.builtin.set_fact:
@@ -59,4 +99,33 @@
   register: vault_final
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  failed_when: (vault_final.stdout | from_json).sealed
+  retries: 20        # a joining member finishes its join after the last key
+  delay: 3
+  until: (vault_final.stdout | trim | length) > 0 and not (vault_final.stdout | from_json).sealed
+  failed_when: (vault_final.stdout | trim | length) == 0 or (vault_final.stdout | from_json).sealed
+
+# Unsealed is not enough for a member of a cluster: it must know the active node.
+- name: "init | The member follows the cluster's active node"
+  ansible.builtin.command:
+    cmd: "docker exec {{ vault_container_name }} vault status -format=json"
+  register: vault_member_state
+  check_mode: false  # read-only probe
+  changed_when: false
+  retries: 20
+  delay: 3
+  until: >-
+    (vault_member_state.stdout | trim | length) > 0 and
+    ((vault_member_state.stdout | from_json).leader_address | default('') | length) > 0
+  failed_when: >-
+    (vault_member_state.stdout | trim | length) == 0 or
+    ((vault_member_state.stdout | from_json).leader_address | default('') | length) == 0
+  when: vault_members | length > 1
+
+- name: "init | Member state"
+  ansible.builtin.debug:
+    msg: >-
+      VAULT {{ inventory_hostname }}: sealed={{ (vault_member_state.stdout | from_json).sealed }}
+      ha_enabled={{ (vault_member_state.stdout | from_json).ha_enabled | default('-') }}
+      active node={{ (vault_member_state.stdout | from_json).leader_address | default('-') }}
+      raft applied index={{ (vault_member_state.stdout | from_json).raft_applied_index | default('-') }}
+  when: vault_member_state is not skipped
