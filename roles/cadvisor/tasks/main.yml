@@ -30,6 +30,10 @@
     restart_policy: unless-stopped
     pull: false
     privileged: false
+    # Read-only root filesystem: cAdvisor keeps its state in memory and only READS the host
+    # mounts below (survey 2026-10-04: no write in the container's own layer on 32 hosts).
+    read_only: true
+    security_opts: ["no-new-privileges:true"]
     devices: "{{ ['/dev/kmsg'] if cadvisor_kmsg.stat.exists else [] }}"
     comparisons:
       devices: strict        # a container left over with a device this host lacks must be recreated, not restarted

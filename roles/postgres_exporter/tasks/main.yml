@@ -49,6 +49,10 @@
     state: started
     restart_policy: unless-stopped
     network_mode: host
+    # Stateless: read-only root filesystem, no capability (it runs as `nobody`).
+    read_only: true
+    cap_drop: [ALL]
+    security_opts: ["no-new-privileges:true"]
     command:
       - "--web.listen-address={{ postgres_exporter_listen_ip }}:{{ postgres_exporter_port }}"
     env:

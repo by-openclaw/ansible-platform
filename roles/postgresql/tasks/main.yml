@@ -5,42 +5,51 @@
 # first run it adopts the standalone data directory and becomes the leader, then the others
 # join as replicas.
 # ==============================================================================
-- name: Retire any native PostgreSQL install
-  ansible.builtin.import_tasks: migrate.yml
-  tags: [postgresql, migrate]
+- name: "PostgreSQL | Remove this member (pg_state=absent, confirmed by name)"
+  ansible.builtin.include_tasks: absent.yml
+  when: pg_state == 'absent'
+  tags: [postgresql]
 
-- name: Distribute the shared wildcard cert (ssl=on)
-  ansible.builtin.import_tasks: tls.yml
-  tags: [postgresql, tls]
+- name: "PostgreSQL | Converge this member"
+  when: pg_state == 'present'
+  tags: [postgresql]
+  block:
+    - name: Retire any native PostgreSQL install
+      ansible.builtin.import_tasks: migrate.yml
+      tags: [postgresql, migrate]
 
-- name: Resolve / generate the cluster secrets
-  ansible.builtin.import_tasks: secrets.yml
-  tags: [postgresql, secrets]
+    - name: Distribute the shared wildcard cert (ssl=on)
+      ansible.builtin.import_tasks: tls.yml
+      tags: [postgresql, tls]
 
-- name: Render config (pg_hba, Patroni)
-  ansible.builtin.import_tasks: config.yml
-  tags: [postgresql, config]
+    - name: Resolve / generate the cluster secrets
+      ansible.builtin.import_tasks: secrets.yml
+      tags: [postgresql, secrets]
 
-- name: "PostgreSQL | Platform image (server + Patroni)"
-  ansible.builtin.import_tasks: image.yml
-  tags: [postgresql, image]
+    - name: Render config (pg_hba, Patroni)
+      ansible.builtin.import_tasks: config.yml
+      tags: [postgresql, config]
 
-- name: Run the member
-  ansible.builtin.import_tasks: container.yml
-  tags: [postgresql, container]
+    - name: "PostgreSQL | Platform image (server + Patroni)"
+      ansible.builtin.import_tasks: image.yml
+      tags: [postgresql, image]
 
-- name: "PostgreSQL | Cluster state, replication login, dynamic configuration"
-  ansible.builtin.import_tasks: cluster.yml
-  tags: [postgresql, cluster]
+    - name: Run the member
+      ansible.builtin.import_tasks: container.yml
+      tags: [postgresql, container]
 
-- name: "PostgreSQL | Owner-only database access"
-  ansible.builtin.import_tasks: access.yml
-  when: inventory_hostname == pg_leader
-  tags: [postgresql, access]
+    - name: "PostgreSQL | Cluster state, replication login, dynamic configuration"
+      ansible.builtin.import_tasks: cluster.yml
+      tags: [postgresql, cluster]
 
-# App databases + roles are created by each app's own playbook (the reusable
-# `postgres_db` role) — not here (separation of concerns).
+    - name: "PostgreSQL | Owner-only database access"
+      ansible.builtin.import_tasks: access.yml
+      when: inventory_hostname == pg_leader
+      tags: [postgresql, access]
 
-- name: Install logical backup automation
-  ansible.builtin.import_tasks: backup.yml
-  tags: [postgresql, backup]
+    # App databases + roles are created by each app's own playbook (the reusable
+    # `postgres_db` role) — not here (separation of concerns).
+
+    - name: Install logical backup automation
+      ansible.builtin.import_tasks: backup.yml
+      tags: [postgresql, backup]

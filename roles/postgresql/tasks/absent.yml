@@ -1,0 +1,30 @@
+---
+# Teardown of ONE member: its containers, its data volume, its configuration. For a rehearsal
+# member, or a member that is rebuilt from the leader (it rejoins empty and copies the data).
+# Never the way to stop the cluster — and refused unless the host is named a second time.
+- name: "absent | The member is named explicitly (pg_absent_confirm = this host)"
+  ansible.builtin.assert:
+    that: pg_absent_confirm | default('') == inventory_hostname
+    fail_msg: >-
+      removing {{ inventory_hostname }}'s PostgreSQL data needs
+      -e pg_state=absent -e pg_absent_confirm={{ inventory_hostname }} (one member per run)
+    quiet: true
+
+- name: "absent | Containers"
+  community.docker.docker_container:
+    name: "{{ item }}"
+    state: absent
+    stop_timeout: "{{ pg_stop_timeout }}"
+  loop:
+    - "{{ postgres_exporter_container_name | default('postgres-exporter') }}"
+    - "{{ pg_container_name }}"
+
+- name: "absent | Data volume"
+  community.docker.docker_volume:
+    name: "{{ pg_data_volume }}"
+    state: absent
+
+- name: "absent | Patroni configuration (credentials)"
+  ansible.builtin.file:
+    path: "{{ pg_patroni_conf_host_dir }}"
+    state: absent

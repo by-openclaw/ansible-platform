@@ -53,6 +53,11 @@
       containers:
         - name: step-ca
           image: "{{ step_ca_image }}"
+          # Read-only root filesystem: the CA's state is its volume. The capabilities stay: the
+          # image's binary carries a file capability, and without it in the bounding set the
+          # kernel refuses to start it ("Operation not permitted", 2026-10-04).
+          read_only: true
+          tmpfs: ["/tmp:rw,size=16m"]
           log_driver: journald
           published:
             - "{{ step_ca_listen_ip }}:{{ step_ca_port }}:9000"
