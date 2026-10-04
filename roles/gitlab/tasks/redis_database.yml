@@ -1,0 +1,31 @@
+---
+# GitLab's keys move to its own Redis database (platform_redis_databases · services/0004
+# SVC-27). Until 2026-10-04 GitLab used the database it shared with another consumer
+# (gitlab_redis_previous_db; that consumer's keys start with gitlab_redis_foreign_prefixes).
+# Included once, while the live connection does not name the database yet: GitLab's processes stop,
+# every key that is not the other consumer's moves in one atomic script — sessions, queues
+# and scheduled jobs are kept — and the reconfigure that follows writes the new connection.
+- name: "GitLab | Stop its processes (its keys move to its own Redis database)"
+  ansible.builtin.command:
+    argv: "{{ gitlab_exec + [gitlab_container, 'gitlab-ctl', 'stop'] }}"
+  changed_when: true
+
+- name: "GitLab | Move its keys to database {{ gitlab_redis_db }}"
+  ansible.builtin.command:
+    argv: >-
+      {{ gitlab_exec + ['-e', 'REDISCLI_AUTH', gitlab_container, gitlab_redis_cli,
+                        '--no-auth-warning', '--tls', '--cacert', gitlab_redis_cacert,
+                        '-h', gitlab_redis_host, '-p', gitlab_redis_port | string,
+                        '--user', gitlab_redis_user, '-n', gitlab_redis_previous_db | string,
+                        'EVAL', gitlab_redis_move_script, '0', gitlab_redis_db | string]
+         + gitlab_redis_foreign_prefixes }}
+  environment:
+    REDISCLI_AUTH: "{{ gitlab_redis_password }}"
+  register: gitlab_redis_moved
+  changed_when: gitlab_redis_moved.stdout | trim | int > 0
+  failed_when: gitlab_redis_moved.rc != 0 or gitlab_redis_moved.stdout | trim is not match('^[0-9]+$')
+  no_log: true
+
+- name: "GitLab | Keys moved"
+  ansible.builtin.debug:
+    msg: "{{ gitlab_redis_moved.stdout | trim }} keys moved from Redis database {{ gitlab_redis_previous_db }} to {{ gitlab_redis_db }}"
