@@ -123,9 +123,12 @@ platform_docker_firewall:
     - {port: 2380, from: [postgresql], comment: "etcd peers"}
   dbproxy:
     - {port: 5432, from: ["db:shared-pg"], comment: "PostgreSQL endpoint (routes to the leader)"}
+    - {port: 6379, from: [gitlab, netbox, nextcloud], comment: "Redis endpoint (routes to the primary)"}
+    - {port: 26379, from: [redis], comment: "Redis Sentinel (the third Sentinel)"}
     - {port: 8405, from: [monitoring], comment: "HAProxy metrics (Prometheus)"}
   redis:
-    - {port: 6379, from: [authentik, gitlab, netbox, nextcloud], comment: "Redis"}
+    - {port: 6379, from: [gitlab, netbox, nextcloud, redis, dbproxy], comment: "Redis (consumers, replication between the members, the Sentinels, the endpoint)"}
+    - {port: 26379, from: [redis, dbproxy], comment: "Redis Sentinel (the three Sentinels talk to each other)"}
   # Every host fetches the CA roots straight from step-ca (roles/platform_ca).
   step-ca:
     - {port: 9000, from: [trusted], comment: "step-ca"}

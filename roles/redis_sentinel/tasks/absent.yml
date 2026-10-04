@@ -1,0 +1,12 @@
+---
+# Teardown of this Sentinel: its container and the state it recorded. The remaining Sentinels
+# forget it with `SENTINEL RESET <name>` (they rediscover the ones that still run).
+- name: "absent | Container"
+  community.docker.docker_container:
+    name: "{{ redis_sentinel_container_name }}"
+    state: absent
+
+- name: "absent | Recorded state"
+  ansible.builtin.file:
+    path: "{{ redis_sentinel_state_host_dir }}"
+    state: absent

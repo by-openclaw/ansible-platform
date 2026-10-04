@@ -1,7 +1,9 @@
 ---
 # The container through the scaffold's containers step (the one owner of "run a pinned
 # container"); Redis has no HTTP route, so only that step of the contract applies.
-- name: "container | Redis (roles/service_scaffold containers)"
+# Runs as the redis uid from the start (the data volume and the certificate are already owned
+# by it): read-only root filesystem, no capability.
+- name: "container | Redis member (roles/service_scaffold containers)"
   ansible.builtin.include_role:
     name: service_scaffold
     tasks_from: containers
@@ -11,7 +13,13 @@
       containers:
         - name: "{{ redis_container_name }}"
           image: "{{ redis_image }}"
-          command: "redis-server {{ redis_conf_file }}"
+          user: "{{ redis_uid }}:{{ redis_uid }}"
+          command: ["redis-server", "{{ redis_runtime_file }}"]
+          restart: "{{ 'newer' in (redis_conf_age.stdout | default('')) }}"   # config.yml: the file is newer than the process
+          read_only: true
+          tmpfs: ["/tmp:rw,size=16m"]
+          cap_drop: [ALL]
+          security_opts: ["no-new-privileges:true"]
           published:
             - "{{ redis_listen_ip }}:{{ redis_port }}:6379"
             - "[{{ redis_listen_ip6 }}]:{{ redis_port }}:6379"
@@ -20,6 +28,7 @@
           volumes:
             - "{{ redis_data_volume }}:/data"
             - "{{ redis_conf_host_dir }}:{{ redis_conf_host_dir }}:ro"
+            - "{{ redis_runtime_host_dir }}:{{ redis_runtime_host_dir }}"
             - "{{ redis_cert_host_dir }}:{{ redis_cert_host_dir }}:ro"
             # Host CA store (base installs ca-certificates) — the stock redis image
             # ships none, so this lets the in-container redis-cli verify with --cacert
@@ -28,11 +37,23 @@
 
 - name: "container | Wait for Redis to accept verified TLS connections"
   ansible.builtin.command:
-    cmd: >-
-      docker exec {{ redis_container_name }} redis-cli --tls
-      --cacert /etc/ssl/certs/ca-certificates.crt
-      -h {{ inventory_hostname }}.{{ platform_domain }} -p {{ redis_tls_port }}
-      -a {{ redis_requirepass }} ping
+    argv:
+      - docker
+      - exec
+      - -e
+      - REDISCLI_AUTH
+      - "{{ redis_container_name }}"
+      - redis-cli
+      - --tls
+      - --cacert
+      - /etc/ssl/certs/ca-certificates.crt
+      - -h
+      - "{{ redis_fqdn }}"
+      - -p
+      - "{{ redis_tls_port | string }}"
+      - ping
+  environment:
+    REDISCLI_AUTH: "{{ redis_requirepass }}"
   register: redis_ping
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   retries: 15
@@ -40,3 +61,41 @@
   until: redis_ping.rc == 0 and 'PONG' in redis_ping.stdout
   changed_when: false
   no_log: true
+
+# A replica is only useful when its link to the primary is up.
+- name: "container | Role and replication link"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -e
+      - REDISCLI_AUTH
+      - "{{ redis_container_name }}"
+      - redis-cli
+      - --tls
+      - --cacert
+      - /etc/ssl/certs/ca-certificates.crt
+      - -h
+      - "{{ redis_fqdn }}"
+      - -p
+      - "{{ redis_tls_port | string }}"
+      - info
+      - replication
+  environment:
+    REDISCLI_AUTH: "{{ redis_requirepass }}"
+  register: redis_role_after
+  check_mode: false   # read-only probe
+  retries: 30
+  delay: 4
+  until: >-
+    redis_role_after.rc == 0 and
+    ('role:master' in redis_role_after.stdout or 'master_link_status:up' in redis_role_after.stdout)
+  changed_when: false
+  no_log: true
+
+- name: "container | Report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ 'primary, ' ~ (redis_role_after.stdout | regex_search('connected_slaves:(\d+)', '\1') | first) ~ ' replica(s) attached'
+         if 'role:master' in redis_role_after.stdout
+         else 'replica of ' ~ (redis_role_after.stdout | regex_search('master_host:(\S+)', '\1') | first | regex_replace('\.' ~ (platform_domain | regex_escape) ~ '$', '')) ~ ', link up' }}

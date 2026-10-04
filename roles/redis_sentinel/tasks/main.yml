@@ -1,0 +1,201 @@
+---
+# ==============================================================================
+# Role: redis_sentinel (Docker)
+# ==============================================================================
+- name: "Sentinel | Remove (redis_sentinel_state=absent)"
+  ansible.builtin.include_tasks: absent.yml
+  when: redis_sentinel_state == 'absent'
+
+- name: "Sentinel | Converge"
+  when: redis_sentinel_state == 'present'
+  block:
+    - name: "sentinel | Distribute the wildcard cert (owned by the redis uid)"
+      ansible.builtin.include_role:
+        name: tls_cert
+      vars:
+        tls_cert_dir: "{{ redis_sentinel_cert_host_dir }}"
+        tls_cert_crt: "{{ redis_sentinel_tls_cert }}"
+        tls_cert_key: "{{ redis_sentinel_tls_key }}"
+        tls_cert_owner: "{{ redis_sentinel_uid }}"
+        tls_cert_group: "{{ redis_sentinel_uid }}"
+        tls_cert_key_mode: "0600"
+        tls_cert_crt_mode: "0644"
+      tags: [redis_sentinel, tls]
+
+    - name: "sentinel | The members' admin password (read from Vault; owner: roles/redis)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ redis_sentinel_redis_vault_path }}"
+        vault_secret_action: read   # pragma: allowlist secret
+      tags: [redis_sentinel, secrets]
+
+    - name: "sentinel | Bind it"
+      ansible.builtin.set_fact:
+        redis_sentinel_redis_password: "{{ vault_secret_result.password }}"
+      no_log: true
+      tags: [redis_sentinel, secrets]
+
+    - name: "sentinel | The Sentinels' own password (get-or-create in Vault)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ redis_sentinel_vault_path }}"
+        vault_secret_init:
+          password: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+      tags: [redis_sentinel, secrets]
+
+    - name: "sentinel | Bind it"
+      ansible.builtin.set_fact:
+        redis_sentinel_password: "{{ vault_secret_result.password }}"
+      no_log: true
+      tags: [redis_sentinel, secrets]
+
+    - name: "sentinel | State directory (Sentinel rewrites its configuration there)"
+      ansible.builtin.file:
+        path: "{{ redis_sentinel_state_host_dir }}"
+        state: directory
+        owner: "{{ redis_sentinel_uid }}"
+        group: "{{ redis_sentinel_uid }}"
+        mode: "0700"
+      tags: [redis_sentinel, config]
+
+    - name: "sentinel | Is there a configuration already?"
+      ansible.builtin.stat:
+        path: "{{ redis_sentinel_conf_file }}"
+      register: redis_sentinel_conf
+      tags: [redis_sentinel, config]
+
+    # Only for a NEW configuration: which member is the primary right now? Asked from the members
+    # themselves (a play host that is not a member asks them too); the first one that says master.
+    - name: "sentinel | Which member is the primary now"
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - -e
+          - REDISCLI_AUTH
+          - redis
+          - redis-cli
+          - --tls
+          - --cacert
+          - /etc/ssl/certs/ca-certificates.crt
+          - -h
+          - "{{ redis_sentinel_member }}.{{ platform_domain }}"
+          - -p
+          - "{{ redis_sentinel_redis_port | string }}"
+          - info
+          - replication
+      environment:
+        REDISCLI_AUTH: "{{ redis_sentinel_redis_password }}"
+      delegate_to: "{{ redis_sentinel_member }}"
+      throttle: 1   # every Sentinel host asks the SAME members: one at a time (parallel first connections to one host raced, 2026-10-04)
+      register: redis_sentinel_roles
+      changed_when: false
+      failed_when: false
+      check_mode: false   # read-only probe
+      no_log: true
+      loop: "{{ redis_sentinel_members }}"
+      loop_control:
+        loop_var: redis_sentinel_member
+      when: not redis_sentinel_conf.stat.exists or redis_sentinel_reset | bool
+      tags: [redis_sentinel, config]
+
+    - name: "sentinel | Exactly one member answers as primary"
+      ansible.builtin.assert:
+        that: _primaries | length == 1
+        fail_msg: "expected one Redis primary among {{ redis_sentinel_members }}, found {{ _primaries }}"
+        quiet: true
+      vars:
+        _primaries: >-
+          {{ redis_sentinel_roles.results | selectattr('stdout', 'defined') | selectattr('stdout', 'search', 'role:master')
+             | map(attribute='redis_sentinel_member') | list }}
+      when: not redis_sentinel_conf.stat.exists or redis_sentinel_reset | bool
+      tags: [redis_sentinel, config]
+
+    - name: "sentinel | Write the initial configuration (only when absent or on reset)"
+      ansible.builtin.template:
+        src: sentinel.conf.j2
+        dest: "{{ redis_sentinel_conf_file }}"
+        owner: "{{ redis_sentinel_uid }}"
+        group: "{{ redis_sentinel_uid }}"
+        mode: "0600"
+      vars:
+        redis_sentinel_primary: >-
+          {{ redis_sentinel_roles.results | selectattr('stdout', 'defined') | selectattr('stdout', 'search', 'role:master')
+             | map(attribute='redis_sentinel_member') | first }}
+      no_log: true
+      register: redis_sentinel_conf_written
+      when: not redis_sentinel_conf.stat.exists or redis_sentinel_reset | bool
+      tags: [redis_sentinel, config]
+
+    # The container through the scaffold's containers step. Same pinned image as the members,
+    # started as the redis uid: read-only root filesystem, no capability.
+    - name: "sentinel | Container (roles/service_scaffold containers)"
+      ansible.builtin.include_role:
+        name: service_scaffold
+        tasks_from: containers
+      vars:
+        service_scaffold_def:
+          name: redis-sentinel
+          containers:
+            - name: "{{ redis_sentinel_container_name }}"
+              image: "{{ redis_sentinel_image }}"
+              user: "{{ redis_sentinel_uid }}:{{ redis_sentinel_uid }}"
+              command: ["redis-sentinel", "{{ redis_sentinel_conf_file }}"]
+              restart: "{{ redis_sentinel_conf_written is changed }}"
+              read_only: true
+              tmpfs: ["/tmp:rw,size=16m"]
+              cap_drop: [ALL]
+              security_opts: ["no-new-privileges:true"]
+              published:
+                - "{{ redis_sentinel_listen_ip }}:{{ redis_sentinel_port }}:{{ redis_sentinel_port }}"
+                - "[{{ redis_sentinel_listen_ip6 }}]:{{ redis_sentinel_port }}:{{ redis_sentinel_port }}"
+                - "127.0.0.1:{{ redis_sentinel_port }}:{{ redis_sentinel_port }}"
+              volumes:
+                - "{{ redis_sentinel_state_host_dir }}:{{ redis_sentinel_state_host_dir }}"
+                - "{{ redis_sentinel_cert_host_dir }}:{{ redis_sentinel_cert_host_dir }}:ro"
+                - "/etc/ssl/certs:/etc/ssl/certs:ro"
+      tags: [redis_sentinel, container]
+
+    # What this Sentinel sees: the primary, how many replicas, how many other Sentinels.
+    - name: "sentinel | This Sentinel's view of the pair"
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - -e
+          - REDISCLI_AUTH
+          - "{{ redis_sentinel_container_name }}"
+          - redis-cli
+          - --tls
+          - --cacert
+          - /etc/ssl/certs/ca-certificates.crt
+          - -h
+          - "{{ redis_sentinel_fqdn }}"
+          - -p
+          - "{{ redis_sentinel_port | string }}"
+          - sentinel
+          - master
+          - "{{ redis_sentinel_master_name }}"
+      environment:
+        REDISCLI_AUTH: "{{ redis_sentinel_password }}"
+      register: redis_sentinel_view
+      check_mode: false   # read-only probe
+      retries: 15
+      delay: 4
+      until: redis_sentinel_view.rc == 0 and 'num-slaves' in redis_sentinel_view.stdout
+      changed_when: false
+      no_log: true
+      tags: [redis_sentinel, verify]
+
+    - name: "sentinel | Report"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} sees primary {{ _v[_v.index('name') + 1] }} at
+          {{ _v[_v.index('ip') + 1] | regex_replace('\.' ~ (platform_domain | regex_escape) ~ '$', '') }},
+          flags {{ _v[_v.index('flags') + 1] }}, replicas {{ _v[_v.index('num-slaves') + 1] }},
+          other Sentinels {{ _v[_v.index('num-other-sentinels') + 1] }}, quorum {{ _v[_v.index('quorum') + 1] }}
+      vars:
+        _v: "{{ redis_sentinel_view.stdout_lines }}"
+      tags: [redis_sentinel, verify]

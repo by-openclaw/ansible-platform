@@ -1,7 +1,8 @@
 ---
 # ==============================================================================
 # Role: dbproxy — the data endpoint (services/0004): ONE address every consumer connects to,
-# routed to the PostgreSQL member Patroni reports as leader. TCP routing only — no pooling, no
+# routed to the PostgreSQL member Patroni reports as leader and to the Redis member that
+# reports itself master. TCP routing only — no pooling, no
 # TLS termination: the client's TLS session ends on PostgreSQL itself, whose wildcard
 # certificate is valid for the endpoint's name (sslmode=verify-full unchanged).
 # What it costs: PostgreSQL sees the endpoint's address as the client's; the connection log
@@ -28,6 +29,18 @@ dbproxy_check_rise: 2
 dbproxy_idle_timeout: "12h"
 dbproxy_connect_timeout: "5s"
 dbproxy_maxconn: 1000
+
+# --- Redis ----------------------------------------------------------------------------------
+# The member that answers `role:master`. The check logs in with its own login (it may run INFO
+# and PING, nothing else). A member that returns still believing it is the primary must not be
+# routed to before Sentinel has demoted it: it is taken out fast (2 checks) and taken back
+# slowly (6 checks = 18 s, longer than Sentinel needs).
+dbproxy_redis_members: "{{ platform_redis_members | default([]) }}"
+dbproxy_redis_port: 6379
+dbproxy_redis_check_user: "healthcheck"
+dbproxy_redis_check_vault_path: "{{ platform_redis_users_vault_prefix | default('') }}/{{ dbproxy_redis_check_user }}"
+dbproxy_redis_check_fall: 2
+dbproxy_redis_check_rise: 6
 
 # --- Metrics (HAProxy's built-in Prometheus exporter) -----------------------------------------
 dbproxy_metrics_port: 8405

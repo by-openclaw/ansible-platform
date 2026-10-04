@@ -1,0 +1,21 @@
+# Created by Ansible (roles/redis_sentinel) when absent — then OWNED by Sentinel, which records
+# its state below. Do not edit by hand; re-create with -e redis_sentinel_reset=true.
+port 0
+tls-port {{ redis_sentinel_port }}
+tls-cert-file {{ redis_sentinel_tls_cert }}
+tls-key-file {{ redis_sentinel_tls_key }}
+tls-ca-cert-file /etc/ssl/certs/ca-certificates.crt
+tls-auth-clients no
+tls-replication yes
+dir /tmp
+requirepass {{ redis_sentinel_password }}
+sentinel sentinel-pass {{ redis_sentinel_password }}
+sentinel resolve-hostnames yes
+sentinel announce-hostnames yes
+sentinel announce-ip {{ redis_sentinel_fqdn }}
+sentinel announce-port {{ redis_sentinel_port }}
+sentinel monitor {{ redis_sentinel_master_name }} {{ redis_sentinel_primary }}.{{ platform_domain }} {{ redis_sentinel_redis_port }} {{ redis_sentinel_quorum }}
+sentinel auth-pass {{ redis_sentinel_master_name }} {{ redis_sentinel_redis_password }}
+sentinel down-after-milliseconds {{ redis_sentinel_master_name }} {{ redis_sentinel_down_after_ms }}
+sentinel failover-timeout {{ redis_sentinel_master_name }} {{ redis_sentinel_failover_timeout_ms }}
+sentinel parallel-syncs {{ redis_sentinel_master_name }} 1
