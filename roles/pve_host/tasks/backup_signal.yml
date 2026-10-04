@@ -1,0 +1,78 @@
+---
+# The backup liveness signal (infra/0008 · INF-45). A timer on the node asks PVE for
+# the guests, the backup jobs and the backup content of every job's target storage,
+# and writes — where node_exporter's textfile collector reads it — which guest each
+# job covers, when its newest backup started and how many of its snapshots failed
+# verification. roles/prometheus raises the Backup* alerts from those series, so a
+# missed or failed backup reaches the alert channel instead of a mailbox.
+# No script: one pipeline through a jq filter, then an atomic rename (roles/host_job).
+- name: "PVE host | jq (the filter of the backup signal)"
+  ansible.builtin.apt:
+    name: jq
+    state: present
+
+- name: "PVE host | Backup signal filter directory"
+  ansible.builtin.file:
+    path: "{{ pve_host_backup_signal_filter | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "PVE host | Backup signal filter"
+  ansible.builtin.copy:
+    src: backup-signal.jq
+    dest: "{{ pve_host_backup_signal_filter }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: "PVE host | Backup jobs (the storages the signal reads)"
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/backup, --output-format, json]
+  register: pve_host_backup_signal_jobs
+  changed_when: false
+  check_mode: false   # read-only probe
+
+# One `pvesh get …/content` per target storage: the storages of the live jobs, plus the
+# NAS job's (declared here, so present even before its first converge).
+- name: "PVE host | Backup content reads of the signal"
+  ansible.builtin.set_fact:
+    pve_host_backup_signal_reads: >-
+      {{ ((pve_host_backup_signal_jobs.stdout | from_json | map(attribute='storage') | list)
+          + [pve_host_nfs_backup_job.storage]) | unique | sort
+         | map('regex_replace', '^(.*)$',
+               'pvesh get /nodes/' ~ pve_host_node ~ '/storage/\\1/content --content backup --output-format json;')
+         | join(' ') }}
+
+- name: "PVE host | Backup signal timer (roles/host_job)"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: platform-backup-signal
+    host_job_description: "Backup liveness signal for Prometheus (newest backup and failed verifications per guest)"
+    host_job_on_calendar: ""
+    host_job_on_boot_sec: "120"
+    host_job_on_unit_active_sec: "{{ pve_host_backup_signal_interval }}"
+    host_job_timeout: "10min"
+    host_job_exec:
+      - >-
+        /bin/sh -c '{ pvesh get /cluster/resources --type vm --output-format json;
+        pvesh get /cluster/backup --output-format json; {{ pve_host_backup_signal_reads }} }
+        | jq -rs -f {{ pve_host_backup_signal_filter }} > {{ pve_host_backup_signal_file }}.tmp'
+      - "/bin/mv {{ pve_host_backup_signal_file }}.tmp {{ pve_host_backup_signal_file }}"
+
+- name: "PVE host | Write the signal now"
+  ansible.builtin.systemd_service:
+    name: platform-backup-signal.service
+    state: started
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: "PVE host | The signal as written"
+  ansible.builtin.command:
+    argv: [grep, -c, "^platform_backup_expected", "{{ pve_host_backup_signal_file }}"]
+  register: pve_host_backup_signal_count
+  changed_when: false
+  failed_when: pve_host_backup_signal_count.stdout | int < 1
+  when: not ansible_check_mode

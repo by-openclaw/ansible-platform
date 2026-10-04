@@ -148,6 +148,51 @@ groups:
           description: "The exporter cannot reach the cluster: either PostgreSQL is down, or the exporter's own credential stopped working. Every service with a database is affected."
           runbook: "Check the container on the database host, then the exporter's credential in Vault ({{ platform_env }}/postgresql/exporter)."
 
+  - name: platform-backup
+    rules:
+      # The series come from the node (roles/pve_host, tasks/backup_signal.yml): one per
+      # guest and per backup job's target storage.
+      - alert: BackupStale
+        expr: ((time() - platform_backup_last_timestamp_seconds) * on(storage, vmid) group_left(name) platform_backup_expected) > {{ prometheus_backup_max_age_hours }} * 3600
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "No backup of {{ '{{' }} $labels.name {{ '}}' }} on {{ '{{' }} $labels.storage {{ '}}' }} for {{ '{{' }} $value | humanizeDuration {{ '}}' }}"
+          description: "The newest backup of guest {{ '{{' }} $labels.name {{ '}}' }} (VMID {{ '{{' }} $labels.vmid {{ '}}' }}) on storage {{ '{{' }} $labels.storage {{ '}}' }} is older than {{ prometheus_backup_max_age_hours }} h: last night's job skipped it or failed on it."
+          runbook: "On the node: the job log in the task list (vzdump) names the error for that VMID; fix it, then run the job for that guest. docs/backup.md lists the usual causes."
+      - alert: BackupMissing
+        expr: platform_backup_expected unless on(storage, vmid) platform_backup_last_timestamp_seconds
+        for: {{ prometheus_backup_max_age_hours }}h
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ '{{' }} $labels.name {{ '}}' }} has no backup at all on {{ '{{' }} $labels.storage {{ '}}' }}"
+          description: "Guest {{ '{{' }} $labels.name {{ '}}' }} (VMID {{ '{{' }} $labels.vmid {{ '}}' }}) is covered by the backup job of storage {{ '{{' }} $labels.storage {{ '}}' }} and has had no backup there for more than {{ prometheus_backup_max_age_hours }} h."
+          runbook: "On the node: check the job log for that VMID and the storage state (pvesm status); a new guest gets its first backup with the next nightly job."
+      - alert: BackupVerifyFailed
+        expr: platform_backup_verify_failed > 0
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ '{{' }} $value {{ '}}' }} backup snapshot(s) of VMID {{ '{{' }} $labels.vmid {{ '}}' }} failed verification on {{ '{{' }} $labels.storage {{ '}}' }}"
+          description: "PBS read back a snapshot of VMID {{ '{{' }} $labels.vmid {{ '}}' }} and found chunks missing or corrupt: that snapshot cannot be trusted for a restore. The other copy (NAS) is not affected."
+          runbook: "playbooks/pbs-reverify.yml re-verifies and reports the snapshot; a snapshot that fails again is replaced by the next backup and then removed. No S3 or edge restart during a verification."
+      - alert: BackupSignalStale
+        expr: (time() - node_textfile_mtime_seconds{file=~".*platform_backup\\.prom"} > 3600) or absent(platform_backup_expected)
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "The backup signal is not refreshed — backup alerts are blind"
+          description: "The node has not written the backup series for over an hour (timer platform-backup-signal), so BackupStale, BackupMissing and BackupVerifyFailed cannot fire."
+          runbook: "On the node: systemctl status platform-backup-signal.service, then its journal; a backup storage that does not answer (NAS mount, PBS) is the usual cause."
+      - alert: OffsiteReplicaDown
+        expr: absent(container_last_seen{name="{{ prometheus_offsite_replica_container }}"}) or (time() - container_last_seen{name="{{ prometheus_offsite_replica_container }}"} > 600)
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "The offsite copy is not running"
+          description: "The container that replicates the object store to the offsite bucket is not running: the third copy of the backups stops advancing."
+          runbook: "On the object store host: docker logs of the replication container, then playbooks/seaweedfs.yml."
+
   - name: platform-containers
     rules:
       - alert: ContainerRestarting
