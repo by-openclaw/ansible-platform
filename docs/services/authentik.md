@@ -57,5 +57,5 @@ Two instances — `lxc-authentik-01` and `lxc-authentik-02` — each a server an
 2. **forwardAuth:** the middleware takes one address — a loopback entry point of the edge (`authgate`), whose router balances the auth requests over the instances that are ready. The forwarded headers of the edge's own call are trusted on that entry point only.
 3. **Once for the deployment (first instance only):** the database, the LDAP outpost and its certificate (LDAPS for the firewall's WebGUI stays on `lxc-authentik-01`), the API calls that follow the blueprints, the edge route. Both workers apply the blueprints (idempotent).
 4. **Not shared:** the media volume (icons uploaded through the UI) — everything the platform sets comes from blueprints and URLs.
-5. **Signals:** `ProbeFailed` on `authentik.<domain>` (no instance ready behind the edge) and on each instance's own readiness URL.
+5. **Signals:** `ProbeFailed` on `authentik.<domain>` (no instance ready behind the edge) and on each instance's own listener (TCP 9000: the HTTP probe requires TLS, which ends at the edge).
 6. **Rolling change:** `playbooks/authentik.yml` runs one instance at a time (`serial: 1`): a blueprint or version change restarts one while the other serves.

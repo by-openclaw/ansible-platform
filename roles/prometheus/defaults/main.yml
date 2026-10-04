@@ -147,13 +147,12 @@ prometheus_blackbox_http_extra:
   - "https://{{ platform_service_fqdns.collab }}/healthcheck"
   - "https://{{ platform_service_fqdns['step-ca'] }}/health"
 # Every member of a clustered service on its own address (the route only says that ONE member
-# answers): a Vault node answers 200 here when it is unsealed, active or standby; an Authentik
-# instance when it is ready.
+# answers): a Vault node answers 200 here when it is unsealed, active or standby. (The Authentik
+# instances speak plain HTTP behind the edge — the HTTP probe requires TLS — so each instance
+# is a TCP target below.)
 prometheus_blackbox_http_members: >-
-  {{ (platform_vault_members | default([]) | map('regex_replace', '$', '.' ~ platform_domain ~ ':8200/v1/sys/health?standbyok=true&perfstandbyok=true')
-      | map('regex_replace', '^', 'https://') | list)
-     + ((groups['authentik_cluster'] | default([])) | map('extract', hostvars, 'ansible_host')
-        | map('regex_replace', '^', 'http://') | map('regex_replace', '$', ':9000/-/health/ready/') | list) }}
+  {{ platform_vault_members | default([]) | map('regex_replace', '$', '.' ~ platform_domain ~ ':8200/v1/sys/health?standbyok=true&perfstandbyok=true')
+     | map('regex_replace', '^', 'https://') | list }}
 # The platform resolver on both families (the 2026-09-18 outage, #424)
 prometheus_resolver_host: "{{ groups['adguard'] | first }}"
 prometheus_blackbox_dns_v4: ["{{ hostvars[prometheus_resolver_host].ansible_host }}:53"]
@@ -166,6 +165,7 @@ prometheus_blackbox_tcp_targets:
   - {group: collab,   port: 3478,  what: "Talk TURN listener"}
   - {group: step_ca,  port: 9000,  what: "step-ca (HTTPS probe once its root is trusted, A.4)"}
   - {group: netbird,  port: 33073, what: "NetBird management (public name is WAN-only from inside)"}
+  - {group: authentik_cluster, port: 9000, what: "each Authentik instance (the edge's route says only that ONE is ready)"}
 prometheus_blackbox_tcp: >-
   {%- set out = [] -%}
   {%- for t in prometheus_blackbox_tcp_targets -%}
