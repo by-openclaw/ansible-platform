@@ -56,6 +56,8 @@
       containers:
         - name: "{{ blackbox_exporter_container }}"
           image: "{{ blackbox_exporter_image }}"
+          read_only: true                 # SEC-22: it writes to its mounted directories only
+          tmpfs: ["/tmp:rw,size=64m"]
           network_mode: host
           log_driver: journald   # container log -> journal -> promtail -> Loki (INF-27)
           user: "{{ blackbox_exporter_account_entry[1] }}:{{ blackbox_exporter_account_entry[2] }}"

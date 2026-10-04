@@ -28,6 +28,8 @@
         # trusted_domain), publishes :{{ nextcloud_metrics_port }} to the monitoring host only.
         - name: nextcloud-exporter
           image: "{{ nextcloud_exporter_image }}"
+          read_only: true                 # SEC-22: it writes to its volumes only
+          tmpfs: ["/tmp:rw,size=64m"]
           published:
             - "{{ nextcloud_listen_ip }}:{{ nextcloud_metrics_port }}:9205"
           env:
