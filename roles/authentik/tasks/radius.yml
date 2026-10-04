@@ -1,0 +1,233 @@
+---
+# ==============================================================================
+# authentik | radius — administrator logins on network devices against Authentik.
+#
+# One blueprint (provider of the devices, self-test provider, outpost), one outpost container
+# per instance, and a self-test from the monitoring host on every run: the probe account is
+# accepted, a wrong password is refused. See defaults/main.yml (RADIUS).
+# ==============================================================================
+
+- name: "radius | Shared secrets and the probe's password (Vault, created once)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ authentik_radius_vault_path }}"
+    vault_secret_init:
+      shared_secret: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+      selftest_secret: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+      probe_password: "{{ lookup('community.general.random_string', length=60, special=false) }}"
+
+- name: "radius | Bind them"
+  ansible.builtin.set_fact:
+    authentik_radius_secrets: "{{ vault_secret_result }}"
+  no_log: true
+
+# Readable by the containers' user only: the file carries the shared secrets.
+- name: "radius | Render the RADIUS blueprint"
+  ansible.builtin.template:
+    src: radius.yaml.j2
+    dest: "{{ authentik_blueprints_dir }}/radius.yaml"
+    owner: "{{ authentik_container_uid }}"
+    group: "{{ authentik_container_uid }}"
+    mode: "0400"
+  register: authentik_radius_blueprint
+  no_log: true
+
+# Applied here and now (no restart): the outpost object has to exist before its container
+# can log in. Both workers also apply the file on their own (idempotent).
+- name: "radius | Apply it"
+  ansible.builtin.command:
+    argv: [docker, exec, authentik-server, ak, apply_blueprint, /blueprints/custom/radius.yaml]
+  register: authentik_radius_apply
+  changed_when: authentik_radius_blueprint is changed
+  failed_when: false
+  no_log: true
+  when:
+    - inventory_hostname == authentik_first_member
+    - not ansible_check_mode
+
+- name: "radius | The blueprint is valid and applied"
+  ansible.builtin.assert:
+    that: authentik_radius_apply.rc == 0
+    fail_msg: >-
+      ak apply_blueprint refused radius.yaml:
+      {{ (authentik_radius_apply.stderr | default(''))
+         | replace(authentik_radius_secrets.shared_secret, '***')
+         | replace(authentik_radius_secrets.selftest_secret, '***')
+         | replace(authentik_radius_secrets.probe_password, '***') | truncate(1800) }}
+    quiet: true
+  when:
+    - inventory_hostname == authentik_first_member
+    - not ansible_check_mode
+
+- name: "radius | The outpost (by name)"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/outposts/instances/?name__iexact={{ authentik_radius_outpost_name | urlencode }}"
+    headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}" }
+  register: authentik_radius_outpost
+  check_mode: false   # read-only GET: must run under --check too (later tasks read its json)
+  retries: 12
+  delay: 5
+  until: (authentik_radius_outpost.json.results | default([])) | length > 0 or ansible_check_mode
+  no_log: true
+
+# A first --check has no outpost yet (nothing was applied): the container steps are skipped.
+- name: "radius | Outpost present"
+  ansible.builtin.set_fact:
+    authentik_radius_present: "{{ (authentik_radius_outpost.json.results | default([])) | length > 0 }}"
+    authentik_radius_token_id: "{{ (authentik_radius_outpost.json.results | default([{}]) | first).token_identifier | default('') }}"
+
+# The outpost's API token is issued by Authentik. Vault holds the copy the containers start
+# from, with the identifier it belongs to: a rebuilt outpost has another token, and the copy
+# is refreshed when the identifier differs.
+- name: "radius | The outpost token held in Vault (when present)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ authentik_radius_outpost_vault_path }}"
+    vault_secret_optional: true
+
+- name: "radius | Is it this outpost's"
+  ansible.builtin.set_fact:
+    authentik_radius_token: "{{ vault_secret_result.token | default('') }}"
+    authentik_radius_token_current: "{{ (vault_secret_result.token_identifier | default('')) == authentik_radius_token_id }}"
+  no_log: true
+
+- name: "radius | Read the token from Authentik (absent or of another outpost)"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/core/tokens/{{ authentik_radius_token_id }}/view_key/"
+    headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}" }
+  register: authentik_radius_token_view
+  no_log: true
+  when:
+    - authentik_radius_present | bool
+    - not (authentik_radius_token_current | bool)
+    - not ansible_check_mode
+
+- name: "radius | Store it"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ authentik_radius_outpost_vault_path }}"
+    vault_secret_optional: true
+    vault_secret_force_fields:
+      token: "{{ authentik_radius_token_view.json.key }}"
+      token_identifier: "{{ authentik_radius_token_id }}"
+  when: authentik_radius_token_view is not skipped
+
+- name: "radius | Bind it"
+  ansible.builtin.set_fact:
+    authentik_radius_token: "{{ authentik_radius_token_view.json.key }}"
+  no_log: true
+  when: authentik_radius_token_view is not skipped
+
+- name: "radius | Pull the pinned outpost image"
+  community.docker.docker_image:
+    name: "{{ authentik_radius_image }}"
+    source: pull
+    state: present
+
+- name: "radius | The RADIUS outpost (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: "{{ authentik_radius_container_name }}"
+      containers:
+        - name: "{{ authentik_radius_container_name }}"
+          image: "{{ authentik_radius_image }}"
+          read_only: true
+          tmpfs: ["/tmp:rw,size=64m"]
+          cap_drop: [ALL]
+          published:
+            - "0.0.0.0:{{ authentik_radius_port }}:1812/udp"
+            - "[::]:{{ authentik_radius_port }}:1812/udp"
+          comparisons:
+            published_ports: strict
+          env:
+            AUTHENTIK_HOST: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}"
+            AUTHENTIK_INSECURE: "true"
+            AUTHENTIK_TOKEN: "{{ authentik_radius_token }}"
+  when:
+    - authentik_radius_present | bool
+    - authentik_radius_token | length > 0
+
+- name: "radius | Wait for the outpost to report healthy"
+  ansible.builtin.command:
+    cmd: docker inspect --format '{% raw %}{{.State.Health.Status}}{% endraw %}' {{ authentik_radius_container_name }}
+  register: authentik_radius_health
+  until: authentik_radius_health.stdout | trim == 'healthy'
+  retries: 20
+  delay: 5
+  changed_when: false
+  check_mode: false
+  when:
+    - authentik_radius_present | bool
+    - not ansible_check_mode
+
+# The whole path, from another host: UDP in, shared secret, the outpost's call to this
+# instance, the flow, the group binding. The client reads the secret from a file it writes
+# in its own memory-backed /tmp and the login from its standard input — nothing is on a
+# command line. Judged on the client's summary (one request sent per case).
+- name: "radius | Self-test from the monitoring host: the probe is accepted, a wrong password is refused"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --read-only
+      - --tmpfs
+      - /tmp
+      - --cap-drop
+      - ALL
+      - --user
+      - "65534:65534"
+      - -e
+      - RADIUS_SECRET
+      - -e
+      - RADIUS_USER
+      - -e
+      - RADIUS_PASSWORD
+      - --entrypoint
+      - sh
+      - "{{ authentik_radius_test_image }}"
+      - -c
+      - >-
+        umask 077 && printf '%s' "$RADIUS_SECRET" > /tmp/secret &&
+        printf 'User-Name = "%s"\nUser-Password = "%s"\n' "$RADIUS_USER" "$RADIUS_PASSWORD"
+        | {{ authentik_radius_test_client }} -s -t 5 -r 1 -S /tmp/secret
+        {{ authentik_listen_ip }}:{{ authentik_radius_port }} auth 2>&1
+  environment:
+    RADIUS_SECRET: "{{ authentik_radius_secrets.selftest_secret }}"
+    RADIUS_USER: "{{ authentik_radius_selftest_user }}"
+    RADIUS_PASSWORD: "{{ authentik_radius_secrets.probe_password if item.case == 'accepted' else 'not-the-password' }}"
+  delegate_to: "{{ authentik_radius_test_host }}"
+  register: authentik_radius_selftest
+  loop:
+    - { case: accepted, expect: 'Accepted *: *1' }
+    - { case: refused, expect: 'Rejected *: *1' }
+  loop_control:
+    label: "{{ item.case }}"
+  until: authentik_radius_selftest.stdout is search(item.expect)
+  retries: 6
+  delay: 5
+  changed_when: false
+  failed_when: authentik_radius_selftest.stdout is not search(item.expect)
+  check_mode: false
+  when:
+    - authentik_radius_present | bool
+    - not ansible_check_mode
+
+- name: "radius | Report"
+  ansible.builtin.debug:
+    msg: >-
+      RADIUS outpost {{ authentik_radius_image }} healthy on {{ inventory_hostname }}
+      ({{ authentik_radius_port }}/udp); self-test:
+      {{ authentik_radius_selftest.results | map(attribute='item') | map(attribute='case')
+         | zip(authentik_radius_selftest.results | map(attribute='stdout')
+               | map('regex_findall', '(?:Accepted|Rejected|Lost) *: *[0-9]+') | map('join', ', '))
+         | map('join', ' -> ') | join(' | ') }}.
+  when:
+    - authentik_radius_present | bool
+    - not ansible_check_mode

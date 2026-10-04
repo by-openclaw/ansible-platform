@@ -126,3 +126,52 @@ authentik_ldap_cert_src_host: "{{ groups['traefik'] | first }}"
 authentik_ldap_cert_src_crt: "/etc/lego/cert/certificates/_.{{ platform_domain }}.crt"
 authentik_ldap_cert_src_key: "/etc/lego/cert/certificates/_.{{ platform_domain }}.key"
 authentik_ldap_container_name: "authentik-ldap"   # outpost container (tasks/ldap.yml)
+
+# ------------------------------------------------------------------------------
+# RADIUS — administrator logins on network devices (switches) against Authentik.
+#
+# Authentik's own RADIUS provider, served by an outpost container on EVERY instance: a device
+# is given both as its primary and secondary server. Everything is declared in one blueprint
+# (templates/radius.yaml.j2 — nothing through the UI):
+#   * the provider of the devices: who may ask (the management network of the switch fabric),
+#     the login flow WITH the second factor (the code is typed after the password:
+#     `password;123456`), access for the infrastructure administrators' group only;
+#   * a self-test provider: its own shared secret, reachable from the monitoring host only,
+#     one probe account that can do nothing else — so every run proves an accepted and a
+#     refused login on each instance without the devices' secret leaving Vault and Authentik.
+# PAP only (device administration). Port authentication (802.1X/EAP) is not what this serves.
+# ------------------------------------------------------------------------------
+authentik_radius_enabled: true
+authentik_radius_image: "ghcr.io/goauthentik/radius:{{ authentik_version }}"
+authentik_radius_container_name: "authentik-radius"
+authentik_radius_port: 1812
+
+# The devices' provider.
+authentik_radius_provider_name: "radius-network-devices"
+authentik_radius_app_slug: "radius-network-devices"
+authentik_radius_app_name: "Network devices (RADIUS)"
+authentik_radius_outpost_name: "authentik-radius"
+authentik_radius_group: "{{ platform_infra_admins_group }}"
+authentik_radius_flow: "default-authentication-flow"       # password, then the second factor
+authentik_radius_mfa: true
+authentik_radius_client_networks:
+  - "{{ platform_mgmt_zones.fabric.cidr4 }}"
+
+# The self-test.
+authentik_radius_selftest_name: "radius-selftest"
+authentik_radius_selftest_user: "radius-probe"
+authentik_radius_selftest_group: "radius-probe"
+authentik_radius_test_host: "{{ groups['monitoring'] | first }}"
+authentik_radius_selftest_networks:
+  - "{{ hostvars[authentik_radius_test_host].ansible_host }}/32"
+# The client the self-test runs (and removes) on the monitoring host.
+# renovate: datasource=docker depName=freeradius/freeradius-server
+authentik_radius_test_image: "freeradius/freeradius-server:3.2.9-alpine"
+authentik_radius_test_client: "/opt/bin/radclient"
+
+# Shared secrets and the probe's password: one Vault document, created once.
+authentik_radius_vault_path: "{{ platform_env }}/authentik/radius"
+# The outpost's API token (issued by Authentik) and the identifier it belongs to.
+authentik_radius_outpost_vault_path: "{{ platform_env }}/authentik/radius-outpost"
+# The user the server and worker run as in their image: owner of the blueprint that carries secrets.
+authentik_container_uid: 1000

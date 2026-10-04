@@ -1,0 +1,157 @@
+{# Managed by Ansible role `authentik`. Do not edit by hand.
+   RADIUS for network devices: the devices' provider, a self-test provider and the outpost that
+   serves both. ONE file, so the outpost binds its providers with !KeyOf (order-safe). #}
+version: 1
+metadata:
+  name: radius
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  # --- Network devices ---------------------------------------------------------
+  # Who may ask: the listed networks, with the shared secret. The flow asks for the second
+  # factor; the code follows the password (`password;123456`).
+  - model: authentik_providers_radius.radiusprovider
+    id: provider-radius
+    identifiers:
+      name: {{ authentik_radius_provider_name }}
+    attrs:
+      name: {{ authentik_radius_provider_name }}
+      authorization_flow: !Find [authentik_flows.flow, [slug, {{ authentik_radius_flow }}]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
+      client_networks: "{{ authentik_radius_client_networks | join(',') }}"
+      shared_secret: "{{ authentik_radius_secrets.shared_secret }}"
+      mfa_support: {{ authentik_radius_mfa | bool | lower }}
+
+  - model: authentik_core.application
+    id: app-radius
+    identifiers:
+      slug: {{ authentik_radius_app_slug }}
+    attrs:
+      name: "{{ authentik_radius_app_name }}"
+      slug: {{ authentik_radius_app_slug }}
+      provider: !KeyOf provider-radius
+      meta_launch_url: "blank://blank"      # no tile: nothing to open in a browser
+
+  # Only the infrastructure administrators are accepted (enforced at the IdP).
+  - model: authentik_policies.policybinding
+    id: binding-radius-group
+    identifiers:
+      target: !KeyOf app-radius
+      group: !Find [authentik_core.group, [name, {{ authentik_radius_group }}]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+
+  # --- Self-test ---------------------------------------------------------------
+  # Password only, and only when an outpost asks: this flow cannot be opened in a browser.
+  - model: authentik_flows.flow
+    id: flow-radius-selftest
+    identifiers:
+      slug: {{ authentik_radius_selftest_name }}
+    attrs:
+      name: "RADIUS self-test"
+      title: "RADIUS self-test"
+      slug: {{ authentik_radius_selftest_name }}
+      designation: authentication
+      authentication: require_outpost
+
+  - model: authentik_flows.flowstagebinding
+    id: stage-selftest-identification
+    identifiers:
+      target: !KeyOf flow-radius-selftest
+      stage: !Find [authentik_stages_identification.identificationstage, [name, default-authentication-identification]]
+      order: 10
+
+  - model: authentik_flows.flowstagebinding
+    id: stage-selftest-password
+    identifiers:
+      target: !KeyOf flow-radius-selftest
+      stage: !Find [authentik_stages_password.passwordstage, [name, default-authentication-password]]
+      order: 20
+
+  - model: authentik_flows.flowstagebinding
+    id: stage-selftest-login
+    identifiers:
+      target: !KeyOf flow-radius-selftest
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, default-authentication-login]]
+      order: 100
+
+  - model: authentik_providers_radius.radiusprovider
+    id: provider-radius-selftest
+    identifiers:
+      name: {{ authentik_radius_selftest_name }}
+    attrs:
+      name: {{ authentik_radius_selftest_name }}
+      authorization_flow: !KeyOf flow-radius-selftest
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
+      client_networks: "{{ authentik_radius_selftest_networks | join(',') }}"
+      shared_secret: "{{ authentik_radius_secrets.selftest_secret }}"
+      mfa_support: false
+
+  - model: authentik_core.application
+    id: app-radius-selftest
+    identifiers:
+      slug: {{ authentik_radius_selftest_name }}
+    attrs:
+      name: "RADIUS self-test"
+      slug: {{ authentik_radius_selftest_name }}
+      provider: !KeyOf provider-radius-selftest
+      meta_launch_url: "blank://blank"
+
+  # The probe: a service account in a group of its own that opens nothing but the self-test.
+  - model: authentik_core.group
+    id: group-radius-probe
+    identifiers:
+      name: {{ authentik_radius_selftest_group }}
+    attrs:
+      name: {{ authentik_radius_selftest_group }}
+
+  - model: authentik_core.user
+    id: user-radius-probe
+    identifiers:
+      username: {{ authentik_radius_selftest_user }}
+    attrs:
+      username: {{ authentik_radius_selftest_user }}
+      name: "RADIUS self-test probe"
+      is_active: true
+      type: service_account
+      groups:
+        - !KeyOf group-radius-probe
+
+  - model: authentik_core.token
+    id: token-radius-probe
+    identifiers:
+      identifier: {{ authentik_radius_selftest_user }}-password
+    attrs:
+      identifier: {{ authentik_radius_selftest_user }}-password
+      user: !KeyOf user-radius-probe
+      intent: app_password
+      expiring: false
+      description: "Password of the RADIUS self-test probe (Vault {{ authentik_radius_vault_path }})"
+      key: "{{ authentik_radius_secrets.probe_password }}"
+
+  - model: authentik_policies.policybinding
+    id: binding-radius-selftest-group
+    identifiers:
+      target: !KeyOf app-radius-selftest
+      group: !KeyOf group-radius-probe
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+
+  # --- The outpost both providers are served by (one container per instance) ---
+  - model: authentik_outposts.outpost
+    id: outpost-radius
+    identifiers:
+      name: {{ authentik_radius_outpost_name }}
+    attrs:
+      name: {{ authentik_radius_outpost_name }}
+      type: radius
+      providers:
+        - !KeyOf provider-radius
+        - !KeyOf provider-radius-selftest
+      config:
+        authentik_host: "https://{{ authentik_fqdn }}"
+        log_level: info

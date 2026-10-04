@@ -11,9 +11,12 @@ services/0005 §notifications.md) and points at everything else. Audit: [`audits
    entry in [`inventories/prod/group_vars/all/sso.yml`](../../inventories/prod/group_vars/all/sso.yml)
    (`authentik_oidc_apps` — slug, launch URL, access group, Vault path, redirect URIs;
    `authentik_proxy_apps` — forwardAuth apps). The LDAP outpost serves the directory to tools without
-   OIDC (`roles/authentik/tasks/ldap.yml`).
+   OIDC (`roles/authentik/tasks/ldap.yml`). The RADIUS outposts answer administrator logins on
+   network devices (`roles/authentik/tasks/radius.yml`; infrastructure administrators only, second
+   factor required).
 3. **Vault paths:** `secret/prod/authentik/admin` (secret key + bootstrap admin `akadmin`),
    `secret/prod/authentik/db-pgsql` (own PostgreSQL user), `secret/prod/authentik/ldap-outpost`,
+   `secret/prod/authentik/radius` (shared secrets, probe password), `secret/prod/authentik/radius-outpost`,
    `secret/prod/authentik/user-<username>` (one per person), `secret/prod/<service>/oidc` (one per
    OIDC client, minted by this role), `secret/prod/mail/authentik` (mailbox).
 4. **Ansible adapter + vars:** `roles/authentik` (blueprints rendered from
@@ -57,5 +60,6 @@ Two instances — `lxc-authentik-01` and `lxc-authentik-02` — each a server an
 2. **forwardAuth:** the middleware takes one address — a loopback entry point of the edge (`authgate`), whose router balances the auth requests over the instances that are ready. The forwarded headers of the edge's own call are trusted on that entry point only.
 3. **Once for the deployment (first instance only):** the database, the LDAP outpost and its certificate (LDAPS for the firewall's WebGUI stays on `lxc-authentik-01`), the API calls that follow the blueprints, the edge route. Both workers apply the blueprints (idempotent).
 4. **Not shared:** the media volume (icons uploaded through the UI) — everything the platform sets comes from blueprints and URLs.
-5. **Signals:** `ProbeFailed` on `authentik.<domain>` (no instance ready behind the edge) and on each instance's own listener (TCP 9000: the HTTP probe requires TLS, which ends at the edge).
-6. **Rolling change:** `playbooks/authentik.yml` runs one instance at a time (`serial: 1`): a blueprint or version change restarts one while the other serves.
+5. **RADIUS:** one outpost container per instance (`1812/udp`), both serving the same providers — a network device lists the two instances as primary and secondary server. Reachable from the switch fabric's management network and, for the self-test, from the monitoring host. Signal: `RadiusOutpostDown`.
+6. **Signals:** `ProbeFailed` on `authentik.<domain>` (no instance ready behind the edge) and on each instance's own listener (TCP 9000: the HTTP probe requires TLS, which ends at the edge).
+7. **Rolling change:** `playbooks/authentik.yml` runs one instance at a time (`serial: 1`): a blueprint or version change restarts one while the other serves.

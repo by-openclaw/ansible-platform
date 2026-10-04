@@ -9,8 +9,8 @@
 #   port  the HOST side of the mapping (`docker ps`: left of ->)
 #   proto tcp (default) or udp
 #   from  a service name (-> that service's host, every member of a clustered one), db:<value> (every service
-#         whose platform_services `db` is that value), trusted
-#         (platform_trusted_cidrs) or any. A name that resolves to nothing fails
+#         whose platform_services `db` is that value), mgmt:<zone> (that management
+#         network, platform_mgmt_zones), trusted (platform_trusted_cidrs) or any. A name that resolves to nothing fails
 #         the run. IPv4 resolves to the host (/32), IPv6 to the host's zone (/64):
 #         hosts source IPv6 from their SLAAC address, not the static one, so a
 #         /128 misses them (every PostgreSQL and Redis client did, 2026-09-28).
@@ -59,6 +59,7 @@ platform_docker_firewall:
   authentik:
     - {port: 9000, from: [traefik, monitoring], comment: "Authentik web (the edge; the per-instance readiness probe)"}
     - {port: 636, from: [trusted], comment: "Authentik LDAP outpost (LDAPS)"}
+    - {port: 1812, proto: udp, from: ["mgmt:fabric", monitoring], comment: "Authentik RADIUS outpost (switch fabric management; the self-test)"}
     - {port: 9300, from: [monitoring], comment: "Authentik metrics (Prometheus)"}
   collab:
     - {port: 8000, from: [traefik], comment: "ONLYOFFICE"}

@@ -25,8 +25,9 @@
     that: >-
       item in ['any', 'trusted']
       or (item is match('^db:') and (platform_services | selectattr('db', 'equalto', item[3:]) | list | length) > 0)
+      or (item is match('^mgmt:') and item[5:] in platform_mgmt_zones)
       or (platform_services | selectattr('name', 'equalto', item) | list | length) > 0
-    fail_msg: "docker_firewall source '{{ item }}' is not a service name, db:<value>, trusted or any"
+    fail_msg: "docker_firewall source '{{ item }}' is not a service name, db:<value>, mgmt:<zone>, trusted or any"
     quiet: true
   loop: "{{ docker_user_declared | map(attribute='from') | flatten | unique }}"
 
@@ -43,6 +44,8 @@
             {%- set _ = cidrs.extend(['0.0.0.0/0', '::/0']) -%}
           {%- elif ref == 'trusted' -%}
             {%- set _ = cidrs.extend(platform_trusted_cidrs) -%}
+          {%- elif ref.startswith('mgmt:') -%}
+            {%- set _ = cidrs.append(platform_mgmt_zones[ref[5:]].cidr4) -%}
           {%- else -%}
             {%- set svcs = (platform_services | selectattr('db', 'equalto', ref[3:])) if ref.startswith('db:')
                            else (platform_services | selectattr('name', 'equalto', ref)) -%}
