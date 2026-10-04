@@ -133,7 +133,13 @@ authentik_ldap_container_name: "authentik-ldap"   # outpost container (tasks/lda
 # certificate and on the web login flow (second factor — which a bind cannot answer), undoing
 # what tasks/ldap_cert.yml had set.
 authentik_ldap_app_name: "LDAP"
-authentik_ldap_bind_account: "ldapservice"
+# The account a tool binds with: the member of platform_ldap_search_group, whose password is the
+# Vault document below. (`ldapservice` was the name in an unmerged branch of June 2026; the stray
+# blueprint re-created it on 2026-10-04 as an account without password or group — it is kept,
+# deactivated.)
+authentik_ldap_bind_account: "svc-ldap-{{ platform_env }}"
+authentik_ldap_retired_accounts:
+  - "ldapservice"
 authentik_ldap_base_dn: "dc=ldap,{{ platform_domain.split('.') | map('regex_replace', '^', 'dc=') | join(',') }}"
 authentik_ldap_flow: "ldap-authentication"
 authentik_ldap_bind_vault_path: "{{ platform_env }}/authentik/ldap-bind"

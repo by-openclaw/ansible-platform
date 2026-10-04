@@ -19,7 +19,22 @@ entries:
       username: "{{ authentik_ldap_bind_account }}"
       name: "LDAP bind/search service account"
       type: service_account
-      path: users
+      is_active: true
+      groups:
+        - !Find [authentik_core.group, [name, {{ platform_ldap_search_group }}]]
+{% for account in authentik_ldap_retired_accounts %}
+
+  # Not the bind account (see defaults): kept, cannot sign in.
+  - model: authentik_core.user
+    id: user-retired-{{ loop.index }}
+    identifiers:
+      username: "{{ account }}"
+    attrs:
+      username: "{{ account }}"
+      name: "retired — not the LDAP bind account"
+      type: service_account
+      is_active: false
+{% endfor %}
 
   # The bind flow: identification, password, login. LDAP cannot carry the second factor, so
   # this flow has no such stage — and it runs for an outpost only: it cannot be opened in a
