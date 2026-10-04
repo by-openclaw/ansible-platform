@@ -22,3 +22,7 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: postgresql`)
 ## Backup (infra/0008)
 
 Class A (`docs/backup.md`): `pg-backup.timer` 02:00 on every member, dumping only where the leader runs → `pg_dumpall | gzip` → `/var/lib/postgresql/backups/all-<date>.sql.gz` (7 days, tmpfiles) inside the PBS guest image (encrypted, replicated to the off-site S3); the `pgdata` volume in the same image. Restore = play + `psql -f` of the dump (or the PBS image).
+
+## A member after a guest restart (2026-10-04)
+
+Found while the members took their memory change: Patroni exits cleanly when the guest shuts down, before the Docker daemon stops, so Docker recorded the container as stopped and `unless-stopped` left it down at the next boot — the guest was back, its member was not. Every container of the platform now runs with the restart policy `always` (`roles/service_scaffold`). To start an existing container by hand: `docker start <name>` — never the container module with a bare `state=started`, which recreates it from defaults.
