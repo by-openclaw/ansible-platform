@@ -38,7 +38,8 @@ nextcloud_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"
 
 # Shared Redis (TLS). The official image's REDIS_HOST env does NOT enable TLS,
 # so Redis is configured via a mounted config.php snippet with ssl_context.
-nextcloud_redis_host: "{{ groups['redis'] | first }}.{{ platform_domain }}"
+nextcloud_redis_host: "{{ platform_redis_host }}"
+nextcloud_redis_user: "nextcloud"               # its own login (platform_redis_users)
 nextcloud_redis_port: 6379
 nextcloud_redis_db: "{{ platform_redis_databases.nextcloud }}"   # own DB index on the shared Redis (group_vars/all/redis.yml allocation table, SVC-27)
 
@@ -60,7 +61,7 @@ nextcloud_s3_autocreate: "false"     # we precreate the bucket
 # Vault IS the secret store (no controller files). KV v2 paths under mount `secret`:
 nextcloud_vault_admin_path: "{{ platform_env }}/nextcloud/admin"      # admin_user + admin_password (+url); get-or-create
 nextcloud_vault_db_path: "{{ platform_env }}/nextcloud/db-pgsql"      # minted by postgres_db (Vault mode)
-nextcloud_vault_redis_path: "{{ platform_env }}/redis/admin"          # shared Redis requirepass (owner: roles/redis)
+nextcloud_vault_redis_path: "{{ platform_redis_users_vault_prefix }}/{{ nextcloud_redis_user }}"   # its Redis login (owner: roles/redis)
 nextcloud_vault_s3_path: "{{ platform_external_s3.contabo.vault_path }}"   # Contabo primary storage creds (until the SeaweedFS move)
 nextcloud_vault_oidc_path: "{{ platform_env }}/nextcloud/oidc"        # minted by roles/authentik (Vault-native app)
 

@@ -86,7 +86,9 @@ gitlab_pg_sslmode: "verify-full"       # validates the PG server cert (security 
 gitlab_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"   # host CA bundle (platform CA present; PG cert SAN *.by-research.be)
 
 # --- Shared Redis (TLS) -------------------------------------------------------
-gitlab_redis_host: "{{ groups['redis'] | first }}.{{ platform_domain }}"
+# The endpoint (follows the primary). GitLab still logs in as the `default` user: Omnibus takes
+# a username only per Redis instance (cache, queues, shared state, …), a change of its own.
+gitlab_redis_host: "{{ platform_redis_host }}"
 gitlab_redis_port: 6379
 gitlab_redis_ssl: true
 

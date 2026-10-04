@@ -27,6 +27,13 @@
       redis dbindex --type=integer --value="{{ nextcloud_redis_db }}"
   changed_when: true
 
+- name: "post-install | Configure Redis user (its own login)"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      redis user --value="{{ nextcloud_redis_user }}"
+  changed_when: true
+
 - name: "post-install | Configure Redis password"
   ansible.builtin.command:
     cmd: >-

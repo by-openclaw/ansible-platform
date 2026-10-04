@@ -26,7 +26,8 @@ netbox_pg_sslmode: "verify-full"          # falls back to "require" only if repo
 netbox_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"
 
 # Shared Redis (TLS, two logical DBs: tasks=0, cache=1).
-netbox_redis_host: "{{ groups['redis'] | first }}.{{ platform_domain }}"
+netbox_redis_host: "{{ platform_redis_host }}"
+netbox_redis_user: "netbox"                     # its own login (platform_redis_users)
 netbox_redis_port: 6379
 netbox_redis_tasks_db: "{{ platform_redis_databases['netbox-tasks'] }}"   # group_vars/all/redis.yml — one allocation table
 netbox_redis_cache_db: "{{ platform_redis_databases['netbox-cache'] }}"
@@ -35,7 +36,7 @@ netbox_redis_cache_db: "{{ platform_redis_databases['netbox-cache'] }}"
 # Vault KV paths (security/0001 secret/{env}/{service}/{key}). No controller files:
 # the disk copy was a second source that nothing kept in step (#377).
 netbox_vault_path: "{{ platform_env }}/netbox/admin"        # secret_key + superuser + token
-netbox_redis_vault_path: "{{ platform_env }}/redis/admin"
+netbox_redis_vault_path: "{{ platform_redis_users_vault_prefix }}/{{ netbox_redis_user }}"   # owner: roles/redis
 # Outbound mail = the service's own mailbox on the platform mail server (roles/mailbox through
 # the scaffold: {env}/mail/netbox → address, smtp_host, smtp_port, password), like alertmanager
 # and every other service. The Resend relay it used is retired. Read-if-present: on a fresh
