@@ -49,6 +49,17 @@ authentik_templates_volume: "authentik-templates"
 # --- OIDC / SSO blueprints (declarative, one per cluster service) ----------------
 # Host dir mounted into the containers at /blueprints/custom; Authentik auto-applies.
 authentik_blueprints_dir: "/opt/authentik/blueprints"
+# Names the role's commands, containers and blueprints refer to — written once, here.
+authentik_server_container: "authentik-server"
+authentik_worker_container: "authentik-worker"
+authentik_blueprints_mount: "/blueprints/custom"            # authentik_blueprints_dir inside the containers
+authentik_ca_bundle: "/etc/ssl/certs/ca-certificates.crt"    # the host CA store, mounted into the containers
+# Authentik's own default objects (its shipped blueprints) that the role's blueprints attach to.
+authentik_default_stage_identification: "default-authentication-identification"
+authentik_default_stage_password: "default-authentication-password"   # a stage NAME  # pragma: allowlist secret
+authentik_default_stage_login: "default-authentication-login"
+authentik_default_invalidation_flow: "default-invalidation-flow"
+authentik_hidden_launch_url: "blank://blank"                 # an application without a tile in the library
 # The OIDC and proxy app registries live in inventory: group_vars/all/sso.yml
 # (authentik_oidc_apps, authentik_proxy_apps, authentik_proxy_apps_retired).
 
@@ -142,6 +153,12 @@ authentik_ldap_retired_accounts:
   - "ldapservice"
 authentik_ldap_base_dn: "dc=ldap,{{ platform_domain.split('.') | map('regex_replace', '^', 'dc=') | join(',') }}"
 authentik_ldap_flow: "ldap-authentication"
+authentik_ldap_flow_title: "LDAP bind"
+authentik_ldap_users_ou: "ou=users"                # where the outpost presents the accounts
+# The bind test: connection timeout (s), and how long it waits for a restarted outpost.
+authentik_ldap_bind_test_timeout: 10
+authentik_ldap_bind_test_retries: 6
+authentik_ldap_bind_test_delay: 5
 authentik_ldap_bind_vault_path: "{{ platform_env }}/authentik/ldap-bind"
 # The name the certificate is checked against by the bind test (the Unbound override of the firewall).
 authentik_ldap_fqdn: "ldap.{{ platform_domain }}"
@@ -162,8 +179,11 @@ authentik_ldap_fqdn: "ldap.{{ platform_domain }}"
 # ------------------------------------------------------------------------------
 authentik_radius_enabled: true
 authentik_radius_image: "ghcr.io/goauthentik/radius:{{ authentik_version }}"
-authentik_radius_container_name: "authentik-radius"
-authentik_radius_port: 1812
+authentik_radius_container_name: "{{ platform_radius_container }}"   # inventory: read by monitoring too
+authentik_radius_port: "{{ platform_radius_port }}"                  # inventory: the DOCKER-USER catalog opens it
+authentik_radius_container_port: 1812                                # the outpost image's own listener
+authentik_radius_tmpfs: ["/tmp:rw,size=64m"]
+authentik_radius_outpost_log_level: "info"
 
 # The devices' provider.
 authentik_radius_provider_name: "radius-network-devices"
@@ -180,6 +200,7 @@ authentik_radius_client_networks:
 authentik_radius_selftest_name: "radius-selftest"
 authentik_radius_selftest_user: "radius-probe"
 authentik_radius_selftest_group: "radius-probe"
+authentik_radius_selftest_title: "RADIUS self-test"
 authentik_radius_test_host: "{{ groups['monitoring'] | first }}"
 authentik_radius_selftest_networks:
   - "{{ hostvars[authentik_radius_test_host].ansible_host }}/32"
@@ -187,9 +208,18 @@ authentik_radius_selftest_networks:
 # renovate: datasource=docker depName=freeradius/freeradius-server
 authentik_radius_test_image: "freeradius/freeradius-server:3.2.9-alpine"
 authentik_radius_test_client: "/opt/bin/radclient"
+authentik_radius_test_user: "65534:65534"        # the client runs as nobody: it needs no right
+authentik_radius_test_timeout: 5                 # seconds the client waits for the answer
+authentik_radius_test_retries: 6                 # a new outpost needs a moment to load its providers
+authentik_radius_test_delay: 5
+# Waiting for the outpost object (API) and for the container to report healthy.
+authentik_radius_wait_retries: 20
+authentik_radius_wait_delay: 5
 
 # Shared secrets and the probe's password: one Vault document, created once.
 authentik_radius_vault_path: "{{ platform_env }}/authentik/radius"
+authentik_radius_secret_length: 32               # a length every device accepts as a shared secret
+authentik_radius_probe_password_length: 60
 # The outpost's API token (issued by Authentik) and the identifier it belongs to.
 authentik_radius_outpost_vault_path: "{{ platform_env }}/authentik/radius-outpost"
 # The user the server and worker run as in their image: owner of the blueprint that carries secrets.

@@ -44,8 +44,8 @@ entries:
     identifiers:
       slug: {{ authentik_ldap_flow }}
     attrs:
-      name: "LDAP bind"
-      title: "LDAP bind"
+      name: "{{ authentik_ldap_flow_title }}"
+      title: "{{ authentik_ldap_flow_title }}"
       slug: {{ authentik_ldap_flow }}
       designation: authentication
       authentication: require_outpost
@@ -54,21 +54,21 @@ entries:
     id: stage-ldap-identification
     identifiers:
       target: !KeyOf flow-ldap-bind
-      stage: !Find [authentik_stages_identification.identificationstage, [name, default-authentication-identification]]
+      stage: !Find [authentik_stages_identification.identificationstage, [name, {{ authentik_default_stage_identification }}]]
       order: 10
 
   - model: authentik_flows.flowstagebinding
     id: stage-ldap-password
     identifiers:
       target: !KeyOf flow-ldap-bind
-      stage: !Find [authentik_stages_password.passwordstage, [name, default-authentication-password]]
+      stage: !Find [authentik_stages_password.passwordstage, [name, {{ authentik_default_stage_password }}]]
       order: 20
 
   - model: authentik_flows.flowstagebinding
     id: stage-ldap-login
     identifiers:
       target: !KeyOf flow-ldap-bind
-      stage: !Find [authentik_stages_user_login.userloginstage, [name, default-authentication-login]]
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, {{ authentik_default_stage_login }}]]
       order: 100
 
   - model: authentik_providers_ldap.ldapprovider
@@ -79,7 +79,7 @@ entries:
       name: "{{ authentik_ldap_provider_name }}"
       base_dn: "{{ authentik_ldap_base_dn }}"
       authorization_flow: !KeyOf flow-ldap-bind
-      invalidation_flow: !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, {{ authentik_default_invalidation_flow }}]]
       bind_mode: cached
       search_mode: cached
       mfa_support: false      # no second-factor stage in the flow: nothing to strip off the password

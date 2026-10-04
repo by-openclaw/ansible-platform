@@ -9,7 +9,7 @@
     service_scaffold_def:
       name: authentik
       containers:
-        - name: authentik-server
+        - name: "{{ authentik_server_container }}"
           image: "{{ authentik_image }}"
           command: server
           published:
@@ -19,16 +19,16 @@
             - "{{ authentik_media_volume }}:/media"
             - "{{ authentik_templates_volume }}:/templates"
             - "/etc/ssl/certs:/etc/ssl/certs:ro"
-            - "{{ authentik_blueprints_dir }}:/blueprints/custom:ro"
+            - "{{ authentik_blueprints_dir }}:{{ authentik_blueprints_mount }}:ro"
           env: "{{ authentik_env }}"
-        - name: authentik-worker
+        - name: "{{ authentik_worker_container }}"
           image: "{{ authentik_image }}"
           command: worker
           volumes:
             - "{{ authentik_media_volume }}:/media"
             - "{{ authentik_templates_volume }}:/templates"
             - "/etc/ssl/certs:/etc/ssl/certs:ro"
-            - "{{ authentik_blueprints_dir }}:/blueprints/custom:ro"
+            - "{{ authentik_blueprints_dir }}:{{ authentik_blueprints_mount }}:ro"
             # Worker manages embedded/Docker outposts via the Docker socket.
             - "/var/run/docker.sock:/var/run/docker.sock"
           env: "{{ authentik_env }}"

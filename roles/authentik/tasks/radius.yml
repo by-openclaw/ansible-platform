@@ -13,9 +13,9 @@
   vars:
     vault_secret_path: "{{ authentik_radius_vault_path }}"
     vault_secret_init:
-      shared_secret: "{{ lookup('community.general.random_string', length=32, special=false) }}"
-      selftest_secret: "{{ lookup('community.general.random_string', length=32, special=false) }}"
-      probe_password: "{{ lookup('community.general.random_string', length=60, special=false) }}"
+      shared_secret: "{{ lookup('community.general.random_string', length=authentik_radius_secret_length, special=false) }}"
+      selftest_secret: "{{ lookup('community.general.random_string', length=authentik_radius_secret_length, special=false) }}"
+      probe_password: "{{ lookup('community.general.random_string', length=authentik_radius_probe_password_length, special=false) }}"
 
 - name: "radius | Bind them"
   ansible.builtin.set_fact:
@@ -37,7 +37,7 @@
 # can log in. Both workers also apply the file on their own (idempotent).
 - name: "radius | Apply it"
   ansible.builtin.command:
-    argv: [docker, exec, authentik-server, ak, apply_blueprint, /blueprints/custom/radius.yaml]
+    argv: [docker, exec, "{{ authentik_server_container }}", ak, apply_blueprint, "{{ authentik_blueprints_mount }}/radius.yaml"]
   register: authentik_radius_apply
   changed_when: authentik_radius_blueprint is changed
   failed_when: false
@@ -66,8 +66,8 @@
     headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}" }
   register: authentik_radius_outpost
   check_mode: false   # read-only GET: must run under --check too (later tasks read its json)
-  retries: 12
-  delay: 5
+  retries: "{{ authentik_radius_wait_retries }}"
+  delay: "{{ authentik_radius_wait_delay }}"
   until: (authentik_radius_outpost.json.results | default([])) | length > 0 or ansible_check_mode
   no_log: true
 
@@ -138,11 +138,11 @@
         - name: "{{ authentik_radius_container_name }}"
           image: "{{ authentik_radius_image }}"
           read_only: true
-          tmpfs: ["/tmp:rw,size=64m"]
+          tmpfs: "{{ authentik_radius_tmpfs }}"
           cap_drop: [ALL]
           published:
-            - "0.0.0.0:{{ authentik_radius_port }}:1812/udp"
-            - "[::]:{{ authentik_radius_port }}:1812/udp"
+            - "0.0.0.0:{{ authentik_radius_port }}:{{ authentik_radius_container_port }}/udp"
+            - "[::]:{{ authentik_radius_port }}:{{ authentik_radius_container_port }}/udp"
           comparisons:
             published_ports: strict
           env:
@@ -158,8 +158,8 @@
     cmd: docker inspect --format '{% raw %}{{.State.Health.Status}}{% endraw %}' {{ authentik_radius_container_name }}
   register: authentik_radius_health
   until: authentik_radius_health.stdout | trim == 'healthy'
-  retries: 20
-  delay: 5
+  retries: "{{ authentik_radius_wait_retries }}"
+  delay: "{{ authentik_radius_wait_delay }}"
   changed_when: false
   check_mode: false
   when:
@@ -182,7 +182,7 @@
       - --cap-drop
       - ALL
       - --user
-      - "65534:65534"
+      - "{{ authentik_radius_test_user }}"
       - -e
       - RADIUS_SECRET
       - -e
@@ -196,7 +196,7 @@
       - >-
         umask 077 && printf '%s' "$RADIUS_SECRET" > /tmp/secret &&
         printf 'User-Name = "%s"\nUser-Password = "%s"\n' "$RADIUS_USER" "$RADIUS_PASSWORD"
-        | {{ authentik_radius_test_client }} -s -t 5 -r 1 -S /tmp/secret
+        | {{ authentik_radius_test_client }} -s -t {{ authentik_radius_test_timeout }} -r 1 -S /tmp/secret
         {{ authentik_listen_ip }}:{{ authentik_radius_port }} auth 2>&1
   environment:
     RADIUS_SECRET: "{{ authentik_radius_secrets.selftest_secret }}"
@@ -210,8 +210,8 @@
   loop_control:
     label: "{{ item.case }}"
   until: authentik_radius_selftest.stdout is search(item.expect)
-  retries: 6
-  delay: 5
+  retries: "{{ authentik_radius_test_retries }}"
+  delay: "{{ authentik_radius_test_delay }}"
   changed_when: false
   failed_when: authentik_radius_selftest.stdout is not search(item.expect)
   check_mode: false

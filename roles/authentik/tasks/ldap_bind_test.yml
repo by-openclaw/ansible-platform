@@ -17,15 +17,15 @@
       - exec
       - -e
       - LPW
-      - authentik-server
+      - "{{ authentik_server_container }}"
       - python3
       - -c
       - |
         import os, ssl
         from ldap3 import Server, Connection, Tls
-        tls = Tls(validate=ssl.CERT_REQUIRED, ca_certs_file="/etc/ssl/certs/ca-certificates.crt")
-        server = Server("{{ authentik_ldap_fqdn }}", port={{ authentik_ldap_port }}, use_ssl=True, tls=tls, connect_timeout=10)
-        conn = Connection(server, user="cn={{ authentik_ldap_bind_account }},ou=users,{{ authentik_ldap_base_dn }}", password=os.environ["LPW"], receive_timeout=20)
+        tls = Tls(validate=ssl.CERT_REQUIRED, ca_certs_file="{{ authentik_ca_bundle }}")
+        server = Server("{{ authentik_ldap_fqdn }}", port={{ authentik_ldap_port }}, use_ssl=True, tls=tls, connect_timeout={{ authentik_ldap_bind_test_timeout }})
+        conn = Connection(server, user="cn={{ authentik_ldap_bind_account }},{{ authentik_ldap_users_ou }},{{ authentik_ldap_base_dn }}", password=os.environ["LPW"], receive_timeout={{ authentik_ldap_bind_test_timeout * 2 }})
         try:
             print("BIND_OK" if conn.bind() else "BIND_REFUSED %s" % conn.result.get("description"))
         except Exception as exc:
@@ -34,8 +34,8 @@
     LPW: "{{ vault_secret_result.password }}"
   register: authentik_ldap_bind
   until: "'BIND_OK' in authentik_ldap_bind.stdout"
-  retries: 6
-  delay: 5
+  retries: "{{ authentik_ldap_bind_test_retries }}"
+  delay: "{{ authentik_ldap_bind_test_delay }}"
   changed_when: false
   failed_when: "'BIND_OK' not in authentik_ldap_bind.stdout"
   check_mode: false   # read-only probe

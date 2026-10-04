@@ -17,7 +17,7 @@ entries:
     attrs:
       name: {{ authentik_radius_provider_name }}
       authorization_flow: !Find [authentik_flows.flow, [slug, {{ authentik_radius_flow }}]]
-      invalidation_flow: !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, {{ authentik_default_invalidation_flow }}]]
       client_networks: "{{ authentik_radius_client_networks | join(',') }}"
       shared_secret: "{{ authentik_radius_secrets.shared_secret }}"
       mfa_support: {{ authentik_radius_mfa | bool | lower }}
@@ -30,7 +30,7 @@ entries:
       name: "{{ authentik_radius_app_name }}"
       slug: {{ authentik_radius_app_slug }}
       provider: !KeyOf provider-radius
-      meta_launch_url: "blank://blank"      # no tile: nothing to open in a browser
+      meta_launch_url: "{{ authentik_hidden_launch_url }}"      # no tile: nothing to open in a browser
 
   # Only the infrastructure administrators are accepted (enforced at the IdP).
   - model: authentik_policies.policybinding
@@ -50,8 +50,8 @@ entries:
     identifiers:
       slug: {{ authentik_radius_selftest_name }}
     attrs:
-      name: "RADIUS self-test"
-      title: "RADIUS self-test"
+      name: "{{ authentik_radius_selftest_title }}"
+      title: "{{ authentik_radius_selftest_title }}"
       slug: {{ authentik_radius_selftest_name }}
       designation: authentication
       authentication: require_outpost
@@ -60,21 +60,21 @@ entries:
     id: stage-selftest-identification
     identifiers:
       target: !KeyOf flow-radius-selftest
-      stage: !Find [authentik_stages_identification.identificationstage, [name, default-authentication-identification]]
+      stage: !Find [authentik_stages_identification.identificationstage, [name, {{ authentik_default_stage_identification }}]]
       order: 10
 
   - model: authentik_flows.flowstagebinding
     id: stage-selftest-password
     identifiers:
       target: !KeyOf flow-radius-selftest
-      stage: !Find [authentik_stages_password.passwordstage, [name, default-authentication-password]]
+      stage: !Find [authentik_stages_password.passwordstage, [name, {{ authentik_default_stage_password }}]]
       order: 20
 
   - model: authentik_flows.flowstagebinding
     id: stage-selftest-login
     identifiers:
       target: !KeyOf flow-radius-selftest
-      stage: !Find [authentik_stages_user_login.userloginstage, [name, default-authentication-login]]
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, {{ authentik_default_stage_login }}]]
       order: 100
 
   - model: authentik_providers_radius.radiusprovider
@@ -84,7 +84,7 @@ entries:
     attrs:
       name: {{ authentik_radius_selftest_name }}
       authorization_flow: !KeyOf flow-radius-selftest
-      invalidation_flow: !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, {{ authentik_default_invalidation_flow }}]]
       client_networks: "{{ authentik_radius_selftest_networks | join(',') }}"
       shared_secret: "{{ authentik_radius_secrets.selftest_secret }}"
       mfa_support: false
@@ -94,10 +94,10 @@ entries:
     identifiers:
       slug: {{ authentik_radius_selftest_name }}
     attrs:
-      name: "RADIUS self-test"
+      name: "{{ authentik_radius_selftest_title }}"
       slug: {{ authentik_radius_selftest_name }}
       provider: !KeyOf provider-radius-selftest
-      meta_launch_url: "blank://blank"
+      meta_launch_url: "{{ authentik_hidden_launch_url }}"
 
   # The probe: a service account in a group of its own that opens nothing but the self-test.
   - model: authentik_core.group
@@ -113,7 +113,7 @@ entries:
       username: {{ authentik_radius_selftest_user }}
     attrs:
       username: {{ authentik_radius_selftest_user }}
-      name: "RADIUS self-test probe"
+      name: "{{ authentik_radius_selftest_title }} probe"
       is_active: true
       type: service_account
       groups:
@@ -154,4 +154,4 @@ entries:
         - !KeyOf provider-radius-selftest
       config:
         authentik_host: "https://{{ authentik_fqdn }}"
-        log_level: info
+        log_level: {{ authentik_radius_outpost_log_level }}
