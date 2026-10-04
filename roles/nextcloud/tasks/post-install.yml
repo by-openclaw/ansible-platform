@@ -2,6 +2,25 @@
 # Post-install via occ (run as www-data inside the web container). All steps are
 # idempotent (occ config:system:set + app install/enable guards).
 
+# --- Database host ---------------------------------------------------------------
+# POSTGRES_HOST only seeds a FIRST install; afterwards the host lives in config.php. The role
+# variable changed to the data endpoint on 2026-10-04 and the live configuration kept naming the
+# first member — so the value is asserted here (read first: no write when it already matches).
+- name: "post-install | Database host in config.php"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ config:system:get dbhost
+  register: nextcloud_dbhost_live
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "post-install | Point the database at {{ nextcloud_pg_host }}"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:system:set
+      dbhost --value="{{ nextcloud_pg_host }}"
+  when: (nextcloud_dbhost_live.stdout | trim) != nextcloud_pg_host
+  changed_when: true
+
 # --- Redis over TLS -----------------------------------------------------------
 # The official image's REDIS_HOST env does NOT enable TLS, so wire Redis here via
 # occ (writes config.php inside the volume — the write-safe, supported path).
