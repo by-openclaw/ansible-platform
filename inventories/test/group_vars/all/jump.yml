@@ -5,8 +5,11 @@
 platform_jump_user: "svc-ansible-prod"
 platform_jump_identity: ""
 platform_jump_host: "10.6.239.196"
+# The prod firewall's sshd moved to the platform SSH port (hardening baseline, 2026-09): without
+# -p the hop timed out and every test-tier play stopped at its first Vault read.
+platform_jump_port: 22222
 platform_jump_args: >-
-  -o ProxyCommand="ssh -W %h:%p {{ platform_jump_identity }}
+  -o ProxyCommand="ssh -W %h:%p -p {{ platform_jump_port }} {{ platform_jump_identity }}
   -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
   {{ platform_jump_user }}@{{ platform_jump_host }}"
   -o StrictHostKeyChecking=no
