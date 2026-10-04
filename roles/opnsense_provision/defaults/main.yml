@@ -29,11 +29,17 @@ opnsense_provision_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/
 # the running firewall held the working one, so the 26.7 rebuild came up with no uplink (#360).
 opnsense_provision_vault_secrets: true
 opnsense_provision_vault_host: "{{ vault_secret_host | default(groups['vault'] | first) }}"   # probed before any read
+#
+# The tier is the FIREWALL's (the seed profile's vm.env), never the inventory's: a test firewall
+# provisioned from the prod inventory was seeded with prod's break-glass credential (2026-10-04,
+# the scratch firewall). A profile that names no tier keeps the inventory's.
+opnsense_provision_env: >-
+  {{ ((opnsense_provision_seed | default({})).vm | default({})).env | default(platform_env, true) }}
 opnsense_provision_vault_paths:
-  genesis: "{{ platform_env }}/opnsense/oob-admin"
-  pppoe: "{{ platform_env }}/net/isp-proximus-pppoe"
-  wan2: "{{ platform_env }}/net/isp-telenet"
-  domain: "{{ platform_env }}/net/internal-domain"
+  genesis: "{{ opnsense_provision_env }}/opnsense/oob-admin"
+  pppoe: "{{ opnsense_provision_env }}/net/isp-proximus-pppoe"
+  wan2: "{{ opnsense_provision_env }}/net/isp-telenet"
+  domain: "{{ opnsense_provision_env }}/net/internal-domain"
 
 # Proxmox API credentials: Vault first; the file is the offline copy for a rebuild with
 # Vault unreachable (rewritten from Vault by playbooks/fw-offline-cache.yml). Never the inventory.

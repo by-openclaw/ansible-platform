@@ -91,6 +91,18 @@ opn_interface_map:
   cctv: opt11
   wan: opt12   # the seed assigns no 'wan' slot — WAN1 = Proximus (ADR services/0006 §1: IDS on WAN1)
   lan: lan
+# --- NetFlow / Insight (catalog-owned since 26.7.5; the seed no longer writes it) ---------------
+# Capture = the OOB plane, the trunk and every zone; the uplinks on egress only, so a forwarded
+# flow is counted once. The fabric management segment is not accounted. The local Insight
+# collector listens on the loopback target.
+opn_netflow_trunk: opt1
+opn_netflow_uplinks: ["{{ opn_interface_map.wan }}", opt13]   # Proximus, Telenet
+opn_netflow:
+  interfaces: "{{ ([opn_netflow_trunk] + (opn_interface_map.values() | list) + opn_netflow_uplinks) | unique }}"
+  egress_only: "{{ opn_netflow_uplinks }}"
+  version: v9
+  targets: ["127.0.0.1:2056"]
+  collect: true
 opn_ids:
   # ENABLED 2026-09-09 in the prod window (USER go): the FW VM now carries the 8 GiB seed profile
   # (infra-terraform-proxmox #91, applied with `--apply-hw --confirm-prod-restart`; guest sees
