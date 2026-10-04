@@ -125,6 +125,24 @@
   when: not ansible_check_mode and dbproxy_redis_members | length > 0
   tags: [dbproxy, verify]
 
+# The route sends Redis traffic only to the member the Sentinels name: every Sentinel must be
+# reachable from here, and they must agree on one member.
+- name: "dbproxy | Every Sentinel names the same member (as the endpoint's checks see it)"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ dbproxy_metrics_port }}/metrics"
+    return_content: true
+  register: dbproxy_metrics_named
+  retries: 20
+  delay: 3
+  until: >-
+    dbproxy_metrics_named.status | default(0) == 200 and
+    (dbproxy_metrics_named.content | default('')
+     | regex_findall('haproxy_server_status\{proxy="redis_named_[^"]+",server="[^"]+",state="UP"\} 1') | length)
+    == (dbproxy_redis_sentinels | length)
+  check_mode: false   # read-only probe
+  when: not ansible_check_mode and dbproxy_redis_members | length > 0
+  tags: [dbproxy, verify]
+
 - name: "dbproxy | Report"
   ansible.builtin.debug:
     msg: >-

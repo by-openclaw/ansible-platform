@@ -22,8 +22,8 @@ dbproxy_pg_members: "{{ platform_pg_members }}"
 dbproxy_patroni_port: 8008                 # GET /primary answers 200 on the leader only
 # Leader detection: a member is out after 3 failed checks 3 s apart; its sessions are closed at
 # once so a client reconnects to the new leader instead of talking to a demoted one.
-dbproxy_check_interval: "3s"
-dbproxy_check_fall: 3
+dbproxy_check_interval: "1s"            # a dead member leaves and a new leader enters within 2 s
+dbproxy_check_fall: 2
 dbproxy_check_rise: 2
 # Idle sessions are kept (application pools hold them for hours); TCP keep-alives detect a dead peer.
 dbproxy_idle_timeout: "12h"
@@ -40,7 +40,15 @@ dbproxy_redis_port: 6379
 dbproxy_redis_check_user: "healthcheck"
 dbproxy_redis_check_vault_path: "{{ platform_redis_users_vault_prefix | default('') }}/{{ dbproxy_redis_check_user }}"
 dbproxy_redis_check_fall: 2
-dbproxy_redis_check_rise: 6
+dbproxy_redis_check_rise: 2
 
 # --- Metrics (HAProxy's built-in Prometheus exporter) -----------------------------------------
 dbproxy_metrics_port: 8405
+# Redis: a member receives traffic only while it reports itself master AND at least this many
+# Sentinels name it as the primary. That replaces the 18 s wait (six checks) which kept a
+# restarted old primary out of rotation until the Sentinels had demoted it: the Sentinels'
+# own word is immediate and cannot be wrong about a stale master.
+dbproxy_redis_sentinels: "{{ platform_redis_sentinel_hosts | default([]) }}"
+dbproxy_redis_sentinel_port: 26379
+dbproxy_redis_sentinel_quorum: 2
+dbproxy_redis_master_name: "{{ platform_redis_master_name | default('') }}"

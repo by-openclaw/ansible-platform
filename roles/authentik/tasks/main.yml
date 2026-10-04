@@ -49,6 +49,8 @@
       {{ authentik_members | map('extract', hostvars, 'ansible_host')
          | map('regex_replace', '^', 'http://') | map('regex_replace', '$', ':' ~ authentik_host_port) | list }}
     traefik_route_health_path: "{{ authentik_health_path }}"
+    traefik_route_health_interval: "2s"     # its readiness asks the database: a little more time than the default
+    traefik_route_health_timeout: "1500ms"
     traefik_route_internal_only: false
   when: inventory_hostname == authentik_first_member
   tags: [authentik, route]

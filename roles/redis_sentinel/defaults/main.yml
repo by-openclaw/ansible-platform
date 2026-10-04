@@ -27,7 +27,12 @@ redis_sentinel_master_name: "{{ platform_redis_master_name }}"
 redis_sentinel_members: "{{ platform_redis_members }}"
 redis_sentinel_redis_port: 6379
 redis_sentinel_quorum: 2
-redis_sentinel_down_after_ms: 5000        # a primary silent for 5 s is suspected
+redis_sentinel_down_after_ms: 3000        # a primary silent for 3 s is suspected (pings go every second)
+# The endpoint's check login on the Sentinels (same credential as on the members, owner:
+# roles/redis): it may ask which member is the primary, nothing else.
+redis_sentinel_check_user: "healthcheck"
+redis_sentinel_check_vault_path: "{{ platform_redis_users_vault_prefix }}/{{ redis_sentinel_check_user }}"
+redis_sentinel_check_rules: "-@all +ping +sentinel|get-master-addr-by-name"
 redis_sentinel_failover_timeout_ms: 60000
 
 # Credentials: the members' admin password (owner: roles/redis) and the Sentinels' own.

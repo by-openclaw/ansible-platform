@@ -22,3 +22,19 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: dbproxy`). R
 ## Backup (infra/0008)
 
 Class E (`docs/backup.md`): no data. The guest is in the PBS job; rebuild = the play.
+
+## Failover budget (tuned 2026-10-04)
+
+What a client sees when a member dies, and what the time is made of. The first production figures (39 s, 21 s, 6 s) were Patroni's, HAProxy's and Vault's cautious defaults.
+
+| Service | Detection | Takeover | The endpoint or the edge follows |
+|---|---|---|---|
+| PostgreSQL | the leader key expires: `ttl 10` (`loop_wait 3`, `retry_timeout 3`) | Patroni promotes the synchronous standby | checks every second, two good answers |
+| Redis | the Sentinels: `down-after 3 s`, quorum 2 | a Sentinel promotes the replica | checks every second; a member is used only while it says master **and** two Sentinels name it |
+| Vault | raft heartbeat (`performance_multiplier 1`) | raft election | the edge checks `/v1/sys/health` every second |
+| Authentik | — (two active instances) | — | the edge checks readiness every 2 s |
+
+- **Why Redis no longer waits 18 s:** the wait kept a restarted old primary (it claims to be a master until the Sentinels demote it) out of rotation. The route now asks the Sentinels themselves (`backend redis_named_<member>`): such a member gets no traffic at all, immediately.
+- **The floors:** Patroni's `retry_timeout` is also how long an etcd hiccup may last before the leader steps down, and the Sentinels' `down-after` how long a member may be silent — lower values turn a slow second on the hypervisor into a failover.
+- **Single instances** (this endpoint, the edge, the resolver, the object store, GitLab, …) have no failover: their time is a restart.
+- **Proof:** `playbooks/ha-drill.yml --tags postgresql-kill` / `redis-kill` kill the leader's / the primary's container and measure the gap with a probe that runs three times a second on another host.

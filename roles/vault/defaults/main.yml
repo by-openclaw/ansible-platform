@@ -15,6 +15,10 @@ vault_fqdn: "{{ platform_service_fqdns.vault }}"            # external (Traefik)
 # same keys. A member never initialises a second cluster (tasks/init.yml).
 vault_members: "{{ platform_vault_members | default([inventory_hostname]) }}"
 vault_first_member: "{{ groups['vault'] | first }}"
+# Raft timing. Vault's default multiplier (5) is meant for small test machines: a dead active
+# node is replaced after about 5 s. 1 is the production value (about 1 s); raise it again if
+# the active node changes without a member having died (CPU starvation of a guest).
+vault_raft_performance_multiplier: 1
 vault_node_id: "{{ inventory_hostname | regex_replace('^lxc-', '') }}"   # lxc-vault-01 → vault-01 (node 1 keeps its id)
 vault_node_fqdn: "{{ inventory_hostname }}.{{ platform_domain }}"       # the node's own address
 
