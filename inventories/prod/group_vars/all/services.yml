@@ -50,6 +50,18 @@ platform_service_fqdns: >-
          _aliases | map(attribute='value') | map('regex_replace', '$', '.' ~ platform_domain)))) }}
 _aliases: "{{ platform_services | selectattr('aliases', 'defined') | map(attribute='aliases') | map('dict2items') | flatten }}"
 
+# A clustered service runs on more than one guest: `host` stays its FIRST member (what every
+# single-host reader keeps using — the register, a delegate, a pin read) and `members` lists the
+# others. platform_service_hosts.<name> = all of them, first member first; the DOCKER-USER catalog
+# and the scaffold's published-port check read it, so a rule of the service applies on every
+# member and a `from: <service>` source resolves to every member.
+platform_service_hosts: >-
+  {%- set out = {} -%}
+  {%- for s in platform_services -%}
+    {%- set _ = out.update({s.name: ([s.host] if s.host else []) + (s.members | default([]))}) -%}
+  {%- endfor -%}
+  {{ out }}
+
 platform_services:
   - {name: authentik,     role: authentik,        playbook: authentik.yml,    host: lxc-authentik-01,   fqdn: authentik, exposure: public,  sso: oidc,        db: shared-pg, pin: authentik_version,      backup: [pbs, app-native], monitoring: [node, cadvisor, probe, metrics], metrics_port: 9300, vendor: {name: authentik,        docs: https://docs.goauthentik.io/}}
   - {name: nextcloud,     role: nextcloud,        playbook: nextcloud.yml,    host: lxc-nextcloud-01,   fqdn: nextcloud, exposure: public,  sso: oidc,        db: shared-pg, pin: nextcloud_image,         backup: [pbs, app-native], monitoring: [node, cadvisor, probe, metrics], metrics_port: 9205, vendor: {name: Nextcloud,        docs: https://docs.nextcloud.com/}}
