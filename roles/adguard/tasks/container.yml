@@ -41,6 +41,8 @@
       containers:
         - name: "{{ adguard_container }}"
           image: "{{ adguard_image }}"
+          read_only: true                 # SEC-22: it writes to its mounted directories only
+          tmpfs: ["/tmp:rw,size=64m"]
           network_mode: host
           volumes:
             - "{{ adguard_home_dir }}:/opt/adguardhome/conf"
