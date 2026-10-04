@@ -2,7 +2,7 @@
 
 The package caches of the platform on `lxc-pkgcache-01`: **devpi** (caching mirror of PyPI, `pypi.<domain>`, private route) and **apt-cacher-ng** (caching proxy for Debian repositories, port 3142). Both images are built on the guest from a pinned official base and a pinned package version (`defaults/main.yml`).
 
-- **devpi**: `devpi-server` + `devpi-web`, server directory `/var/lib/devpi` (created once by `devpi-init`), only `root` may modify (`--restrict-modify root`; credential in Vault `{env}/pkgcache/devpi-root`). Clients: `https://pypi.<domain>/root/pypi/+simple/`.
+- **devpi**: `devpi-server` (no web/search plugin: its index of all of PyPI kept the guest busy for hours), server directory `/var/lib/devpi` (created once by `devpi-init`), only `root` may modify (`--restrict-modify root`; credential in Vault `{env}/pkgcache/devpi-root`). Clients: `https://pypi.<domain>/root/pypi/+simple/`.
 - **apt-cacher-ng**: the Debian package, settings passed as arguments (the package's repository mappings stay as shipped), cache in `/var/cache/apt-cacher-ng`. Clients: `Acquire::http::Proxy "http://lxc-pkgcache-01.<domain>:3142";`.
 - Both containers run on a read-only root filesystem, without capabilities, as their own account.
 - **Upgrade**: bump a pin and the revision → the play rebuilds and recreates.
