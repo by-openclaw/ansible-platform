@@ -69,6 +69,8 @@
       containers:
         - name: "{{ crowdsec_container }}"
           image: "{{ crowdsec_image }}"
+          read_only: true                 # SEC-22: it writes to its mounted directories only
+          tmpfs: ["/tmp:rw,size=64m"]
           network_mode: host
           env: "{{ crowdsec_container_env }}"
           volumes:
