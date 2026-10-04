@@ -2,22 +2,29 @@
 # ==============================================================================
 # Role: redis (Docker) — dispatcher
 # ==============================================================================
-- name: Retire any native Redis install
-  ansible.builtin.import_tasks: migrate.yml
-  tags: [redis, migrate]
+- name: "Redis | Remove (redis_state=absent)"
+  ansible.builtin.include_tasks: absent.yml
+  when: redis_state == 'absent'
 
-- name: Distribute the shared wildcard cert (TLS)
-  ansible.builtin.import_tasks: tls.yml
-  tags: [redis, tls]
+- name: "Redis | Converge"
+  when: redis_state == 'present'
+  block:
+    - name: Retire any native Redis install
+      ansible.builtin.import_tasks: migrate.yml
+      tags: [redis, migrate]
 
-- name: Resolve / generate the requirepass secret
-  ansible.builtin.import_tasks: secrets.yml
-  tags: [redis, secrets]
+    - name: Distribute the shared wildcard cert (TLS)
+      ansible.builtin.import_tasks: tls.yml
+      tags: [redis, tls]
 
-- name: Render config (TLS, auth, persistence)
-  ansible.builtin.import_tasks: config.yml
-  tags: [redis, config]
+    - name: Resolve / generate the requirepass secret
+      ansible.builtin.import_tasks: secrets.yml
+      tags: [redis, secrets]
 
-- name: Run the Redis container
-  ansible.builtin.import_tasks: container.yml
-  tags: [redis, container]
+    - name: Render config (TLS, auth, persistence)
+      ansible.builtin.import_tasks: config.yml
+      tags: [redis, config]
+
+    - name: Run the Redis container
+      ansible.builtin.import_tasks: container.yml
+      tags: [redis, container]

@@ -1,0 +1,29 @@
+---
+# Teardown of ONE member: its container, its data volume, its start file. For a rehearsal
+# member or a member rebuilt from the primary (it rejoins empty and copies the data).
+# Refused unless the host is named a second time.
+- name: "absent | The member is named explicitly (redis_absent_confirm = this host)"
+  ansible.builtin.assert:
+    that: redis_absent_confirm | default('') == inventory_hostname
+    fail_msg: >-
+      removing {{ inventory_hostname }}'s Redis data needs
+      -e redis_state=absent -e redis_absent_confirm={{ inventory_hostname }} (one member per run)
+    quiet: true
+
+- name: "absent | Container"
+  community.docker.docker_container:
+    name: "{{ redis_container_name }}"
+    state: absent
+
+- name: "absent | Data volume"
+  community.docker.docker_volume:
+    name: "{{ redis_data_volume }}"
+    state: absent
+
+- name: "absent | Start file and configuration"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ redis_runtime_host_dir }}"
+    - "{{ redis_conf_host_dir }}"
