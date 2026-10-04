@@ -1,0 +1,20 @@
+---
+# ==============================================================================
+# Playbook: pve-storage-health.yml — the node's storage, read and (on request) repaired.
+#   Report:  ansible-playbook playbooks/pve-storage-health.yml
+#            (pool state, the controller's logical volumes and drives, per-drive wear)
+#   Scrub:   ... -e pve_storage_scrub=true
+#   Repair:  ... -e pve_storage_reenable=true
+#            (a logical volume `Failed` on a drive that is `OK` is re-enabled; ZFS resilvers;
+#             the pool is scrubbed and must end ONLINE with 0 errors)
+# A drive the controller reports failed is replaced, not re-enabled: docs/services/proxmox.md.
+# ==============================================================================
+- name: "Proxmox VE — storage health and repair"
+  hosts: proxmox_nodes
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Storage health (roles/pve_host)"
+      ansible.builtin.include_role:
+        name: pve_host
+        tasks_from: storage_health.yml

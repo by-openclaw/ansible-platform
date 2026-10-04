@@ -35,6 +35,19 @@
       apply={{ opnsense_firmware_upgrade | bool }}
   tags: [firmware]
 
+# The rollback first: a hypervisor snapshot of the firewall VM before anything is applied
+# (2026-10-03: taken by hand before the 26.7.5 update — now part of the window).
+- name: "Firmware | Snapshot before the update (or on request)"
+  ansible.builtin.import_tasks: fw_snapshot.yml   # static: the `firmware` tag reaches the task inside
+  vars:
+    opnsense_fw_snapshot_state: "{{ opnsense_firmware_snapshot | default('present') }}"
+  when:
+    - opn_pve_vm_name | default('') | length > 0
+    - >-
+      opnsense_firmware_snapshot is defined or
+      (opnsense_firmware_upgrade | bool and opnsense_fw_pending.diff.before.status | default('') in ['update', 'upgrade'])
+  tags: [firmware]
+
 - name: "Firmware | Apply the pending update/upgrade and wait for the reboot INTO {{ opnsense_firmware_target | default('') or 'any version' }}"
   by_systems.opnsense.opnsense_firmware:
     host: "{{ opn_host }}"

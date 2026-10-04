@@ -1,0 +1,29 @@
+---
+# Hypervisor snapshot of the firewall VM: the rollback of a firmware update. Taken automatically
+# before an update is applied; on request with -e opnsense_firmware_snapshot=present|absent
+# (absent removes every pre_fw_* snapshot once the update is accepted). Runs on the node that
+# hosts the VM (root key, like the other node plays); a firewall that is not a VM of the
+# platform node (no opn_pve_vm_name) is skipped.
+- name: "Firmware | Snapshot of the firewall VM on the hypervisor ({{ opnsense_fw_snapshot_state }})"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -o pipefail
+      id=$(qm list | awk -v n="{{ opn_pve_vm_name }}" '$2 == n {print $1}')
+      [ -n "$id" ] || { echo "no VM named {{ opn_pve_vm_name }} on this node"; exit 2; }
+      snap="pre_fw_{{ (opnsense_firmware_target | default('update', true)) | regex_replace('[^0-9A-Za-z]', '_') }}"
+      {% if opnsense_fw_snapshot_state == 'absent' %}
+      for s in $(qm listsnapshot "$id" | awk '{print $2}' | grep -E '^pre_fw_' || true); do qm delsnapshot "$id" "$s" && echo "removed $s"; done
+      {% else %}
+      if qm listsnapshot "$id" | awk '{print $2}' | grep -qx "$snap"; then echo "exists $snap"; else
+        qm snapshot "$id" "$snap" --description "before the firmware update to {{ opnsense_firmware_target | default('the pending release', true) }} (roles/opnsense)" && echo "created $snap"; fi
+      {% endif %}
+  delegate_to: "{{ groups['proxmox_nodes'] | first }}"
+  become: false
+  vars:
+    ansible_connection: ssh
+    ansible_user: "{{ platform_pve_root_user }}"
+    ansible_ssh_private_key_file: "{{ platform_pve_root_key }}"
+    ansible_become: false
+  register: opnsense_fw_snapshot
+  changed_when: "'created' in opnsense_fw_snapshot.stdout or 'removed' in opnsense_fw_snapshot.stdout"

@@ -208,3 +208,7 @@ validation. `roles/service_decommission` applies to guests, not FWs. The two lab
 - `roles/opnsense/README.md`, `docs/setup.md`, `docs/audits/opnsense-2026-09-07.md`, tracker #324
 - ADRs: services/0001 (provisioning), services/0006 (IDS/IBR), services/0010 (CrowdSec), naming/0003, infra/0004, security/0004
 - infra-terraform-proxmox `modules/vm-opnsense/seed/` (seed pipeline), lib-opnsense, ansible-opnsense
+
+## Firmware window — the rollback is a snapshot
+
+When `opnsense.yml` applies a pending firmware update (`-e opnsense_firmware_upgrade=true`), the firmware task first takes a hypervisor snapshot of the firewall VM (`pre_fw_<target>`, on the node that hosts `opn_pve_vm_name`). On request: `opnsense.yml --tags firmware -e opnsense_firmware_snapshot=present`; once the update is accepted: `-e opnsense_firmware_snapshot=absent` removes every `pre_fw_*` snapshot. Rollback = `qm rollback` of that snapshot on the node, then a normal `opnsense.yml` run. After an update, run lib-opnsense's `scripts/firmware-upgrade-check.sh` (API probe + validator check) against a non-production firewall of the same release.

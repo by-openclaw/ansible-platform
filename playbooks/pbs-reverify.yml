@@ -1,0 +1,71 @@
+---
+# ==============================================================================
+# Playbook: pbs-reverify.yml — verification state of every snapshot, and a re-verify of the ones
+# marked `failed`.
+# The verify job skips a snapshot that already carries a state (failed ones included), and the
+# verify API defaults to the same: a snapshot marked failed by a transient read error (an S3 or
+# edge restart during a verify) stays failed until it is verified on its own with
+# `ignore-verified` off. That is what this play does, one snapshot at a time.
+#   Report:    ansible-playbook playbooks/pbs-reverify.yml
+#   Re-verify: ... -e pbs_reverify_apply=true
+# Not during the backup or verify windows (docs/services/pbs.md).
+# ==============================================================================
+- name: "PBS — snapshot verification states, re-verify the failed ones"
+  hosts: pbs
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../roles/pbs/defaults/main.yml
+  vars:
+    pbs_reverify_apply: false
+  tasks:
+    - name: "Verify | Snapshots of the datastore"
+      ansible.builtin.command:
+        argv: [proxmox-backup-debug, api, get, "/admin/datastore/{{ pbs_datastore_name }}/snapshots", --output-format, json]
+      register: pbs_reverify_list
+      changed_when: false
+      check_mode: false   # read-only probe
+
+    - name: "Verify | States"
+      ansible.builtin.set_fact:
+        pbs_reverify_failed: "{{ pbs_reverify_list.stdout | from_json | selectattr('verification', 'defined') | selectattr('verification.state', 'equalto', 'failed') | list }}"
+        pbs_reverify_total: "{{ pbs_reverify_list.stdout | from_json | length }}"
+
+    - name: "Verify | Report"
+      ansible.builtin.debug:
+        msg: "{{ pbs_reverify_total }} snapshots, {{ pbs_reverify_failed | length }} marked failed: {{ pbs_reverify_failed | map(attribute='backup-type') | zip(pbs_reverify_failed | map(attribute='backup-id'), pbs_reverify_failed | map(attribute='backup-time')) | map('join', '/') | list }}"
+
+    - name: "Verify | Re-verify each failed snapshot on its own (ignore-verified off)"
+      ansible.builtin.command:
+        argv:
+          - proxmox-backup-debug
+          - api
+          - create
+          - "/admin/datastore/{{ pbs_datastore_name }}/verify"
+          - --backup-type
+          - "{{ item['backup-type'] }}"
+          - --backup-id
+          - "{{ item['backup-id'] }}"
+          - --backup-time
+          - "{{ item['backup-time'] | string }}"
+          - --ignore-verified
+          - "false"
+      loop: "{{ pbs_reverify_failed }}"
+      loop_control:
+        label: "{{ item['backup-type'] }}/{{ item['backup-id'] }}/{{ item['backup-time'] }}"
+      when: pbs_reverify_apply | bool
+      changed_when: true
+
+    - name: "Verify | States after the run"
+      ansible.builtin.command:
+        argv: [proxmox-backup-debug, api, get, "/admin/datastore/{{ pbs_datastore_name }}/snapshots", --output-format, json]
+      register: pbs_reverify_after
+      changed_when: false
+      check_mode: false   # read-only probe
+
+    - name: "Verify | No snapshot is marked failed"
+      ansible.builtin.assert:
+        that: pbs_reverify_after.stdout | from_json | selectattr('verification', 'defined') | selectattr('verification.state', 'equalto', 'failed') | list | length == 0
+        fail_msg: "snapshots still marked failed — real corruption is possible: read the verify task log on the server"
+        quiet: true
+      when: pbs_reverify_apply | bool
