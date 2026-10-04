@@ -68,6 +68,8 @@
       containers:
         - name: "{{ loki_container }}"
           image: "{{ loki_image }}"
+          read_only: true                 # SEC-22: it writes to its mounted directories only
+          tmpfs: ["/tmp:rw,size=64m"]
           network_mode: host
           log_driver: journald   # container log -> journal -> promtail -> Loki (INF-27)
           user: "{{ loki_account_user.uid | default(0) }}:{{ loki_account_user.group | default(0) }}"

@@ -33,7 +33,14 @@ traefik_internal_cidrs:
 # server. Traefik's forwardAuth middleware calls /outpost.goauthentik.io/auth/traefik;
 # the /outpost.goauthentik.io/ login-callback path is routed back to the same outpost.
 # Access becomes: internal network AND Authentik SSO AND member of traefik-admins.
-traefik_authentik_outpost_url: "http://{{ hostvars[groups['authentik'] | first].ansible_host }}:9000"
+# Every Authentik instance carries the embedded outpost. forwardAuth takes ONE address, so the
+# edge calls a loopback entry point of its own whose router balances over the instances that
+# are ready; the forwarded headers of the edge's own call are trusted there, and only there.
+traefik_authentik_outpost_urls: >-
+  {{ (groups['authentik_cluster'] | default(groups['authentik'])) | map('extract', hostvars, 'ansible_host')
+     | map('regex_replace', '^', 'http://') | map('regex_replace', '$', ':9000') | list }}
+traefik_authentik_health_path: "/-/health/ready/"
+traefik_authgate_port: 8083
 traefik_authentik_auth_headers:
   - X-authentik-username
   - X-authentik-groups

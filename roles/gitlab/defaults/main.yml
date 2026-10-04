@@ -19,7 +19,7 @@
 # authentik / mailcow) creates it first. GitLab's OWN generated secrets are written
 # back to Vault after install (DR-critical).
 gitlab_pg_vault_path: "{{ platform_env }}/gitlab/db-pgsql"          # postgres_db creates
-gitlab_redis_vault_path: "{{ platform_env }}/redis/admin"         # redis role owns (shared)
+gitlab_redis_vault_path: "{{ platform_redis_users_vault_prefix }}/{{ gitlab_redis_user }}"   # owner: roles/redis (its own login)
 gitlab_s3_vault_path: "{{ platform_env }}/gitlab/s3"   # seaweedfs_bucket creates
 gitlab_oidc_vault_path: "{{ platform_env }}/gitlab/oidc"        # authentik creates
 # SMTP + IMAP both come from the service mailbox document below (SVC-11/SVC-16); the former
@@ -86,11 +86,29 @@ gitlab_pg_sslmode: "verify-full"       # validates the PG server cert (security 
 gitlab_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"   # host CA bundle (platform CA present; PG cert SAN *.by-research.be)
 
 # --- Shared Redis (TLS) -------------------------------------------------------
-# The endpoint (follows the primary). GitLab still logs in as the `default` user: Omnibus takes
-# a username only per Redis instance (cache, queues, shared state, …), a change of its own.
+# The endpoint (follows the primary), GitLab's own login (platform_redis_users) and its own
+# database number (platform_redis_databases): Rails and the agent server take them from the
+# gitlab_rails settings; Workhorse needs the username set on its own (templates/gitlab.rb.j2).
 gitlab_redis_host: "{{ platform_redis_host }}"
 gitlab_redis_port: 6379
 gitlab_redis_ssl: true
+gitlab_redis_user: "gitlab"
+gitlab_redis_db: "{{ platform_redis_databases['gitlab'] }}"
+# The one-time move of its keys (tasks/redis_database.yml): the database GitLab shared
+# until 2026-10-04 and the key prefixes of the consumer that stays there (NetBox's queue).
+gitlab_redis_previous_db: 0
+gitlab_redis_foreign_prefixes: ["rq:"]
+gitlab_redis_cli: /opt/gitlab/embedded/bin/redis-cli
+gitlab_redis_cacert: "{{ gitlab_pg_sslrootcert }}"            # the same host bundle
+gitlab_redis_live_file: /var/opt/gitlab/gitlab-rails/etc/resque.yml   # written by reconfigure
+gitlab_redis_move_script: >-
+  local moved = 0
+  for _, k in ipairs(redis.call('KEYS', '*')) do
+  local foreign = false
+  for i = 2, #ARGV do if string.sub(k, 1, string.len(ARGV[i])) == ARGV[i] then foreign = true end end
+  if not foreign then moved = moved + redis.call('MOVE', k, ARGV[1]) end
+  end
+  return moved
 
 # --- S3 object storage (SeaweedFS, direct same-VLAN endpoint) -----------------
 # Host FQDN (same-VLAN direct, no IP, no Traefik hairpin; s3.{{ platform_domain }} would

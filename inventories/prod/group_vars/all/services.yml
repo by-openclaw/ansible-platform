@@ -26,6 +26,7 @@
 # frequently not the service name:
 #     collab -> office    jitsi -> meet    mailcow -> mail
 #     netbird -> vpn      verdaccio -> npm  seaweedfs -> s3   step-ca -> ca
+#     pkgcache -> pypi
 # So the service-to-public-name mapping lived once in the catalog and was then
 # re-derived by hand everywhere. Renaming a public name meant finding every site;
 # missing one leaves a Traefik route or an OIDC redirect URI on a name that no
@@ -63,7 +64,7 @@ platform_service_hosts: >-
   {{ out }}
 
 platform_services:
-  - {name: authentik,     role: authentik,        playbook: authentik.yml,    host: lxc-authentik-01,   fqdn: authentik, exposure: public,  sso: oidc,        db: shared-pg, pin: authentik_version,      backup: [pbs, app-native], monitoring: [node, cadvisor, probe, metrics], metrics_port: 9300, vendor: {name: authentik,        docs: https://docs.goauthentik.io/}}
+  - {name: authentik,     role: authentik,        playbook: authentik.yml,    host: lxc-authentik-01, members: [lxc-authentik-02], fqdn: authentik, exposure: public,  sso: oidc,        db: shared-pg, pin: authentik_version,      backup: [pbs, app-native], monitoring: [node, cadvisor, probe, metrics], metrics_port: 9300, vendor: {name: authentik,        docs: https://docs.goauthentik.io/}}
   - {name: nextcloud,     role: nextcloud,        playbook: nextcloud.yml,    host: lxc-nextcloud-01,   fqdn: nextcloud, exposure: public,  sso: oidc,        db: shared-pg, pin: nextcloud_image,         backup: [pbs, app-native], monitoring: [node, cadvisor, probe, metrics], metrics_port: 9205, vendor: {name: Nextcloud,        docs: https://docs.nextcloud.com/}}
   # collab: no human login surface — Nextcloud authenticates the person; the backends trust Nextcloud through
   # JWT (ONLYOFFICE) and shared secrets (Talk HPB/TURN/recording, whiteboard). sso: none is the truth (was forwardauth).
@@ -76,6 +77,7 @@ platform_services:
   - {name: gitlab-runner, role: gitlab_runner,    playbook: gitlab-runner.yml, host: vm-gitlab-runner-01, fqdn: null,    exposure: admin,   sso: none,        db: none,      pin: gitlab_runner_image, backup: [pbs], monitoring: [node, cadvisor, metrics], metrics_port: 9252, vendor: {name: GitLab Runner,    docs: https://docs.gitlab.com/runner/}}
   - {name: harbor,        role: harbor,           playbook: harbor.yml,       host: lxc-harbor-01,      fqdn: harbor,    exposure: private, sso: oidc,        db: shared-pg, pin: harbor_version,          backup: [pbs, app-native], monitoring: [node, cadvisor, probe, metrics], metrics_port: 9090, vendor: {name: Harbor,           docs: https://goharbor.io/docs/}}
   - {name: verdaccio,     role: verdaccio,        playbook: verdaccio.yml,    host: lxc-verdaccio-01,   fqdn: npm,       exposure: private, sso: oidc,        db: none,      pin: verdaccio_image,         backup: [pbs],             monitoring: [node, cadvisor, probe], vendor: {name: Verdaccio,        docs: https://verdaccio.org/docs/}}
+  - {name: pkgcache,      role: pkgcache,         playbook: pkgcache.yml,     host: lxc-pkgcache-01,    fqdn: pypi,      exposure: private, sso: none,        db: none,      pin: pkgcache_devpi_server_version, backup: [pbs],        monitoring: [node, cadvisor, probe], vendor: {name: devpi + apt-cacher-ng, docs: https://devpi.net/docs/devpi/devpi/stable/+doc/index.html}}
   - {name: netbox,        role: netbox,           playbook: netbox.yml,       host: lxc-nbox-01,        fqdn: netbox,    exposure: private, sso: oidc,        db: shared-pg, pin: netbox_image,            backup: [pbs, app-native], monitoring: [node, cadvisor, probe, metrics], metrics_port: 8080, vendor: {name: NetBox,           docs: https://docs.netbox.dev/}}
   - {name: monitoring,    role: grafana,          playbook: monitoring.yml,   host: lxc-monitoring-01,  fqdn: grafana,   exposure: private, sso: oidc,        db: shared-pg, pin: grafana_version,         backup: [pbs],             monitoring: [node, cadvisor, probe], vendor: {name: Grafana / Prometheus / Loki / Alertmanager, docs: https://grafana.com/docs/}}
   - {name: wazuh,         role: wazuh,            playbook: wazuh.yml,        host: lxc-wazuh-01,       fqdn: wazuh,     exposure: private, sso: oidc,        db: own,       pin: wazuh_version,           backup: [pbs],             monitoring: [node, cadvisor, probe], vendor: {name: Wazuh,            docs: https://documentation.wazuh.com/}}

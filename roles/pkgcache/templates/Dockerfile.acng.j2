@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/pkgcache). apt-cacher-ng = caching proxy for Debian repositories, pinned.
+FROM {{ pkgcache_debian_image }}
+# The account exists before the package (its install adopts it): a fixed uid for the host directories.
+RUN groupadd --gid {{ pkgcache_acng_uid }} apt-cacher-ng \
+ && useradd --uid {{ pkgcache_acng_uid }} --gid {{ pkgcache_acng_uid }} --home-dir /var/cache/apt-cacher-ng --no-create-home --shell /usr/sbin/nologin apt-cacher-ng \
+ && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends apt-cacher-ng={{ pkgcache_acng_version }} ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+USER {{ pkgcache_acng_uid }}
+EXPOSE 3142
+ENTRYPOINT ["/usr/sbin/apt-cacher-ng", "-c", "/etc/apt-cacher-ng"]
