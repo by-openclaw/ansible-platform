@@ -1,6 +1,6 @@
 # Redis (shared instance) — service page
 
-Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: redis`). Role `roles/redis`, play `playbooks/redis.yml`, guest `lxc-redis-01`. Database allocation: `inventories/prod/group_vars/all/redis.yml` (`platform_redis_databases`). Audit: [`docs/audits/redis-2026-10-03.md`](../audits/redis-2026-10-03.md).
+Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: redis`). Role `roles/redis`, play `playbooks/redis.yml`, guests `lxc-redis-01` and `lxc-redis-02` (a primary and a replica) with three Sentinels (`roles/redis_sentinel`: the two members and the endpoint guest); consumers connect to the data endpoint ([dbproxy](dbproxy.md)). Database allocation: `inventories/prod/group_vars/all/redis.yml` (`platform_redis_databases`). Audit: [`docs/audits/redis-2026-10-03.md`](../audits/redis-2026-10-03.md).
 
 ## Identity (identity/0002 §per-tool identity doc)
 
