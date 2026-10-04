@@ -40,7 +40,18 @@ dbproxy_redis_port: 6379
 dbproxy_redis_check_user: "healthcheck"
 dbproxy_redis_check_vault_path: "{{ platform_redis_users_vault_prefix | default('') }}/{{ dbproxy_redis_check_user }}"
 dbproxy_redis_check_fall: 2
-dbproxy_redis_check_rise: 2
+# One good answer is enough: a member is used only while it says master AND the Sentinels name
+# it — the two already confirm each other (two answers cost a second of every failover).
+dbproxy_redis_check_rise: 1
+dbproxy_check_timeout: "2s"             # how long one check may take
+# A reload starts a new worker; the former one keeps the sessions it holds and no longer checks
+# the members — when a member dies nothing ends those sessions (2026-10-04: after the Redis
+# primary was killed, clients held dead connections for up to a minute). After this long the
+# former worker closes what it still holds and the clients reconnect to the worker that watches.
+dbproxy_hard_stop_after: "30s"
+# How long the role waits for former workers to end (above the previous line), and how often it looks.
+dbproxy_former_worker_retries: 9
+dbproxy_former_worker_delay: 5
 
 # --- Metrics (HAProxy's built-in Prometheus exporter) -----------------------------------------
 dbproxy_metrics_port: 8405

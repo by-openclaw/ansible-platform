@@ -18,10 +18,23 @@ Run: `ansible-playbook playbooks/redis.yml` (members one at a time, then the Sen
     role, so a restart keeps the role. The role normalises it on every run from the member's
     LIVE role — a rewrite copies every setting into it, and a copy left there would silently
     override a later change of `redis.conf`.
-- **Logins**: the `default` user (`requirepass`, Vault `redis/admin`) is the administration,
-  replication and Sentinel login. Every consumer has its own (`platform_redis_users`, Vault
+- **Logins**: the `default` user (Vault `redis/admin`) is the administration, replication and
+  Sentinel login. Every consumer has its own (`platform_redis_users`, Vault
   `redis/users/<name>`): everything except administration commands; the endpoint's check login
   may only run `INFO` and `PING`. ACLs do not replicate — both members render the same list.
+- **Where the logins live**: the ACL file (`redis_acl_file`, `aclfile` in `redis.conf`), not
+  `redis.conf`. The file is validated by a throwaway Redis of the same image before it replaces
+  the one on disk; a change is loaded with `ACL LOAD`, without a restart.
+- **The start file is static and Redis cannot rewrite it** (`redis_runtime_file`: one include
+  of `redis.conf`, root's). When the Sentinels change a member's role they ask it to rewrite
+  the file it started with, and Redis copies what it runs with into it. Two of those copies
+  stopped the next start: the logins ("Duplicate user found") and the image's bundled modules,
+  which its start script loads on every start anyway ("Can't load module … server aborting").
+  A member that had been through a failover could not restart until the role ran again (kill
+  drill of 2026-10-04). Now the rewrite fails, the role change itself applies, and who is
+  primary is the Sentinels' word alone: a restarted member comes up claiming to be a master and
+  the Sentinels make it a replica again within seconds; the endpoint sends nothing to a member
+  the Sentinels do not name. Only a member's FIRST start is told whom to follow.
 - **Replication**: `masterauth`, `replica-announce-ip` = the member's FQDN (the container's
   own address means nothing outside its host), TLS (`tls-replication yes`).
 - **TLS**: the shared wildcard certificate (`roles/tls_cert`), owned by the redis uid.

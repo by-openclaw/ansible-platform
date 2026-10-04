@@ -10,16 +10,19 @@ tls-cert-file {{ redis_tls_cert }}
 tls-key-file {{ redis_tls_key }}
 # The bundle FILE, not the directory: the host's /etc/ssl/certs is mounted, and its hashed
 # entries are symlinks to files outside the mount — a replica could not verify its primary.
-tls-ca-cert-file /etc/ssl/certs/ca-certificates.crt
+tls-ca-cert-file {{ redis_ca_bundle }}
 tls-auth-clients no
 tls-replication yes
 {% else %}
 port {{ redis_port }}
 {% endif %}
 
-# Auth. The default user (requirepass) is the administration, replication and Sentinel login;
-# every consumer has its own (below).
-requirepass {{ redis_requirepass }}
+# Auth. Every login — the default user (administration, replication, Sentinel) and one per
+# consumer — is in the ACL file. NOT here: when the Sentinels change this member's role, Redis
+# rewrites its start file and copies every login it knows into it, unless an ACL file holds
+# them; a login then stood in two files and Redis refused to start ("Duplicate user found") —
+# a member that had been through a failover could not restart (kill drill of 2026-10-04).
+aclfile {{ redis_acl_file }}
 
 # Replication — the same on every member. Who replicates from whom is NOT here: Sentinel
 # decides, and the member's start file carries its `replicaof` line.
@@ -27,12 +30,6 @@ masterauth {{ redis_requirepass }}
 replica-announce-ip {{ redis_fqdn }}
 replica-announce-port {{ redis_port }}
 replica-read-only yes
-
-# One login per consumer (password stored hashed). ACLs do not replicate: both members render
-# the same list.
-{% for u in redis_users %}
-user {{ u.name }} on #{{ redis_user_passwords[u.name] | hash('sha256') }} {{ u.key_patterns | default('~* &*') }} {{ u.rules | default(redis_user_default_rules) }}
-{% endfor %}
 
 # Durability — AOF so a future replica/Sentinel can attach (HA-adoptable).
 dir /data

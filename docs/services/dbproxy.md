@@ -23,19 +23,22 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: dbproxy`). R
 
 Class E (`docs/backup.md`): no data. The guest is in the PBS job; rebuild = the play.
 
-## Failover budget (tuned 2026-10-04)
+## Failover budget (tuned and measured 2026-10-04)
 
-What a client sees when a member dies, and what the time is made of. The first production figures (39 s, 21 s, 6 s) were Patroni's, HAProxy's and Vault's cautious defaults.
+What a client sees when a member dies, and what the time is made of. Measured by `playbooks/ha-drill.yml --tags postgresql-kill | redis-kill | vault-kill`: the member's container is killed and one probe loop on a host that stays up (three probes a second) times the gap. The node was under the nightly verification's I/O load during the run, so these are worst-case figures.
 
-| Service | Detection | Takeover | The endpoint or the edge follows |
-|---|---|---|---|
-| PostgreSQL | the leader key expires: `ttl 10` (`loop_wait 3`, `retry_timeout 3`) | Patroni promotes the synchronous standby | checks every second, two good answers |
-| Redis | the Sentinels: `down-after 3 s`, quorum 2 | a Sentinel promotes the replica | checks every second; a member is used only while it says master **and** two Sentinels name it |
-| Vault | raft heartbeat (`performance_multiplier 1`) | raft election | the edge checks `/v1/sys/health` every second |
-| Authentik | — (two active instances) | — | the edge checks readiness every 2 s |
+| Service | Measured (member killed) | Before | Detection | Takeover | The endpoint or the edge follows |
+|---|---|---|---|---|---|
+| PostgreSQL | **25.1 s** | 39 s | the leader lock expires: `ttl 20` (`loop_wait 3`, `retry_timeout 3`) | Patroni promotes the synchronous standby (no write lost) | checks every second, two good answers |
+| Redis | **5.8 s** (about 7 s in two other runs; 9.7 s with the first routing rule) | 21 s | the Sentinels: `down-after 3 s`, quorum 2 | a Sentinel promotes the replica | checks every second, one good answer; a member is used only while it says master **and** two Sentinels name it |
+| Vault | **3.4 s** | 6 s | raft heartbeat (`performance_multiplier 1`) | raft election, then the new active node loads its state | the edge checks `/v1/sys/health` every second |
+| Authentik | — (two active instances; not part of this run) | — | — | — | the edge checks the liveness path every 2 s |
 
+- **PostgreSQL's floor is Patroni's:** `ttl` cannot be lower than 20 s (a lower value is raised to 20 without a message; etcd shows the lock's granted lifetime). A lost leader — the whole member, Patroni included — is therefore replaced after about 20 s plus the promotion and the endpoint's check. A planned switchover takes about a second; PostgreSQL crashing under a living Patroni is handled by Patroni at once.
+- **Sessions of a former configuration:** a reload starts a new worker; the former one keeps the sessions it holds and no longer checks the members, so a dead member does not end them. `hard-stop-after` ({{ dbproxy_hard_stop_after }} in the role) bounds that: the former worker closes its sessions and the clients reconnect to the worker that watches. The role restarts the endpoint once when a worker without that bound is still present.
+- **The configuration is validated before it lands:** the pinned image parses the rendered file before it replaces the one on disk.
 - **Why Redis no longer waits 18 s:** the wait kept a restarted old primary (it claims to be a master until the Sentinels demote it) out of rotation. The route now asks the Sentinels themselves (`backend redis_named_<member>`): such a member gets no traffic at all, immediately.
 - **The floors:** Patroni's `retry_timeout` is also how long an etcd hiccup may last before the leader steps down, and the Sentinels' `down-after` how long a member may be silent — lower values turn a slow second on the hypervisor into a failover.
 - **Single instances** (this endpoint, the edge, the resolver, the object store, GitLab, …) have no failover: their time is a restart.
-- **Proof:** `playbooks/ha-drill.yml --tags postgresql-kill` / `redis-kill` kill the leader's / the primary's container and measure the gap with a probe that runs three times a second on another host.
+- **Proof:** the three kill drills above; the Redis drill also asserts that the restarted former primary received no session (counted by the time a session was accepted — the endpoint logs a session when it ends).
 - **Incident 2026-10-04 17:45:34–17:49:15 UTC:** the first version of the Sentinel check ended with `QUIT`, which a Sentinel does not answer for the restricted check login; every Sentinel check timed out, no member was "named", and the endpoint refused Redis connections. The role's own verification failed the play, but after the reload. The check now ends on the Sentinel's answer.

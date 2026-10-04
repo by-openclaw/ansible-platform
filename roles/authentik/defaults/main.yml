@@ -19,7 +19,8 @@ authentik_listen_ip: "{{ ansible_host }}"
 # the route — is done on the first member only; every member renders the same blueprints.
 authentik_members: "{{ groups['authentik_cluster'] | default(groups['authentik']) }}"
 authentik_first_member: "{{ groups['authentik'] | first }}"
-authentik_health_path: "/-/health/ready/"
+authentik_health_path: "{{ platform_authentik_lb_health_path }}"   # the edge's health check (inventory: one definition)
+authentik_ready_path: "/-/health/ready/"                           # the role waits on it: database reachable, migrations done
 authentik_host_port: 9000
 authentik_container_port: 9000
 

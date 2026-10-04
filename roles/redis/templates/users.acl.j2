@@ -1,0 +1,7 @@
+{# Managed by Ansible role `redis`. The ACL file Redis loads at start (`aclfile`): one `user` line per
+   login and nothing else — Redis accepts no comment line here. The default user is the
+   administration, replication and Sentinel login (what `requirepass` used to set). #}
+user default on #{{ redis_requirepass | hash('sha256') }} ~* &* +@all
+{% for u in redis_users %}
+{{ ['user', u.name, 'on', '#' ~ (redis_user_passwords[u.name] | hash('sha256')), u.key_patterns | default('~* &*'), u.rules | default(redis_user_default_rules)] | select() | join(' ') }}
+{% endfor %}

@@ -57,7 +57,7 @@ services/0005 §notifications.md) and points at everything else. Audit: [`audits
 
 Two instances — `lxc-authentik-01` and `lxc-authentik-02` — each a server and a worker on the shared PostgreSQL (sessions, cache and tasks live there since 2025.10), with the same secret key and the same blueprints rendered on both.
 
-1. **Edge:** `authentik.<domain>` carries both servers with a readiness check (`/-/health/ready/`): an instance that is not ready receives no traffic.
+1. **Edge:** `authentik.<domain>` carries both servers with a health check on the liveness path (`/-/health/live/`, `platform_authentik_lb_health_path`): an instance whose web stack does not answer receives no traffic. Not the readiness path: it opens a new database connection on every call (it was most of 4.7 new PostgreSQL sessions per second when asked every 2 s), and its answer passed the health timeout on both instances at once under load (2026-10-04). The role itself still waits on readiness when it starts an instance.
 2. **forwardAuth:** the middleware takes one address — a loopback entry point of the edge (`authgate`), whose router balances the auth requests over the instances that are ready. The forwarded headers of the edge's own call are trusted on that entry point only.
 3. **Once for the deployment (first instance only):** the database, the LDAP outpost and its certificate (LDAPS for the firewall's WebGUI stays on `lxc-authentik-01`), the API calls that follow the blueprints, the edge route. Both workers apply the blueprints (idempotent).
 4. **Not shared:** the media volume (icons uploaded through the UI) — everything the platform sets comes from blueprints and URLs.
