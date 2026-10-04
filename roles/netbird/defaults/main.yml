@@ -103,7 +103,7 @@ netbird_disable_default_policy: false
 # Stores on the shared cluster PostgreSQL (services/0004; catalog db: shared-pg).
 # NEVER sqlite: it lived in the container volume, outside the DB backup chain.
 netbird_store_engine: "postgres"
-netbird_pg_host: "{{ groups['postgresql'] | first }}.{{ platform_domain }}"   # FQDN: matches the server cert (verify-full)
+netbird_pg_host: "{{ platform_pg_host }}"   # FQDN: matches the server cert (verify-full)
 netbird_pg_port: 5432
 netbird_pg_user: "netbird"
 netbird_pg_vault_path: "{{ platform_env }}/netbird/db-pgsql"
@@ -148,7 +148,7 @@ netbird_automation_user: "svc-netbird-{{ platform_env }}"  # naming/0002 §3 svc
 netbird_enforce_no_human_pat: true
 netbird_pg_container: "postgres"       # shared cluster PG container on the DB host
 netbird_pg_database: "netbird"
-netbird_pg_delegate: "{{ groups['postgresql'] | first }}"    # where the shared postgres runs
+netbird_pg_delegate: "{{ platform_pg_leader | default(groups['postgresql'] | first) }}"    # the cluster's leader (tasks ask postgres_db/leader first)
 netbird_automation_vault_path: "{{ platform_env }}/netbird/automation"   # service-user PAT (role-managed)
 netbird_pat_expire_days: 365
 

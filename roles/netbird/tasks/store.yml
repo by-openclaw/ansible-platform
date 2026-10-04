@@ -9,6 +9,13 @@
 # Afterwards management.json says postgres and this block never runs again.
 # ==============================================================================
 
+# Statements that write run on the cluster's LEADER (a replica is read-only): ask once.
+- name: "store | Which PostgreSQL member leads"
+  ansible.builtin.include_role:
+    name: postgres_db
+    tasks_from: leader
+  when: platform_pg_leader is not defined
+
 - name: "store | The live management.json (which engine is running now?)"
   ansible.builtin.slurp:
     src: "{{ netbird_build_dir }}/management.json"

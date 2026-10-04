@@ -22,7 +22,7 @@ decommission_dump_dir: "{{ (vault_secret_dir | expanduser) }}/_stale/db-dumps"
 decommission_stale_dir: "{{ (vault_secret_dir | expanduser) }}/_stale"
 
 # Where each footprint component is removed.
-decommission_pg_host: "{{ groups['postgresql'] | first }}"
+decommission_pg_host: "{{ platform_pg_leader | default(groups['postgresql'] | first) }}"   # the cluster's leader (asked at the start)
 decommission_pg_container: "postgres"
 decommission_traefik_host: "{{ groups['traefik'] | first }}"
 decommission_traefik_dynamic_dir: "/etc/traefik/dynamic"
