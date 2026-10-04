@@ -65,8 +65,25 @@ Guest images capture everything on the rootfs and named docker volumes.
 | 2026-08 | GitLab archive → restore (role) | ✓ proven |
 | 2026-08 | Vault raft snapshot restore procedure | documented (`roles/vault_backup/README.md`) — drill pending |
 
-## Logs (INF-45)
+## Logs and alerts (INF-45)
 
 `vzdump` run logs ship from the PVE host via promtail (`journal`, host label
-`srv-proxmox-poc-01`) → Loki; PBS task logs on `vm-pbs-01`. Failed jobs also
-email `tech-support@` (to be moved to `alerts@` — queued).
+`srv-proxmox-poc-01`) → Loki; PBS task logs on `vm-pbs-01`. Both jobs mail their
+result to the ops mailbox (PVE notification target `mail-to-root`).
+
+A mail can be missed, so the state of the backups is also a **signal Prometheus
+watches**: every 15 min the node writes, per guest and per job's target storage,
+whether the job covers the guest, when its newest backup started and how many of its
+snapshots failed verification (`roles/pve_host`, timer `platform-backup-signal`).
+
+| Alert | Fires when |
+|---|---|
+| `BackupStale` | a guest's newest backup on a storage is older than 30 h (a missed night) |
+| `BackupMissing` | a guest covered by a job has no backup at all on that storage after 30 h |
+| `BackupVerifyFailed` | PBS found a snapshot it cannot read back |
+| `BackupSignalStale` | the node stopped writing the signal (the alerts above would be blind) |
+| `OffsiteReplicaDown` | the replication to the offsite bucket is not running |
+
+Do not create or destroy a guest while the nightly jobs run (01:30–07:30 UTC): a job
+lists its guests when it starts and reports a guest removed meanwhile as failed
+(2026-10-04, a throwaway firewall).

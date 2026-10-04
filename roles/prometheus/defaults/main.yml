@@ -68,6 +68,7 @@ prometheus_keep:
     - "node_timex_(offset_seconds|sync_status)"
     - "node_hwmon_temp_celsius"
     - "node_textfile_.*"
+    - "platform_backup_.*"                 # the backup signal the node writes (roles/pve_host) — the Backup* rules
   cadvisor:
     - "container_(start_time_seconds|last_seen)"
     - "container_memory_(working_set|usage)_bytes"
@@ -106,6 +107,11 @@ prometheus_drop:
 # anyone could see the cause.
 prometheus_postgres_exporter_port: 9187
 prometheus_postgres_exporter_hosts: "{{ platform_pg_members | default(groups['postgresql'] | default([])) }}"
+# The Backup* rules (platform-backup group). A guest is backed up nightly by each job, so
+# its newest backup is at most a day old plus the length of the job: older = a missed night.
+prometheus_backup_max_age_hours: 30
+# The container that replicates the object store to the offsite bucket (the third copy).
+prometheus_offsite_replica_container: "{{ seaweedfs_backup_container }}"
 prometheus_seaweedfs_hosts: "{{ groups['seaweedfs'] | default([]) }}"
 prometheus_seaweedfs_metrics_port: "{{ platform_seaweedfs_metrics_port }}"
 # Bind to localhost only — Grafana is co-located and Traefik/edge (if any) fronts it.

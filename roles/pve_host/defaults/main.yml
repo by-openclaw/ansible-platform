@@ -41,6 +41,13 @@ pve_host_keyboard: fr-be
 # root@pam's address: PVE's mail-to-root notifications (e.g. a failed backup job).
 pve_host_root_email: "{{ platform_ops_email }}"
 
+# The backup liveness signal (tasks/backup_signal.yml): the series the Backup* alerts of
+# roles/prometheus read, written for node_exporter's textfile collector (the Debian
+# package reads this directory by default).
+pve_host_backup_signal_interval: "15min"
+pve_host_backup_signal_file: /var/lib/prometheus/node-exporter/platform_backup.prom
+pve_host_backup_signal_filter: /etc/platform-backup-signal/backup-signal.jq
+
 # The NAS (NFS) backup job: every guest, nightly, reports mailed to the ops mailbox.
 # Matched by its storage (one job per target storage); tasks/backup_jobs.yml creates
 # it when missing and `pvesh set`s any drifted setting. The PBS job (second copy)

@@ -373,3 +373,10 @@
       register: r_freeze
       changed_when: "'SET' in r_freeze.stdout"
       loop: "{{ pbs_no_fsfreeze_vms }}"
+
+    # The backup signal reads the storage of every job: written again now that the PBS
+    # job exists, so the Backup* alerts cover this copy from the first night.
+    - name: "PVE-wire | Backup liveness signal covers the PBS job (roles/pve_host)"
+      ansible.builtin.include_role:
+        name: pve_host
+        tasks_from: backup_signal
