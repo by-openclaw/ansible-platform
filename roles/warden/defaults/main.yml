@@ -24,6 +24,8 @@ warden_native:
   packages: [ansible-core]
   files: []
 warden_vault_url: "{{ platform_vault_addr }}"
+# Every member of the Vault cluster is unsealed at a cold start (each one seals on restart).
+warden_vault_urls: "{{ platform_vault_members | default([]) | map('regex_replace', '$', '.' ~ platform_domain ~ ':8200') | map('regex_replace', '^', 'https://') | list or [warden_vault_url] }}"
 warden_share_file: "{{ warden_dir }}/unseal.json"
 warden_key_threshold: 3
 

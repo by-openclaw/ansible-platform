@@ -1,7 +1,8 @@
 ---
 # Configure PROD Vault (lxc-vault-01, SVC) — Docker secrets backend.
 - name: Configure PROD Vault
-  hosts: vault
+  hosts: "{{ groups['vault_cluster'] | default(groups['vault']) }}"   # node 1 first, then the members that join it
+  serial: 1
   become: true
   gather_facts: true
   roles:

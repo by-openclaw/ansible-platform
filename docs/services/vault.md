@@ -1,6 +1,6 @@
 # Vault — service page
 
-Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: vault`). Role `roles/vault` (+ `roles/vault_deploy_identity`, `roles/vault_login`, `roles/vault_secret` as the consumers' concern roles), play `playbooks/vault.yml`, guest `lxc-vault-01`. Audit: [`docs/audits/vault-2026-10-03.md`](../audits/vault-2026-10-03.md).
+Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: vault`). Role `roles/vault` (+ `roles/vault_deploy_identity`, `roles/vault_login`, `roles/vault_secret` as the consumers' concern roles), play `playbooks/vault.yml`, guests `lxc-vault-01`, `-02`, `-03` (three raft voters). Audit: [`docs/audits/vault-2026-10-03.md`](../audits/vault-2026-10-03.md).
 
 ## Identity (identity/0002 §per-tool identity doc)
 
@@ -22,3 +22,14 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: vault`). Rol
 ## Backup (infra/0008)
 
 Class A (`docs/backup.md`): `vault-snapshot.timer` 02:15 → `operator raft snapshot save` → `/var/lib/vault/snapshots/` (0600, 14 days by tmpfiles) → PBS daily guest image (encrypted, replicated off-site with the datastore); restore = `operator raft snapshot restore -force` + unseal (3 of 5 key shares). The data at rest is sealed with the Shamir keys; the raft snapshot carries sealed data.
+
+## Cluster (services/0004 §Cluster placement)
+
+Three raft voters (quorum 2): `lxc-vault-01` (where the cluster was initialised), `lxc-vault-02`, `lxc-vault-03`. One node is active, the others are standbys that forward requests to it; the loss of one node leaves Vault available.
+
+1. **Join:** a new member starts with no data; `retry_join` (`vault.hcl`) makes it reach a member that answers, and the cluster's key shares unseal it — that completes the join. Only the first member may ever run `operator init`, and only while no key is stored (`tasks/init.yml` asserts it): a second init would create another Vault.
+2. **Paths:** humans and runtime clients use `vault.<domain>` — the edge sends traffic to the node that answers 200 on `/v1/sys/health` (the active one). Deploy plays read and write through the container of `platform_vault_host` (node 1); while node 1 is down, `-e platform_vault_host=lxc-vault-02` keeps them working.
+3. **Seal:** every member seals when it restarts; the cold-start unsealer (`roles/warden`) unseals each member, and the play unseals the member it has just restarted.
+4. **Ports:** 8200 (API: the edge, the unsealer, the members, the per-member probe), 8201 (raft and request forwarding, members only) — `group_vars/all/docker_firewall.yml`.
+5. **Signals:** `ProbeFailed` on `vault.<domain>` (no active node behind the edge) and on each member's own `/v1/sys/health?standbyok=true` (a member down or sealed).
+6. **Rolling change:** `playbooks/vault.yml` runs one member at a time (`serial: 1`), node 1 first. A raft snapshot (`vault-snapshot.timer`, node 1) restores the whole cluster.

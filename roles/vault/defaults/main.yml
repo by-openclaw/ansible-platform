@@ -3,16 +3,23 @@
 # Role: vault — HashiCorp Vault (Docker) on lxc-vault-01 (SVC 10.1.3.150)
 # Secrets backend, integrated raft storage, TLS via the shared wildcard cert,
 # fronted by Traefik (internal-only). Upgrade = bump vault_image tag (raft data
-# persists in the named volume). Single node now; raft is HA-adoptable.
+# persists in the named volume). Three raft voters (quorum 2).
 # ==============================================================================
 vault_image: "hashicorp/vault:2.1.1"   # exact pin. NOTE: recreating this container RE-SEALS Vault
 vault_container_name: "vault"
 
 vault_fqdn: "{{ platform_service_fqdns.vault }}"            # external (Traefik) name
-vault_node_fqdn: "{{ groups['vault'] | first }}.{{ platform_domain }}"  # the node's own address
+# The cluster: three raft voters (platform_vault_members). Every member runs this role; the
+# first one is where the cluster was initialised (init, engines, audit device, SSO, the edge
+# route are cluster-wide and run there only) — the others JOIN it and are unsealed with the
+# same keys. A member never initialises a second cluster (tasks/init.yml).
+vault_members: "{{ platform_vault_members | default([inventory_hostname]) }}"
+vault_first_member: "{{ groups['vault'] | first }}"
+vault_node_id: "{{ inventory_hostname | regex_replace('^lxc-', '') }}"   # lxc-vault-01 → vault-01 (node 1 keeps its id)
+vault_node_fqdn: "{{ inventory_hostname }}.{{ platform_domain }}"       # the node's own address
 
 # Published on the SVC IP + loopback.
-vault_listen_ip: "{{ hostvars[groups['vault'] | first].ansible_host }}"
+vault_listen_ip: "{{ ansible_host }}"
 vault_port: 8200
 vault_cluster_port: 8201
 vault_uid: 100                          # vault uid inside the official image
@@ -40,4 +47,4 @@ vault_oidc_admin_group: "{{ platform_service_groups.vault.admin }}"        # Aut
 vault_oidc_discovery_url: "https://{{ platform_service_fqdns.authentik }}/application/o/vault/"
 
 # Verified-TLS API address (FQDN matches the wildcard cert; skip-verify banned).
-vault_api_addr: "{{ platform_vault_addr }}"
+vault_api_addr: "https://{{ vault_node_fqdn }}:{{ vault_port }}"   # the in-container CLI talks to its own node

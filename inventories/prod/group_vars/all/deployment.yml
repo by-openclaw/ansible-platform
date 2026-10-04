@@ -31,7 +31,12 @@ platform_system_mail_enabled: true
 # it was written out in 8 places across 7 roles and a playbook.
 platform_alert_email: "alerts@{{ platform_domain }}"
 # The Vault API as clients on the platform reach it (verified TLS on the host FQDN).
-platform_vault_addr: "https://{{ groups['vault'] | first }}.{{ platform_domain }}:8200"
+# The Vault cluster (raft voters). Deploy plays read and write through the container of
+# platform_vault_host: node 1 by default; a standby forwards to the active node, so
+# `-e platform_vault_host=<another member>` keeps deploys working while node 1 is down.
+platform_vault_members: "{{ groups['vault_cluster'] | default(groups['vault']) }}"
+platform_vault_host: "{{ groups['vault'] | first }}"
+platform_vault_addr: "https://{{ platform_vault_host }}.{{ platform_domain }}:8200"
 # The operations mailbox a person reads: the hypervisor's own reports (root@pam,
 # the NAS backup job). Not the alert mailbox — that is platform_alert_email. Both
 # values were set by hand on the node until 2026-09-28.
