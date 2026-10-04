@@ -1,0 +1,34 @@
+---
+# ==============================================================================
+# Role: redis_sentinel — one of the three Sentinels that watch the Redis pair and promote the
+# replica when the primary is gone (services/0004). A quorum of 2 agrees before a failover, so
+# one Sentinel (or the guest it runs on) can be down.
+# Sentinel OWNS its configuration file once it runs: it records the members, the other
+# Sentinels and the failover epochs in it. The role writes the file only when it does not
+# exist; redis_sentinel_reset re-creates it (the Sentinels then rediscover each other).
+# ==============================================================================
+redis_sentinel_image: "{{ redis_image | default('redis:8.10.2') }}"   # the same pinned image as the members
+redis_sentinel_container_name: "redis-sentinel"
+redis_sentinel_uid: 999
+redis_sentinel_port: 26379
+redis_sentinel_listen_ip: "{{ hostvars[inventory_hostname].ansible_host }}"
+redis_sentinel_listen_ip6: "{{ hostvars[inventory_hostname].platform_host_v6 }}"
+redis_sentinel_fqdn: "{{ inventory_hostname }}.{{ platform_domain }}"
+redis_sentinel_state_host_dir: "/var/lib/redis-sentinel"
+redis_sentinel_conf_file: "{{ redis_sentinel_state_host_dir }}/sentinel.conf"
+redis_sentinel_cert_host_dir: "/etc/redis-sentinel/certs"
+redis_sentinel_tls_cert: "{{ redis_sentinel_cert_host_dir }}/wildcard.crt"
+redis_sentinel_tls_key: "{{ redis_sentinel_cert_host_dir }}/wildcard.key"
+redis_sentinel_reset: false
+
+# What is watched.
+redis_sentinel_master_name: "{{ platform_redis_master_name }}"
+redis_sentinel_members: "{{ platform_redis_members }}"
+redis_sentinel_redis_port: 6379
+redis_sentinel_quorum: 2
+redis_sentinel_down_after_ms: 5000        # a primary silent for 5 s is suspected
+redis_sentinel_failover_timeout_ms: 60000
+
+# Credentials: the members' admin password (owner: roles/redis) and the Sentinels' own.
+redis_sentinel_redis_vault_path: "{{ platform_env }}/redis/admin"
+redis_sentinel_vault_path: "{{ platform_env }}/redis/sentinel"

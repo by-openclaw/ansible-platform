@@ -7,7 +7,7 @@
     group: root
     mode: "0755"
 
-- name: "config | Render redis.conf (TLS, auth, persistence)"
+- name: "config | Render redis.conf (TLS, auth, persistence, replication, consumer logins)"
   ansible.builtin.template:
     src: redis.conf.j2
     dest: "{{ redis_conf_file }}"
@@ -16,3 +16,77 @@
     mode: "0640"
   no_log: true
   notify: Restart redis
+
+# --- The start file: include + this member's current role -----------------------------------
+- name: "config | Start-file directory (Redis rewrites the file on a role change)"
+  ansible.builtin.file:
+    path: "{{ redis_runtime_host_dir }}"
+    state: directory
+    owner: "{{ redis_uid }}"
+    group: "{{ redis_uid }}"
+    mode: "0700"
+
+# The member's live role, when it runs: a replica names its primary. The password travels in
+# the task environment (`docker exec -e NAME` forwards it), never on a command line.
+- name: "config | Live role of this member"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -e
+      - REDISCLI_AUTH
+      - "{{ redis_container_name }}"
+      - redis-cli
+      - --tls
+      - --cacert
+      - /etc/ssl/certs/ca-certificates.crt
+      - -h
+      - "{{ redis_fqdn }}"
+      - -p
+      - "{{ redis_tls_port | string }}"
+      - info
+      - replication
+  environment:
+    REDISCLI_AUTH: "{{ redis_requirepass }}"
+  register: redis_live_role
+  changed_when: false
+  failed_when: false
+  check_mode: false   # read-only probe
+  no_log: true
+
+# Running replica → its live primary. Running primary → no line. Not running: the line the
+# start file already has (the role it had), or for a member that never started, the initial
+# primary.
+- name: "config | Existing start file"
+  ansible.builtin.slurp:
+    src: "{{ redis_runtime_file }}"
+  register: redis_runtime_now
+  failed_when: false
+
+- name: "config | The primary this member follows (empty = it is the primary)"
+  ansible.builtin.set_fact:
+    redis_replicaof: >-
+      {%- set live = redis_live_role.stdout | default('') -%}
+      {%- if redis_live_role.rc | default(1) == 0 and 'role:' in live -%}
+        {%- if 'role:slave' in live -%}
+          {{ live | regex_search('master_host:(\S+)', '\1') | first }} {{ live | regex_search('master_port:(\d+)', '\1') | first }}
+        {%- endif -%}
+      {%- elif redis_runtime_now.content is defined -%}
+        {{ (redis_runtime_now.content | b64decode | regex_search('(?m)^replicaof (\S+ \d+)', '\1') | default([''], true)) | first }}
+      {%- elif inventory_hostname != redis_initial_primary -%}
+        {{ redis_initial_primary }}.{{ platform_domain }} {{ redis_tls_port }}
+      {%- endif -%}
+
+- name: "config | Start file = include + this member's role"
+  ansible.builtin.copy:
+    dest: "{{ redis_runtime_file }}"
+    owner: "{{ redis_uid }}"
+    group: "{{ redis_uid }}"
+    mode: "0600"
+    content: |
+      # Managed by Ansible (roles/redis) and rewritten by Redis on a role change. Settings live in
+      # {{ redis_conf_file }} — nothing else belongs here.
+      include {{ redis_conf_file }}
+      {% if redis_replicaof | trim | length > 0 %}
+      replicaof {{ redis_replicaof | trim }}
+      {% endif %}

@@ -1,10 +1,24 @@
 ---
-# Configure PROD Redis (lxc-redis-01, SVC).
-- name: Configure PROD Redis
-  hosts: redis
+# The Redis pair (services/0004): a primary and a replica, three Sentinels (one per member and
+# one on the endpoint guest) that promote the replica when the primary is gone.
+#   ansible-playbook playbooks/redis.yml
+# Members one at a time, the current primary's host first on a first build (the replica needs
+# it to copy from).
+- name: "Redis | members, one at a time"
+  hosts: redis_cluster
+  become: true
+  gather_facts: true
+  serial: 1
+  roles:
+    - base
+    - docker
+    - redis
+
+- name: "Redis | Sentinels (the members and the endpoint guest)"
+  hosts: redis_cluster:pg_endpoint
   become: true
   gather_facts: true
   roles:
     - base
     - docker
-    - redis
+    - redis_sentinel

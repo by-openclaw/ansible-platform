@@ -1,9 +1,9 @@
 ---
 # ==============================================================================
-# Role: redis — Redis as a Docker container (lxc-redis-01, SVC 10.1.3.117)
-# All-Docker pivot (upgrade-by-tag, k8s-future). Internal-only cache/broker for
-# Authentik + NetBox. Single-node now; HA-adoptable (AOF + tls-replication).
-# Data persists in a named volume across container re-creation.
+# Role: redis — one member of the Redis pair, as a Docker container (SVC).
+# All-Docker pivot (upgrade-by-tag, k8s-future). Internal-only cache/broker.
+# A primary and a replica (services/0004); roles/redis_sentinel decides which member is the
+# primary. Data persists in a named volume across container re-creation.
 # ==============================================================================
 # Exact pin, never a stream tag: ":8.6" would silently drift within 8.6.x on any
 # re-pull, and was also why this host could never reach 8.10 at all.
@@ -13,7 +13,7 @@ redis_container_name: "redis"
 # Publish on loopback + the SVC IP (v4 and v6 — dual-stack data svc, reached
 # directly over TCP/TLS, not via Traefik). The v6 publish needs docker_ipv6
 # (ip6tables) on this host; pg_hba/clients already permit fd01:3::/64.
-redis_listen_ip: "{{ hostvars[groups['redis'] | first].ansible_host }}"
+redis_listen_ip: "{{ hostvars[inventory_hostname].ansible_host }}"   # each member publishes on its OWN address
 redis_listen_ip6: "{{ hostvars[inventory_hostname].platform_host_v6 }}"
 redis_port: 6379
 redis_data_volume: "redis-data"
@@ -21,7 +21,25 @@ redis_uid: 999                    # redis uid inside the official image
 
 # Host dirs bind-mounted into the container (same path inside).
 redis_conf_host_dir: "/etc/redis/conf"
-redis_conf_file: "{{ redis_conf_host_dir }}/redis.conf"
+redis_conf_file: "{{ redis_conf_host_dir }}/redis.conf"     # the settings: Ansible's file, read-only in the container
+
+# --- Cluster ---------------------------------------------------------------------------------
+redis_members: "{{ platform_redis_members }}"
+redis_fqdn: "{{ inventory_hostname }}.{{ platform_domain }}"
+# Who the others replicate from when a member starts for the FIRST time. Afterwards Sentinel
+# decides; the member's current role is read live on every run and written to the start file.
+redis_initial_primary: "{{ redis_members | first }}"
+# The file Redis starts with: one include of redis.conf plus, on a replica, its `replicaof` line.
+# Redis rewrites this file itself when Sentinel changes its role (so a restart keeps the role);
+# the role normalises it back to those two lines on every run — a rewrite copies every setting
+# into it, and a copy left there would silently override a later change of redis.conf.
+redis_runtime_host_dir: "/var/lib/redis-runtime"
+redis_runtime_file: "{{ redis_runtime_host_dir }}/runtime.conf"
+
+# Per-consumer logins (ACL users), the same on every member.
+redis_users: "{{ platform_redis_users }}"
+redis_user_default_rules: "{{ platform_redis_user_default_rules }}"
+redis_users_vault_prefix: "{{ platform_redis_users_vault_prefix }}"
 redis_cert_host_dir: "/etc/redis/certs"
 
 # TLS — shared wildcard cert (tls_cert), mounted into the container. Plaintext

@@ -11,6 +11,23 @@
     mode: "0750"
   tags: [dbproxy, config]
 
+# The Redis check's login (owner: roles/redis — one document per consumer login).
+- name: "dbproxy | Redis check login (read from Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ dbproxy_redis_check_vault_path }}"
+    vault_secret_action: read   # pragma: allowlist secret
+  when: dbproxy_redis_members | length > 0
+  tags: [dbproxy, config]
+
+- name: "dbproxy | Bind it"
+  ansible.builtin.set_fact:
+    dbproxy_redis_check_password: "{{ vault_secret_result.password }}"
+  no_log: true
+  when: dbproxy_redis_members | length > 0
+  tags: [dbproxy, config]
+
 - name: "dbproxy | haproxy.cfg"
   ansible.builtin.template:
     src: haproxy.cfg.j2
@@ -18,6 +35,7 @@
     owner: root
     group: "{{ dbproxy_uid }}"
     mode: "0640"
+  no_log: true      # carries the Redis check's password
   notify: Reload dbproxy
   tags: [dbproxy, config]
 
@@ -62,6 +80,9 @@
             - "{{ dbproxy_listen_ip }}:{{ dbproxy_pg_port }}:{{ dbproxy_pg_port }}"
             - "[{{ dbproxy_listen_ip6 }}]:{{ dbproxy_pg_port }}:{{ dbproxy_pg_port }}"
             - "127.0.0.1:{{ dbproxy_pg_port }}:{{ dbproxy_pg_port }}"
+            - "{{ dbproxy_listen_ip }}:{{ dbproxy_redis_port }}:{{ dbproxy_redis_port }}"
+            - "[{{ dbproxy_listen_ip6 }}]:{{ dbproxy_redis_port }}:{{ dbproxy_redis_port }}"
+            - "127.0.0.1:{{ dbproxy_redis_port }}:{{ dbproxy_redis_port }}"
             - "{{ dbproxy_listen_ip }}:{{ dbproxy_metrics_port }}:{{ dbproxy_metrics_port }}"
             - "127.0.0.1:{{ dbproxy_metrics_port }}:{{ dbproxy_metrics_port }}"
           volumes:
@@ -87,6 +108,21 @@
      | regex_findall('haproxy_server_status\{proxy="postgres",server="[^"]+",state="UP"\} 1') | length) == 1
   check_mode: false   # read-only probe
   when: not ansible_check_mode
+  tags: [dbproxy, verify]
+
+- name: "dbproxy | Exactly one Redis member is routed to (the primary)"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ dbproxy_metrics_port }}/metrics"
+    return_content: true
+  register: dbproxy_metrics_redis
+  retries: 20
+  delay: 3
+  until: >-
+    dbproxy_metrics_redis.status | default(0) == 200 and
+    (dbproxy_metrics_redis.content | default('')
+     | regex_findall('haproxy_server_status\{proxy="redis",server="[^"]+",state="UP"\} 1') | length) == 1
+  check_mode: false   # read-only probe
+  when: not ansible_check_mode and dbproxy_redis_members | length > 0
   tags: [dbproxy, verify]
 
 - name: "dbproxy | Report"

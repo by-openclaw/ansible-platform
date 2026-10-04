@@ -8,3 +8,28 @@ platform_redis_databases:
   authentik: 2
   nextcloud: 3        # consumed when roles/nextcloud reaches its audit
   gitlab: 4           # consumed when roles/gitlab reaches its audit
+
+# --- The cluster (services/0004) -----------------------------------------------------------
+# Two members (a primary and a replica), three Sentinels (one on each member and one on the
+# endpoint guest: a quorum of 2 decides a failover). Consumers connect to the endpoint, which
+# routes to the member that reports itself master.
+platform_redis_members: "{{ groups['redis_cluster'] }}"
+platform_redis_sentinel_hosts: "{{ groups['redis_cluster'] + groups['pg_endpoint'] }}"
+platform_redis_master_name: "platform-redis"
+platform_redis_endpoint_host: "{{ groups['pg_endpoint'] | first }}"
+platform_redis_endpoint_fqdn: "{{ platform_redis_endpoint_host }}.{{ platform_domain }}"
+
+# One login per consumer (services/0004: per-service identity). Vault holds each password at
+# {{ platform_env }}/redis/users/<name>; the members carry the same list (ACLs do not replicate).
+#   rules  what the login may run (default: everything except administration)
+#   keys   key patterns (default: all — consumers are separated by database number, which an
+#          ACL cannot restrict)
+platform_redis_users:
+  - {name: authentik}
+  - {name: netbox}
+  - {name: nextcloud}
+  - {name: gitlab}
+  # The endpoint's check asks each member for its role; it can read no key.
+  - {name: healthcheck, rules: "+info +ping", keys: ""}
+platform_redis_user_default_rules: "+@all -@admin"
+platform_redis_users_vault_prefix: "{{ platform_env }}/redis/users"

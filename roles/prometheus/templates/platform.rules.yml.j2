@@ -131,6 +131,14 @@ groups:
           summary: "The data endpoint routes PostgreSQL to {{ '{{' }} $value {{ '}}' }} members (expected 1)"
           description: "The endpoint sends connections to the member whose Patroni answers /primary. Zero = no leader, or the endpoint cannot reach the members' REST API; every service that connects through the endpoint fails."
           runbook: "Compare `patronictl list` with the endpoint's view (`curl -s localhost:8405/metrics | grep haproxy_server_status` on the endpoint guest); then the firewall catalog entry of port 8008 and the members' certificates."
+      - alert: RedisEndpointNoPrimary
+        expr: haproxy_backend_active_servers{proxy="redis"} != 1
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "The data endpoint routes Redis to {{ '{{' }} $value {{ '}}' }} members (expected 1)"
+          description: "The endpoint sends connections to the member that answers role:master. Zero = no primary (both members down, or the Sentinels have no quorum to promote the replica); sessions, queues and locks of every consumer fail."
+          runbook: "On a member: `docker exec redis-sentinel redis-cli --tls ... sentinel master {{ platform_redis_master_name | default('platform-redis') }}`; bring the missing member or Sentinel back (playbooks/redis.yml). Never run REPLICAOF by hand while the Sentinels are up."
       - alert: PostgresDown
         expr: pg_up == 0
         for: 2m

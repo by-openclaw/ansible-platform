@@ -15,8 +15,22 @@ tls-replication yes
 port {{ redis_port }}
 {% endif %}
 
-# Auth.
+# Auth. The default user (requirepass) is the administration, replication and Sentinel login;
+# every consumer has its own (below).
 requirepass {{ redis_requirepass }}
+
+# Replication — the same on every member. Who replicates from whom is NOT here: Sentinel
+# decides, and the member's start file carries its `replicaof` line.
+masterauth {{ redis_requirepass }}
+replica-announce-ip {{ redis_fqdn }}
+replica-announce-port {{ redis_tls_port }}
+replica-read-only yes
+
+# One login per consumer (password stored hashed). ACLs do not replicate: both members render
+# the same list.
+{% for u in redis_users %}
+user {{ u.name }} on #{{ redis_user_passwords[u.name] | hash('sha256') }} {{ ('~* &*' if u.keys is not defined else u.keys) }} {{ u.rules | default(redis_user_default_rules) }}
+{% endfor %}
 
 # Durability — AOF so a future replica/Sentinel can attach (HA-adoptable).
 dir /data
