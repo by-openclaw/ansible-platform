@@ -1,0 +1,84 @@
+---
+- name: "Storage | Pool, logical volumes, physical drives"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -o pipefail
+      echo "pool_state=$(zpool list -H -o health {{ pve_host_zfs_pool }})"
+      ssacli ctrl slot={{ pve_host_smartarray_slot }} ld all show status | awk '/logicaldrive/{gsub(":","",$2); print "ld " $2 " " $NF}'
+      ssacli ctrl slot={{ pve_host_smartarray_slot }} pd all show status | awk '/physicaldrive/{print "pd " $2 " " $NF}'
+  register: pve_storage_state
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "Storage | Per-drive wear (SMART through the controller)"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      n=$(ssacli ctrl slot={{ pve_host_smartarray_slot }} pd all show status | grep -c physicaldrive)
+      for i in $(seq 0 $((n - 1))); do
+        out=$(smartctl -a -d cciss,$i /dev/sda 2>/dev/null)
+        g=$(echo "$out" | awk -F: '/grown defect list/{gsub(/ /,"",$2); print $2}')
+        u=$(echo "$out" | awk '/^(read|write|verify):/{s+=$NF} END{print s+0}')
+        h=$(echo "$out" | awk -F: '/SMART Health Status/{gsub(/^ /,"",$2); print $2}')
+        echo "bay $((i + 1)) health=${h:-?} grown_defects=${g:-?} uncorrected=${u:-?}"
+      done
+  register: pve_storage_wear
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "Storage | Facts of the report"
+  ansible.builtin.set_fact:
+    pve_storage_pool_state: "{{ pve_storage_state.stdout_lines | select('match', '^pool_state=') | first | split('=', 1) | last }}"
+    pve_storage_ld_failed: "{{ pve_storage_state.stdout_lines | select('match', '^ld ') | reject('search', ' OK$') | map('split', ' ') | map(attribute=1) | list }}"
+    pve_storage_pd_not_ok: "{{ pve_storage_state.stdout_lines | select('match', '^pd ') | reject('search', ' OK$') | map('split', ' ') | map(attribute=1) | list }}"
+
+- name: "Storage | Report"
+  ansible.builtin.debug:
+    msg:
+      - "pool {{ pve_host_zfs_pool }}: {{ pve_storage_pool_state }}"
+      - "logical volumes not OK: {{ pve_storage_ld_failed | default([], true) }}"
+      - "physical drives not OK: {{ pve_storage_pd_not_ok | default([], true) }}"
+      - "drive wear (bay, health, grown defects, uncorrected errors):"
+      - "{{ pve_storage_wear.stdout_lines }}"
+
+# Repair: only a volume whose physical drive the controller reports OK (a failed drive needs a
+# replacement, not a re-enable).
+- name: "Storage | Re-enable failed logical volumes (their physical drives are OK)"
+  ansible.builtin.command:
+    argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", ld, "{{ item }}", modify, reenable, forced]
+  loop: "{{ pve_storage_ld_failed }}"
+  when:
+    - pve_storage_reenable | bool
+    - pve_storage_pd_not_ok | length == 0
+  changed_when: true
+  register: pve_storage_reenabled
+
+- name: "Storage | Wait for the resilver"
+  ansible.builtin.command:
+    argv: [zpool, wait, -t, resilver, "{{ pve_host_zfs_pool }}"]
+  when: pve_storage_reenabled is changed
+  changed_when: false
+
+- name: "Storage | Scrub the pool and wait (every block read and verified)"
+  ansible.builtin.command:
+    argv: [zpool, scrub, -w, "{{ pve_host_zfs_pool }}"]
+  when: pve_storage_reenabled is changed or pve_storage_scrub | bool
+  changed_when: true
+  async: 7200
+  poll: 30
+
+- name: "Storage | Pool after the run"
+  ansible.builtin.command:
+    argv: [zpool, status, "{{ pve_host_zfs_pool }}"]
+  register: pve_storage_after
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "Storage | The pool is ONLINE without errors"
+  ansible.builtin.assert:
+    that:
+      - "'state: ONLINE' in pve_storage_after.stdout"
+      - "'errors: No known data errors' in pve_storage_after.stdout"
+    fail_msg: "{{ pve_storage_after.stdout_lines | select('search', 'state:|scan:|errors:|DEGRADED|REMOVED|FAULTED|UNAVAIL') | list }}"
+    success_msg: "{{ pve_storage_after.stdout_lines | select('search', 'state:|scan:|errors:') | map('trim') | list }}"

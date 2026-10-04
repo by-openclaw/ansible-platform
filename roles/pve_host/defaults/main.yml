@@ -239,3 +239,13 @@ pve_host_smartarray_package: ssacli
 # platform needed 17 minutes to settle. Declared per node in the inventory (guest = the name PVE
 # shows; the VMID is read from the node — Terraform and the firewall seed own the ids).
 pve_host_boot_order: []        # [{guest: <name>, order: <n>, up: <seconds>}]
+
+# --- Storage health and repair (playbooks/pve-storage-health.yml) --------------------------------
+# Report: the pool, the controller's logical volumes and physical drives, per-drive wear (SMART).
+# Repair (pve_storage_reenable=true): a logical volume that is `Failed` while its physical drive is
+# `OK` is re-enabled, ZFS resilvers the mirror, the pool is scrubbed and must end ONLINE with 0
+# errors — the sequence run by hand on 2026-10-03, now a play.
+pve_host_zfs_pool: tank
+pve_host_smartarray_slot: 0
+pve_storage_reenable: false
+pve_storage_scrub: false            # a scrub after the report (always done after a repair)

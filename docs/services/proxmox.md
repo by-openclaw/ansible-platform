@@ -41,7 +41,8 @@ ssacli ctrl slot=0 ld all show status        # logical volumes (one per pool dis
 ssacli ctrl slot=0 ld <n> show detail        # which array / drive a volume uses
 ```
 
-- **A logical volume shows `Failed` while its physical drive is `OK`** (2026-10-03, bay 14, under heavy writes): `ssacli ctrl slot=0 ld <n> modify reenable forced` brings the volume back, ZFS onlines the disk and resilvers from the mirror partner; then `zpool scrub` and read the result. Done on 2026-10-03: resilver 35 s, scrub 393 G with 0 errors.
+- **Read the storage:** `ansible-playbook playbooks/pve-storage-health.yml` — pool state, logical volumes, drives, wear per bay (grown defects, uncorrected errors).
+- **A logical volume shows `Failed` while its physical drive is `OK`** (2026-10-03, bay 14, under heavy writes): `playbooks/pve-storage-health.yml -e pve_storage_reenable=true` re-enables the volume, waits for ZFS to resilver from the mirror partner, scrubs the pool and asserts it ONLINE with 0 errors. On 2026-10-03: resilver 35 s, scrub 393 G with 0 errors.
 - **A physical drive is failed:** replace it in its bay (hot-swap), create its logical volume (`ssacli ctrl slot=0 create type=ld drives=<port:box:bay> raid=0`), then `zpool replace tank <old> <new device>`; wait for the resilver.
 - **Do not reboot the node with a failed logical volume:** the controller can stop at its boot prompt, and the firewall VM lives on this node.
 - Alert: `ZfsPoolNotOnline` (Prometheus) fires when the pool is not ONLINE.
