@@ -82,7 +82,7 @@ All 71 playbooks in this repo, grouped by scope. Each runs against `inventories/
 | `mailcow.yml` | Playbook: mailcow.yml — PROD mailcow mail server (vm-mailcow-01, DMZ vlan1020) Self-contained mailcow-dockerized stack; vmail on Synology NFS; web UI via |
 | `portainer.yml` | One web console for both container worlds: Portainer server in the k3s cluster + an agent on every Docker host, environments registered from the inventory through the API, published internally behind Authentik. |
 | `postgresql.yml` | Configure PROD PostgreSQL (lxc-pgsql-01, SVC). |
-| `redis.yml` | Configure PROD Redis (lxc-redis-01, SVC). |
+| `redis.yml` | The Redis pair: the members one at a time, then the three Sentinels (members + endpoint guest). |
 | `seaweedfs.yml` | SeaweedFS — S3 object-storage backend (replaces EOL MinIO). Play 1 (PVE host): persistent ZFS dataset tank/data/seaweedfs + bind-mount into lxc-seaweedfs-01 at /data — DATA survive |
 | `traefik.yml` | Configure PROD Traefik ingress (lxc-traefik-01, DMZ). |
 

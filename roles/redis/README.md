@@ -1,29 +1,45 @@
 # role: redis (Docker)
 
-Shared **Redis** as a Docker container on `lxc-redis-01` (SVC `10.1.3.117`).
-Internal-only — a TCP service, **not** behind Traefik. Cache / broker for
-Authentik + NetBox.
+One member of the shared **Redis pair** (services/0004): a primary and a replica; three
+Sentinels (`roles/redis_sentinel`) decide which member is the primary. Internal-only — a TCP
+service, **not** behind Traefik. Consumers connect to the data endpoint (`roles/dbproxy`),
+which routes to the member that reports itself master.
 
-All-Docker pivot: **upgrade = bump `redis_image` tag** → ansible pulls + recreates
-the container; data persists in the `redis-data` named volume (`/data`). Maps
-cleanly to a future k8s Deployment/PVC.
+Run: `ansible-playbook playbooks/redis.yml` (members one at a time, then the Sentinels).
 
-- Pinned `redis:8` image; depends on `base` + `docker` (nested LXC).
-- Retires any prior **native** install first (`migrate.yml` stops/masks
-  `redis-server`) so the container can bind `:6379`.
-- Published only on `10.1.3.117:6379` + `127.0.0.1:6379`.
-- **TLS (`rediss://`):** the shared wildcard `*.by-research.be` cert is
-  distributed by the `tls_cert` role (owned by the container's redis uid 999) and
-  mounted read-only. Plaintext disabled (`port 0`), `tls-port 6379`,
-  `tls-replication yes`.
-- **Auth:** `requirepass` generated once and stored in the controller secret
-  store (`db-redis.json`, `0600`, `no_log`).
-- **Durable + HA-adoptable:** `appendonly` (AOF) → a future replica / Sentinel
-  can attach with no rebuild and no data loss.
+- **Container** (through `roles/service_scaffold`): pinned `redis_image`, started as the redis
+  uid, **read-only root filesystem**, no capability; data on the `redis-data` volume (AOF).
+  Published on the member's service address + loopback, TLS only (`port 0`, `tls-port 6379`).
+- **Two files**:
+  - `redis.conf` (Ansible's, read-only in the container): TLS, authentication, persistence,
+    replication settings, the consumer logins.
+  - the **start file** (`redis_runtime_file`): one `include` of `redis.conf` plus, on a
+    replica, its `replicaof` line. Redis rewrites this file itself when Sentinel changes its
+    role, so a restart keeps the role. The role normalises it on every run from the member's
+    LIVE role — a rewrite copies every setting into it, and a copy left there would silently
+    override a later change of `redis.conf`.
+- **Logins**: the `default` user (`requirepass`, Vault `redis/admin`) is the administration,
+  replication and Sentinel login. Every consumer has its own (`platform_redis_users`, Vault
+  `redis/users/<name>`): everything except administration commands; the endpoint's check login
+  may only run `INFO` and `PING`. ACLs do not replicate — both members render the same list.
+- **Replication**: `masterauth`, `replica-announce-ip` = the member's FQDN (the container's
+  own address means nothing outside its host), TLS (`tls-replication yes`).
+- **TLS**: the shared wildcard certificate (`roles/tls_cert`), owned by the redis uid.
 
-Config is a mounted `redis.conf` (`/etc/redis/conf/redis.conf`). Clients connect
-over TLS with the password, e.g.
-`rediss://:<pw>@lxc-redis-01.by-research.be:6379/0`.
+## Operating it
 
-Run: `ansible-playbook -i inventories/prod/hosts.yml playbooks/redis.yml`
-(reaches the SVC LXC via OPNsense ProxyJump, login `root`).
+| Need | How |
+|---|---|
+| Who is primary | `docker exec redis-sentinel redis-cli --tls … -p 26379 sentinel master platform-redis` |
+| Planned primary change | `… sentinel failover platform-redis` |
+| A member's role | `docker exec redis redis-cli --tls … info replication` |
+
+Never run `REPLICAOF` by hand while the Sentinels are up: they own the roles of the members.
+
+## Limits
+
+- Two members: the pair survives the loss or the maintenance of one. Replication is
+  asynchronous — a failover can lose the last writes (caches, sessions, queues: acceptable for
+  what the platform stores there).
+- Database numbers are not an access boundary: an ACL cannot restrict a login to a database
+  number. The logins give attribution, revocation and no administration commands.
