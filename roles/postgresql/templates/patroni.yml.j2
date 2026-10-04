@@ -47,6 +47,12 @@ postgresql:
   bin_dir: /usr/lib/postgresql/{{ pg_image.split(':')[1].split('.')[0] }}/bin
   pgpass: /tmp/pgpass
   use_unix_socket: true
+  # Patroni's replication connection to ITS OWN PostgreSQL — how it reads its timeline and
+  # position — goes over the socket too. Over TCP it dialled "localhost" and verified the
+  # certificate against that name, which the platform's wildcard does not carry: every loop
+  # logged "Can not fetch local timeline and lsn from replication connection" on the
+  # replicas (thousands of lines an hour) and Patroni fell back to the control file.
+  use_unix_socket_repl: true
   authentication:
     superuser:
       username: postgres
@@ -59,7 +65,7 @@ postgresql:
   # Member-local settings (file paths, TLS). What must be identical on every member lives in
   # the dynamic configuration (dcs.yml.j2).
   parameters:
-    unix_socket_directories: /var/run/postgresql
+    unix_socket_directories: {{ pg_socket_dir }}
     hba_file: {{ pg_conf_host_dir }}/pg_hba.conf
     ssl: "{{ 'on' if pg_ssl | bool else 'off' }}"
     ssl_cert_file: {{ pg_ssl_cert }}

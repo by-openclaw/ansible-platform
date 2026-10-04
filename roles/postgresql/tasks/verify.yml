@@ -29,3 +29,20 @@
          | map('join', ' / ') | join(' | ') }} — timeline {{ _m | map(attribute='TL') | first }}
   vars:
     _m: "{{ pg_verify_list.stdout | from_json }}"
+
+# What Patroni does on every loop to read this member's own timeline and position. It fails
+# when pg_hba.conf has no line for a local replication connection.
+- name: "verify | The member accepts a replication connection over its socket"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ pg_container_name }}"
+      - psql
+      - "host={{ pg_socket_dir }} dbname=postgres user={{ pg_replication_user }} replication=1"
+      - -Atc
+      - IDENTIFY_SYSTEM
+  register: pg_verify_local_repl
+  changed_when: false
+  check_mode: false   # read-only probe
+  failed_when: pg_verify_local_repl.rc != 0 or (pg_verify_local_repl.stdout | trim | length) == 0

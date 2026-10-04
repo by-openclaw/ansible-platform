@@ -1,6 +1,9 @@
 {# Managed by Ansible role `postgresql` (container). Do not edit by hand. #}
 # TYPE   DATABASE  USER  ADDRESS         METHOD
 local    all       all                   trust
+# Patroni's replication connection to its own PostgreSQL, over the socket (the keyword `all`
+# above does not cover replication connections).
+local    replication  {{ pg_replication_user }}        trust
 host     all       all   127.0.0.1/32    scram-sha-256
 host     all       all   ::1/128         scram-sha-256
 # App access from the SVC zone only (source IP preserved via Docker DNAT).
