@@ -204,7 +204,7 @@ groups:
   - name: platform-containers
     rules:
       - alert: ContainerRestarting
-        expr: changes(container_start_time_seconds{name!=""}[15m]) > 2
+        expr: changes(container_start_time_seconds{name!="", name!~"{{ prometheus_timer_job_containers | join('|') }}"}[15m]) > 2
         for: 5m
         labels: {severity: warning}
         annotations:
