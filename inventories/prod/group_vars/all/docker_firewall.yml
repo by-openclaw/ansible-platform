@@ -130,6 +130,9 @@ platform_docker_firewall:
     - {port: 6379, from: [gitlab, netbox, nextcloud, redis, dbproxy], comment: "Redis (consumers, replication between the members, the Sentinels, the endpoint)"}
     - {port: 26379, from: [redis, dbproxy], comment: "Redis Sentinel (the three Sentinels talk to each other)"}
   # Every host fetches the CA roots straight from step-ca (roles/platform_ca).
+  pkgcache:
+    - {port: 3141, from: [traefik], comment: "devpi (PyPI cache) behind the edge"}
+    - {port: 3142, from: [trusted], comment: "apt-cacher-ng (Debian package proxy for the platform's hosts)"}
   step-ca:
     - {port: 9000, from: [trusted], comment: "step-ca"}
   vault:

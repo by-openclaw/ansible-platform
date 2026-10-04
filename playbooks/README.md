@@ -105,6 +105,8 @@ All 71 playbooks in this repo, grouped by scope. Each runs against `inventories/
 | `jumpserver.yml` | JumpServer CE bastion/PAM on lxc-jumpserver-01. Self-contained (bundled Postgres + Redis), NON-privileged, Vault-native secrets. Browser SSH/RDP to infra; VPN-only via Traefik. Jum |
 | `verdaccio-gitlab-ci.yml` | npm registry for CI (issue: Verdaccio finish → runner must use it). Seeds GitLab INSTANCE-level CI/CD variables so every pipeline (via the shared npm.gitlab-ci.yml template) resolv |
 | `verdaccio.yml` | Verdaccio — npm registry + upstream proxy (lxc-verdaccio-01, VPN-only). Guest = infra-terraform-proxmox svc-verdaccio.tf (VMID 505). Born through roles/service_scaffold (mailbox, V |
+| `pkgcache.yml` | Package caches on lxc-pkgcache-01: devpi (PyPI, `pypi.<domain>` behind the edge) and apt-cacher-ng (Debian, port 3142). Caches only — refilled from upstream. |
+| `pkgcache-gitlab-ci.yml` | PyPI cache for CI: seeds the GitLab instance-level CI/CD variable `PIP_INDEX_URL` so every pipeline installs through the cache. |
 
 ## Apps
 
