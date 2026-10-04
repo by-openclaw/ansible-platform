@@ -158,6 +158,8 @@
     seaweedfs_server_ctr:
       name: "{{ seaweedfs_container }}"
       image: "{{ seaweedfs_image }}"
+      read_only: true                 # SEC-22: data and configuration are host directories
+      tmpfs: ["/tmp:rw,size=256m"]     # weed's sockets and its own log files (about 1 MB a day)
       network_mode: host
       user: "{{ seaweedfs_run_as }}"
       entrypoint: ["{{ seaweedfs_bin }}"]
@@ -185,6 +187,8 @@
     seaweedfs_admin_ctr:
       name: "{{ seaweedfs_admin_container }}"
       image: "{{ seaweedfs_image }}"
+      read_only: true                 # SEC-22: data and configuration are host directories
+      tmpfs: ["/tmp:rw,size=256m"]     # weed's sockets and its own log files (about 1 MB a day)
       network_mode: host
       user: "{{ seaweedfs_run_as }}"
       entrypoint: ["{{ seaweedfs_bin }}"]
@@ -206,6 +210,8 @@
     seaweedfs_backup_ctr:
       name: "{{ seaweedfs_backup_container }}"
       image: "{{ seaweedfs_image }}"
+      read_only: true                 # SEC-22: data and configuration are host directories
+      tmpfs: ["/tmp:rw,size=256m"]     # weed's sockets and its own log files (about 1 MB a day)
       network_mode: host
       user: "{{ seaweedfs_run_as }}"
       # filer.backup reads its checkpoint from the filer at start; when the filer does not answer

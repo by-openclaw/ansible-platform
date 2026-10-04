@@ -36,6 +36,8 @@
       containers:
         - name: "{{ vault_container_name }}"
           image: "{{ vault_image }}"
+          read_only: true                 # SEC-22: it writes to its mounted directories only
+          tmpfs: ["/tmp:rw,size=64m", "/home/vault:rw,size=8m"]   # the CLI's home (history, token helper)
           command: server
           published:
             - "{{ vault_listen_ip }}:{{ vault_port }}:8200"

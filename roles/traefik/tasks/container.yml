@@ -42,6 +42,8 @@
       containers:
         - name: traefik
           image: "{{ traefik_image }}"
+          read_only: true                 # SEC-22: it writes to its mounted directories only
+          tmpfs: ["/tmp:rw,size=64m"]
           network_mode: host
           command: ["--configFile={{ traefik_conf_dir }}/traefik.yml"]
           volumes:

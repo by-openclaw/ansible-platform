@@ -43,16 +43,20 @@ is applied one service at a time and verified in the service's log before the ne
 | `postgres` (Patroni), `postgres-exporter`, `etcd` | `lxc-pgsql-01`, `-02`, `-03` | the data volume / a host directory; tmpfs for sockets and `/tmp` | cluster state, replication, 0 restarts |
 | `redis`, `redis-sentinel` | `lxc-redis-01`, `-02` (+ the third Sentinel on `lxc-pgpool-01`) | the data volume; the start file and the Sentinel's state directory | primary / replica link, three Sentinels agree |
 | `dbproxy` | `lxc-pgpool-01` | none (tmpfs `/tmp`, `/run`) | routes to the leader and the primary |
+| `traefik` | `lxc-traefik-01` | host directories (configuration read-only, logs), tmpfs `/tmp` | routes answer, certificates served, forwardAuth 302 |
+| `adguard` | `vm-adguard-01` | its home directory (host), tmpfs `/tmp` | answers on :53 (both families), filtering on |
+| `crowdsec` | `lxc-crowdsec-01` | configuration and data directories (host), tmpfs `/tmp` | LAPI `/health`, agents and bouncers listed |
+| `seaweedfs`, `seaweedfs-admin`, `seaweedfs-backup` | `lxc-seaweedfs-01` | the data directories (host), tmpfs `/tmp` (sockets, weed's own log files) | S3 read and write, offsite replication progressing |
+| `vault` | `lxc-vault-01`, `-02`, `-03` | data and audit log (host), tmpfs `/tmp` and the CLI's home | unsealed, follows the active node — one member at a time |
 | `devpi`, `apt-cacher-ng` | `lxc-pkgcache-01` | the cache directories (host); tmpfs `/tmp` and the proxy's run directory | a PyPI project index and a Debian index served through each cache |
 
 `step-ca` keeps its capabilities: its binary carries a file capability and does not start
 without it in the bounding set (`cap_drop: ALL` → "Operation not permitted", 2026-10-04).
 
-## Next (same method, one service at a time)
+## Next
 
-Candidates whose write set is empty or temporary files only: `seaweedfs` (three
-containers), `traefik`, `vault`, `adguard`, `crowdsec`. The edge, the resolver, the secret
-store and the object store are done in a window, each on its own.
+Nothing: every container whose image allows it runs on a read-only root filesystem. The list
+below is what cannot, with the reason.
 
 ## Cannot be read-only with the vendor's image
 
