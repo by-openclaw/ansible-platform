@@ -27,7 +27,12 @@ redis_acl_file: "{{ redis_conf_host_dir }}/users.acl"       # the logins (passwo
 redis_ca_bundle: "/etc/ssl/certs/ca-certificates.crt"       # the host CA store, mounted into the container
 redis_settle_retries: 15                                    # how long the role waits for a started member to be a replica again …
 redis_settle_delay: 4                                       # … every this many seconds
-redis_acl_validate_seconds: 3                               # how long the throwaway Redis that validates the ACL file runs
+# The ACL file is rendered as a candidate and loaded by a throwaway Redis before it is used.
+redis_acl_candidate_file: "{{ redis_acl_file }}.candidate"
+redis_acl_check_container: "{{ redis_container_name }}-acl-check"
+redis_acl_check_port: 6399                                  # inside the throwaway container only (it has no network)
+redis_acl_check_retries: 10
+redis_acl_check_delay: 1
 
 # --- Cluster ---------------------------------------------------------------------------------
 redis_members: "{{ platform_redis_members }}"

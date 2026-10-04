@@ -15,7 +15,7 @@
           image: "{{ redis_image }}"
           user: "{{ redis_uid }}:{{ redis_uid }}"
           command: ["redis-server", "{{ redis_runtime_file }}"]
-          restart: "{{ 'newer' in (redis_conf_age.stdout | default('')) }}"   # config.yml: the file is newer than the process
+          restart: "{{ redis_conf_newer | default(false) | bool }}"   # config.yml: the file is newer than the process
           read_only: true
           tmpfs: ["/tmp:rw,size=16m"]
           cap_drop: [ALL]
@@ -110,30 +110,27 @@
 
 # A replica is only useful when its link to the primary is up. A member that has just started
 # claims to be a master until the Sentinels make it a replica again: it is given time for
-# that. The task reports what it finds and does not fail on it — a primary whose replica is
-# down must not stop the run that repairs the replica.
+# that. A primary whose replica is down does not meet the condition either — the task then
+# shows as failed and ignored, and the report below says what the member is: it must not stop
+# the run that repairs the replica.
 - name: "container | Role and replication link"
-  ansible.builtin.shell:
-    executable: /bin/bash
-    cmd: |
-      set -uo pipefail
-      info=""
-      for attempt in $(seq 1 {{ redis_settle_retries }}); do
-        info=$({{ redis_cli | map('quote') | join(' ') }} info replication 2>/dev/null || true)
-        if grep -q 'master_link_status:up' <<<"$info"; then break; fi
-        if grep -q 'role:master' <<<"$info" && ! grep -q 'connected_slaves:0' <<<"$info"; then break; fi
-      {% if redis_members | length == 1 or (redis_first_start | default(false) | bool) %}
-        if grep -q 'role:master' <<<"$info"; then break; fi
-      {% endif %}
-        sleep {{ redis_settle_delay }}
-      done
-      echo "$info"
+  ansible.builtin.command:
+    argv: "{{ redis_cli + ['info', 'replication'] }}"
   environment:
     REDISCLI_AUTH: "{{ redis_requirepass }}"
   register: redis_role_after
   check_mode: false   # read-only probe
+  retries: "{{ redis_settle_retries }}"
+  delay: "{{ redis_settle_delay }}"
+  until: >-
+    redis_role_after.rc == 0 and
+    ('master_link_status:up' in redis_role_after.stdout
+     or ('role:master' in redis_role_after.stdout
+         and ('connected_slaves:0' not in redis_role_after.stdout
+              or redis_members | length == 1
+              or (redis_first_start | default(false) | bool))))
   changed_when: false
-  failed_when: "'role:' not in redis_role_after.stdout"
+  ignore_errors: true
   no_log: true
 
 - name: "container | Report"

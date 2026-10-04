@@ -48,10 +48,10 @@ dbproxy_check_timeout: "2s"             # how long one check may take
 # the members — when a member dies nothing ends those sessions (2026-10-04: after the Redis
 # primary was killed, clients held dead connections for up to a minute). After this long the
 # former worker closes what it still holds and the clients reconnect to the worker that watches.
-dbproxy_hard_stop_after: "30s"
-# How long the role waits for former workers to end (above the previous line), and how often it looks.
-dbproxy_former_worker_retries: 9
-dbproxy_former_worker_delay: 5
+dbproxy_hard_stop_after_seconds: 30
+dbproxy_hard_stop_after: "{{ dbproxy_hard_stop_after_seconds }}s"
+# The role reads the endpoint's processes this long after that bound.
+dbproxy_former_worker_margin_seconds: 10
 
 # --- Metrics (HAProxy's built-in Prometheus exporter) -----------------------------------------
 dbproxy_metrics_port: 8405
