@@ -38,3 +38,30 @@ Requires the FW DMZ→SVC `:9000` rule + Unbound override (opnsense catalog).
 Authentik re-applies every blueprint file hourly: whatever a blueprint sets wins over an API
 change within the hour. A setting made through the API (the certificate) must therefore not
 appear in any blueprint, and no file may sit in the blueprint directory that this role does not render.
+
+## RADIUS (administrator logins on network devices)
+
+`tasks/radius.yml`, `templates/radius.yaml.j2`, defaults `authentik_radius_*`. Authentik's own
+RADIUS provider, served by the outpost container `authentik-radius` on every instance
+(`1812/udp`): a device is given both instances as primary and secondary server.
+
+| What | Where |
+|------|-------|
+| Who may ask | `authentik_radius_client_networks` — the management network of the switch fabric (`platform_mgmt_zones.fabric`); the same sources in the DOCKER-USER catalog (`mgmt:fabric`) |
+| Who is accepted | members of `authentik_radius_group` (`platform_infra_admins_group`), nobody else |
+| Login | the user name and `password;code` — the flow asks for the second factor, the code of the authenticator app follows the password after a semicolon |
+| Shared secret of the devices | Vault `{env}/authentik/radius`, field `shared_secret` (created once) |
+| Outpost token | issued by Authentik, copy in Vault `{env}/authentik/radius-outpost` |
+| Protocol | PAP (device administration). Port authentication (802.1X/EAP) is not served by this provider |
+
+Self-test, on every run and for each instance: a client container on the monitoring host sends
+one login of the probe account (accepted) and one with a wrong password (refused). The probe is
+a service account whose only right is the self-test provider — own shared secret, reachable
+from the monitoring host only, a password-only flow that only an outpost can run. The devices'
+secret is never used by the test.
+
+Signal: `RadiusOutpostDown` (fewer outposts running than instances).
+
+A device still needs its own side: the two servers, the shared secret from Vault, and the
+vendor attribute that maps an accepted login to a privilege level (added as a property mapping
+of the provider when the first device is linked).

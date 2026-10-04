@@ -112,6 +112,9 @@ prometheus_postgres_exporter_hosts: "{{ platform_pg_members | default(groups['po
 prometheus_backup_max_age_hours: 30
 # The container that replicates the object store to the offsite bucket (the third copy).
 prometheus_offsite_replica_container: "{{ seaweedfs_backup_container }}"
+# The RADIUS outposts (administrator logins on network devices): one per identity provider instance.
+prometheus_radius_container: "authentik-radius"
+prometheus_radius_instances: "{{ (groups['authentik_cluster'] | default(groups['authentik'] | default([]))) | length }}"
 prometheus_seaweedfs_hosts: "{{ groups['seaweedfs'] | default([]) }}"
 prometheus_seaweedfs_metrics_port: "{{ platform_seaweedfs_metrics_port }}"
 # Bind to localhost only — Grafana is co-located and Traefik/edge (if any) fronts it.

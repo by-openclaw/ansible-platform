@@ -211,6 +211,14 @@ groups:
           summary: "Container {{ '{{' }} $labels.name {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} restarted {{ '{{' }} $value {{ '}}' }} times in 15 min"
           description: "Container {{ '{{' }} $labels.name {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} is in a restart loop: it crashes right after starting (bad config, missing secret, dependency not up)."
           runbook: "docker logs --tail 100 on the container; a config or secret change is the usual cause, so check the last deploy of that service."
+      - alert: RadiusOutpostDown
+        expr: (count(time() - container_last_seen{name="{{ prometheus_radius_container }}"} < 300) or vector(0)) < {{ prometheus_radius_instances }}
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ '{{' }} $value {{ '}}' }} of {{ prometheus_radius_instances }} RADIUS outposts running"
+          description: "Network devices ask the RADIUS outposts for administrator logins, one outpost per identity provider instance. With one missing the devices use the other; with none they fall back to their local accounts."
+          runbook: "On the identity provider instance: docker logs --tail 50 {{ prometheus_radius_container }}, then playbooks/authentik.yml (it ends with an accepted and a refused test login)."
       - alert: ContainerMemoryNearLimit
         expr: (container_memory_working_set_bytes{name!=""} / (container_spec_memory_limit_bytes{name!=""} > 0)) > 0.9
         for: 10m
