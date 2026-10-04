@@ -20,7 +20,8 @@
   serial: 1
   roles:
     - postgresql
-    - postgres_exporter   # metrics + saturation alerts, on every member
+    - role: postgres_exporter   # metrics + saturation alerts, on every member
+      when: pg_state | default('present') == 'present'   # a member being removed has no exporter
 
 - name: "PostgreSQL cluster | final state"
   hosts: patroni
@@ -32,3 +33,4 @@
         name: postgresql
         tasks_from: verify
       run_once: true
+      when: pg_state | default('present') == 'present'
