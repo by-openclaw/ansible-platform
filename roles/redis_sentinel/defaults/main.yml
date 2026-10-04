@@ -38,3 +38,23 @@ redis_sentinel_failover_timeout_ms: 60000
 # Credentials: the members' admin password (owner: roles/redis) and the Sentinels' own.
 redis_sentinel_redis_vault_path: "{{ platform_env }}/redis/admin"
 redis_sentinel_vault_path: "{{ platform_env }}/redis/sentinel"
+# SEC-09: -e redis_sentinel_rotate=true gives the Sentinels a new password of their own
+# (tasks/rotate.yml: accepted next to the old one, used, then the old one removed).
+redis_sentinel_rotate: false
+# The Sentinel's own command line (its password comes in REDISCLI_AUTH, never as an argument).
+redis_sentinel_cli:
+  - docker
+  - exec
+  - -i
+  - -e
+  - REDISCLI_AUTH
+  - "{{ redis_sentinel_container_name }}"
+  - redis-cli
+  - --no-auth-warning
+  - --tls
+  - --cacert
+  - /etc/ssl/certs/ca-certificates.crt
+  - -h
+  - "{{ redis_sentinel_fqdn }}"
+  - -p
+  - "{{ redis_sentinel_port | string }}"
