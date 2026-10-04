@@ -2,7 +2,7 @@
 # ==============================================================================
 # Role: authentik — SSO / Identity Provider (Docker) on lxc-authentik-01 (SVC)
 # server + worker containers (same image). Uses the shared cluster PostgreSQL
-# (postgres_db: authentik) + Redis, both over verified TLS. Fronted by Traefik
+# (postgres_db: authentik) over verified TLS. Fronted by Traefik
 # (wildcard TLS). Upgrade = bump authentik_image tag.
 # ==============================================================================
 # Core image. Derived from authentik_version so the LDAP outpost tag below
@@ -17,20 +17,17 @@ authentik_host_port: 9000
 authentik_container_port: 9000
 
 # Shared PostgreSQL (DB + role created by the postgres_db role).
-authentik_pg_host: "{{ groups['postgresql'] | first }}.{{ platform_domain }}"
+authentik_pg_host: "{{ platform_pg_host }}"
 authentik_pg_port: 5432
 authentik_pg_name: "authentik"
 authentik_pg_user: "authentik"
 
-# Shared Redis.
-authentik_redis_host: "{{ groups['redis'] | first }}.{{ platform_domain }}"
-authentik_redis_port: 6379
+# No Redis: since 2025.10 Authentik keeps cache, sessions and tasks in PostgreSQL (its Redis
+# settings were removed upstream; the role carried them unused until 2026-10-04).
 
 # Secrets — Vault only (secret/{env}/{service}/{key}); no controller files.
 authentik_vault_path: "{{ platform_env }}/authentik/admin"          # secret_key + bootstrap (get-or-create)
 authentik_pg_vault_path: "{{ platform_env }}/authentik/db-pgsql"    # postgres_db creates it
-authentik_redis_vault_path: "{{ platform_env }}/redis/admin"        # the redis role owns it (shared)
-authentik_redis_db: "{{ platform_redis_databases.authentik }}"      # own DB number (SVC-27; group_vars/all/redis.yml)
 # Authentik's own metrics listener (:9300 inside the server container), published on the host for
 # Prometheus (INF-33); the DOCKER-USER catalog admits the monitoring host to it.
 authentik_metrics_port: 9300

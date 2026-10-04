@@ -14,6 +14,13 @@
 # convention-named svc-{function}-{env} (naming/0002 §3). Any other service user
 # (e.g. a legacy 'netbird-automation') is deleted via the API.
 
+# Statements that write run on the cluster's LEADER (a replica is read-only): ask once.
+- name: "enforce | Which PostgreSQL member leads"
+  ansible.builtin.include_role:
+    name: postgres_db
+    tasks_from: leader
+  when: platform_pg_leader is not defined
+
 - name: "No-human-PAT | List users (bootstrap JWT) for stray service-user cleanup"
   ansible.builtin.uri:
     url: "http://{{ netbird_listen_ip }}:{{ netbird_api_port }}/api/users"
@@ -59,7 +66,7 @@
           WHERE p.user_id = u.id AND u.is_service_user = false
           RETURNING p.id
         ) SELECT count(*) FROM d;
-  delegate_to: "{{ netbird_pg_delegate | default(groups['postgresql'] | first) }}"
+  delegate_to: "{{ netbird_pg_delegate }}"
   register: netbird_pat_revoked
   changed_when: (netbird_pat_revoked.stdout | trim | int) > 0
   notify: "Restart netbird management"

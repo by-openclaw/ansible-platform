@@ -4,6 +4,13 @@
 # with nothing to read, so it refused every target. services.yml already records the database,
 # the route and the host for all of them; decommission_catalog now only carries the leftovers
 # of a service whose role is already gone, where there is no catalog row left to read.
+# Statements that write run on the cluster's LEADER (a replica is read-only): ask once.
+- name: "decommission | Which PostgreSQL member leads"
+  ansible.builtin.include_role:
+    name: postgres_db
+    tasks_from: leader
+  when: platform_pg_leader is not defined
+
 - name: "decommission | Require a target"
   ansible.builtin.assert:
     that: decommission_target | length > 0
