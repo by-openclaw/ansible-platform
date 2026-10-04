@@ -39,9 +39,13 @@ pg_max_locks_per_transaction: 256
 # 13:27Z, "remaining connection slots are reserved for SUPERUSER"): Authentik lost its
 # pool → forwardAuth answered 500 on every route → one ProbeFailed per site. Every
 # `db: shared-pg` service in platform_services shares this cluster (ten on
-# 2026-09-28), each with its own pool; 200 leaves headroom
-# (each backend costs a few MB, the host has 2 GiB). Restart-required setting.
-pg_max_connections: 200
+# 2026-09-28), each with its own pool. 200 was reached again on 2026-10-04 (189 backends)
+# when the second Authentik instance started: each instance keeps about 60 persistent
+# connections (its async workers, not the 2 × 4 threads the authentik role counted), GitLab
+# about 40. 400 with 4 GiB per member (each backend costs about 5 MB). Restart-required
+# setting: a standby must never carry less than the leader, so it is raised on the standbys
+# first (Patroni applies it at their next restart), the leader last.
+pg_max_connections: 400
 # Log every connection with role + database (Loki keeps them), so the next time the
 # ceiling is approached the client that opened the connections is named — without it,
 # only the victims' errors are visible. Restart-required setting.
