@@ -1,0 +1,74 @@
+# Managed by Ansible (roles/postgresql). Do not edit by hand.
+scope: {{ pg_cluster_scope }}
+namespace: /patroni/
+name: {{ inventory_hostname }}
+
+log:
+  level: INFO
+
+restapi:
+  listen: "[::]:{{ pg_patroni_port }}"
+  connect_address: {{ pg_fqdn }}:{{ pg_patroni_port }}
+  certfile: {{ pg_ssl_cert }}
+  keyfile: {{ pg_ssl_key }}
+  authentication:
+    username: patroni
+    password: "{{ pg_patroni_api_password }}"
+
+ctl:
+  cacert: {{ pg_ca_bundle }}
+
+etcd3:
+  hosts:
+{% for h in pg_etcd_hosts %}
+    - {{ h }}
+{% endfor %}
+  protocol: https
+  cacert: {{ pg_ca_bundle }}
+  username: root
+  password: "{{ pg_etcd_password }}"
+
+bootstrap:
+  dcs:
+    {{ lookup('ansible.builtin.template', 'dcs.yml.j2') | indent(4) }}
+  # Only for a cluster created from nothing (a rebuild): the adopted data directory and the
+  # replicas' copies never run initdb.
+  initdb:
+    - encoding: UTF8
+    - locale: en_US.utf8
+{% if pg_data_checksums | bool %}
+    - data-checksums
+{% endif %}
+
+postgresql:
+  listen: "*:5432"
+  connect_address: {{ pg_fqdn }}:{{ pg_port }}
+  data_dir: /var/lib/postgresql/data/pgdata
+  bin_dir: /usr/lib/postgresql/{{ pg_image.split(':')[1].split('.')[0] }}/bin
+  pgpass: /tmp/pgpass
+  use_unix_socket: true
+  authentication:
+    superuser:
+      username: postgres
+      password: "{{ pg_superuser_password }}"
+    replication:
+      username: {{ pg_replication_user }}
+      password: "{{ pg_replication_password }}"
+      sslmode: verify-full
+      sslrootcert: {{ pg_ca_bundle }}
+  # Member-local settings (file paths, TLS). What must be identical on every member lives in
+  # the dynamic configuration (dcs.yml.j2).
+  parameters:
+    unix_socket_directories: /var/run/postgresql
+    hba_file: {{ pg_conf_host_dir }}/pg_hba.conf
+    ssl: "{{ 'on' if pg_ssl | bool else 'off' }}"
+    ssl_cert_file: {{ pg_ssl_cert }}
+    ssl_key_file: {{ pg_ssl_key }}
+    ssl_min_protocol_version: {{ pg_ssl_min_version }}
+    ssl_ciphers: "{{ pg_ssl_ciphers }}"
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

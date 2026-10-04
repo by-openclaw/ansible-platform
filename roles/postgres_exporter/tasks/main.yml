@@ -15,6 +15,14 @@
   no_log: true
   when: vault_secret_result.password is defined
 
+# A replica is read-only: the login is written on the leader and arrives here by replication.
+- name: "PG exporter | Is this member a replica?"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ pg_container_name }}", psql, -U, postgres, -Atc, "select pg_is_in_recovery()"]
+  register: postgres_exporter_recovery
+  changed_when: false
+  check_mode: false   # read-only probe
+
 - name: "PG exporter | The monitoring role exists, with pg_monitor only"
   ansible.builtin.command:
     cmd: >-
@@ -30,7 +38,9 @@
   register: postgres_exporter_role
   changed_when: false     # the statement is idempotent; the password is the one Vault holds
   no_log: true
-  when: postgres_exporter_password is defined and not ansible_check_mode
+  when:
+    - postgres_exporter_password is defined and not ansible_check_mode
+    - postgres_exporter_recovery.stdout | trim == 'f'
 
 - name: "PG exporter | Run the exporter container (pinned)"
   community.docker.docker_container:

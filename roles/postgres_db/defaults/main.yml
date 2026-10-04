@@ -10,7 +10,12 @@
 #   postgres_db_user   e.g. "netbox"
 # ==============================================================================
 # Where the PostgreSQL container runs (delegate target for docker exec).
-postgres_db_host: "{{ groups['postgresql'] | first }}"
+# Where the statements run: the cluster's LEADER (a replica is read-only). tasks/leader.yml
+# asks Patroni once per play host and publishes platform_pg_leader; before that fact exists
+# (and for a caller that names the host itself) the first member is the default.
+postgres_db_host: "{{ platform_pg_leader | default(groups['postgresql'] | first) }}"
+postgres_db_members: "{{ platform_pg_members | default(groups['postgresql']) }}"
+postgres_db_patroni_conf: "/etc/postgres/patroni/patroni.yml"
 postgres_db_container: "postgres"
 postgres_db_listen_ip: "{{ hostvars[groups['postgresql'] | first].ansible_host }}"
 postgres_db_port: 5432
@@ -25,6 +30,7 @@ postgres_db_extensions: []     # extensions the service needs (CREATE EXTENSION 
 # --- Role-only mode, memberships, CONNECT (a login for cluster tooling, e.g. pgAdmin's) -------
 # postgres_db_name: "" -> no database: the login is created/kept (password from Vault) and only
 # its memberships + CONNECT grants are reconciled. Never a superuser.
+postgres_db_role_attributes: []  # role attributes of the login (e.g. REPLICATION); set on create, added to an existing role
 postgres_db_memberships: []      # roles granted to the login (GRANT x TO login), e.g. the predefined pg_read_all_data; never revoked here
 postgres_db_connect_all: false   # the login may CONNECT to every database of the cluster (service databases revoke PUBLIC)
 # The platform's DBA logins (inventories/<env>/group_vars/all/postgresql.yml, key = service -> login):

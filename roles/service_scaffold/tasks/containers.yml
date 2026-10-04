@@ -83,7 +83,14 @@
     restart: "{{ scaffold_ctr.restart | default(omit) }}"   # e.g. a config the app does not hot-reload changed
     recreate: "{{ scaffold_ctr.recreate | default(omit) }}"
     security_opts: "{{ scaffold_ctr.security_opts | default(omit) }}"
+    # Hardening a service opts into (SEC: read-only root filesystem, no capabilities): the
+    # writable paths it needs are its volumes plus the tmpfs mounts it declares.
+    read_only: "{{ scaffold_ctr.read_only | default(omit) }}"
+    tmpfs: "{{ scaffold_ctr.tmpfs | default(omit) }}"
+    cap_drop: "{{ scaffold_ctr.cap_drop | default(omit) }}"
+    capabilities: "{{ scaffold_ctr.capabilities | default(omit) }}"
     hostname: "{{ scaffold_ctr.hostname | default(omit) }}"
+    stop_timeout: "{{ scaffold_ctr.stop_timeout | default(omit) }}"   # a database needs more than Docker's 10 s
     shm_size: "{{ scaffold_ctr.shm_size | default(omit) }}"
     ulimits: "{{ scaffold_ctr.ulimits | default(omit) }}"
     etc_hosts: "{{ scaffold_ctr.etc_hosts | default(omit) }}"

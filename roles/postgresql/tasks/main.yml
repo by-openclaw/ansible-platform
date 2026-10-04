@@ -1,6 +1,9 @@
 ---
 # ==============================================================================
-# Role: postgresql (Docker) — dispatcher
+# Role: postgresql (Docker) — dispatcher. One member of the Patroni cluster.
+# The play runs the members ONE AT A TIME (serial: 1), the first member first: on the very
+# first run it adopts the standalone data directory and becomes the leader, then the others
+# join as replicas.
 # ==============================================================================
 - name: Retire any native PostgreSQL install
   ansible.builtin.import_tasks: migrate.yml
@@ -10,24 +13,29 @@
   ansible.builtin.import_tasks: tls.yml
   tags: [postgresql, tls]
 
-- name: Resolve / generate DB secrets (superuser + apps)
+- name: Resolve / generate the cluster secrets
   ansible.builtin.import_tasks: secrets.yml
   tags: [postgresql, secrets]
 
-- name: Render config (pg_hba)
+- name: Render config (pg_hba, Patroni)
   ansible.builtin.import_tasks: config.yml
   tags: [postgresql, config]
 
-- name: "PostgreSQL | Data checksums on an existing cluster (one-time offline conversion)"
-  ansible.builtin.import_tasks: checksums.yml
-  tags: [postgresql, container, checksums]
+- name: "PostgreSQL | Platform image (server + Patroni)"
+  ansible.builtin.import_tasks: image.yml
+  tags: [postgresql, image]
 
-- name: Run the PostgreSQL container
+- name: Run the member
   ansible.builtin.import_tasks: container.yml
   tags: [postgresql, container]
 
+- name: "PostgreSQL | Cluster state, replication login, dynamic configuration"
+  ansible.builtin.import_tasks: cluster.yml
+  tags: [postgresql, cluster]
+
 - name: "PostgreSQL | Owner-only database access"
   ansible.builtin.import_tasks: access.yml
+  when: inventory_hostname == pg_leader
   tags: [postgresql, access]
 
 # App databases + roles are created by each app's own playbook (the reusable

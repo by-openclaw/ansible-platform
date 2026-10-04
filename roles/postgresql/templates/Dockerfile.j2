@@ -1,0 +1,9 @@
+# Managed by Ansible (roles/postgresql). Do not edit by hand.
+# {{ pg_image }} + Patroni {{ pg_patroni_version }} from the image's own PGDG repository: same base,
+# same glibc, same binaries as the standalone server — its data directory is used unchanged.
+FROM {{ pg_image }}
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends patroni={{ pg_patroni_version }} python3-etcd \
+ && rm -rf /var/lib/apt/lists/* \
+ && patroni --version
+USER postgres

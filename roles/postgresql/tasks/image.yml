@@ -1,0 +1,36 @@
+---
+# The platform image, built on the member from the pinned server image (the Verdaccio pattern:
+# a templated Dockerfile, a tag that carries the upstream version and the platform revision).
+- name: "image | Build directory"
+  ansible.builtin.file:
+    path: "{{ pg_build_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "image | Dockerfile"
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ pg_build_dir }}/Dockerfile"
+    owner: root
+    group: root
+    mode: "0644"
+  register: pg_dockerfile
+
+- name: "image | Pull the pinned server image (the build's base)"
+  community.docker.docker_image:
+    name: "{{ pg_image }}"
+    source: pull
+    force_source: false
+
+- name: "image | Build {{ pg_platform_image }}:{{ pg_platform_tag }}"
+  community.docker.docker_image:
+    name: "{{ pg_platform_image }}"
+    tag: "{{ pg_platform_tag }}"
+    source: build
+    build:
+      path: "{{ pg_build_dir }}"
+      dockerfile: Dockerfile
+      pull: false
+    force_source: "{{ pg_dockerfile.changed }}"

@@ -4,6 +4,11 @@
 # Idempotent via `docker exec` (delegated to the Postgres host; local socket =
 # trust). Password is generated once and stored in Vault (get-or-create).
 # ==============================================================================
+# --- Where: the cluster's leader ------------------------------------------------
+- name: "Postgresdb | Find the leader (once per play host)"
+  ansible.builtin.include_tasks: leader.yml
+  when: platform_pg_leader is not defined
+
 # --- Password: Vault (get-or-create) -----------------------------------------
 - name: "Postgresdb | A Vault path is required"
   ansible.builtin.assert:
@@ -42,7 +47,7 @@
   ansible.builtin.command:
     cmd: >-
       docker exec {{ postgres_db_container }} psql -U postgres -d postgres
-      -c "CREATE ROLE {{ postgres_db_user }} LOGIN PASSWORD '{{ postgres_db_password }}'"
+      -c "CREATE ROLE {{ postgres_db_user }} LOGIN {{ postgres_db_role_attributes | join(' ') }} PASSWORD '{{ postgres_db_password }}'"
   delegate_to: "{{ postgres_db_host }}"
   when: postgres_db_role_exists.stdout | trim != '1'
   no_log: true
@@ -75,6 +80,30 @@
     - postgres_db_role_exists.stdout | trim == '1'
     - postgres_db_pw_probe.rc | default(1) != 0
   no_log: true
+  changed_when: true
+
+# Role attributes the login must carry (e.g. REPLICATION for the cluster's streaming login):
+# set at creation above; an existing role that lacks one gets it here.
+- name: "Postgresdb | Attributes of {{ postgres_db_user }}"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ postgres_db_container }} psql -tAU postgres -d postgres
+      -c "SELECT rolreplication FROM pg_roles WHERE rolname = '{{ postgres_db_user }}'"
+  delegate_to: "{{ postgres_db_host }}"
+  register: postgres_db_role_attrs
+  check_mode: false  # read-only probe
+  changed_when: false
+  when: "'REPLICATION' in postgres_db_role_attributes"
+
+- name: "Postgresdb | Give {{ postgres_db_user }} the REPLICATION attribute"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ postgres_db_container }} psql -U postgres -d postgres
+      -c "ALTER ROLE {{ postgres_db_user }} REPLICATION"
+  delegate_to: "{{ postgres_db_host }}"
+  when:
+    - "'REPLICATION' in postgres_db_role_attributes"
+    - postgres_db_role_attrs.stdout | default('') | trim == 'f'
   changed_when: true
 
 - name: "Postgresdb | Check database exists: {{ postgres_db_name }}"

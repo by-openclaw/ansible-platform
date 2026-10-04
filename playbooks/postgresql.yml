@@ -1,11 +1,34 @@
 ---
-# Configure PROD PostgreSQL (lxc-pgsql-01, SVC).
-- name: Configure PROD PostgreSQL
-  hosts: postgresql
+# The PostgreSQL cluster (services/0004): three members under Patroni, etcd colocated on them.
+#   ansible-playbook playbooks/postgresql.yml
+# Play 1 runs on all members at once: the consensus store needs a quorum before it is healthy.
+# Play 2 runs the members one at a time, the first member first — on the very first run it adopts
+# the standalone data directory and leads, then the others copy it and stream.
+- name: "PostgreSQL cluster | base, Docker, consensus store (all members at once)"
+  hosts: patroni
   become: true
   gather_facts: true
   roles:
     - base
     - docker
+    - etcd
+
+- name: "PostgreSQL cluster | members, one at a time"
+  hosts: patroni
+  become: true
+  gather_facts: true
+  serial: 1
+  roles:
     - postgresql
-    - postgres_exporter   # metrics + saturation alerts for the shared cluster
+    - postgres_exporter   # metrics + saturation alerts, on every member
+
+- name: "PostgreSQL cluster | final state"
+  hosts: patroni
+  become: true
+  gather_facts: true
+  tasks:
+    - name: "Cluster | Every member present, one leader, replicas streaming"
+      ansible.builtin.include_role:
+        name: postgresql
+        tasks_from: verify
+      run_once: true

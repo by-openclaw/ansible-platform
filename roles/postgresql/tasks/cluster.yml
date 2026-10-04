@@ -1,0 +1,96 @@
+---
+# Cluster-level steps. Every member runs them (the play is serial); the writes happen on the
+# leader only.
+- name: "cluster | Members"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ pg_container_name }}", patronictl, -c, "{{ pg_patroni_conf }}", list, -f, json]
+  register: pg_cluster_list
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "cluster | Who leads"
+  ansible.builtin.set_fact:
+    pg_cluster_members_live: "{{ pg_cluster_list.stdout | from_json }}"
+    pg_leader: >-
+      {{ pg_cluster_list.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | first | default('') }}
+
+- name: "cluster | Exactly one leader"
+  ansible.builtin.assert:
+    that:
+      - pg_cluster_members_live | selectattr('Role', 'equalto', 'Leader') | list | length == 1
+      - pg_leader in pg_cluster_members
+    fail_msg: "the cluster has no single leader: {{ pg_cluster_members_live }}"
+    quiet: true
+
+# The streaming replication login, through roles/postgres_db (the one writer of roles). Patroni
+# creates it itself only for a cluster built from nothing; the adopted data directory needs it
+# before the first replica joins.
+- name: "cluster | Replication login (roles/postgres_db, on the leader)"
+  ansible.builtin.include_role:
+    name: postgres_db
+  vars:
+    postgres_db_name: ""                                   # login only, no database
+    postgres_db_user: "{{ pg_replication_user }}"
+    postgres_db_vault_path: "{{ pg_replication_vault_path }}"   # pragma: allowlist secret
+    postgres_db_role_attributes: [REPLICATION]
+    postgres_db_host: "{{ pg_leader }}"
+  when: inventory_hostname == pg_leader
+
+# The dynamic configuration lives in the consensus store: converge it to dcs.yml. A parameter
+# that needs a restart is flagged by Patroni on each member (pending restart) — applied
+# explicitly, below.
+- name: "cluster | Dynamic configuration = dcs.yml"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ pg_container_name }}"
+      - patronictl
+      - -c
+      - "{{ pg_patroni_conf }}"
+      - edit-config
+      - --replace
+      - "{{ pg_patroni_dcs_file }}"
+      - --force
+  register: pg_dcs_apply
+  changed_when: "'Not changed' not in pg_dcs_apply.stdout"
+  when: inventory_hostname == pg_leader
+
+- name: "cluster | Members after the configuration step"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ pg_container_name }}", patronictl, -c, "{{ pg_patroni_conf }}", list, -f, json]
+  register: pg_cluster_list_after
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "cluster | Members that wait for a restart"
+  ansible.builtin.set_fact:
+    pg_pending_restart: >-
+      {{ pg_cluster_list_after.stdout | from_json | selectattr('Pending restart', 'defined') | map(attribute='Member') | list }}
+
+- name: "cluster | A postmaster-level parameter changed: restart pending"
+  ansible.builtin.debug:
+    msg: >-
+      pending restart on {{ pg_pending_restart | join(', ') }} — apply it in a window with
+      -e pg_apply_pending_restart=true (restarts those members, the database is unavailable for
+      the seconds the leader takes).
+  when: pg_pending_restart | length > 0 and not (pg_apply_pending_restart | bool)
+
+- name: "cluster | Apply the pending restart (explicit)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ pg_container_name }}"
+      - patronictl
+      - -c
+      - "{{ pg_patroni_conf }}"
+      - restart
+      - "{{ pg_cluster_scope }}"
+      - --pending
+      - --force
+  changed_when: true
+  when:
+    - pg_apply_pending_restart | bool
+    - pg_pending_restart | length > 0
+    - inventory_hostname == pg_leader

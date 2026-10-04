@@ -106,6 +106,31 @@ groups:
           summary: "PostgreSQL on {{ '{{' }} $labels.instance {{ '}}' }} is at {{ '{{' }} $value | humanizePercentage {{ '}}' }} of its connection ceiling"
           description: "New connections are about to be refused ('remaining connection slots are reserved for roles with the SUPERUSER attribute'). Every service sharing this cluster is affected within seconds."
           runbook: "Find the role holding the most backends (pg_stat_activity by usename) and stop its bleeding first — restart that service's pool, then fix its connection lifetime. Raising max_connections is the last resort, not the first."
+      - alert: PostgresLeaderCount
+        # the cluster's heartbeat: exactly ONE member is not a replica
+        expr: count(pg_replication_is_replica == 0) != 1
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "The PostgreSQL cluster has {{ '{{' }} $value {{ '}}' }} leaders (expected 1)"
+          description: "Either no member leads (writes fail on every service with a database) or two do. Patroni elects a leader through etcd: a lost quorum of the consensus store (two of three members down) leaves the cluster without one."
+          runbook: "On any member: `docker exec postgres patronictl -c /etc/postgres/patroni/patroni.yml list`, then `docker exec etcd etcdctl endpoint health --cluster`. Bring the missing members back (playbooks/postgresql.yml); never promote by hand."
+      - alert: PostgresReplicaMissing
+        expr: count(pg_replication_is_replica == 1) < {{ (prometheus_postgres_exporter_hosts | length) - 1 }}
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "The PostgreSQL cluster runs with {{ '{{' }} $value {{ '}}' }} replicas (expected {{ (prometheus_postgres_exporter_hosts | length) - 1 }})"
+          description: "A member is down or not streaming: the cluster still serves, with less redundancy. With no replica left a failure of the leader is an outage."
+          runbook: "`patronictl list` on a member names the missing one; `playbooks/postgresql.yml -l <member>` converges it (a member that fell too far behind is re-copied with `patronictl reinit`)."
+      - alert: PostgresEndpointNoLeader
+        expr: haproxy_backend_active_servers{proxy="postgres"} != 1
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "The data endpoint routes PostgreSQL to {{ '{{' }} $value {{ '}}' }} members (expected 1)"
+          description: "The endpoint sends connections to the member whose Patroni answers /primary. Zero = no leader, or the endpoint cannot reach the members' REST API; every service that connects through the endpoint fails."
+          runbook: "Compare `patronictl list` with the endpoint's view (`curl -s localhost:8405/metrics | grep haproxy_server_status` on the endpoint guest); then the firewall catalog entry of port 8008 and the members' certificates."
       - alert: PostgresDown
         expr: pg_up == 0
         for: 2m

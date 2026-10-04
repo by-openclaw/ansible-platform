@@ -1,7 +1,87 @@
 ---
+# What runs on this host today decides the path: nothing (a new member — it copies the leader's
+# data), the standalone server (the first run on the first member — Patroni adopts its data
+# directory unchanged), or a cluster member (the normal case).
+- name: "container | Image of the running container"
+  ansible.builtin.command:
+    argv: [docker, inspect, --format, "{{ '{{' }}.Config.Image{{ '}}' }}", "{{ pg_container_name }}"]
+  register: pg_running_image
+  changed_when: false
+  failed_when: false
+  check_mode: false   # read-only probe
+
+- name: "container | Where this host comes from"
+  ansible.builtin.set_fact:
+    pg_was_standalone: "{{ pg_running_image.rc == 0 and (pg_running_image.stdout | trim) == pg_image }}"
+    pg_was_member: "{{ pg_running_image.rc == 0 and (pg_running_image.stdout | trim) is match(pg_platform_image ~ ':') }}"
+    pg_image_changes: >-
+      {{ pg_running_image.rc == 0 and (pg_running_image.stdout | trim) != (pg_platform_image ~ ':' ~ pg_platform_tag) }}
+
+# --- Conversion of the standalone server (once) -------------------------------------------------
+# A fresh logical dump first, through the nightly job's own unit: the restart that follows is
+# the only step of the conversion that touches the running database.
+- name: "container | Conversion: fresh logical dump (the nightly job's unit, run now)"
+  when: pg_was_standalone | bool
+  block:
+    - name: "container | Run pg-backup.service"
+      ansible.builtin.systemd_service:
+        name: pg-backup.service
+        state: started
+
+    - name: "container | A dump written in the last 15 minutes"
+      ansible.builtin.find:
+        paths: "{{ pg_backup_dir }}"
+        patterns: "all-*.sql.gz"
+        age: "-15m"
+        size: "1m"
+      register: pg_conversion_dump
+
+    - name: "container | The dump exists and is not empty"
+      ansible.builtin.assert:
+        that: pg_conversion_dump.matched | int >= 1
+        fail_msg: "no fresh dump in {{ pg_backup_dir }} — the conversion does not start without one"
+        success_msg: >-
+          fresh dump: {{ pg_conversion_dump.files | map(attribute='path') | map('basename') | join(', ') }}
+          ({{ (pg_conversion_dump.files | map(attribute='size') | sum / 1048576) | round(1) }} MiB)
+
+# --- A leader hands over before its container is replaced --------------------------------------
+- name: "container | Cluster members before the change"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ pg_container_name }}", patronictl, -c, "{{ pg_patroni_conf }}", list, -f, json]
+  register: pg_members_before
+  changed_when: false
+  failed_when: false
+  check_mode: false   # read-only probe
+  when: pg_was_member | bool and pg_image_changes | bool
+
+- name: "container | Switchover: the leadership moves to a healthy replica first"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ pg_container_name }}"
+      - patronictl
+      - -c
+      - "{{ pg_patroni_conf }}"
+      - switchover
+      - --leader
+      - "{{ inventory_hostname }}"
+      - --force
+  changed_when: true
+  vars:
+    _members: "{{ (pg_members_before.stdout | default('[]', true)) | from_json }}"
+  when:
+    - pg_was_member | bool and pg_image_changes | bool
+    - pg_members_before.rc | default(1) == 0
+    - (_members | selectattr('Member', 'equalto', inventory_hostname) | map(attribute='Role') | first | default('')) == 'Leader'
+    - (_members | rejectattr('Member', 'equalto', inventory_hostname) | selectattr('State', 'in', ['running', 'streaming']) | list | length) > 0
+
+# --- The member -----------------------------------------------------------------------------
 # The container through the scaffold's containers step (the one owner of "run a pinned
 # container"); PostgreSQL has no HTTP route, so only that step of the contract applies.
-- name: "container | PostgreSQL (roles/service_scaffold containers)"
+# Patroni is the container's process and starts PostgreSQL itself; the root filesystem is
+# read-only (data on the volume, sockets and Patroni's pgpass on tmpfs), no capability is kept.
+- name: "container | PostgreSQL member (roles/service_scaffold containers)"
   ansible.builtin.include_role:
     name: service_scaffold
     tasks_from: containers
@@ -10,70 +90,53 @@
       name: postgresql
       containers:
         - name: "{{ pg_container_name }}"
-          image: "{{ pg_image }}"
+          image: "{{ pg_platform_image }}:{{ pg_platform_tag }}"
+          pull: false                      # built on this host (image.yml)
+          hostname: "{{ inventory_hostname }}"
+          command: ["patroni", "{{ pg_patroni_conf }}"]
+          stop_timeout: "{{ pg_stop_timeout }}"
+          read_only: true
+          tmpfs:
+            - "/tmp:rw,size=64m"
+            - "/var/run/postgresql:rw,uid={{ pg_uid }},gid={{ pg_uid }},mode=2775"
+          cap_drop: [ALL]
+          security_opts: ["no-new-privileges:true"]
           published:
             - "{{ pg_listen_ip }}:{{ pg_port }}:5432"
             - "127.0.0.1:{{ pg_port }}:5432"
             # Dual-stack: publish on the SVC IPv6 + v6 loopback (ip6tables DNAT).
             - "[{{ pg_listen_ip6 }}]:{{ pg_port }}:5432"
             - "[::1]:{{ pg_port }}:5432"
+            # Patroni REST API: the members check each other, the endpoint guest asks who leads.
+            - "{{ pg_listen_ip }}:{{ pg_patroni_port }}:{{ pg_patroni_port }}"
+            - "[{{ pg_listen_ip6 }}]:{{ pg_patroni_port }}:{{ pg_patroni_port }}"
+            - "127.0.0.1:{{ pg_patroni_port }}:{{ pg_patroni_port }}"
           volumes:
             - "{{ pg_data_volume }}:/var/lib/postgresql/data"
             - "{{ pg_conf_host_dir }}:{{ pg_conf_host_dir }}:ro"
+            - "{{ pg_patroni_conf_host_dir }}:{{ pg_patroni_conf_host_dir }}:ro"
             - "{{ pg_cert_host_dir }}:{{ pg_cert_host_dir }}:ro"
             # Host CA store (base installs ca-certificates) — standard on every
             # container so in-container tools verify TLS against the public LE chain.
             - "/etc/ssl/certs:/etc/ssl/certs:ro"
           env:
-            POSTGRES_PASSWORD: "{{ pg_superuser_password }}"
-            POSTGRES_USER: "postgres"
-            POSTGRES_DB: "postgres"
-            PGDATA: "/var/lib/postgresql/data/pgdata"
-            # A NEW cluster is initialised with data checksums (an existing one: tasks/checksums.yml).
-            POSTGRES_INITDB_ARGS: "{{ '--data-checksums' if pg_data_checksums | bool else '' }}"
-          # HA-adoptable settings + TLS + our pg_hba, passed as server flags so we don't
-          # manage a full postgresql.conf. listen_addresses=* is safe: only the bound
-          # published ports are reachable.
-          command:
-            - "postgres"
-            - "-c"
-            - "listen_addresses=*"
-            - "-c"
-            - "password_encryption=scram-sha-256"
-            - "-c"
-            - "hba_file={{ pg_conf_host_dir }}/pg_hba.conf"
-            - "-c"
-            - "ssl={{ 'on' if pg_ssl | bool else 'off' }}"
-            - "-c"
-            - "ssl_cert_file={{ pg_ssl_cert }}"
-            - "-c"
-            - "ssl_key_file={{ pg_ssl_key }}"
-            - "-c"
-            - "ssl_min_protocol_version={{ pg_ssl_min_version }}"
-            - "-c"
-            - "wal_level=replica"
-            - "-c"
-            - "max_wal_senders=10"
-            - "-c"
-            - "max_replication_slots=10"
-            - "-c"
-            - "hot_standby=on"
-            - "-c"
-            - "wal_keep_size=512MB"
-            - "-c"
-            - "max_locks_per_transaction={{ pg_max_locks_per_transaction }}"
-            - "-c"
-            - "max_connections={{ pg_max_connections }}"
-            - "-c"
-            - "log_connections={{ 'on' if pg_log_connections | bool else 'off' }}"
-            - "-c"
-            - "log_disconnections={{ 'on' if pg_log_disconnections | bool else 'off' }}"
-            - "-c"
-            - "log_statement={{ pg_log_statement }}"
-            - "-c"
-            - "ssl_ciphers={{ pg_ssl_ciphers }}"
+            PGDATA: "/var/lib/postgresql/data/pgdata"   # for `docker exec` tools; Patroni reads patroni.yml
 
-- name: "container | Wait for PostgreSQL to accept connections"
+# A new member copies the leader's data first (pg_basebackup): minutes, not seconds.
+- name: "container | Wait for the member (Patroni reports it running or streaming)"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ pg_container_name }}", patronictl, -c, "{{ pg_patroni_conf }}", list, -f, json]
+  register: pg_member_wait
+  check_mode: false   # read-only probe: a later task reads its result
+  retries: "{{ (pg_replica_bootstrap_timeout | int / 10) | int }}"
+  delay: 10
+  until: >-
+    pg_member_wait.rc == 0 and
+    (pg_member_wait.stdout | from_json | selectattr('Member', 'equalto', inventory_hostname)
+     | map(attribute='State') | first | default('')) in ['running', 'streaming']
+  changed_when: false
+
+- name: "container | PostgreSQL accepts connections"
   ansible.builtin.command:
     cmd: "docker exec {{ pg_container_name }} pg_isready -U postgres"
   register: pg_ready

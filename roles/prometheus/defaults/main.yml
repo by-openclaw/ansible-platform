@@ -84,6 +84,10 @@ prometheus_keep:
     - "gitlab_database_connection_pool_(size|busy|dead|waiting)"
     - "gitlab_ci_pending_builds"
     - "process_(start_time_seconds|resident_memory_bytes)"
+  dbproxy:                                 # the data endpoint: is exactly one member routed to?
+    - "haproxy_backend_active_servers"
+    - "haproxy_server_status"
+    - "haproxy_process_build_info"
   monitoring:
     - ".*_build_info"
     - "alertmanager_alerts"
@@ -101,7 +105,7 @@ prometheus_drop:
 # cluster every service depends on. 2026-09-22 showed the symptom (500s everywhere) long before
 # anyone could see the cause.
 prometheus_postgres_exporter_port: 9187
-prometheus_postgres_exporter_hosts: "{{ groups['postgresql'] | default([]) }}"
+prometheus_postgres_exporter_hosts: "{{ platform_pg_members | default(groups['postgresql'] | default([])) }}"
 prometheus_seaweedfs_hosts: "{{ groups['seaweedfs'] | default([]) }}"
 prometheus_seaweedfs_metrics_port: "{{ platform_seaweedfs_metrics_port }}"
 # Bind to localhost only — Grafana is co-located and Traefik/edge (if any) fronts it.

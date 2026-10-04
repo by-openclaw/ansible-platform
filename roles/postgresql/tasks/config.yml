@@ -1,13 +1,18 @@
 ---
-- name: "config | Ensure the config dir exists (mounted into the container)"
+- name: "config | Ensure the config dirs exist (mounted into the container)"
   ansible.builtin.file:
-    path: "{{ pg_conf_host_dir }}"
+    path: "{{ item.path }}"
     state: directory
-    owner: root
-    group: root
-    mode: "0755"
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ pg_conf_host_dir }}", owner: root, mode: "0755" }
+    - { path: "{{ pg_patroni_conf_host_dir }}", owner: "{{ pg_uid }}", mode: "0700" }   # holds credentials
+  loop_control:
+    label: "{{ item.path }}"
 
-- name: "config | Render pg_hba.conf (scram-sha-256, hostssl SVC only)"
+- name: "config | Render pg_hba.conf (scram-sha-256, hostssl SVC only, replication between the members)"
   ansible.builtin.template:
     src: pg_hba.conf.j2
     dest: "{{ pg_conf_host_dir }}/pg_hba.conf"
@@ -15,3 +20,24 @@
     group: "{{ pg_uid }}"
     mode: "0640"
   notify: Reload postgres
+
+# Patroni's own configuration: the member's identity, the consensus store, the credentials it
+# starts PostgreSQL with. Patroni re-reads it on SIGHUP (handler) — no restart of the database.
+- name: "config | Render patroni.yml"
+  ansible.builtin.template:
+    src: patroni.yml.j2
+    dest: "{{ pg_patroni_conf }}"
+    owner: "{{ pg_uid }}"
+    group: "{{ pg_uid }}"
+    mode: "0400"
+  no_log: true
+  notify: Reload patroni
+
+# The dynamic configuration the consensus store must hold (cluster.yml converges it).
+- name: "config | Render the dynamic configuration (dcs.yml)"
+  ansible.builtin.template:
+    src: dcs.yml.j2
+    dest: "{{ pg_patroni_dcs_file }}"
+    owner: "{{ pg_uid }}"
+    group: "{{ pg_uid }}"
+    mode: "0440"

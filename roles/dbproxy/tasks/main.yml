@@ -1,0 +1,100 @@
+---
+# ==============================================================================
+# Role: dbproxy (Docker) — the data endpoint
+# ==============================================================================
+- name: "dbproxy | Configuration directory (mounted into the container)"
+  ansible.builtin.file:
+    path: "{{ dbproxy_conf_host_dir }}"
+    state: directory
+    owner: root
+    group: "{{ dbproxy_uid }}"
+    mode: "0750"
+  tags: [dbproxy, config]
+
+- name: "dbproxy | haproxy.cfg"
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: "{{ dbproxy_conf_host_dir }}/haproxy.cfg"
+    owner: root
+    group: "{{ dbproxy_uid }}"
+    mode: "0640"
+  notify: Reload dbproxy
+  tags: [dbproxy, config]
+
+# The image checks the file itself: a configuration that does not parse never reaches the
+# running endpoint.
+- name: "dbproxy | The configuration parses (haproxy -c, same pinned image)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --volume
+      - "{{ dbproxy_conf_host_dir }}:/usr/local/etc/haproxy:ro"
+      - --volume
+      - "/etc/ssl/certs:/etc/ssl/certs:ro"
+      - "{{ dbproxy_image }}"
+      - haproxy
+      - -c
+      - -f
+      - /usr/local/etc/haproxy/haproxy.cfg
+  changed_when: false
+  check_mode: false   # read-only probe
+  tags: [dbproxy, config]
+
+# The container through the scaffold's containers step (the one owner of "run a pinned
+# container"). Read-only root filesystem, no capability: the listeners are above 1024.
+- name: "dbproxy | Endpoint container (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: dbproxy
+      containers:
+        - name: "{{ dbproxy_container_name }}"
+          image: "{{ dbproxy_image }}"
+          read_only: true
+          tmpfs: ["/tmp:rw,size=16m", "/run:rw,size=16m"]
+          cap_drop: [ALL]
+          security_opts: ["no-new-privileges:true"]
+          published:
+            - "{{ dbproxy_listen_ip }}:{{ dbproxy_pg_port }}:{{ dbproxy_pg_port }}"
+            - "[{{ dbproxy_listen_ip6 }}]:{{ dbproxy_pg_port }}:{{ dbproxy_pg_port }}"
+            - "127.0.0.1:{{ dbproxy_pg_port }}:{{ dbproxy_pg_port }}"
+            - "{{ dbproxy_listen_ip }}:{{ dbproxy_metrics_port }}:{{ dbproxy_metrics_port }}"
+            - "127.0.0.1:{{ dbproxy_metrics_port }}:{{ dbproxy_metrics_port }}"
+          volumes:
+            - "{{ dbproxy_conf_host_dir }}:/usr/local/etc/haproxy:ro"
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"
+  tags: [dbproxy, container]
+
+- name: "dbproxy | Apply a changed configuration now (before the checks)"
+  ansible.builtin.meta: flush_handlers
+  tags: [dbproxy, config]
+
+# The endpoint's own view: exactly one PostgreSQL member is up behind it — the leader.
+- name: "dbproxy | Exactly one member is routed to (the leader)"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ dbproxy_metrics_port }}/metrics"
+    return_content: true
+  register: dbproxy_metrics
+  retries: 20
+  delay: 3
+  until: >-
+    dbproxy_metrics.status | default(0) == 200 and
+    (dbproxy_metrics.content | default('')
+     | regex_findall('haproxy_server_status\{proxy="postgres",server="[^"]+",state="UP"\} 1') | length) == 1
+  check_mode: false   # read-only probe
+  when: not ansible_check_mode
+  tags: [dbproxy, verify]
+
+- name: "dbproxy | Report"
+  ansible.builtin.debug:
+    msg: >-
+      endpoint {{ inventory_hostname }}.{{ platform_domain }}:{{ dbproxy_pg_port }} routes to
+      {{ dbproxy_metrics.content | default('')
+         | regex_findall('haproxy_server_status\{proxy="postgres",server="([^"]+)",state="UP"\} 1') | join(',') }}
+      ({{ dbproxy_image }})
+  when: not ansible_check_mode
+  tags: [dbproxy, verify]
