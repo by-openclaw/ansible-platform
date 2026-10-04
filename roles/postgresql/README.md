@@ -1,31 +1,68 @@
 # role: postgresql (Docker)
 
-Shared **PostgreSQL 17** as a Docker container on `lxc-pgsql-01` (SVC
-`10.1.3.110`). Internal-only — a TCP service, **not** behind Traefik. Consumed by
-Authentik + NetBox over the SVC network.
+One member of the shared **PostgreSQL 17 cluster** (services/0004): three members under
+**Patroni**, the leader elected through etcd (`roles/etcd`, colocated), the other two
+streaming from it. Internal-only — a TCP service, **not** behind Traefik. Consumers connect to
+the data endpoint (`roles/dbproxy`), which follows the leader.
 
-All-Docker pivot: **upgrade = bump `pg_image` tag** → ansible pulls + recreates
-the container; data persists in the `pgdata` named volume. Maps cleanly to a
-future k8s Deployment/PVC.
+Run: `ansible-playbook playbooks/postgresql.yml` (members one at a time, the first member first).
 
-- Pinned `postgres:17` image; depends on `base` + `docker` (nested LXC).
-- Retires any prior **native** install first (`migrate.yml` stops/masks
-  `postgresql@17-main`) so the container can bind `:5432`.
-- Published only on `10.1.3.110:5432` + `127.0.0.1:5432`.
-- **TLS (`ssl=on`):** the shared wildcard `*.by-research.be` cert is distributed
-  by the `tls_cert` role (owned by the container's postgres uid 999) and mounted
-  read-only. Remote app access forced over TLS (`hostssl` in `pg_hba`); clients
-  connect `sslmode=verify-full` against the publicly-trusted LE chain.
-- `scram-sha-256`; `pg_hba` allows the SVC zone only (further locked by the FW).
-- **HA-adoptable:** `wal_level=replica` etc. (server flags) → a future replica /
-  Patroni can attach with no rebuild and no data loss.
-- Creates app roles + DBs (`netbox`, `authentik`) idempotently via `docker exec`;
-  passwords generated once and stored in the controller secret store
-  (`db-pgsql-<app>.json`, superuser `db-pgsql-superuser.json`, `no_log`).
-- Daily `pg_dumpall` (via `docker exec`) backup + retention (NAS offload = follow-up).
+## What the role does
 
-Run: `ansible-playbook -i inventories/prod/hosts.yml playbooks/postgresql.yml`
-(reaches the SVC LXC via OPNsense ProxyJump, login `root`).
+- **Image**: builds `platform/postgres-patroni:<server version>-p<rev>` on the member FROM the
+  pinned `pg_image`, adding Patroni (`pg_patroni_version`, exact apt pin from the image's own
+  PGDG repository). Same base, same glibc collations, same binaries as the standalone server.
+  Upgrade = bump `pg_image` / `pg_patroni_version` (then `pg_platform_rev`).
+- **Container** (through `roles/service_scaffold`): Patroni is the container's process and
+  starts PostgreSQL; runs as the `postgres` uid, **read-only root filesystem**, no capability;
+  data on the `pgdata` volume. Published on the member's service address + loopback: `5432`
+  (PostgreSQL) and `8008` (Patroni REST API).
+- **Three situations, one role** (`tasks/container.yml`):
+  - nothing runs → a new member: it copies the leader's data (`pg_basebackup`) and streams;
+  - the standalone server runs → the conversion: a fresh logical dump (the nightly job's unit,
+    run now), then Patroni **adopts the data directory unchanged** and leads;
+  - a member runs → converge; a leader hands the leadership over before its container is
+    replaced by an image change.
+- **Configuration**: `patroni.yml` (member identity, etcd, credentials — `0400`, re-read on
+  SIGHUP), `pg_hba.conf` (ours, via `hba_file`: scram over TLS from the service networks,
+  replication between the members), and the **dynamic configuration** `dcs.yml` (what must be
+  identical on every member: connections, locks, WAL, logging, failover timing) converged in
+  etcd with `patronictl edit-config --replace`. A parameter that needs a restart is flagged
+  *pending restart* and applied explicitly: `-e pg_apply_pending_restart=true`.
+- **Failover**: `pg_patroni_ttl` (30 s) bounds how long a dead leader keeps the cluster without
+  one. `pg_synchronous_mode: true` — a commit waits for one replica, so a failover loses no
+  acknowledged transaction; with no replica available the leader keeps accepting writes.
+- **TLS**: the shared wildcard certificate (`roles/tls_cert`), server TLS 1.2+, replication with
+  `sslmode=verify-full`; the REST API is HTTPS, its write operations need a password.
+- **Secrets** (Vault, get-or-create): `postgres/superuser`, `postgres/replication`,
+  `postgres/patroni-api`; the etcd credential is read from `etcd/root` (owner: `roles/etcd`).
+- **Logins and databases** are not created here: every service's play uses `roles/postgres_db`,
+  which runs on the cluster's leader. The role itself only asks that role for the replication
+  login.
+- **Backup**: `pg-backup.timer` on every member, dumping only where the leader runs
+  (`pg_dumpall | gzip`, kept `pg_backup_keep_days`).
+- **Verification** (`tasks/verify.yml`, end of the play): every member present, one leader,
+  every other member streaming on the leader's timeline.
+
+## Operating it
+
+| Need | How |
+|---|---|
+| Who leads, who streams | `docker exec postgres patronictl -c /etc/postgres/patroni/patroni.yml list` on any member |
+| Planned leader change | `… patronictl … switchover` (the play does it itself before an image change) |
+| Re-copy a member that fell behind | `… patronictl … reinit <scope> <member>` |
+| Remove ONE member and its data | `-l <member> -e pg_state=absent -e pg_absent_confirm=<member>`, then the play again to rebuild it from the leader |
+| Apply a pending restart | `-e pg_apply_pending_restart=true` |
+
+Never promote or demote by hand (`pg_ctl promote`, `REPLICAOF`-style changes): Patroni owns the
+roles of the members.
 
 ## Limits
-- `pg_max_connections` (200) and `pg_log_connections` (on): the 100-connection image default was exhausted twice on 2026-09-22 and took every service behind Authentik's forwardAuth down with it; connections are logged with role + database so the next approach to the ceiling names the client (Loki).
+
+- `pg_max_connections` (200) and `pg_log_connections` (on): the 100-connection image default
+  was exhausted twice on 2026-09-22 and took every service behind Authentik down. They live in
+  the dynamic configuration now (`templates/dcs.yml.j2`).
+- The three members share one hypervisor and one storage pool: the cluster covers the loss or
+  the maintenance of a guest, a container or a PostgreSQL process — not the loss of the host.
+- The endpoint guest is single: it is stateless and restarts in seconds, but while it is down
+  consumers cannot reach the leader.

@@ -94,6 +94,12 @@
           network_mode: host
           log_driver: journald   # container log -> journal -> promtail -> Loki (INF-27)
           user: "{{ grafana_account_user.uid | default(0) }}:{{ grafana_account_user.group | default(0) }}"
+          # Read-only root filesystem: data, logs and configuration are host directories; the
+          # plugin loader unpacks and RUNS its helpers from /tmp, hence the exec flag.
+          read_only: true
+          tmpfs: ["/tmp:rw,exec,size=256m"]
+          cap_drop: [ALL]
+          security_opts: ["no-new-privileges:true"]
           volumes:
             - "{{ grafana_config_dir }}:{{ grafana_config_dir }}:ro"
             - "{{ grafana_data_dir }}:{{ grafana_data_dir }}"

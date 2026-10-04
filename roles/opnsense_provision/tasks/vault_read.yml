@@ -10,6 +10,10 @@
   vars:
     vault_secret_path: "{{ item.value }}"   # pragma: allowlist secret (a KV path, not a value)
     vault_secret_action: read   # pragma: allowlist secret
+    # A tier does not hold every credential (a test firewall has no ISP identity): an absent path
+    # is "nothing from Vault for this one" — the renderer falls back to the file the seed names —
+    # and must not void the credentials that DID come back.
+    vault_secret_optional: true   # pragma: allowlist secret
 
 - name: "Provision | Keep it when Vault returned one: {{ item.key }}"
   ansible.builtin.set_fact:

@@ -46,6 +46,20 @@
     quiet: true
   when: opnsense_provision_vm.env | default('') != 'prod'
 
+# Same rule for the break-glass credential: the Vault paths follow the profile's tier
+# (opnsense_provision_env), and an override that points a non-prod firewall back at prod's is refused.
+- name: "Provision | A non-prod firewall must never carry prod's break-glass credential"
+  ansible.builtin.assert:
+    that:
+      - opnsense_provision_vault_paths.values() | select('match', '^prod/') | list | length == 0
+      - opnsense_provision_seed.genesis_creds_file | default('') is not search('-prod-')
+    fail_msg: >-
+      {{ opnsense_provision_fw }} is not prod but would be seeded with prod credentials
+      ({{ opnsense_provision_vault_paths.values() | select('match', '^prod/') | list | join(', ') }}).
+      Its profile names the tier (vm.env) — the Vault paths follow it.
+    quiet: true
+  when: opnsense_provision_vm.env | default('') != 'prod'
+
 - name: "Provision | Is the Vault host reachable from here? (through its own connection)"
   ansible.builtin.wait_for_connection:
     timeout: 20
@@ -180,6 +194,7 @@
 - name: "Provision | Where each credential came from"
   ansible.builtin.debug:
     msg: >-
+      tier {{ opnsense_provision_env }} —
       {{ 'Vault unreachable or its read failed (expected mid-rebuild) — ' if (_unreachable | bool) else '' }}Vault:
       {{ (opnsense_provision_secrets | default({})).keys() | list | join(', ') or 'none' }}
       | files (fallback):
