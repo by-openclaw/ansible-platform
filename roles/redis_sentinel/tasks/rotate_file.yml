@@ -1,0 +1,67 @@
+---
+# One Sentinel (redis_sentinel_rot_host, looped from rotate.yml): its file gets the new password
+# while it is stopped; the next one is touched only when this one answers again.
+- name: "Rotate | Stop this Sentinel"
+  ansible.builtin.command:
+    argv: [docker, stop, "{{ redis_sentinel_container_name }}"]
+  delegate_to: "{{ redis_sentinel_rot_host }}"
+  changed_when: true
+
+- name: "Rotate | The password lines of its file"
+  ansible.builtin.lineinfile:
+    path: "{{ redis_sentinel_conf_file }}"
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - {what: "requirepass", regexp: '^requirepass ', line: "requirepass {{ redis_sentinel_new_password }}"}
+    - {what: "sentinel-pass", regexp: '^sentinel sentinel-pass ', line: "sentinel sentinel-pass {{ redis_sentinel_new_password }}"}
+  loop_control:
+    label: "{{ item.what }}"
+  delegate_to: "{{ redis_sentinel_rot_host }}"
+  no_log: true
+
+# A `user default …` line written back by Sentinel would be applied after requirepass at the
+# next start: without it the two lines above are the only word on the default user.
+- name: "Rotate | No separate line for the default user"
+  ansible.builtin.lineinfile:
+    path: "{{ redis_sentinel_conf_file }}"
+    regexp: '^user default '
+    state: absent
+  delegate_to: "{{ redis_sentinel_rot_host }}"
+  no_log: true
+
+- name: "Rotate | Start it"
+  ansible.builtin.command:
+    argv: [docker, start, "{{ redis_sentinel_container_name }}"]
+  delegate_to: "{{ redis_sentinel_rot_host }}"
+  changed_when: true
+
+- name: "Rotate | It answers with the new password and sees the primary"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -e
+      - REDISCLI_AUTH
+      - "{{ redis_sentinel_container_name }}"
+      - redis-cli
+      - --no-auth-warning
+      - --tls
+      - --cacert
+      - /etc/ssl/certs/ca-certificates.crt
+      - -h
+      - "{{ redis_sentinel_rot_host }}.{{ platform_domain }}"
+      - -p
+      - "{{ redis_sentinel_port | string }}"
+      - SENTINEL
+      - GET-MASTER-ADDR-BY-NAME
+      - "{{ redis_sentinel_master_name }}"
+  delegate_to: "{{ redis_sentinel_rot_host }}"
+  environment:
+    REDISCLI_AUTH: "{{ redis_sentinel_new_password }}"
+  register: redis_sentinel_rot_back
+  retries: 20
+  delay: 2
+  until: redis_sentinel_rot_back.rc == 0 and platform_domain in redis_sentinel_rot_back.stdout
+  changed_when: false
+  no_log: true

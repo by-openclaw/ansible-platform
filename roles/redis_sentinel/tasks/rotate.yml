@@ -1,0 +1,91 @@
+---
+# Rotation of the Sentinels' own password (SEC-09) with no moment where two Sentinels cannot
+# talk to each other: every Sentinel first ACCEPTS the new password next to the old one, then
+# every Sentinel USES the new one towards the others, then the old one is removed.
+# Run it for all Sentinels in one play (never --limit):
+#   ansible-playbook playbooks/redis.yml -e redis_sentinel_rotate=true
+# No password travels in a command line: the new one is added by its hash, and the one line
+# that needs it in clear is fed on standard input.
+- name: "Rotate | The new password (one for every Sentinel)"
+  ansible.builtin.set_fact:
+    redis_sentinel_new_password: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+  run_once: true
+  no_log: true
+
+- name: "Rotate | Every Sentinel accepts the new password next to the old one"
+  ansible.builtin.command:
+    argv: "{{ redis_sentinel_cli + ['ACL', 'SETUSER', 'default', '#' ~ (redis_sentinel_new_password | hash('sha256'))] }}"
+  environment:
+    REDISCLI_AUTH: "{{ redis_sentinel_password }}"
+  register: redis_sentinel_rot_accept
+  changed_when: true
+  failed_when: "'OK' not in redis_sentinel_rot_accept.stdout"
+  no_log: true
+
+- name: "Rotate | Store it in Vault (the password field of the stored document is replaced)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ redis_sentinel_vault_path }}"   # pragma: allowlist secret
+    vault_secret_force_fields:
+      password: "{{ redis_sentinel_new_password }}"
+  run_once: true
+
+- name: "Rotate | Every Sentinel uses the new password towards the others"
+  ansible.builtin.command:
+    argv: "{{ redis_sentinel_cli }}"
+    stdin: "SENTINEL CONFIG SET sentinel-pass {{ redis_sentinel_new_password }}"
+  environment:
+    REDISCLI_AUTH: "{{ redis_sentinel_password }}"
+  register: redis_sentinel_rot_use
+  changed_when: true
+  failed_when: "'OK' not in redis_sentinel_rot_use.stdout"
+  no_log: true
+
+# Sentinel owns its file, and what it writes back for the default user is its own business:
+# the two lines that carry the password are set here while that Sentinel is stopped, one
+# Sentinel at a time (the two others keep the quorum), so a restart can only come back with
+# the new password.
+# (a loop from one host, not a throttle: a throttle would stop all three before starting any)
+- name: "Rotate | One Sentinel at a time: stop, set the password lines of its file, start"
+  ansible.builtin.include_tasks: rotate_file.yml
+  loop: "{{ ansible_play_hosts }}"
+  loop_control:
+    loop_var: redis_sentinel_rot_host
+  run_once: true
+
+- name: "Rotate | The old password is removed and the Sentinel records its configuration"
+  ansible.builtin.command:
+    argv: "{{ redis_sentinel_cli + item }}"
+  environment:
+    REDISCLI_AUTH: "{{ redis_sentinel_new_password }}"
+  loop:
+    - ["ACL", "SETUSER", "default", "!{{ redis_sentinel_password | hash('sha256') }}"]
+    - ["SENTINEL", "FLUSHCONFIG"]
+  loop_control:
+    label: "{{ item[0] }} {{ item[1] }}"
+  register: redis_sentinel_rot_drop
+  changed_when: true
+  # after its restart a Sentinel may not know the old password any more: nothing to remove
+  failed_when: "'OK' not in redis_sentinel_rot_drop.stdout and 'does not exist' not in redis_sentinel_rot_drop.stdout"
+  no_log: true
+
+- name: "Rotate | The old password is refused, the new one accepted"
+  ansible.builtin.command:
+    argv: "{{ redis_sentinel_cli + ['PING'] }}"
+  environment:
+    REDISCLI_AUTH: "{{ item.pw }}"
+  loop:
+    - {which: new, pw: "{{ redis_sentinel_new_password }}", expect: "PONG"}
+    - {which: old, pw: "{{ redis_sentinel_password }}", expect: "WRONGPASS"}
+  loop_control:
+    label: "{{ item.which }}"
+  register: redis_sentinel_rot_check
+  changed_when: false
+  failed_when: item.expect not in (redis_sentinel_rot_check.stdout ~ redis_sentinel_rot_check.stderr)
+  no_log: true
+
+- name: "Rotate | From here on this run uses the new password"
+  ansible.builtin.set_fact:
+    redis_sentinel_password: "{{ redis_sentinel_new_password }}"
+  no_log: true
