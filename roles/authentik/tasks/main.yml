@@ -36,6 +36,11 @@
   ansible.builtin.import_tasks: blueprints.yml
   tags: [authentik, blueprints, sso]
 
+- name: RADIUS for network devices (provider, outpost on every instance, self-test)
+  ansible.builtin.import_tasks: radius.yml
+  when: authentik_radius_enabled | bool
+  tags: [authentik, radius]
+
 - name: Publish Authentik via Traefik (public + rate-limit)
   ansible.builtin.include_role:
     name: traefik_route
