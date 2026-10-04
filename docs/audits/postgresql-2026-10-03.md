@@ -58,3 +58,11 @@ Idempotence: `postgresql.yml` from the branch — `changed=1` (the container wit
 ## Owner decisions applied after the closure
 
 - **2026-10-03 window — gap 5:** `data_checksums = on`. `pg_data_checksums: true` in the role; `tasks/checksums.yml` converted the cluster once (fresh `pg_dumpall` first; clean stop, control file "shut down", `pg_checksums --enable`: 20,241 files, 70,395 blocks; database back after ≈4 min); new clusters are initialised with `--data-checksums`; every run asserts the live setting. `postgresql.yml` `changed=3` then `changed=0`; 126/126 targets and 44/44 probes up afterwards.
+
+## High availability and hardening — 2026-10-04 (#781)
+
+- **Cluster (services/0004):** the server is one of three members under Patroni (`lxc-pgsql-01` leader, `-02` synchronous standby, `-03` replica; etcd colocated). The data directory of this audit was adopted unchanged: same system identifier before and after, 12 databases, 15 logins, checksums on; the port was closed for 3 s at 07:03Z, a fresh dump was taken first. Consumers connect through the data endpoint (`docs/audits/dbproxy-2026-10-04.md`).
+- **Gap 4 (SEC-15) closed:** the container starts as `postgres` (the platform image sets the user); OH-19 is closed in `docs/override-hardening.md`.
+- **Gap 7 (SEC-22) closed for this service:** read-only root filesystem, every capability dropped, on the three members, their exporters and etcd.
+- **New rules:** `PostgresLeaderCount`, `PostgresReplicaMissing`, `PostgresEndpointNoLeader`.
+- Still open: gap 6 (tuning), NetBox (platform), the ADR departures proposed in doc-platform-core #72.

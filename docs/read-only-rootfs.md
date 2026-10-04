@@ -35,13 +35,14 @@ is applied one service at a time and verified in the service's log before the ne
 | `grafana` | `lxc-monitoring-01` | host directories (data, logs), tmpfs `/tmp` with `exec` (plugin helpers) | `/api/health`: database ok |
 | `step-ca` | `lxc-stepca-01` | the state volume, tmpfs `/tmp` | `/health` ok, `/roots.pem` 200 |
 
+| `postgres` (Patroni), `postgres-exporter`, `etcd` | `lxc-pgsql-01`, `-02`, `-03` | the data volume / a host directory; tmpfs for sockets and `/tmp` | cluster state, replication, 0 restarts |
+| `redis`, `redis-sentinel` | `lxc-redis-01`, `-02` (+ the third Sentinel on `lxc-pgpool-01`) | the data volume; the start file and the Sentinel's state directory | primary / replica link, three Sentinels agree |
+| `dbproxy` | `lxc-pgpool-01` | none (tmpfs `/tmp`, `/run`) | routes to the leader and the primary |
+
 `step-ca` keeps its capabilities: its binary carries a file capability and does not start
 without it in the bounding set (`cap_drop: ALL` → "Operation not permitted", 2026-10-04).
 
 ## Next (same method, one service at a time)
-
-The cluster components are read-only from their first start (their own change): `etcd`,
-`postgres` (Patroni), `postgres-exporter`, `redis`, `redis-sentinel`, `dbproxy`.
 
 Candidates whose write set is empty or temporary files only: `prometheus`, `loki`,
 `alertmanager`, `blackbox-exporter`, `seaweedfs` (three containers), `traefik`, `vault`,
