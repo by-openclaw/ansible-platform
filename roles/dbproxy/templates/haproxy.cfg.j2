@@ -39,6 +39,8 @@ listen postgres
 # Redis, part 1 — what the Sentinels say. One backend per member, whose "servers" are the
 # Sentinels: a Sentinel is UP in the backend of member M while it names M as the primary.
 # No traffic goes through these backends; the route below counts their servers.
+# (No QUIT at the end: a Sentinel does not answer it for a restricted login, and the check
+# then times out — which made the endpoint refuse Redis for 3 min 40 s on 2026-10-04.)
 {% for m in dbproxy_redis_members %}
 backend redis_named_{{ m }}
     option tcp-check
@@ -46,8 +48,6 @@ backend redis_named_{{ m }}
     tcp-check expect string +OK
     tcp-check send "SENTINEL get-master-addr-by-name {{ dbproxy_redis_master_name }}\r\n"
     tcp-check expect string {{ m }}.{{ platform_domain }}
-    tcp-check send "QUIT\r\n"
-    tcp-check expect string +OK
     default-server inter {{ dbproxy_check_interval }} fall {{ dbproxy_redis_check_fall }} rise {{ dbproxy_redis_check_rise }} check check-ssl verify required ca-file {{ dbproxy_ca_bundle }} resolvers platform init-addr last,libc,none
 {% for s in dbproxy_redis_sentinels %}
     server {{ s }} {{ s }}.{{ platform_domain }}:{{ dbproxy_redis_sentinel_port }} check-sni {{ s }}.{{ platform_domain }} verifyhost {{ s }}.{{ platform_domain }}
