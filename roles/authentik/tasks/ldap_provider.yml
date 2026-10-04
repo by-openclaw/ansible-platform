@@ -1,0 +1,36 @@
+---
+# ==============================================================================
+# authentik | ldap_provider — the LDAP provider, its application, the bind account and
+# the bind flow, as one blueprint rendered by this role.
+#
+# Authentik re-applies every blueprint file hourly. The file that sat here before came from
+# an unmerged branch (2026-06-13) and was not rendered by anything: each hour it put the
+# provider back on a self-signed certificate and on the web login flow, so the firewall's
+# LDAP login failed until the next run of this role (found 2026-10-04).
+# ==============================================================================
+- name: "LDAP provider | The blueprint directory"
+  ansible.builtin.file:
+    path: "{{ authentik_blueprints_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "LDAP provider | Render the blueprint (provider, application, bind account, bind flow)"
+  ansible.builtin.template:
+    src: ldap-provider.yaml.j2
+    dest: "{{ authentik_blueprints_dir }}/ldap-provider.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: authentik_ldap_blueprint
+
+# Applied here and now (no restart); the workers re-apply the same file on their own.
+- name: "LDAP provider | Apply it"
+  ansible.builtin.command:
+    argv: [docker, exec, authentik-server, ak, apply_blueprint, /blueprints/custom/ldap-provider.yaml]
+  register: authentik_ldap_apply
+  changed_when: authentik_ldap_blueprint is changed
+  when:
+    - inventory_hostname == authentik_first_member
+    - not ansible_check_mode

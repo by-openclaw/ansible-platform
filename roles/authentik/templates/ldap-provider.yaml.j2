@@ -1,0 +1,80 @@
+{# Managed by Ansible role `authentik`. Do not edit by hand.
+   The LDAP provider, its application, the bind/search account and the bind flow: what the
+   LDAP outpost serves to tools that cannot speak OIDC (the firewall's WebGUI login).
+   The LDAPS certificate is NOT set here: it is the platform wildcard, assigned to the provider
+   through the API (tasks/ldap_cert.yml) — a key written here would be reset on every apply. #}
+version: 1
+metadata:
+  name: ldap-{{ authentik_ldap_provider_name }}
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  # The account a tool binds with to look a login up. Its password is in Vault and set
+  # through the API (a blueprint cannot set a password).
+  - model: authentik_core.user
+    id: user-ldap-bind
+    identifiers:
+      username: "{{ authentik_ldap_bind_account }}"
+    attrs:
+      username: "{{ authentik_ldap_bind_account }}"
+      name: "LDAP bind/search service account"
+      type: service_account
+      path: users
+
+  # The bind flow: identification, password, login. LDAP cannot carry the second factor, so
+  # this flow has no such stage — and it runs for an outpost only: it cannot be opened in a
+  # browser, where it would be a login without the second factor.
+  - model: authentik_flows.flow
+    id: flow-ldap-bind
+    identifiers:
+      slug: {{ authentik_ldap_flow }}
+    attrs:
+      name: "LDAP bind"
+      title: "LDAP bind"
+      slug: {{ authentik_ldap_flow }}
+      designation: authentication
+      authentication: require_outpost
+
+  - model: authentik_flows.flowstagebinding
+    id: stage-ldap-identification
+    identifiers:
+      target: !KeyOf flow-ldap-bind
+      stage: !Find [authentik_stages_identification.identificationstage, [name, default-authentication-identification]]
+      order: 10
+
+  - model: authentik_flows.flowstagebinding
+    id: stage-ldap-password
+    identifiers:
+      target: !KeyOf flow-ldap-bind
+      stage: !Find [authentik_stages_password.passwordstage, [name, default-authentication-password]]
+      order: 20
+
+  - model: authentik_flows.flowstagebinding
+    id: stage-ldap-login
+    identifiers:
+      target: !KeyOf flow-ldap-bind
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, default-authentication-login]]
+      order: 100
+
+  - model: authentik_providers_ldap.ldapprovider
+    id: provider-ldap
+    identifiers:
+      name: "{{ authentik_ldap_provider_name }}"
+    attrs:
+      name: "{{ authentik_ldap_provider_name }}"
+      base_dn: "{{ authentik_ldap_base_dn }}"
+      authorization_flow: !KeyOf flow-ldap-bind
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
+      bind_mode: cached
+      search_mode: cached
+      mfa_support: false      # no second-factor stage in the flow: nothing to strip off the password
+
+  # Any account may bind; the tool decides what a login may do (group membership).
+  - model: authentik_core.application
+    id: app-ldap
+    identifiers:
+      slug: "{{ authentik_ldap_provider_name }}"
+    attrs:
+      name: "{{ authentik_ldap_app_name }}"
+      slug: "{{ authentik_ldap_provider_name }}"
+      provider: !KeyOf provider-ldap
