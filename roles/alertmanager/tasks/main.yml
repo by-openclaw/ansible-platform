@@ -86,6 +86,8 @@
       containers:
         - name: "{{ alertmanager_container }}"
           image: "{{ alertmanager_image }}"
+          read_only: true                 # SEC-22: it writes to its mounted directories only
+          tmpfs: ["/tmp:rw,size=64m"]
           network_mode: host
           log_driver: journald   # container log -> journal -> promtail -> Loki (INF-27)
           user: "{{ alertmanager_account_entry[1] }}:{{ alertmanager_account_entry[2] }}"

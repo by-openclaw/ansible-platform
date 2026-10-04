@@ -142,6 +142,8 @@
           entrypoint: ["python", "manage.py", "run_huey", "-w", "2", "--scheduler-interval", "60"]
         - name: "{{ ciso_assistant_frontend_container }}"
           image: "{{ ciso_assistant_frontend_image }}"
+          read_only: true                 # SEC-22: it writes to its volumes only
+          tmpfs: ["/tmp:rw,size=64m"]
           log_driver: journald
           published:
             - "{{ ciso_assistant_listen_ip }}:{{ ciso_assistant_frontend_port }}:{{ ciso_assistant_frontend_container_port }}"
