@@ -62,7 +62,7 @@ http:
     # copied back onto the request (harmless for api@internal; standard for the app).
     authentik:
       forwardAuth:
-        address: "{{ traefik_authentik_outpost_url }}/outpost.goauthentik.io/auth/traefik"
+        address: "http://127.0.0.1:{{ traefik_authgate_port }}/outpost.goauthentik.io/auth/traefik"
         trustForwardHeader: true
         authResponseHeaders:
 {% for h in traefik_authentik_auth_headers %}
@@ -75,9 +75,23 @@ http:
     authentik-outpost:
       loadBalancer:
         servers:
-          - url: "{{ traefik_authentik_outpost_url }}"
+{% for u in traefik_authentik_outpost_urls %}
+          - url: "{{ u }}"
+{% endfor %}
+        healthCheck:
+          path: "{{ traefik_authentik_health_path }}"
+          interval: "5s"
+          timeout: "3s"
 
   routers:
+    # The forwardAuth gate (loopback entry point): the edge's own auth requests, balanced
+    # over the Authentik instances that are ready.
+    authentik-authgate:
+      rule: "PathPrefix(`/outpost.goauthentik.io/`)"
+      entryPoints:
+        - authgate
+      service: authentik-outpost
+
     # Traefik dashboard — internal network AND Authentik SSO (traefik-admins).
     dashboard:
       rule: "Host(`{{ traefik_dashboard_host }}`)"

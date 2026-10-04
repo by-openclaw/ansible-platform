@@ -9,6 +9,7 @@
     postgres_db_vault_path: "{{ platform_env }}/authentik/db-pgsql"
     postgres_db_name: "{{ authentik_pg_name }}"
     postgres_db_user: "{{ authentik_pg_user }}"
+  when: inventory_hostname == authentik_first_member
   tags: [authentik, database]
 
 - name: Resolve / generate Authentik secrets
@@ -21,11 +22,14 @@
 
 - name: Run the LDAP outpost (LDAPS for the OPNsense WebGUI)
   ansible.builtin.import_tasks: ldap.yml
-  when: authentik_ldap_enabled | bool
+  when:
+    - authentik_ldap_enabled | bool
+    - inventory_hostname == authentik_first_member
   tags: [authentik, container, ldap]
 
 - name: "LDAP outpost TLS certificate — platform wildcard, synced from Traefik"
   ansible.builtin.import_tasks: ldap_cert.yml
+  when: inventory_hostname == authentik_first_member
   tags: [authentik, ldap, ldap-cert]
 
 - name: Provision per-service OIDC blueprints (SSO)
@@ -40,6 +44,11 @@
   vars:
     traefik_route_name: authentik
     traefik_route_fqdn: "{{ authentik_fqdn }}"
-    traefik_route_backend_url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}"
+    # Every instance behind the one name; an instance that is not ready receives no traffic.
+    traefik_route_backend_urls: >-
+      {{ authentik_members | map('extract', hostvars, 'ansible_host')
+         | map('regex_replace', '^', 'http://') | map('regex_replace', '$', ':' ~ authentik_host_port) | list }}
+    traefik_route_health_path: "{{ authentik_health_path }}"
     traefik_route_internal_only: false
+  when: inventory_hostname == authentik_first_member
   tags: [authentik, route]

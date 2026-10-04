@@ -48,3 +48,14 @@ services/0005 §notifications.md) and points at everything else. Audit: [`audits
 
 - Backup class **A + D** — [`docs/backup.md`](../backup.md); licensing — [`docs/licensing.md`](../licensing.md).
 - Runbook: `roles/authentik/README.md`.
+
+## Instances (services/0004 §Cluster placement)
+
+Two instances — `lxc-authentik-01` and `lxc-authentik-02` — each a server and a worker on the shared PostgreSQL (sessions, cache and tasks live there since 2025.10), with the same secret key and the same blueprints rendered on both.
+
+1. **Edge:** `authentik.<domain>` carries both servers with a readiness check (`/-/health/ready/`): an instance that is not ready receives no traffic.
+2. **forwardAuth:** the middleware takes one address — a loopback entry point of the edge (`authgate`), whose router balances the auth requests over the instances that are ready. The forwarded headers of the edge's own call are trusted on that entry point only.
+3. **Once for the deployment (first instance only):** the database, the LDAP outpost and its certificate (LDAPS for the firewall's WebGUI stays on `lxc-authentik-01`), the API calls that follow the blueprints, the edge route. Both workers apply the blueprints (idempotent).
+4. **Not shared:** the media volume (icons uploaded through the UI) — everything the platform sets comes from blueprints and URLs.
+5. **Signals:** `ProbeFailed` on `authentik.<domain>` (no instance ready behind the edge) and on each instance's own readiness URL.
+6. **Rolling change:** `playbooks/authentik.yml` runs one instance at a time (`serial: 1`): a blueprint or version change restarts one while the other serves.

@@ -43,7 +43,7 @@
              | difference(prometheus_blackbox_http_overrides | map(attribute='host') | list))
           | map('regex_replace', '^', 'https://') | map('regex_replace', '$', '/') | list
           + (prometheus_blackbox_http_overrides | map(attribute='url') | list)
-          + prometheus_blackbox_http_extra) | unique | sort }}
+          + prometheus_blackbox_http_extra + prometheus_blackbox_http_members) | unique | sort }}
 
 # promtool comes with the image now: the candidate file is checked in a throwaway
 # container (no network, as root so it can read the 0600 temp file). Under --check a
@@ -92,6 +92,8 @@
       containers:
         - name: "{{ prometheus_container }}"
           image: "{{ prometheus_image }}"
+          read_only: true                 # SEC-22: it writes to its mounted directories only
+          tmpfs: ["/tmp:rw,size=64m"]
           network_mode: host
           log_driver: journald   # container log -> journal -> promtail -> Loki (INF-27)
           user: "{{ prometheus_account_user.uid | default(0) }}:{{ prometheus_account_user.group | default(0) }}"

@@ -82,6 +82,8 @@
           log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
         - name: netbird-management
           image: "{{ netbird_management_image }}"
+          read_only: true                 # SEC-22: it writes to its volumes only
+          tmpfs: ["/tmp:rw,size=64m"]
           restart_policy: unless-stopped
           published:
             - "{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}:{{ netbird_mgmt_port }}"
@@ -125,6 +127,8 @@
           log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
         - name: netbird-signal
           image: "{{ netbird_signal_image }}"
+          read_only: true                 # SEC-22: it writes to its volumes only
+          tmpfs: ["/tmp:rw,size=64m"]
           restart_policy: unless-stopped
           published:
             - "{{ netbird_listen_ip }}:{{ netbird_signal_grpc_port }}:{{ netbird_signal_grpc_port }}"
@@ -135,6 +139,8 @@
           log_driver: journald   # container logs -> journal -> promtail -> Loki (INF-27)
         - name: netbird-relay
           image: "{{ netbird_relay_image }}"
+          read_only: true                 # SEC-22: it writes to its volumes only
+          tmpfs: ["/tmp:rw,size=64m"]
           restart_policy: unless-stopped
           published:
             - "{{ netbird_listen_ip }}:{{ netbird_relay_port }}:{{ netbird_relay_port }}"

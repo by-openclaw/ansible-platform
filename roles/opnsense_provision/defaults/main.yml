@@ -28,7 +28,7 @@ opnsense_provision_secret_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/
 # Reading files ALONE is what let the Proximus PPPoE password go stale in both stores while only
 # the running firewall held the working one, so the 26.7 rebuild came up with no uplink (#360).
 opnsense_provision_vault_secrets: true
-opnsense_provision_vault_host: "{{ vault_secret_host | default(groups['vault'] | first) }}"   # probed before any read
+opnsense_provision_vault_host: "{{ vault_secret_host | default(platform_vault_host | default(groups['vault'] | first)) }}"   # probed before any read
 #
 # The tier is the FIREWALL's (the seed profile's vm.env), never the inventory's: a test firewall
 # provisioned from the prod inventory was seeded with prod's break-glass credential (2026-10-04,

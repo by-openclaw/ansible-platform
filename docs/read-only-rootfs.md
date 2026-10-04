@@ -34,6 +34,11 @@ is applied one service at a time and verified in the service's log before the ne
 | `vaultwarden` | `lxc-vaultwarden-01` | the data volume, tmpfs `/tmp` | `/alive` 200, `/api/config` 200 |
 | `grafana` | `lxc-monitoring-01` | host directories (data, logs), tmpfs `/tmp` with `exec` (plugin helpers) | `/api/health`: database ok |
 | `step-ca` | `lxc-stepca-01` | the state volume, tmpfs `/tmp` | `/health` ok, `/roots.pem` 200 |
+| `prometheus`, `loki`, `alertmanager`, `blackbox-exporter` | `lxc-monitoring-01` | their data directories (host), tmpfs `/tmp` | targets and probes up, rules loaded, Loki ready, a test alert delivered |
+| `nextcloud-exporter` | `lxc-nextcloud-01` | tmpfs `/tmp` | `nextcloud_up 1` |
+| `authentik-ldap` | `lxc-authentik-01` | tmpfs `/tmp` | outpost healthy, an LDAPS bind answers |
+| `ciso-assistant-frontend` | `lxc-grc-01` | tmpfs `/tmp` | the login page answers 200 |
+| `netbird-management`, `netbird-signal`, `netbird-relay` | `lxc-netbird-01` | their volumes, tmpfs `/tmp` | peers connected, management API 200 |
 
 | `postgres` (Patroni), `postgres-exporter`, `etcd` | `lxc-pgsql-01`, `-02`, `-03` | the data volume / a host directory; tmpfs for sockets and `/tmp` | cluster state, replication, 0 restarts |
 | `redis`, `redis-sentinel` | `lxc-redis-01`, `-02` (+ the third Sentinel on `lxc-pgpool-01`) | the data volume; the start file and the Sentinel's state directory | primary / replica link, three Sentinels agree |
@@ -45,11 +50,9 @@ without it in the bounding set (`cap_drop: ALL` → "Operation not permitted", 2
 
 ## Next (same method, one service at a time)
 
-Candidates whose write set is empty or temporary files only: `prometheus`, `loki`,
-`alertmanager`, `blackbox-exporter`, `seaweedfs` (three containers), `traefik`, `vault`,
-`adguard`, `crowdsec`, `authentik-ldap`, `nextcloud-exporter`, `netbird-relay`,
-`netbird-signal`, `netbird-management`, `ciso-assistant-frontend`. The edge, the secret store
-and the object store are done in a window, each on its own.
+Candidates whose write set is empty or temporary files only: `seaweedfs` (three
+containers), `traefik`, `vault`, `adguard`, `crowdsec`. The edge, the resolver, the secret
+store and the object store are done in a window, each on its own.
 
 ## Cannot be read-only with the vendor's image
 

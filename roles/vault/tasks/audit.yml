@@ -3,9 +3,12 @@
 # to /var/log/vault on the host, shipped to Loki by promtail). Enabling an audit
 # device needs sys/audit — granted to the ansible-deploy policy (see
 # vault_deploy_identity); NOT a root operation anymore.
+# The audit device is cluster configuration (replicated): enabled once, on the first member.
+# Every member writes its own file (same path, its own bind-mount), rotated on each.
 - name: "audit | Login (AppRole via vault_login)"
   ansible.builtin.include_role:
     name: vault_login
+  when: inventory_hostname == vault_first_member
 
 - name: "audit | List audit devices"
   ansible.builtin.command:
@@ -18,6 +21,7 @@
   changed_when: false
   failed_when: false
   no_log: true
+  when: inventory_hostname == vault_first_member
 
 - name: "audit | Enable the file audit device (idempotent)"
   ansible.builtin.command:
@@ -25,7 +29,9 @@
       docker exec -e VAULT_ADDR={{ vault_api_addr }}
       -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
       vault audit enable file file_path=/vault/logs/audit.log mode=0640
-  when: "'file/' not in (vault_audit_list.stdout | default(''))"
+  when:
+    - inventory_hostname == vault_first_member
+    - "'file/' not in (vault_audit_list.stdout | default(''))"
   register: vault_audit_enable
   changed_when: vault_audit_enable is not skipped
 

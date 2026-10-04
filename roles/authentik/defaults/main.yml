@@ -1,6 +1,6 @@
 ---
 # ==============================================================================
-# Role: authentik — SSO / Identity Provider (Docker) on lxc-authentik-01 (SVC)
+# Role: authentik — SSO / Identity Provider (Docker) on the authentik members (SVC)
 # server + worker containers (same image). Uses the shared cluster PostgreSQL
 # (postgres_db: authentik) over verified TLS. Fronted by Traefik
 # (wildcard TLS). Upgrade = bump authentik_image tag.
@@ -12,7 +12,14 @@ authentik_image: "ghcr.io/goauthentik/server:{{ authentik_version }}"
 authentik_fqdn: "{{ platform_service_fqdns.authentik }}"
 
 # Server HTTP backend (Traefik terminates TLS) — published on the SVC IP.
-authentik_listen_ip: "{{ hostvars[groups['authentik'] | first].ansible_host }}"
+authentik_listen_ip: "{{ ansible_host }}"
+# The instances (services/0004 §Cluster placement): each runs a server and a worker on the
+# shared PostgreSQL, behind the one edge route. What exists once for the whole deployment —
+# the database, the LDAP outpost and its certificate, the API calls that follow the blueprints,
+# the route — is done on the first member only; every member renders the same blueprints.
+authentik_members: "{{ groups['authentik_cluster'] | default(groups['authentik']) }}"
+authentik_first_member: "{{ groups['authentik'] | first }}"
+authentik_health_path: "/-/health/ready/"
 authentik_host_port: 9000
 authentik_container_port: 9000
 
