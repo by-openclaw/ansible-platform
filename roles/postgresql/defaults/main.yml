@@ -119,11 +119,16 @@ pg_etcd_vault_path: "{{ platform_etcd_vault_path }}"
 # Failover behaviour — the DYNAMIC configuration, stored in etcd and identical on every member
 # (templates/dcs.yml.j2). ttl = how long a leader key lives without renewal: a dead leader is
 # replaced after at most ttl seconds. With Patroni's defaults (30 / 10 / 10) an unplanned
-# failover took 39 s (rehearsal 2026-10-04); 10 / 3 / 3 brings it near 10 s. The floor is
-# ttl >= loop_wait + 2 x retry_timeout, and retry_timeout is also how long an etcd hiccup may
-# last before the leader demotes itself: lower than 3 s, a slow second on the hypervisor
-# becomes a failover of its own.
-pg_patroni_ttl: 10
+# failover took 39 s (rehearsal 2026-10-04); with 20 / 3 / 3 it takes 25 s (kill drill of the
+# same day: 23 s until the standby holds the lock, 2 s until the endpoint follows).
+# 20 s is PATRONI'S MINIMUM for ttl: a lower value is raised to 20 without a word (10 was set
+# here for a few hours and etcd showed the lock granted for 20 s). So a lost leader — the
+# whole member, Patroni included — cannot be replaced faster than that; a planned switchover
+# takes about a second, and PostgreSQL crashing under a living Patroni is handled by Patroni
+# at once. retry_timeout is also how long an etcd hiccup may last before the leader demotes
+# itself: lower than 3 s (Patroni's minimum too), a slow second on the hypervisor becomes a
+# failover of its own.
+pg_patroni_ttl: 20
 pg_patroni_loop_wait: 3
 pg_patroni_retry_timeout: 3
 pg_patroni_maximum_lag_on_failover: 1048576

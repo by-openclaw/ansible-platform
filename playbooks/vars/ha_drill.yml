@@ -1,0 +1,17 @@
+---
+# ==============================================================================
+# Settings of playbooks/ha-drill.yml — what the kill drills measure with, in one place.
+# A probe is ONE loop on a host that stays up: it starts before the kill and ends at the
+# first good answer after a bad one, so no task latency is inside the measured gap.
+# ==============================================================================
+ha_drill_ca_bundle: "/etc/ssl/certs/ca-certificates.crt"   # the host CA store (also mounted into the containers the probes use)
+ha_drill_probe_interval: 0.3          # seconds between two probes (three a second)
+ha_drill_probe_timeout: 1             # seconds one probe may take
+ha_drill_redis_probe_timeout: 2       # the Redis probe starts a client in a container: a little more
+ha_drill_probe_max_seconds: 120       # a probe that sees no recovery gives up after this long
+ha_drill_probe_async: 180             # the loop's own ceiling (above the previous line)
+ha_drill_probe_warmup_seconds: 5      # the probe must see the service working before the kill
+ha_drill_verdict_retries: 70          # waiting for the loop to end …
+ha_drill_verdict_delay: 2             # … every this many seconds
+ha_drill_rejoin_retries: 60           # waiting for the killed member to follow the cluster again …
+ha_drill_rejoin_delay: 3              # … every this many seconds

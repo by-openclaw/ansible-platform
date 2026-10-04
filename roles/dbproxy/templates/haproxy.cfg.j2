@@ -2,6 +2,7 @@
 global
     log stdout format raw local0 info
     maxconn {{ dbproxy_maxconn }}
+    hard-stop-after {{ dbproxy_hard_stop_after }}
 
 defaults
     log     global
@@ -13,7 +14,7 @@ defaults
     timeout connect {{ dbproxy_connect_timeout }}
     timeout client  {{ dbproxy_idle_timeout }}
     timeout server  {{ dbproxy_idle_timeout }}
-    timeout check   2s
+    timeout check   {{ dbproxy_check_timeout }}
 
 # Member names are resolved through the guest's resolver, at start and while running.
 resolvers platform
@@ -48,17 +49,22 @@ backend redis_named_{{ m }}
     tcp-check expect string +OK
     tcp-check send "SENTINEL get-master-addr-by-name {{ dbproxy_redis_master_name }}\r\n"
     tcp-check expect string {{ m }}.{{ platform_domain }}
-    default-server inter {{ dbproxy_check_interval }} fall {{ dbproxy_redis_check_fall }} rise {{ dbproxy_redis_check_rise }} check check-ssl verify required ca-file {{ dbproxy_ca_bundle }} resolvers platform init-addr last,libc,none
+    default-server init-state fully-down inter {{ dbproxy_check_interval }} fall {{ dbproxy_redis_check_fall }} rise {{ dbproxy_redis_check_rise }} check check-ssl verify required ca-file {{ dbproxy_ca_bundle }} resolvers platform init-addr last,libc,none
 {% for s in dbproxy_redis_sentinels %}
     server {{ s }} {{ s }}.{{ platform_domain }}:{{ dbproxy_redis_sentinel_port }} check-sni {{ s }}.{{ platform_domain }} verifyhost {{ s }}.{{ platform_domain }}
 {% endfor %}
 
 {% endfor %}
-# Redis, part 2 — the route. A member is used only while it answers role:master (its own
-# check: TLS, its own login, INFO replication) AND {{ dbproxy_redis_sentinel_quorum }} Sentinels name it. A member that says
-# master without the Sentinels' word (a restarted or resumed old primary) gets nothing; when
-# the named member is not up yet the connection is refused, never sent elsewhere. The data
-# path is plain TCP (the client's TLS session ends on Redis).
+# Redis, part 2 — the route. A member is ELIGIBLE while it answers role:master (its own check:
+# TLS, its own login, INFO replication) AND {{ dbproxy_redis_sentinel_quorum }} Sentinels name it. A member that says master
+# without the Sentinels' word (a restarted or resumed old primary) gets nothing.
+#   * no member eligible  -> the connection is refused, never sent elsewhere;
+#   * two eligible at once (the Sentinels' word about a former primary is not withdrawn here yet
+#     and it is back, claiming to be a master) -> refused too: the endpoint does not guess.
+# What the endpoint remembers about a member that is no longer named must not block the one
+# that is: until 2026-10-04 it did, for the 2 x check timeout it takes to forget — 3.7 s of a
+# measured 9.7 s. Every state starts as "down" (init-state): nothing is routed before a check
+# has answered. The data path is plain TCP (the client's TLS session ends on Redis).
 listen redis
     bind :::{{ dbproxy_redis_port }} v4v6
     option tcp-check
@@ -72,15 +78,17 @@ listen redis
     acl named_{{ loop.index }} nbsrv(redis_named_{{ m }}) ge {{ dbproxy_redis_sentinel_quorum }}
     acl up_{{ loop.index }} srv_is_up(redis/{{ m }})
 {% endfor %}
-    tcp-request content reject unless {% for m in dbproxy_redis_members %}named_{{ loop.index }}{{ ' or ' if not loop.last }}{% endfor %}
+    tcp-request content reject unless {% for m in dbproxy_redis_members %}named_{{ loop.index }} up_{{ loop.index }}{{ ' or ' if not loop.last }}{% endfor %}
 
-{% for m in dbproxy_redis_members %}
-    tcp-request content reject if named_{{ loop.index }} !up_{{ loop.index }}
+{% for a in range(1, dbproxy_redis_members | length + 1) %}
+{% for b in range(a + 1, dbproxy_redis_members | length + 1) %}
+    tcp-request content reject if named_{{ a }} up_{{ a }} named_{{ b }} up_{{ b }}
+{% endfor %}
 {% endfor %}
 {% for m in dbproxy_redis_members %}
-    use-server {{ m }} if named_{{ loop.index }}
+    use-server {{ m }} if named_{{ loop.index }} up_{{ loop.index }}
 {% endfor %}
-    default-server inter {{ dbproxy_check_interval }} fall {{ dbproxy_redis_check_fall }} rise {{ dbproxy_redis_check_rise }} on-marked-down shutdown-sessions check check-ssl verify required ca-file {{ dbproxy_ca_bundle }} resolvers platform init-addr last,libc,none
+    default-server init-state fully-down inter {{ dbproxy_check_interval }} fall {{ dbproxy_redis_check_fall }} rise {{ dbproxy_redis_check_rise }} on-marked-down shutdown-sessions check check-ssl verify required ca-file {{ dbproxy_ca_bundle }} resolvers platform init-addr last,libc,none
 {% for h in dbproxy_redis_members %}
     server {{ h }} {{ h }}.{{ platform_domain }}:{{ dbproxy_redis_port }} check-sni {{ h }}.{{ platform_domain }} verifyhost {{ h }}.{{ platform_domain }}
 {% endfor %}

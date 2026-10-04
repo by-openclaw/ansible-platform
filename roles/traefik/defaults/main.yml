@@ -39,7 +39,7 @@ traefik_internal_cidrs:
 traefik_authentik_outpost_urls: >-
   {{ (groups['authentik_cluster'] | default(groups['authentik'])) | map('extract', hostvars, 'ansible_host')
      | map('regex_replace', '^', 'http://') | map('regex_replace', '$', ':9000') | list }}
-traefik_authentik_health_path: "/-/health/ready/"
+traefik_authentik_health_path: "{{ platform_authentik_lb_health_path }}"
 traefik_authgate_port: 8083
 traefik_authentik_auth_headers:
   - X-authentik-username

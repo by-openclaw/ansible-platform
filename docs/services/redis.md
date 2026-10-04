@@ -30,3 +30,12 @@ Class E/B (`docs/backup.md`): caches rebuild; the append-only file and RDB snaps
 Why the pause: the endpoint follows a new primary only after six good checks (about 18 s — the margin that keeps a restarted old primary out of rotation until the Sentinels have demoted it). Without the pause the old primary stays writable during that time and those writes are discarded when it becomes a replica (first drill: promoted 12:35:39.9, endpoint on the new primary 12:35:58.0). A pause alone is not enough either: it also stops the Sentinels' hello on that member, so they fail over by themselves after `down-after` (5 s) and can only demote the paused member when the pause ends (second drill).
 
 What clients see on a planned change: writes wait, then errors until the endpoint is on the new primary; nothing is lost. Third drill, with the atomic step: writes paused 15:21:54.9, replica promoted 15:21:56.1, former primary a replica 15:21:56.7, endpoint on the new primary 15:22:11.4 — 16.5 s. An unplanned failure (the primary is gone) has no such window: measured 21 s in the rehearsal.
+
+## A member lost, and a member restarted (kill drills of 2026-10-04)
+
+`playbooks/ha-drill.yml --tags redis-kill`: the primary's container is killed, a probe on the endpoint's host times the gap, the member is started again and must return as a replica without having received a session.
+
+- **Gap for clients:** 5.8 s in the last run, about 7 s in two others (9.7 s with the endpoint's first routing rule, 21 s before the tuning): the Sentinels need about 4.5 s (`down-after 3 s`, agreement, promotion), the endpoint about 2 s more (the new primary's own check, then two Sentinels naming it).
+- **A restarted member claims to be a master** until the Sentinels make it a replica again (some seconds). The endpoint sends it nothing in that time: a member is used only while the Sentinels name it.
+- **Its start file is static** (`include redis.conf`, root's): Redis cannot rewrite it. Until this drill a member that had been through a failover could not restart — the rewritten file declared every login a second time and loaded the image's bundled modules a second time. See `roles/redis/README.md`.
+- **Planned change** (`--tags redis`) with the same endpoint rule: about 3 s of refused connections after the pause.

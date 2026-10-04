@@ -16,6 +16,23 @@
     mode: "0640"
   no_log: true
 
+# ACLs do not replicate: every member renders the same file. A change is loaded live (ACL LOAD,
+# tasks/container.yml) — no restart for a login.
+- name: "config | Render the ACL file (the default user and one login per consumer, passwords hashed)"
+  ansible.builtin.template:
+    src: users.acl.j2
+    dest: "{{ redis_acl_file }}"
+    owner: "{{ redis_uid }}"
+    group: "{{ redis_uid }}"
+    mode: "0640"
+    # Loaded by a throwaway Redis of the same image BEFORE it replaces the file: Redis exits at
+    # once on a file it cannot read, and still runs after {{ redis_acl_validate_seconds }} s on one it accepts.
+    validate: >-
+      docker run --rm --user 0:0 --network none --volume %s:/tmp/users.acl:ro {{ redis_image }}
+      sh -c "timeout {{ redis_acl_validate_seconds }} redis-server --port 6399 --save '' --appendonly no --aclfile /tmp/users.acl >/dev/null; test $? -eq 124"
+  register: redis_acl_rendered
+  no_log: true
+
 # Redis reads redis.conf only when it starts. The member is restarted (container step) when the
 # file is NEWER than the running process — not "when this run changed it": a run interrupted
 # after the render would otherwise leave a process on the old settings for good, and a
@@ -28,77 +45,36 @@
   changed_when: false
   check_mode: false   # read-only probe
 
-# --- The start file: include + this member's current role -----------------------------------
-- name: "config | Start-file directory (Redis rewrites the file on a role change)"
+# --- The start file: static, and not writable by Redis ------------------------------------------
+# When the Sentinels change a member's role they also ask it to rewrite the file it started
+# with. Redis then copies what it runs with into that file — and the image's start script
+# loads its bundled modules itself on every start, so the rewritten file loaded each of them a
+# second time and the member aborted ("Can't load module … server aborting"): a member that
+# had been through a failover could not restart (kill drill of 2026-10-04; the logins were a
+# second copy of the same kind, see the ACL file above). So Redis gets a file it cannot
+# rewrite: the directory and the file are root's. The rewrite fails, the role change itself is
+# applied, and WHO IS PRIMARY is the Sentinels' word alone: a member that restarts comes up
+# claiming to be a master and the Sentinels make it a replica again within seconds — the
+# endpoint sends nothing to a member the Sentinels do not name.
+- name: "config | First start of this member? (it has no container yet)"
+  ansible.builtin.set_fact:
+    redis_first_start: "{{ (redis_conf_age.stdout | default('') | trim) | length == 0 }}"
+
+- name: "config | Start-file directory (root's: Redis cannot rewrite the file in it)"
   ansible.builtin.file:
     path: "{{ redis_runtime_host_dir }}"
     state: directory
-    owner: "{{ redis_uid }}"
-    group: "{{ redis_uid }}"
-    mode: "0700"
+    owner: root
+    group: root
+    mode: "0755"
 
-# The member's live role, when it runs: a replica names its primary. The password travels in
-# the task environment (`docker exec -e NAME` forwards it), never on a command line.
-- name: "config | Live role of this member"
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - REDISCLI_AUTH
-      - "{{ redis_container_name }}"
-      - redis-cli
-      - --tls
-      - --cacert
-      - /etc/ssl/certs/ca-certificates.crt
-      - -h
-      - "{{ redis_fqdn }}"
-      - -p
-      - "{{ redis_tls_port | string }}"
-      - info
-      - replication
-  environment:
-    REDISCLI_AUTH: "{{ redis_requirepass }}"
-  register: redis_live_role
-  changed_when: false
-  failed_when: false
-  check_mode: false   # read-only probe
-  no_log: true
-
-# Running replica → its live primary. Running primary → no line. Not running: the line the
-# start file already has (the role it had), or for a member that never started, the initial
-# primary.
-- name: "config | Existing start file"
-  ansible.builtin.slurp:
-    src: "{{ redis_runtime_file }}"
-  register: redis_runtime_now
-  failed_when: false
-
-- name: "config | The primary this member follows (empty = it is the primary)"
-  ansible.builtin.set_fact:
-    redis_replicaof: >-
-      {%- set live = redis_live_role.stdout | default('') -%}
-      {%- if redis_live_role.rc | default(1) == 0 and 'role:' in live -%}
-        {%- if 'role:slave' in live -%}
-          {{ live | regex_search('master_host:(\S+)', '\1') | first }} {{ live | regex_search('master_port:(\d+)', '\1') | first }}
-        {%- endif -%}
-      {%- elif redis_runtime_now.content is defined -%}
-        {{ (redis_runtime_now.content | b64decode | regex_search('(?m)^replicaof (\S+ \d+)', '\1') | default([''], true)) | first }}
-      {%- elif inventory_hostname != redis_initial_primary -%}
-        {{ redis_initial_primary }}.{{ platform_domain }} {{ redis_tls_port }}
-      {%- endif -%}
-
-- name: "config | Start file = include + this member's role"
+- name: "config | Start file = one include of redis.conf (static, read-only)"
   ansible.builtin.copy:
     dest: "{{ redis_runtime_file }}"
-    owner: "{{ redis_uid }}"
-    group: "{{ redis_uid }}"
-    mode: "0600"
+    owner: root
+    group: root
+    mode: "0444"
     content: |
-      # Managed by Ansible (roles/redis) and rewritten by Redis on a role change. Settings live in
-      # {{ redis_conf_file }} — nothing else belongs here.
+      # Managed by Ansible (roles/redis). Static: Redis cannot rewrite this file (it is root's).
+      # Settings live in {{ redis_conf_file }}; the member's role is the Sentinels' decision.
       include {{ redis_conf_file }}
-      {% set _primary = (redis_replicaof or '') | string | trim %}
-      {% if _primary | length > 0 and _primary != 'None' %}
-      replicaof {{ _primary }}
-      {% endif %}

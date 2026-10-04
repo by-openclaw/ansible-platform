@@ -272,3 +272,12 @@ authentik_proxy_apps:
 # (port, container), roles/prometheus (RadiusOutpostDown) and the log shipping (audit class).
 platform_radius_port: 1812
 platform_radius_container: "authentik-radius"
+
+# --- Authentik behind the edge: which path decides that an instance receives traffic --------------
+# The LIVENESS path: answered by the instance's web stack without opening a database connection.
+# The readiness path forces a NEW database connection on every call (TLS + login): asked every
+# 2 s by the edge's two services on both instances it was most of 4.7 new PostgreSQL sessions
+# per second, and under load its answer passed the health timeout on both instances at once —
+# the edge then had no instance for a moment (2026-10-04 21:27 UTC). Two instances share one
+# database: when it is away both are equally unready and nothing is gained by removing them.
+platform_authentik_lb_health_path: "/-/health/live/"
