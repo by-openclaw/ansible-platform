@@ -17,7 +17,7 @@
     gitlab_pg_password: "{{ vault_secret_result.password }}"
   no_log: true
 
-- name: "GitLab | Read Redis creds from Vault (shared)"
+- name: "GitLab | Read its Redis login from Vault (owner: roles/redis)"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
@@ -121,6 +121,18 @@
     - gitlab_secrets_restore.gitlab_secrets | default({}) | length > 0
   no_log: true
   register: gitlab_secrets_restored
+
+# Does GitLab connect to its own Redis database already? Read from the connection file the
+# last reconfigure wrote (not gitlab.rb: a reconfigure that failed half-way is then taken up
+# again by the next run). No = its keys still sit in the database it shared:
+# tasks/redis_database.yml moves them, once. The file holds a credential: counted, never shown.
+- name: "GitLab | Redis database of the live connection"
+  ansible.builtin.command:
+    argv: [grep, -c, "^  url: .*/{{ gitlab_redis_db }}$", "{{ gitlab_redis_live_file }}"]
+  register: gitlab_redis_db_live
+  changed_when: false
+  failed_when: gitlab_redis_db_live.rc > 2
+  check_mode: false   # read-only probe
 
 - name: "GitLab | Render /etc/gitlab/gitlab.rb"
   ansible.builtin.template:
@@ -229,6 +241,14 @@
             - "{{ gitlab_scripts_dir }}:{{ gitlab_scripts_dir }}:ro"
             - /etc/ssl/certs:/etc/ssl/certs:ro   # the host's trust store: PG verify-full names its bundle
 
+- name: "GitLab | Its keys move to its own Redis database (once)"
+  ansible.builtin.include_tasks: redis_database.yml
+  when:
+    - not ansible_check_mode
+    - gitlab_container_before.exists | default(false)
+    - (gitlab_container_before.container.State.Running | default(false))
+    - gitlab_redis_db_live.rc == 1          # the file exists and does not name the database yet
+
 # A running container takes a config change with a reconfigure in place (no restart); a
 # container started just now reconfigured at its own start.
 - name: "GitLab | Reconfigure in the running container (config changed)"
@@ -239,7 +259,13 @@
     - not ansible_check_mode
     - gitlab_container_before.exists | default(false)
     - (gitlab_container_before.container.State.Running | default(false))
-    - gitlab_rb_file is changed or gitlab_secrets_restored is changed
+    - gitlab_rb_file is changed or gitlab_secrets_restored is changed or gitlab_redis_moved is defined
+
+- name: "GitLab | Start its processes (stopped for the move of its keys)"
+  ansible.builtin.command:
+    argv: "{{ gitlab_exec + [gitlab_container, 'gitlab-ctl', 'start'] }}"
+  changed_when: true
+  when: gitlab_redis_moved is defined
 
 # --- Verify the daemon is actually healthy (API 'ok' != running; read status) --
 # The first start of the container runs the whole reconfigure: give it minutes.

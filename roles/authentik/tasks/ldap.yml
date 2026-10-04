@@ -40,6 +40,8 @@
       containers:
         - name: authentik-ldap
           image: "{{ authentik_ldap_image }}"
+          read_only: true                 # SEC-22: it writes to its volumes only
+          tmpfs: ["/tmp:rw,size=64m"]
           published:
             - "0.0.0.0:{{ authentik_ldap_port }}:{{ authentik_ldap_container_port }}"
             - "[::]:{{ authentik_ldap_port }}:{{ authentik_ldap_container_port }}"
