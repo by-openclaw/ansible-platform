@@ -1,0 +1,41 @@
+---
+# ==============================================================================
+# Role: pkgcache — the package caches of the platform, on lxc-pkgcache-01 (SVC):
+#   devpi          caching mirror of PyPI, behind the edge (pypi.<domain>)
+#   apt-cacher-ng  caching proxy for Debian/Ubuntu package repositories (port 3142)
+# Caches only: nothing here is a source of truth — a rebuild refills them from upstream
+# (backup class E). Both images are built on the guest from a pinned official base and a
+# pinned package version (no registry holds them). Upgrade = bump a pin and the revision.
+# ==============================================================================
+pkgcache_fqdn: "{{ platform_service_fqdns.pkgcache }}"
+pkgcache_listen_ip: "{{ hostvars[groups['pkgcache'] | first].ansible_host }}"
+pkgcache_build_dir: "/opt/pkgcache"
+
+# --- devpi (PyPI) ---------------------------------------------------------------
+pkgcache_python_image: "python:3.13.16-slim-trixie"   # OFFICIAL base, exact pin
+pkgcache_devpi_server_version: "6.20.3"                # devpi-server (PyPI), exact pin
+pkgcache_devpi_web_version: "5.1.1"                    # devpi-web: the browsable index and search
+pkgcache_devpi_image: "platform/devpi"
+pkgcache_devpi_rev: 1
+pkgcache_devpi_uid: 10001
+pkgcache_devpi_port: 3141
+pkgcache_devpi_data_dir: "/var/lib/devpi"
+# The devpi root user: creating users and indexes is restricted to it (the mirror itself is
+# read by everyone who reaches the edge route). Vault: get-or-create.
+pkgcache_devpi_vault_path: "{{ platform_env }}/pkgcache/devpi-root"
+# What clients configure (pip: index-url; uv/poetry: the same simple index).
+pkgcache_pypi_index_url: "https://{{ pkgcache_fqdn }}/root/pypi/+simple/"
+
+# --- apt-cacher-ng (Debian) -------------------------------------------------------
+pkgcache_debian_image: "debian:trixie-20260918-slim"   # OFFICIAL base, exact pin
+pkgcache_acng_version: "3.7.5-1"                        # the Debian trixie package, exact pin
+pkgcache_acng_image: "platform/apt-cacher-ng"
+pkgcache_acng_rev: 1
+pkgcache_acng_uid: 10002
+pkgcache_acng_port: 3142
+pkgcache_acng_cache_dir: "/var/cache/apt-cacher-ng"
+pkgcache_acng_log_dir: "/var/log/apt-cacher-ng"
+# HTTPS repositories cannot be cached (the proxy only tunnels them): allowed to port 443 only.
+pkgcache_acng_passthrough: "^(.*):443$"
+# What clients configure (apt: Acquire::http::Proxy).
+pkgcache_apt_proxy_url: "http://{{ groups['pkgcache'] | first }}.{{ platform_domain }}:{{ pkgcache_acng_port }}"

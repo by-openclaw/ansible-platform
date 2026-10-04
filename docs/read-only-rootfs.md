@@ -38,6 +38,7 @@ is applied one service at a time and verified in the service's log before the ne
 | `postgres` (Patroni), `postgres-exporter`, `etcd` | `lxc-pgsql-01`, `-02`, `-03` | the data volume / a host directory; tmpfs for sockets and `/tmp` | cluster state, replication, 0 restarts |
 | `redis`, `redis-sentinel` | `lxc-redis-01`, `-02` (+ the third Sentinel on `lxc-pgpool-01`) | the data volume; the start file and the Sentinel's state directory | primary / replica link, three Sentinels agree |
 | `dbproxy` | `lxc-pgpool-01` | none (tmpfs `/tmp`, `/run`) | routes to the leader and the primary |
+| `devpi`, `apt-cacher-ng` | `lxc-pkgcache-01` | the cache directories (host); tmpfs `/tmp` and the proxy's run directory | a PyPI project index and a Debian index served through each cache |
 
 `step-ca` keeps its capabilities: its binary carries a file capability and does not start
 without it in the bounding set (`cap_drop: ALL` → "Operation not permitted", 2026-10-04).

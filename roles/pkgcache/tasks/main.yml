@@ -1,0 +1,225 @@
+---
+# devpi's root user — Vault-native get-or-create (SVC-11). Only root may create users or
+# indexes (--restrict-modify); the mirror is read without a login.
+- name: "pkgcache | Get-or-create the devpi root credential"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ pkgcache_devpi_vault_path }}"   # pragma: allowlist secret
+    vault_secret_init:
+      username: root
+      password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+
+- name: "pkgcache | Bind the credential"
+  ansible.builtin.set_fact:
+    pkgcache_devpi_root_password: "{{ vault_secret_result.password }}"
+  no_log: true
+
+- name: "pkgcache | Build directories"
+  ansible.builtin.file:
+    path: "{{ pkgcache_build_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [devpi, apt-cacher-ng]
+
+- name: "pkgcache | Data directories (owned by each container's account)"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.uid }}"
+    group: "{{ item.uid }}"
+    mode: "0750"
+  loop:
+    - {path: "{{ pkgcache_devpi_data_dir }}", uid: "{{ pkgcache_devpi_uid }}"}
+    - {path: "{{ pkgcache_acng_cache_dir }}", uid: "{{ pkgcache_acng_uid }}"}
+    - {path: "{{ pkgcache_acng_log_dir }}", uid: "{{ pkgcache_acng_uid }}"}
+
+# --- platform images = official base + the pinned package ----------------------------
+- name: "pkgcache | Pull the official base images"
+  community.docker.docker_image:
+    name: "{{ item }}"
+    source: pull
+  loop:
+    - "{{ pkgcache_python_image }}"
+    - "{{ pkgcache_debian_image }}"
+
+- name: "pkgcache | Render the Dockerfiles"
+  ansible.builtin.template:
+    src: "Dockerfile.{{ item.key }}.j2"
+    dest: "{{ pkgcache_build_dir }}/{{ item.dir }}/Dockerfile"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - {key: devpi, dir: devpi}
+    - {key: acng, dir: apt-cacher-ng}
+  loop_control:
+    label: "{{ item.dir }}"
+  register: pkgcache_dockerfiles
+
+- name: "pkgcache | Build the devpi image"
+  community.docker.docker_image:
+    name: "{{ pkgcache_devpi_image }}"
+    tag: "{{ pkgcache_devpi_server_version }}-p{{ pkgcache_devpi_rev }}"
+    source: build
+    build:
+      path: "{{ pkgcache_build_dir }}/devpi"
+      dockerfile: Dockerfile
+      pull: false
+    force_source: "{{ pkgcache_dockerfiles.results[0].changed }}"
+
+- name: "pkgcache | Build the apt-cacher-ng image"
+  community.docker.docker_image:
+    name: "{{ pkgcache_acng_image }}"
+    tag: "{{ pkgcache_acng_version }}-p{{ pkgcache_acng_rev }}"
+    source: build
+    build:
+      path: "{{ pkgcache_build_dir }}/apt-cacher-ng"
+      dockerfile: Dockerfile
+      pull: false
+    force_source: "{{ pkgcache_dockerfiles.results[1].changed }}"
+
+# --- devpi's server directory: created once (root user + the root/pypi mirror index) ---
+- name: "pkgcache | Is the devpi server directory initialised?"
+  ansible.builtin.stat:
+    path: "{{ pkgcache_devpi_data_dir }}/.nodeinfo"
+  register: pkgcache_devpi_nodeinfo
+
+- name: "pkgcache | Initialise the devpi server directory (once)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - -e
+      - DEVPI_ROOT_PW
+      - -v
+      - "{{ pkgcache_devpi_data_dir }}:/data"
+      - --entrypoint
+      - sh
+      - "{{ pkgcache_devpi_image }}:{{ pkgcache_devpi_server_version }}-p{{ pkgcache_devpi_rev }}"
+      - -c
+      - 'devpi-init --serverdir /data --root-passwd "$DEVPI_ROOT_PW"'
+  environment:
+    DEVPI_ROOT_PW: "{{ pkgcache_devpi_root_password }}"
+  when:
+    - not pkgcache_devpi_nodeinfo.stat.exists
+    - not ansible_check_mode
+  changed_when: true
+  no_log: true
+
+# --- the platform concerns via the golden-path scaffold: the containers, the edge route ---
+- name: "pkgcache | Scaffold the platform concerns"
+  ansible.builtin.include_role:
+    name: service_scaffold
+  vars:
+    service_scaffold_def:
+      name: pkgcache
+      fqdn: "{{ pkgcache_fqdn }}"
+      backend_url: "http://{{ pkgcache_listen_ip }}:{{ pkgcache_devpi_port }}"
+      exposure: internal
+      mailbox: false            # the caches send no mail
+      containers:
+        - name: devpi
+          image: "{{ pkgcache_devpi_image }}:{{ pkgcache_devpi_server_version }}-p{{ pkgcache_devpi_rev }}"
+          pull: false               # built above on this host (no registry holds it)
+          log_driver: journald
+          command:
+            - --serverdir
+            - /data
+            - --host
+            - 0.0.0.0
+            - --port
+            - "3141"
+            - --outside-url
+            - "https://{{ pkgcache_fqdn }}"
+            - --restrict-modify
+            - root
+          # Read-only root filesystem: the cache is a host directory.
+          read_only: true
+          tmpfs: ["/tmp:rw,size=64m"]
+          cap_drop: [ALL]
+          security_opts: ["no-new-privileges:true"]
+          published:
+            - "{{ pkgcache_listen_ip }}:{{ pkgcache_devpi_port }}:3141"
+            - "127.0.0.1:{{ pkgcache_devpi_port }}:3141"
+          volumes:
+            - "{{ pkgcache_devpi_data_dir }}:/data"
+        - name: apt-cacher-ng
+          image: "{{ pkgcache_acng_image }}:{{ pkgcache_acng_version }}-p{{ pkgcache_acng_rev }}"
+          pull: false
+          log_driver: journald
+          # Settings as arguments (they override the package's acng.conf, whose repository
+          # mappings stay as shipped).
+          command:
+            - ForeGround=1
+            - "Port=3142"
+            - "CacheDir=/var/cache/apt-cacher-ng"
+            - "LogDir=/var/log/apt-cacher-ng"
+            - "PassThroughPattern={{ pkgcache_acng_passthrough }}"
+            - "ReportPage=acng-report.html"
+          read_only: true
+          tmpfs:
+            - "/tmp:rw,size=64m"
+            - "/run/apt-cacher-ng:rw,size=1m,uid={{ pkgcache_acng_uid }},gid={{ pkgcache_acng_uid }},mode=0755"
+          cap_drop: [ALL]
+          security_opts: ["no-new-privileges:true"]
+          published:
+            - "{{ pkgcache_listen_ip }}:{{ pkgcache_acng_port }}:3142"
+            - "127.0.0.1:{{ pkgcache_acng_port }}:3142"
+          volumes:
+            - "{{ pkgcache_acng_cache_dir }}:/var/cache/apt-cacher-ng"
+            - "{{ pkgcache_acng_log_dir }}:/var/log/apt-cacher-ng"
+
+- name: "pkgcache | Rotate the proxy's log files"
+  ansible.builtin.include_role:
+    name: logrotate
+  vars:
+    logrotate_entries:
+      - name: apt-cacher-ng
+        paths: ["{{ pkgcache_acng_log_dir }}/*.log", "{{ pkgcache_acng_log_dir }}/*.err"]
+        rotate: 14
+        copytruncate: true
+
+# --- verify the function, not the port: a package index through each cache ------------
+- name: "pkgcache | devpi answers"
+  ansible.builtin.uri:
+    url: "http://{{ pkgcache_listen_ip }}:{{ pkgcache_devpi_port }}/+api"
+    status_code: [200]
+  register: pkgcache_devpi_api
+  check_mode: false   # read-only GET
+  retries: 20
+  delay: 3
+  until: pkgcache_devpi_api.status == 200
+
+- name: "pkgcache | devpi serves a project from PyPI (the mirror reaches upstream)"
+  ansible.builtin.uri:
+    url: "http://{{ pkgcache_listen_ip }}:{{ pkgcache_devpi_port }}/root/pypi/+simple/pip/"
+    status_code: [200]
+  register: pkgcache_devpi_simple
+  check_mode: false   # read-only GET
+  retries: 10
+  delay: 3
+  until: pkgcache_devpi_simple.status == 200
+
+- name: "pkgcache | apt-cacher-ng answers"
+  ansible.builtin.uri:
+    url: "http://{{ pkgcache_listen_ip }}:{{ pkgcache_acng_port }}/acng-report.html"
+    status_code: [200]
+  register: pkgcache_acng_report
+  check_mode: false   # read-only GET
+  retries: 20
+  delay: 3
+  until: pkgcache_acng_report.status == 200
+
+- name: "pkgcache | apt-cacher-ng serves a Debian index (the proxy reaches upstream)"
+  ansible.builtin.uri:
+    url: "http://{{ pkgcache_listen_ip }}:{{ pkgcache_acng_port }}/deb.debian.org/debian/dists/trixie/InRelease"
+    status_code: [200]
+  register: pkgcache_acng_index
+  check_mode: false   # read-only GET
+  retries: 10
+  delay: 3
+  until: pkgcache_acng_index.status == 200
