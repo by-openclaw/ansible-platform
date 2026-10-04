@@ -209,8 +209,12 @@ authentik_radius_selftest_networks:
 authentik_radius_test_image: "freeradius/freeradius-server:3.2.9-alpine"
 authentik_radius_test_client: "/opt/bin/radclient"
 authentik_radius_test_user: "65534:65534"        # the client runs as nobody: it needs no right
-authentik_radius_test_timeout: 5                 # seconds the client waits for the answer
-authentik_radius_test_retries: 6                 # a new outpost needs a moment to load its providers
+# Seconds the client waits for the answer. A login runs the whole flow through the outpost and
+# takes about 6 s for the probe (measured 2026-10-04: its app password is tried after the
+# password back ends, each of which costs one password hash) — a 5 s client gave up before
+# the answer and counted it lost. A device needs a RADIUS timeout of 10 s or more as well.
+authentik_radius_test_timeout: 20
+authentik_radius_test_retries: 3                 # a new outpost needs a moment to load its providers
 authentik_radius_test_delay: 5
 # Waiting for the outpost object (API) and for the container to report healthy.
 authentik_radius_wait_retries: 20
