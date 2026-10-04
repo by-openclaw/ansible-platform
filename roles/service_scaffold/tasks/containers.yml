@@ -54,7 +54,7 @@
       {%- for r in platform_docker_firewall_common | default([]) -%}
         {%- set _ = out.append((r.port | string) ~ '/' ~ (r.proto | default('tcp'))) -%}
       {%- endfor -%}
-      {%- for s in platform_services | selectattr('host', 'equalto', inventory_hostname) | map(attribute='name') -%}
+      {%- for s in platform_services | map(attribute='name') if inventory_hostname in platform_service_hosts[s] -%}
         {%- for r in (platform_docker_firewall | default({})).get(s, []) -%}
           {%- set _ = out.append((r.port | string) ~ '/' ~ (r.proto | default('tcp'))) -%}
         {%- endfor -%}
