@@ -12,7 +12,7 @@
 # check needs six good answers, about 18 s. An unplanned failure has no such window.
 #
 #   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/ha-drill.yml
-#        --tags postgresql | redis   one of the two
+#        --tags postgresql | redis | vault   one of the three
 #
 # Announce it first (reconnects: a few seconds for PostgreSQL, about 20 s for Redis) and run it
 # outside the backup window. The members are equivalent: the drill does not switch back.
@@ -288,3 +288,94 @@
           writes paused on the old primary (replica confirmed in sync), former primary demoted at once; the endpoint answers from the new primary
           with its replica attached {{ (ha_drill_redis_t1.stdout | float - ha_drill_redis_t0.stdout | float) | round(1) }} s after the pause
           ({{ ha_drill_redis_e1.attempts }} attempt(s)); endpoint log: {{ ha_drill_redis_seen.stdout_lines | default([]) | join(' | ') }}
+
+# Vault: the ACTIVE member is lost (its container restarts, so it comes back sealed). The
+# two others must elect a new active node and the edge must follow it; then the restarted
+# member is unsealed with the role's own init tasks and must follow the cluster again.
+- name: "HA drill | Vault loses its active member"
+  hosts: "{{ groups['vault'] | first }}"
+  become: true
+  gather_facts: false
+  tags: [vault]
+  vars_files:
+    - ../roles/vault/defaults/main.yml
+  vars:
+    ha_drill_vault_edge: "https://{{ platform_service_fqdns.vault }}/v1/sys/health"
+  tasks:
+    - name: "Vault | State of every member before"
+      ansible.builtin.command:
+        cmd: "docker exec {{ vault_container_name }} vault status -format=json"
+      delegate_to: "{{ item }}"
+      loop: "{{ platform_vault_members }}"
+      register: ha_drill_vault_before
+      changed_when: false
+      failed_when: ha_drill_vault_before.rc != 0 or (ha_drill_vault_before.stdout | from_json).sealed
+
+    - name: "Vault | The active member"
+      ansible.builtin.set_fact:
+        ha_drill_vault_active: >-
+          {{ ((ha_drill_vault_before.results | first).stdout | from_json).leader_address | default('')
+             | regex_replace('^https://', '') | regex_replace('[.:].*$', '') }}
+
+    - name: "Vault | It is one of the members"
+      ansible.builtin.assert:
+        that: ha_drill_vault_active in platform_vault_members
+        fail_msg: "no active member named by the cluster: {{ ha_drill_vault_active }}"
+        quiet: true
+
+    - name: "Vault | The edge answers from the active member before"
+      ansible.builtin.uri:
+        url: "{{ ha_drill_vault_edge }}"
+        status_code: [200]
+
+    - name: "Vault | Clock"
+      ansible.builtin.command: date +%s.%N
+      register: ha_drill_vault_t0
+      changed_when: false
+
+    - name: "Vault | Restart the active member's container (it comes back sealed)"
+      ansible.builtin.command:
+        cmd: "docker restart {{ vault_container_name }}"
+      delegate_to: "{{ ha_drill_vault_active }}"
+      changed_when: true
+
+    - name: "Vault | The edge answers again (another member is active)"
+      ansible.builtin.uri:
+        url: "{{ ha_drill_vault_edge }}"
+        status_code: [200]
+      register: ha_drill_vault_edge_after
+      retries: 60
+      delay: 1
+      until: ha_drill_vault_edge_after.status == 200
+
+    - name: "Vault | Clock"
+      ansible.builtin.command: date +%s.%N
+      register: ha_drill_vault_t1
+      changed_when: false
+
+    - name: "Vault | The new active member, asked from a member that stayed up"
+      ansible.builtin.command:
+        cmd: "docker exec {{ vault_container_name }} vault status -format=json"
+      delegate_to: "{{ platform_vault_members | difference([ha_drill_vault_active]) | first }}"
+      register: ha_drill_vault_after
+      changed_when: false
+
+    - name: "Vault | Result"
+      ansible.builtin.debug:
+        msg: >-
+          DRILL vault: active {{ ha_drill_vault_active }} restarted (sealed); the edge answered from
+          {{ (ha_drill_vault_after.stdout | from_json).leader_address | default('?') }}
+          {{ (ha_drill_vault_t1.stdout | float - ha_drill_vault_t0.stdout | float) | round(1) }} s after the restart
+          ({{ ha_drill_vault_edge_after.attempts | default(1) }} attempt(s))
+
+- name: "HA drill | Vault — the restarted member is unsealed and follows the cluster"
+  hosts: "{{ groups['vault_cluster'] | default(groups['vault']) }}"
+  become: true
+  gather_facts: false
+  serial: 1
+  tags: [vault]
+  tasks:
+    - name: "Vault | Unseal what is sealed, every member follows the active node (roles/vault init)"
+      ansible.builtin.include_role:
+        name: vault
+        tasks_from: init
