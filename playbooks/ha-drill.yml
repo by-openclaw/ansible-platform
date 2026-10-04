@@ -62,7 +62,7 @@
         that:
           - _m | length == platform_pg_members | length
           - _m | rejectattr('State', 'in', ['running', 'streaming']) | list | length == 0
-          - _m | rejectattr('Role', 'equalto', 'Leader') | map(attribute='Lag in MB') | map('int') | max == 0
+          - _m | rejectattr('Role', 'equalto', 'Leader') | map(attribute='Replay Lag', default=0) | map('int') | max == 0   # Patroni 4: Receive Lag / Replay Lag
         fail_msg: "the cluster is not healthy — no drill: {{ _m }}"
         quiet: true
       vars:
