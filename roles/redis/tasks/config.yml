@@ -15,7 +15,18 @@
     group: "{{ redis_uid }}"
     mode: "0640"
   no_log: true
-  notify: Restart redis
+
+# Redis reads redis.conf only when it starts. The member is restarted (container step) when the
+# file is NEWER than the running process — not "when this run changed it": a run interrupted
+# after the render would otherwise leave a process on the old settings for good, and a
+# readiness check that needs the new settings could never pass (rehearsal 2026-10-04).
+- name: "config | Is redis.conf newer than the running member?"
+  ansible.builtin.shell: |
+    started=$(docker inspect --format '{{ '{{' }}.State.StartedAt{{ '}}' }}' {{ redis_container_name }} 2>/dev/null) || exit 0
+    [ "$(stat -c %Y {{ redis_conf_file }})" -gt "$(date -d "$started" +%s)" ] && echo newer || echo current
+  register: redis_conf_age
+  changed_when: false
+  check_mode: false   # read-only probe
 
 # --- The start file: include + this member's current role -----------------------------------
 - name: "config | Start-file directory (Redis rewrites the file on a role change)"
@@ -87,6 +98,7 @@
       # Managed by Ansible (roles/redis) and rewritten by Redis on a role change. Settings live in
       # {{ redis_conf_file }} — nothing else belongs here.
       include {{ redis_conf_file }}
-      {% if redis_replicaof | trim | length > 0 %}
-      replicaof {{ redis_replicaof | trim }}
+      {% set _primary = (redis_replicaof or '') | string | trim %}
+      {% if _primary | length > 0 and _primary != 'None' %}
+      replicaof {{ _primary }}
       {% endif %}

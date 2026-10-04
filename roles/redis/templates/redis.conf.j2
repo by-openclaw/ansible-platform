@@ -8,7 +8,9 @@ port 0
 tls-port {{ redis_tls_port }}
 tls-cert-file {{ redis_tls_cert }}
 tls-key-file {{ redis_tls_key }}
-tls-ca-cert-dir /etc/ssl/certs
+# The bundle FILE, not the directory: the host's /etc/ssl/certs is mounted, and its hashed
+# entries are symlinks to files outside the mount — a replica could not verify its primary.
+tls-ca-cert-file /etc/ssl/certs/ca-certificates.crt
 tls-auth-clients no
 tls-replication yes
 {% else %}
@@ -29,7 +31,7 @@ replica-read-only yes
 # One login per consumer (password stored hashed). ACLs do not replicate: both members render
 # the same list.
 {% for u in redis_users %}
-user {{ u.name }} on #{{ redis_user_passwords[u.name] | hash('sha256') }} {{ ('~* &*' if u.keys is not defined else u.keys) }} {{ u.rules | default(redis_user_default_rules) }}
+user {{ u.name }} on #{{ redis_user_passwords[u.name] | hash('sha256') }} {{ u.key_patterns | default('~* &*') }} {{ u.rules | default(redis_user_default_rules) }}
 {% endfor %}
 
 # Durability — AOF so a future replica/Sentinel can attach (HA-adoptable).

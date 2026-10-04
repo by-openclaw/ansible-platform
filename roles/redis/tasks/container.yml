@@ -15,6 +15,7 @@
           image: "{{ redis_image }}"
           user: "{{ redis_uid }}:{{ redis_uid }}"
           command: ["redis-server", "{{ redis_runtime_file }}"]
+          restart: "{{ 'newer' in (redis_conf_age.stdout | default('')) }}"   # config.yml: the file is newer than the process
           read_only: true
           tmpfs: ["/tmp:rw,size=16m"]
           cap_drop: [ALL]

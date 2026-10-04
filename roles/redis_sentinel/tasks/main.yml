@@ -89,6 +89,7 @@
       environment:
         REDISCLI_AUTH: "{{ redis_sentinel_redis_password }}"
       delegate_to: "{{ redis_sentinel_member }}"
+      throttle: 1   # every Sentinel host asks the SAME members: one at a time (parallel first connections to one host raced, 2026-10-04)
       register: redis_sentinel_roles
       changed_when: false
       failed_when: false
