@@ -31,6 +31,13 @@ entryPoints:
         readTimeout: "0s"
         writeTimeout: "0s"
         idleTimeout: "0s"
+  # forwardAuth gate — loopback only. The edge's own auth requests enter here and reach the
+  # Authentik instances through a balanced service; their forwarded headers are kept.
+  authgate:
+    address: "127.0.0.1:{{ traefik_authgate_port }}"
+    forwardedHeaders:
+      trustedIPs:
+        - "127.0.0.1/32"
 {% if traefik_metrics_enabled | default(false) %}
   # Prometheus scrape entry point (INF-33) — the host firewall admits the monitoring host only.
   metrics:

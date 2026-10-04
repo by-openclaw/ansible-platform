@@ -242,3 +242,5 @@ reconcile runs), `yboujraf_example` state, `poc-*` storage rename.
 | **Owner-only data/infra changes** | 17 `poc-*` storage rename (Terraform, disruptive), 19 `yboujraf_example` active (people.yml), NAM-03 hostname length |
 
 Lesson recorded: #721 alone left the identity blueprint in `error` (a blueprint entry's `permissions:` key is object-level) and only the post-apply verification caught it — every Authentik apply now reads `BlueprintInstance.status`.
+
+- **2026-10-04 — second instance:** `lxc-authentik-02` (server + worker) on the shared PostgreSQL; the edge route and the forwardAuth gate balance over the instances that are ready; one instance at a time in the play. Charter layer 3 (identity HA) closed on one hypervisor: it survives a guest or process failure and removes the forwardAuth brownout of a blueprint restart, not the loss of the host. The LDAP outpost stays single (first instance).
