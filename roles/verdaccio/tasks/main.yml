@@ -122,6 +122,11 @@
           image: "{{ verdaccio_platform_image }}:{{ verdaccio_image.split(':')[1] }}-p{{ verdaccio_platform_rev }}"
           pull: false               # built above on this host (no registry holds it)
           log_driver: journald
+          # Read-only root filesystem: packages and configuration are host directories.
+          read_only: true
+          tmpfs: ["/tmp:rw,size=64m"]
+          cap_drop: [ALL]
+          security_opts: ["no-new-privileges:true"]
           restart: "{{ verdaccio_config.changed | default(false) }}"   # verdaccio does not hot-reload config.yaml
           published:
             - "{{ verdaccio_listen_ip }}:{{ verdaccio_port }}:4873"

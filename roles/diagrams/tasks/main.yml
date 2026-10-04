@@ -23,10 +23,17 @@
       network: "{{ diagrams_docker_network }}"
       containers:
         # The companion first: Kroki calls it by name on the private network.
+        # Read-only root filesystem on the three renderers (they write temporary files only);
+        # draw.io's image rewrites its Tomcat configuration at start and stays writable
+        # (docs/override-hardening.md).
         - name: "{{ diagrams_kroki_mermaid_container }}"
           image: "{{ diagrams_kroki_mermaid_image }}"
+          read_only: true
+          tmpfs: ["/tmp:rw,size=256m"]
         - name: "{{ diagrams_kroki_container }}"
           image: "{{ diagrams_kroki_image }}"
+          read_only: true
+          tmpfs: ["/tmp:rw,size=256m"]
           published: ["{{ diagrams_kroki_port }}:8000"]
           env:
             KROKI_MERMAID_HOST: "{{ diagrams_kroki_mermaid_container }}"
@@ -34,6 +41,8 @@
           health: "http://127.0.0.1:{{ diagrams_kroki_port }}/health"
         - name: "{{ diagrams_plantuml_container }}"
           image: "{{ diagrams_plantuml_image }}"
+          read_only: true
+          tmpfs: ["/tmp:rw,size=256m"]
           published: ["{{ diagrams_plantuml_port }}:8080"]
           health: "http://127.0.0.1:{{ diagrams_plantuml_port }}/"
         - name: "{{ diagrams_drawio_container }}"

@@ -41,7 +41,27 @@
   become: false
   tags: [services, crowdsec]
 
-- name: Services | Reconfigure NetFlow / Insight reporting (exporter config is seed-owned)
+# NetFlow / Insight: catalog-owned since OPNsense 26.7.5 (opn_netflow). Until then
+# diagnostics/netflow/setconfig did not save and the seed wrote this block into config.xml; the
+# module applies (reconfigure) only when a setting changed.
+- name: Services | NetFlow / Insight capture and local collection (opn_netflow)
+  by_systems.opnsense.opnsense_netflow_settings:
+    host: "{{ opn_host }}"
+    port: "{{ opn_port | default(443) }}"
+    key: "{{ opnsense_api_key }}"
+    secret: "{{ opnsense_api_secret }}"
+    verify_ssl: false
+    interfaces: "{{ opn_netflow.interfaces }}"
+    egress_only: "{{ opn_netflow.egress_only }}"
+    version: "{{ opn_netflow.version }}"
+    targets: "{{ opn_netflow.targets }}"
+    collect: "{{ opn_netflow.collect }}"
+  when: opn_netflow is defined
+  delegate_to: localhost
+  become: false
+  tags: [services, netflow]
+
+- name: Services | Reconfigure NetFlow / Insight reporting (keeps the exporter active)
   by_systems.opnsense.opnsense_netflow_service:
     host: "{{ opn_host }}"
     port: "{{ opn_port | default(443) }}"

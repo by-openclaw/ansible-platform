@@ -82,12 +82,17 @@
     healthcheck: "{{ scaffold_ctr.healthcheck | default(omit) }}"
     restart: "{{ scaffold_ctr.restart | default(omit) }}"   # e.g. a config the app does not hot-reload changed
     recreate: "{{ scaffold_ctr.recreate | default(omit) }}"
-    security_opts: "{{ scaffold_ctr.security_opts | default(omit) }}"
     # Hardening a service opts into (SEC: read-only root filesystem, no capabilities): the
     # writable paths it needs are its volumes plus the tmpfs mounts it declares.
-    read_only: "{{ scaffold_ctr.read_only | default(omit) }}"
-    tmpfs: "{{ scaffold_ctr.tmpfs | default(omit) }}"
-    cap_drop: "{{ scaffold_ctr.cap_drop | default(omit) }}"
+    # The definition is AUTHORITATIVE for these four: an option that is not declared is set to
+    # its neutral value and compared strictly, so removing a line really reverts the container.
+    # Left to the module's defaults, an omitted option is not compared at all and a list only
+    # has to be CONTAINED in what the container carries — on 2026-10-04 a failed `cap_drop: ALL`
+    # could not be rolled back by deleting it, and the service stayed down until this was found.
+    security_opts: "{{ scaffold_ctr.security_opts | default([]) }}"
+    read_only: "{{ scaffold_ctr.read_only | default(false) }}"
+    tmpfs: "{{ scaffold_ctr.tmpfs | default([]) }}"
+    cap_drop: "{{ scaffold_ctr.cap_drop | default([]) }}"
     capabilities: "{{ scaffold_ctr.capabilities | default(omit) }}"
     hostname: "{{ scaffold_ctr.hostname | default(omit) }}"
     stop_timeout: "{{ scaffold_ctr.stop_timeout | default(omit) }}"   # a database needs more than Docker's 10 s
@@ -95,7 +100,9 @@
     ulimits: "{{ scaffold_ctr.ulimits | default(omit) }}"
     etc_hosts: "{{ scaffold_ctr.etc_hosts | default(omit) }}"
     env_file: "{{ scaffold_ctr.env_file | default(omit) }}"
-    comparisons: "{{ scaffold_ctr.comparisons | default(omit) }}"
+    comparisons: >-
+      {{ {'security_opts': 'strict', 'tmpfs': 'strict', 'cap_drop': 'strict'}
+         | combine(scaffold_ctr.comparisons | default({})) }}
   loop: "{{ service_scaffold_def.containers | default([]) }}"
   loop_control:
     loop_var: scaffold_ctr

@@ -8,7 +8,7 @@ one `ansible.builtin.command` in the role runs `files/catalog_lint.py` **on the 
 pre-apply guard (naming/0003) and never touches the appliance.
 
 Ownership split: the **seed** (infra-terraform-proxmox `modules/vm-opnsense/seed`) owns L2/L3 topology,
-system identity, interface settings, gateways and the NetFlow exporter; **Ansible** owns every
+system identity, interface settings and gateways; **Ansible** owns every
 MVC-managed service below. Firmware updates/upgrades are a deliberate per-env window, never part of a
 converge.
 
@@ -45,7 +45,7 @@ converge.
 | `firewall`, `aliases` | `aliases.yml` | `opn_aliases` | `opnsense_fw_alias` |
 | `firewall`, `rules` | `rules.yml` | `opn_filter_rules` | catalog lint gate (`files/catalog_lint.py` §1a/§3/§4/twins) then `opnsense_fw_filter` |
 | `firewall`, `nat` | `nat.yml` | `opn_dnat_rules`, `opn_snat_rules` | `opnsense_fw_dnat`, `opnsense_fw_source_nat` |
-| `services` | `services.yml` | — | `opnsense_qemuguestagent_settings/_service`, `opnsense_crowdsec_service`, `opnsense_netflow_service` (reconfigure only; config is seed-owned) |
+| `services` | `services.yml` | — | `opnsense_qemuguestagent_settings/_service`, `opnsense_crowdsec_service`, `opnsense_netflow_settings` (`opn_netflow`: capture + local collection, catalog-owned since 26.7.5), `opnsense_netflow_service` (reconfigure) |
 | `services`, `monit` | `monit.yml` | `opnsense_monit_*` + Vault SMTP | `opnsense_monit_settings/_alert/_test/_service` (`ProcessDown` is `type: Custom`) |
 | `syslog` | `syslog.yml` | `opnsense_syslog_*` | `opnsense_syslog_dest` |
 | `firewall`, `prune` | `prune.yml` | `opn_prune` (+ the four object lists) | read-only lookups → marker-bearing aliases/rules/DNAT/SNAT the catalog does not declare: reported always, deleted through the same modules (`state: absent`) only with `-e opn_prune=true` on an unscoped run |
