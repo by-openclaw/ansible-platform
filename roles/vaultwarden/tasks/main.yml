@@ -29,6 +29,10 @@
       containers:
         - name: "{{ vaultwarden_container_name }}"
           image: "{{ vaultwarden_image }}"
+          # Read-only root filesystem: everything it writes is on the data volume.
+          read_only: true
+          tmpfs: ["/tmp:rw,size=64m"]
+          security_opts: ["no-new-privileges:true"]
           published: ["{{ vaultwarden_listen_ip }}:{{ vaultwarden_host_port }}:80"]
           volumes:
             - "{{ vaultwarden_data_volume }}:/data"
