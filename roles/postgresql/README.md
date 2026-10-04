@@ -59,7 +59,7 @@ roles of the members.
 
 ## Limits
 
-- `pg_max_connections` (200) and `pg_log_connections` (on): the 100-connection image default
+- `pg_max_connections` (400) and `pg_log_connections` (on): the 100-connection image default
   was exhausted twice on 2026-09-22 and took every service behind Authentik down. They live in
   the dynamic configuration now (`templates/dcs.yml.j2`).
 - The three members share one hypervisor and one storage pool: the cluster covers the loss or

@@ -103,8 +103,9 @@ authentik_version: "2026.5.6"
 # request: on this platform that was ~2 new TLS connections per second (12 363 in 70 min on
 # 2026-09-22), one per forwardAuth/API call, so any slowdown stacked fresh connections until the
 # shared cluster's ceiling (100) was hit and every route behind forwardAuth answered 500. With a
-# lifetime, each gunicorn thread keeps its connection: the footprint is bounded by
-# web workers × threads (2 × 4) + the worker (1 × 2) + the outposts, and the per-request TLS
+# lifetime, each worker thread keeps its connection — measured 2026-10-04: about 60 per
+# instance (the async workers use more threads than web workers × threads), which the
+# cluster's pg_max_connections budgets for — and the per-request TLS
 # handshake (CPU on both containers) disappears. Health checks drop a stale connection before reuse.
 authentik_pg_conn_max_age: 300
 authentik_pg_conn_health_checks: true
