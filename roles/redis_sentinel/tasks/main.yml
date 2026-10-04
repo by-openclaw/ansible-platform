@@ -51,6 +51,20 @@
       no_log: true
       tags: [redis_sentinel, secrets]
 
+    - name: "sentinel | The endpoint's check login (read from Vault; owner: roles/redis)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ redis_sentinel_check_vault_path }}"   # pragma: allowlist secret
+        vault_secret_action: read   # pragma: allowlist secret
+      tags: [redis_sentinel, secrets]
+
+    - name: "sentinel | Bind it"
+      ansible.builtin.set_fact:
+        redis_sentinel_check_password: "{{ vault_secret_result.password }}"
+      no_log: true
+      tags: [redis_sentinel, secrets]
+
     - name: "sentinel | State directory (Sentinel rewrites its configuration there)"
       ansible.builtin.file:
         path: "{{ redis_sentinel_state_host_dir }}"
@@ -157,6 +171,30 @@
                 - "{{ redis_sentinel_cert_host_dir }}:{{ redis_sentinel_cert_host_dir }}:ro"
                 - "/etc/ssl/certs:/etc/ssl/certs:ro"
       tags: [redis_sentinel, container]
+
+    # Sentinel owns its file once created: what this role declares afterwards is set on the
+    # running Sentinel, which records it itself (idempotent — the same commands every run).
+    - name: "sentinel | Declared settings on the running Sentinel (check login, detection time)"
+      ansible.builtin.command:
+        argv: >-
+          {{ ['docker', 'exec', '-e', 'REDISCLI_AUTH', redis_sentinel_container_name, 'redis-cli', '--no-auth-warning',
+              '--tls', '--cacert', '/etc/ssl/certs/ca-certificates.crt',
+              '-h', redis_sentinel_fqdn, '-p', redis_sentinel_port | string] + item }}
+      environment:
+        REDISCLI_AUTH: "{{ redis_sentinel_password }}"
+      loop:
+        - "{{ ['ACL', 'SETUSER', redis_sentinel_check_user, 'reset', 'on', '#' ~ (redis_sentinel_check_password | hash('sha256'))] + redis_sentinel_check_rules.split() }}"
+        - ["SENTINEL", "SET", "{{ redis_sentinel_master_name }}", "down-after-milliseconds", "{{ redis_sentinel_down_after_ms | string }}"]
+        - ["SENTINEL", "FLUSHCONFIG"]
+      loop_control:
+        label: "{{ item[0] }} {{ item[1] }}"
+      register: redis_sentinel_declared
+      retries: 10
+      delay: 3
+      until: redis_sentinel_declared.rc == 0 and 'OK' in redis_sentinel_declared.stdout
+      changed_when: false
+      no_log: true
+      tags: [redis_sentinel, config]
 
     # What this Sentinel sees: the primary, how many replicas, how many other Sentinels.
     - name: "sentinel | This Sentinel's view of the pair"

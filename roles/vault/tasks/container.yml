@@ -39,6 +39,7 @@
           read_only: true                 # SEC-22: it writes to its mounted directories only
           tmpfs: ["/tmp:rw,size=64m", "/home/vault:rw,size=8m"]   # the CLI's home (history, token helper)
           command: server
+          restart: "{{ vault_hcl is changed }}"   # tasks/config.yml: the configuration is read at start only
           published:
             - "{{ vault_listen_ip }}:{{ vault_port }}:8200"
             - "127.0.0.1:{{ vault_port }}:8200"

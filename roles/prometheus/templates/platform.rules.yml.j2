@@ -131,6 +131,14 @@ groups:
           summary: "The data endpoint routes PostgreSQL to {{ '{{' }} $value {{ '}}' }} members (expected 1)"
           description: "The endpoint sends connections to the member whose Patroni answers /primary. Zero = no leader, or the endpoint cannot reach the members' REST API; every service that connects through the endpoint fails."
           runbook: "Compare `patronictl list` with the endpoint's view (`curl -s localhost:8405/metrics | grep haproxy_server_status` on the endpoint guest); then the firewall catalog entry of port 8008 and the members' certificates."
+      - alert: RedisSentinelsDoNotNameAPrimary
+        expr: max(haproxy_backend_active_servers{proxy=~"redis_named_.+"}) < 2
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "No Redis member is named primary by two Sentinels — the endpoint refuses Redis connections"
+          description: "The endpoint sends Redis traffic only to the member that at least two Sentinels name as the primary. It sees fewer than two agreeing Sentinels: connections are refused although a member may be healthy."
+          runbook: "On the endpoint guest and the Redis members: the redis-sentinel containers and their logs; playbooks/redis.yml re-applies the Sentinels' check login."
       - alert: RedisEndpointNoPrimary
         expr: haproxy_backend_active_servers{proxy="redis"} != 1
         for: 1m

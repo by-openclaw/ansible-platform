@@ -17,6 +17,7 @@
     owner: "{{ vault_uid }}"
     group: "{{ vault_uid }}"
     mode: "0640"
-  # No auto-restart notify: restarting Vault seals it. On first run the container
-  # reads this config at creation; for a later vault.hcl change, restart Vault
-  # manually (`docker restart vault`) then re-run the playbook to re-unseal.
+  register: vault_hcl
+  # vault.hcl is read at start only. A change restarts this member's container (it comes back
+  # sealed and tasks/init.yml unseals it); the play runs one member at a time, so the two
+  # others keep the quorum and one of them is active meanwhile.
