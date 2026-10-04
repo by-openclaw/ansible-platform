@@ -99,6 +99,14 @@
     state: started
   when: not (ansible_check_mode and docker_engine_install is changed)
 
+# The engine's restart (a changed daemon.json — always the case on a new guest) happens HERE,
+# inside this role, not at the end of the play: by then the service roles have started their
+# containers, and a restart behind a role's back undoes its work. Vault is the case that
+# hurts: its container restarts sealed after the role has unsealed it — on 2026-10-04 a
+# freshly joined second voter sealed that way and the cluster lost its quorum for 4.5 min.
+- name: "Docker | Apply a changed engine configuration now"
+  ansible.builtin.meta: flush_handlers
+
 - name: "Docker | Host firewall: container networks may reach the host (when ufw is active)"
   ansible.builtin.include_role:
     name: host_firewall
