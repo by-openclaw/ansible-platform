@@ -22,3 +22,11 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: redis`). Rol
 ## Backup (infra/0008)
 
 Class E/B (`docs/backup.md`): caches rebuild; the append-only file and RDB snapshots under the `redis-data` volume are in the PBS guest image (daily). Restore = play + the volume from PBS (or an empty instance: consumers repopulate their caches; NetBox re-queues).
+
+## Planned change of the primary (drills of 2026-10-04)
+
+`playbooks/ha-drill.yml --tags redis`. One atomic step: writes are paused on the primary (`CLIENT PAUSE … WRITE`), `WAIT 1` confirms the replica has every write, the Sentinels fail over, the former primary is made a replica at once, the pause is released.
+
+Why the pause: the endpoint follows a new primary only after six good checks (about 18 s — the margin that keeps a restarted old primary out of rotation until the Sentinels have demoted it). Without the pause the old primary stays writable during that time and those writes are discarded when it becomes a replica (first drill: promoted 12:35:39.9, endpoint on the new primary 12:35:58.0). A pause alone is not enough either: it also stops the Sentinels' hello on that member, so they fail over by themselves after `down-after` (5 s) and can only demote the paused member when the pause ends (second drill).
+
+What clients see on a planned change: writes wait, then errors until the endpoint is on the new primary; nothing is lost. Third drill, with the atomic step: writes paused 15:21:54.9, replica promoted 15:21:56.1, former primary a replica 15:21:56.7, endpoint on the new primary 15:22:11.4 — 16.5 s. An unplanned failure (the primary is gone) has no such window: measured 21 s in the rehearsal.

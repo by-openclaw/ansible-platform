@@ -33,3 +33,4 @@ Three raft voters (quorum 2): `lxc-vault-01` (where the cluster was initialised)
 4. **Ports:** 8200 (API: the edge, the unsealer, the members, the per-member probe), 8201 (raft and request forwarding, members only) — `group_vars/all/docker_firewall.yml`.
 5. **Signals:** `ProbeFailed` on `vault.<domain>` (no active node behind the edge) and on each member's own `/v1/sys/health?standbyok=true` (a member down or sealed).
 6. **Rolling change:** `playbooks/vault.yml` runs one member at a time (`serial: 1`), node 1 first. A raft snapshot (`vault-snapshot.timer`, node 1) restores the whole cluster.
+7. **Proof (2026-10-04):** the active member (`lxc-vault-01`) was restarted — its container came back sealed. Probed once a second through the edge, Vault did not answer for 6 s (15:02:52–15:02:57 UTC), then `lxc-vault-02` served as the active node; the play unsealed the restarted member, which follows the cluster again. `playbooks/ha-drill.yml --tags vault` repeats it.
