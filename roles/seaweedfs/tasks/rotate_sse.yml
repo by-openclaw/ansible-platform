@@ -1,0 +1,94 @@
+---
+# ==============================================================================
+# Rotation of the SSE-S3 key-encryption key (SEC-09).
+#   ansible-playbook playbooks/seaweedfs.yml -e seaweedfs_sse_rotate=true
+#
+# SeaweedFS has ONE such key and no rotation of its own: an object written with the SSE header
+# carries a data key wrapped by the key in use at that moment, and is readable only with
+# that key (a GET answers 500 with any other; the offsite replication would retry it for
+# ever). So this refuses to replace the key while such an object exists or could appear
+# unasked: a bucket that encrypts by default, or objects under a prefix that is written with
+# the header (seaweedfs_sse_written_prefixes, looked for in every bucket). Those are copied under the new key first —
+# docs/services/seaweedfs.md. The former key stays in Vault's version history.
+# The key is replaced in Vault here; the role then renders it and restarts, once, the two
+# processes that hold it (the S3 gateway and the offsite replication), and tasks/rotate_sse_verify.yml
+# proves the new key is in use.
+# ==============================================================================
+- name: "Rotate SSE key | Admin identity (Vault, read)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ seaweedfs_vault_path }}"
+
+- name: "Rotate SSE key | Bind it"
+  ansible.builtin.set_fact:
+    seaweedfs_creds: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "Rotate SSE key | Buckets and their default encryption"
+  amazon.aws.s3_bucket_info:
+    endpoint_url: "{{ seaweedfs_s3_local_url }}"
+    access_key: "{{ seaweedfs_creds.admin_access_key }}"
+    secret_key: "{{ seaweedfs_creds.admin_secret_key }}"
+    region: "{{ seaweedfs_s3_region }}"
+    bucket_facts:
+      bucket_encryption: true
+  register: seaweedfs_sse_buckets
+  no_log: true
+
+- name: "Rotate SSE key | No bucket encrypts by default"
+  ansible.builtin.assert:
+    that: seaweedfs_sse_default_encrypted | length == 0
+    fail_msg: >-
+      these buckets encrypt every object by default: {{ seaweedfs_sse_default_encrypted }} — their objects are
+      bound to the current key. Copy them under the new key first (docs/services/seaweedfs.md).
+    quiet: true
+  vars:
+    seaweedfs_sse_default_encrypted: >-
+      {{ seaweedfs_sse_buckets.buckets | selectattr('bucket_encryption', 'defined') | selectattr('bucket_encryption')
+         | map(attribute='name') | list }}
+
+- name: "Rotate SSE key | Objects under the prefixes that are written with the SSE header, in every bucket"
+  amazon.aws.s3_object:
+    endpoint_url: "{{ seaweedfs_s3_local_url }}"
+    access_key: "{{ seaweedfs_creds.admin_access_key }}"
+    secret_key: "{{ seaweedfs_creds.admin_secret_key }}"
+    region: "{{ seaweedfs_s3_region }}"
+    bucket: "{{ item.0 }}"
+    prefix: "{{ item.1 }}"
+    mode: list
+  loop: "{{ seaweedfs_sse_buckets.buckets | map(attribute='name') | product(seaweedfs_sse_written_prefixes) | list }}"
+  loop_control:
+    label: "{{ item.0 }}/{{ item.1 }}"
+  register: seaweedfs_sse_written
+  changed_when: false
+  no_log: true
+
+- name: "Rotate SSE key | None exists"
+  ansible.builtin.assert:
+    that: seaweedfs_sse_written_count | int == 0
+    fail_msg: >-
+      {{ seaweedfs_sse_written_count }} object(s) under a prefix written with the SSE header: they are bound to the
+      current key. Copy them under the new key first (docs/services/seaweedfs.md).
+    quiet: true
+  vars:
+    seaweedfs_sse_written_count: "{{ seaweedfs_sse_written.results | map(attribute='s3_keys', default=[]) | map('length') | sum }}"
+
+# The proof that follows the rotation is run once NOW, with the current key: if its tooling did
+# not work, that is found before anything is replaced (it leaves no object behind).
+- name: "Rotate SSE key | The proof works before anything changes"
+  ansible.builtin.include_tasks: sse_proof.yml
+
+# 32 random bytes, written as 64 hex digits (what `[s3.sse] kek` takes). Never printed.
+- name: "Rotate SSE key | The new key"
+  ansible.builtin.set_fact:
+    seaweedfs_sse_new_kek: "{{ lookup('community.general.random_string', length=seaweedfs_sse_kek_hex_length, override_all=seaweedfs_sse_kek_alphabet) }}"
+  no_log: true
+
+- name: "Rotate SSE key | Store it in Vault (the key field of the stored document is replaced; the former one stays in the version history)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ seaweedfs_vault_path }}"
+    vault_secret_force_fields:
+      sse_kek: "{{ seaweedfs_sse_new_kek }}"
