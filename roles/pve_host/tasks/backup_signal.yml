@@ -36,14 +36,11 @@
 
 # One `pvesh get …/content` per target storage: the storages of the live jobs, plus the
 # NAS job's (declared here, so present even before its first converge).
-- name: "PVE host | Backup content reads of the signal"
+- name: "PVE host | Target storages of the signal"
   ansible.builtin.set_fact:
-    pve_host_backup_signal_reads: >-
+    pve_host_backup_signal_storages: >-
       {{ ((pve_host_backup_signal_jobs.stdout | from_json | map(attribute='storage') | list)
-          + [pve_host_nfs_backup_job.storage]) | unique | sort
-         | map('regex_replace', '^(.*)$',
-               'pvesh get /nodes/' ~ pve_host_node ~ '/storage/\\1/content --content backup --output-format json;')
-         | join(' ') }}
+          + [pve_host_nfs_backup_job.storage]) | unique | sort }}
 
 - name: "PVE host | Backup signal timer (roles/host_job)"
   ansible.builtin.include_role:
@@ -55,11 +52,17 @@
     host_job_on_boot_sec: "120"
     host_job_on_unit_active_sec: "{{ pve_host_backup_signal_interval }}"
     host_job_timeout: "10min"
+    # The filter is told how many answers to expect (guests, jobs, one per storage): a read
+    # that fails leaves the pipeline short, the filter refuses it, the unit fails and the
+    # previous file stays — BackupSignalStale then says so, instead of a partial signal.
     host_job_exec:
       - >-
         /bin/sh -c '{ pvesh get /cluster/resources --type vm --output-format json;
-        pvesh get /cluster/backup --output-format json; {{ pve_host_backup_signal_reads }} }
-        | jq -rs -f {{ pve_host_backup_signal_filter }} > {{ pve_host_backup_signal_file }}.tmp'
+        pvesh get /cluster/backup --output-format json;
+        {% for s in pve_host_backup_signal_storages %}pvesh get /nodes/{{ pve_host_node }}/storage/{{ s }}/content --content backup --output-format json;
+        {% endfor %}}
+        | jq -rs --argjson answers {{ 2 + pve_host_backup_signal_storages | length }}
+        -f {{ pve_host_backup_signal_filter }} > {{ pve_host_backup_signal_file }}.tmp'
       - "/bin/mv {{ pve_host_backup_signal_file }}.tmp {{ pve_host_backup_signal_file }}"
 
 - name: "PVE host | Write the signal now"
@@ -69,10 +72,23 @@
   changed_when: false
   when: not ansible_check_mode
 
+# The timer may have started the first run by itself: wait for the file of a complete run
+# (a series per covered guest and a backup time per guest that has one).
 - name: "PVE host | The signal as written"
   ansible.builtin.command:
-    argv: [grep, -c, "^platform_backup_expected", "{{ pve_host_backup_signal_file }}"]
+    argv: [grep, -c, -e, "^platform_backup_expected", -e, "^platform_backup_last_timestamp_seconds", "{{ pve_host_backup_signal_file }}"]
   register: pve_host_backup_signal_count
   changed_when: false
-  failed_when: pve_host_backup_signal_count.stdout | int < 1
+  failed_when: false
+  retries: 12
+  delay: 5
+  until: pve_host_backup_signal_count.stdout | default('0') | int > pve_host_backup_signal_storages | length
+  when: not ansible_check_mode
+
+- name: "PVE host | The signal carries the guests and their backups"
+  ansible.builtin.command:
+    argv: [grep, -c, "^platform_backup_last_timestamp_seconds", "{{ pve_host_backup_signal_file }}"]
+  register: pve_host_backup_signal_times
+  changed_when: false
+  failed_when: pve_host_backup_signal_times.stdout | default('0') | int < 1
   when: not ansible_check_mode
