@@ -112,6 +112,11 @@ prometheus_postgres_exporter_hosts: "{{ platform_pg_members | default(groups['po
 prometheus_backup_max_age_hours: 30
 # The container that replicates the object store to the offsite bucket (the third copy).
 prometheus_offsite_replica_container: "{{ seaweedfs_backup_container }}"
+# Containers that a timer starts on purpose, several times within the window ContainerRestarting
+# looks at: each run is a start, not a crash. Their failure shows as a failed unit instead.
+# (The unsealer's watchdog runs every minute since 2026-10-04 and fired the alert on every run.)
+prometheus_timer_job_containers:
+  - "warden-coldstart"
 # The RADIUS outposts (administrator logins on network devices): one per identity provider instance.
 prometheus_radius_container: "authentik-radius"
 prometheus_radius_instances: "{{ (groups['authentik_cluster'] | default(groups['authentik'] | default([]))) | length }}"
