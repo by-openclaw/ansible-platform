@@ -1,0 +1,25 @@
+---
+# ==============================================================================
+# Role: etcd — dispatcher. The play must run on ALL members at once (no serial): a member is
+# only healthy when a quorum is up, so the containers start everywhere before the cluster
+# checks run.
+# ==============================================================================
+- name: "etcd | Remove the member and its data (etcd_state=absent)"
+  ansible.builtin.import_tasks: absent.yml
+  when: etcd_state == 'absent'
+  tags: [etcd]
+
+- name: "etcd | Certificate, secret, directories"
+  ansible.builtin.import_tasks: prepare.yml
+  when: etcd_state == 'present'
+  tags: [etcd]
+
+- name: "etcd | Run the member"
+  ansible.builtin.import_tasks: container.yml
+  when: etcd_state == 'present'
+  tags: [etcd, container]
+
+- name: "etcd | Cluster health and authentication"
+  ansible.builtin.import_tasks: cluster.yml
+  when: etcd_state == 'present'
+  tags: [etcd, cluster]

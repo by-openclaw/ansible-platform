@@ -1,0 +1,41 @@
+# Managed by Ansible (roles/dbproxy). Do not edit by hand.
+global
+    log stdout format raw local0 info
+    maxconn {{ dbproxy_maxconn }}
+
+defaults
+    log     global
+    mode    tcp
+    option  tcplog
+    option  clitcpka
+    option  srvtcpka
+    retries 2
+    timeout connect {{ dbproxy_connect_timeout }}
+    timeout client  {{ dbproxy_idle_timeout }}
+    timeout server  {{ dbproxy_idle_timeout }}
+    timeout check   5s
+
+# Member names are resolved through the guest's resolver, at start and while running.
+resolvers platform
+    parse-resolv-conf
+    hold valid 30s
+
+# PostgreSQL: the ONE member whose Patroni answers 200 on /primary. The check speaks HTTPS to
+# the member's REST API and verifies its certificate; the data path is plain TCP (the client's
+# TLS session ends on PostgreSQL).
+listen postgres
+    bind :::{{ dbproxy_pg_port }} v4v6
+    option httpchk
+    http-check send meth GET uri /primary
+    http-check expect status 200
+    default-server inter {{ dbproxy_check_interval }} fall {{ dbproxy_check_fall }} rise {{ dbproxy_check_rise }} on-marked-down shutdown-sessions check port {{ dbproxy_patroni_port }} check-ssl verify required ca-file {{ dbproxy_ca_bundle }} resolvers platform init-addr last,libc,none
+{% for h in dbproxy_pg_members %}
+    server {{ h }} {{ h }}.{{ platform_domain }}:{{ dbproxy_pg_port }} check-sni {{ h }}.{{ platform_domain }} verifyhost {{ h }}.{{ platform_domain }}
+{% endfor %}
+
+frontend metrics
+    bind :::{{ dbproxy_metrics_port }} v4v6
+    mode http
+    no log
+    http-request use-service prometheus-exporter if { path /metrics }
+    http-request deny

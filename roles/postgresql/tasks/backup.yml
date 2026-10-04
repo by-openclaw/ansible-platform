@@ -10,6 +10,8 @@
 # Daily logical dump of the whole cluster (roles/host_job: systemd service + timer,
 # no script). One line, bash for pipefail so a failed pg_dumpall is not masked by
 # gzip; `%%` and `$$` are systemd's escapes for a literal % and $.
+# The job is installed on every member and dumps only where the LEADER runs (a replica exits
+# clean): one dump per night, wherever the leadership is.
 - name: "backup | Daily pg_dumpall (roles/host_job)"
   ansible.builtin.include_role:
     name: host_job
@@ -19,7 +21,9 @@
     host_job_on_calendar: "*-*-* 02:00:00"
     host_job_exec:
       - >-
-        /bin/bash -c 'set -o pipefail; docker exec {{ pg_container_name }} pg_dumpall -U postgres
+        /bin/bash -c 'set -o pipefail;
+        [ "$$(docker exec {{ pg_container_name }} psql -U postgres -Atc "select pg_is_in_recovery()")" = f ] || exit 0;
+        docker exec {{ pg_container_name }} pg_dumpall -U postgres
         | gzip > {{ pg_backup_dir }}/all-$$(date +%%F).sql.gz'
     host_job_retention:
       - { path: "{{ pg_backup_dir }}", age: "{{ pg_backup_keep_days }}d" }

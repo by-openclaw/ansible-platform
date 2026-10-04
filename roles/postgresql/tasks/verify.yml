@@ -1,0 +1,31 @@
+---
+# The cluster's final state, asked once after every member was converged: all members present,
+# one leader, every replica streaming on the leader's timeline.
+- name: "verify | Members"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ pg_container_name }}", patronictl, -c, "{{ pg_patroni_conf }}", list, -f, json]
+  register: pg_verify_list
+  changed_when: false
+  check_mode: false   # read-only probe
+  retries: 12
+  delay: 10
+  until: >-
+    pg_verify_list.rc == 0 and
+    (pg_verify_list.stdout | from_json | selectattr('State', 'in', ['running', 'streaming']) | list | length)
+    == (pg_cluster_members | length)
+
+- name: "verify | One leader, every other member streaming"
+  ansible.builtin.assert:
+    that:
+      - _m | length == pg_cluster_members | length
+      - _m | selectattr('Role', 'equalto', 'Leader') | list | length == 1
+      - _m | rejectattr('Role', 'equalto', 'Leader') | selectattr('State', 'equalto', 'streaming') | list | length
+        == (pg_cluster_members | length) - 1
+      - _m | map(attribute='TL') | unique | list | length == 1
+    fail_msg: "cluster not converged: {{ _m }}"
+    success_msg: >-
+      {{ pg_cluster_scope }}:
+      {{ _m | map(attribute='Member') | zip(_m | map(attribute='Role'), _m | map(attribute='State'))
+         | map('join', ' / ') | join(' | ') }} — timeline {{ _m | map(attribute='TL') | first }}
+  vars:
+    _m: "{{ pg_verify_list.stdout | from_json }}"

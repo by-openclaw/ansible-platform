@@ -1,0 +1,168 @@
+---
+# Cluster-level steps, once (the first member speaks for the cluster). etcdctl runs inside the
+# member's container; the password travels in the task environment (`docker exec -e NAME`
+# forwards it), never on a command line.
+# Is authentication on? Until it is enabled an anonymous `auth status` is answered; afterwards
+# the member refuses it by name ("user name is empty") — that refusal IS the answer. Retried:
+# at a first start the members need a moment to form a quorum.
+- name: "cluster | Is authentication enabled? (anonymous probe)"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ etcd_container_name }}"
+      - etcdctl
+      - "--endpoints=https://{{ etcd_fqdn }}:{{ etcd_client_port }}"
+      - "--cacert={{ etcd_ca_bundle }}"
+      - auth
+      - status
+  register: etcd_auth_probe
+  retries: 20
+  delay: 3
+  until: >-
+    etcd_auth_probe.rc == 0 or
+    'user name is empty' in ((etcd_auth_probe.stderr | default('')) ~ (etcd_auth_probe.stdout | default('')))
+  changed_when: false
+  failed_when: false
+  check_mode: false   # read-only probe
+  run_once: true
+
+- name: "cluster | Authentication state"
+  ansible.builtin.set_fact:
+    etcd_auth_enabled: >-
+      {{ etcd_auth_probe.rc != 0 or (etcd_auth_probe.stdout | default('')) is search('Authentication Status: true') }}
+  run_once: true
+
+# With authentication on, the health check has to log in too (an anonymous one is refused).
+- name: "cluster | Every member is healthy"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -e
+      - ETCDCTL_USER
+      - -e
+      - ETCDCTL_PASSWORD
+      - "{{ etcd_container_name }}"
+      - etcdctl
+      - "--endpoints={{ etcd_endpoints }}"
+      - "--cacert={{ etcd_ca_bundle }}"
+      - endpoint
+      - health
+  environment:
+    ETCDCTL_USER: "{{ 'root' if etcd_auth_enabled | bool else '' }}"
+    ETCDCTL_PASSWORD: "{{ etcd_root_password if etcd_auth_enabled | bool else '' }}"
+  register: etcd_health
+  retries: 20
+  delay: 3
+  until: etcd_health.rc == 0
+  changed_when: false
+  check_mode: false   # read-only probe
+  run_once: true
+  no_log: true
+
+- name: "cluster | Enable authentication (root user from Vault)"
+  when: not (etcd_auth_enabled | bool)
+  run_once: true
+  block:
+    - name: "cluster | The root role"
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ etcd_container_name }}"
+          - etcdctl
+          - "--endpoints=https://{{ etcd_fqdn }}:{{ etcd_client_port }}"
+          - "--cacert={{ etcd_ca_bundle }}"
+          - role
+          - add
+          - root
+      register: etcd_role_add
+      changed_when: etcd_role_add.rc == 0
+      failed_when: etcd_role_add.rc != 0 and 'already exists' not in (etcd_role_add.stderr | default(''))
+
+    - name: "cluster | The root user (password on stdin)"
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - -i
+          - "{{ etcd_container_name }}"
+          - etcdctl
+          - "--endpoints=https://{{ etcd_fqdn }}:{{ etcd_client_port }}"
+          - "--cacert={{ etcd_ca_bundle }}"
+          - user
+          - add
+          - root
+          - --interactive=false
+        stdin: "{{ etcd_root_password }}"
+      register: etcd_user_add
+      changed_when: etcd_user_add.rc == 0
+      failed_when: etcd_user_add.rc != 0 and 'already exists' not in (etcd_user_add.stderr | default(''))
+      no_log: true
+
+    - name: "cluster | root holds the root role"
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ etcd_container_name }}"
+          - etcdctl
+          - "--endpoints=https://{{ etcd_fqdn }}:{{ etcd_client_port }}"
+          - "--cacert={{ etcd_ca_bundle }}"
+          - user
+          - grant-role
+          - root
+          - root
+      changed_when: true
+
+    - name: "cluster | auth enable"
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ etcd_container_name }}"
+          - etcdctl
+          - "--endpoints=https://{{ etcd_fqdn }}:{{ etcd_client_port }}"
+          - "--cacert={{ etcd_ca_bundle }}"
+          - auth
+          - enable
+      changed_when: true
+
+# The proof Patroni will rely on: the Vault password authenticates, on every member.
+- name: "cluster | The root password from Vault authenticates on every member"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -e
+      - ETCDCTL_USER
+      - -e
+      - ETCDCTL_PASSWORD
+      - "{{ etcd_container_name }}"
+      - etcdctl
+      - "--endpoints={{ etcd_endpoints }}"
+      - "--cacert={{ etcd_ca_bundle }}"
+      - endpoint
+      - status
+      - --write-out=json
+  environment:
+    ETCDCTL_USER: root
+    ETCDCTL_PASSWORD: "{{ etcd_root_password }}"
+  register: etcd_status
+  changed_when: false
+  check_mode: false   # read-only probe
+  run_once: true
+  no_log: true
+  failed_when: >-
+    etcd_status.rc != 0 or
+    (etcd_status.stdout | from_json | length) != (etcd_members | length)
+
+- name: "cluster | Members and leader"
+  ansible.builtin.debug:
+    msg: >-
+      etcd: {{ etcd_status.stdout | from_json | length }} members answer,
+      leader id {{ (etcd_status.stdout | from_json | map(attribute='Status.leader') | unique | list) | join(',') }},
+      versions {{ etcd_status.stdout | from_json | map(attribute='Status.version') | unique | join(',') }},
+      authentication on
+  run_once: true

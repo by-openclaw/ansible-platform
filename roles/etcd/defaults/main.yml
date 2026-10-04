@@ -1,0 +1,46 @@
+---
+# ==============================================================================
+# Role: etcd — one member of the consensus store the PostgreSQL cluster elects its leader in
+# (Patroni's DCS). services/0004: colocated on the PostgreSQL guests, no extra guest.
+#
+# Security model (the platform baseline for an internal data service: TLS + a password, ports
+# gated by the DOCKER-USER catalog):
+#   - client and peer traffic is TLS with the shared wildcard certificate;
+#   - clients authenticate with the etcd `root` user (Vault), auth is enabled on the cluster;
+#   - peers are NOT authenticated by certificate: the wildcard is a server certificate (the
+#     public CA no longer issues the client-auth usage), so the peer port is restricted to the
+#     members by the firewall catalog instead.
+# ==============================================================================
+etcd_state: present                            # absent = remove the member AND its data
+etcd_image: "quay.io/coreos/etcd:v3.6.15"      # exact pin, never a stream tag
+etcd_container_name: "etcd"
+
+# The members, as inventory hosts. Quorum = floor(n/2)+1: three members survive the loss of one.
+etcd_members: "{{ groups['patroni'] }}"
+etcd_cluster_token: "{{ platform_pg_cluster_scope }}"
+etcd_client_port: 2379
+etcd_peer_port: 2380
+etcd_listen_ip: "{{ hostvars[inventory_hostname].ansible_host }}"
+etcd_listen_ip6: "{{ hostvars[inventory_hostname].platform_host_v6 }}"
+
+# The image carries no user: the member runs as this uid on a host directory it owns, so the
+# container needs neither root nor a writable root filesystem.
+etcd_uid: 10001
+etcd_data_host_dir: "/var/lib/etcd"
+etcd_cert_host_dir: "/etc/etcd/certs"
+etcd_tls_cert: "{{ etcd_cert_host_dir }}/wildcard.crt"
+etcd_tls_key: "{{ etcd_cert_host_dir }}/wildcard.key"
+etcd_ca_bundle: "/etc/ssl/certs/ca-certificates.crt"   # host CA store, mounted read-only
+
+# Housekeeping: keep one hour of key history, then compact (Patroni writes its leader key every
+# loop; without compaction the store only grows).
+etcd_auto_compaction_retention: "1h"
+
+etcd_vault_path: "{{ platform_etcd_vault_path }}"   # Vault KV: the `root` user's password
+
+# Derived — the URLs the members and the clients use (FQDN: matches the certificate).
+etcd_fqdn: "{{ inventory_hostname }}.{{ platform_domain }}"
+etcd_initial_cluster: >-
+  {{ etcd_members | map('regex_replace', '^(.*)$', '\1=https://\1.' ~ platform_domain ~ ':' ~ etcd_peer_port) | join(',') }}
+etcd_endpoints: >-
+  {{ etcd_members | map('regex_replace', '^(.*)$', 'https://\1.' ~ platform_domain ~ ':' ~ etcd_client_port) | join(',') }}

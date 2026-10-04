@@ -1,0 +1,12 @@
+---
+# Teardown of a member (a rehearsal cluster, a member being replaced). The data directory goes
+# with it: a member that rejoins must start empty.
+- name: "absent | The member's container"
+  community.docker.docker_container:
+    name: "{{ etcd_container_name }}"
+    state: absent
+
+- name: "absent | The member's data"
+  ansible.builtin.file:
+    path: "{{ etcd_data_host_dir }}"
+    state: absent

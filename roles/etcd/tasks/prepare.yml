@@ -1,0 +1,36 @@
+---
+- name: "prepare | Distribute the wildcard cert (owned by the member's uid)"
+  ansible.builtin.include_role:
+    name: tls_cert
+  vars:
+    tls_cert_dir: "{{ etcd_cert_host_dir }}"
+    tls_cert_crt: "{{ etcd_tls_cert }}"
+    tls_cert_key: "{{ etcd_tls_key }}"
+    tls_cert_owner: "{{ etcd_uid }}"
+    tls_cert_group: "{{ etcd_uid }}"
+    tls_cert_key_mode: "0600"
+    tls_cert_crt_mode: "0644"
+
+# The `root` user's password, from Vault (get-or-create). An existing path is READ: re-minting
+# it would lock Patroni out of the store on every member.
+- name: "prepare | etcd root password (get-or-create in Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ etcd_vault_path }}"
+    vault_secret_init:
+      username: root
+      password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+
+- name: "prepare | Bind it"
+  ansible.builtin.set_fact:
+    etcd_root_password: "{{ vault_secret_result.password }}"
+  no_log: true
+
+- name: "prepare | Data directory (owned by the member's uid, nobody else reads it)"
+  ansible.builtin.file:
+    path: "{{ etcd_data_host_dir }}"
+    state: directory
+    owner: "{{ etcd_uid }}"
+    group: "{{ etcd_uid }}"
+    mode: "0700"

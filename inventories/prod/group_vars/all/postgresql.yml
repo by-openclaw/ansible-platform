@@ -10,3 +10,14 @@
 # on every run. key = service, value = the login name.
 platform_pg_dba_logins:
   pgadmin: pgadmin_dba
+
+# --- The cluster (services/0004) -----------------------------------------------------------
+# Three members (group `patroni`) elect a leader through etcd; ONE endpoint guest follows the
+# leader (TCP routing, no pooling). A consumer connects to the endpoint name — the shared
+# wildcard certificate is valid for it, so sslmode=verify-full is unchanged.
+platform_pg_cluster_scope: "platform-pg"
+platform_pg_members: "{{ groups['patroni'] }}"
+platform_pg_endpoint_host: "{{ groups['pg_endpoint'] | first }}"
+platform_pg_endpoint_fqdn: "{{ platform_pg_endpoint_host }}.{{ platform_domain }}"
+# The consensus store's client credential (etcd `root`), shared by roles/etcd and Patroni.
+platform_etcd_vault_path: "{{ platform_env }}/etcd/root"

@@ -117,7 +117,13 @@ platform_docker_firewall:
   portainer:
     - {port: 9000, from: [traefik], comment: "Portainer"}
   postgresql:
-    - {port: 5432, from: ["db:shared-pg"], comment: "PostgreSQL"}
+    - {port: 5432, from: ["db:shared-pg", postgresql, dbproxy], comment: "PostgreSQL (consumers, replication between the members, the endpoint)"}
+    - {port: 8008, from: [postgresql, dbproxy], comment: "Patroni REST API (member checks, the endpoint's leader check)"}
+    - {port: 2379, from: [postgresql], comment: "etcd clients (Patroni on every member)"}
+    - {port: 2380, from: [postgresql], comment: "etcd peers"}
+  dbproxy:
+    - {port: 5432, from: ["db:shared-pg"], comment: "PostgreSQL endpoint (routes to the leader)"}
+    - {port: 8405, from: [monitoring], comment: "HAProxy metrics (Prometheus)"}
   redis:
     - {port: 6379, from: [authentik, gitlab, netbox, nextcloud], comment: "Redis"}
   # Every host fetches the CA roots straight from step-ca (roles/platform_ca).

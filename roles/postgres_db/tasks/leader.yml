@@ -1,0 +1,28 @@
+---
+# Which member leads the cluster? Every member is asked (three short reads); the first answer
+# wins. The result is a fact on the play host (platform_pg_leader), so a play that provisions
+# several databases asks once. No member answers = no cluster yet (a standalone server, a first
+# build): the first member is the place.
+- name: "Postgresdb | Ask Patroni for the cluster members"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ postgres_db_container }}", patronictl, -c, "{{ postgres_db_patroni_conf }}", list, -f, json]
+  delegate_to: "{{ postgres_db_member }}"
+  register: postgres_db_patroni
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+  throttle: 1   # several play hosts ask the SAME members: one at a time (parallel first connections to one host race)
+  check_mode: false   # read-only probe
+  loop: "{{ postgres_db_members }}"
+  loop_control:
+    loop_var: postgres_db_member
+
+- name: "Postgresdb | The leader"
+  ansible.builtin.set_fact:
+    platform_pg_leader: >-
+      {{ ((_answers | first | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | first)
+          if _answers | length > 0 else (postgres_db_members | first)) }}
+  vars:
+    _answers: >-
+      {{ postgres_db_patroni.results | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0)
+         | map(attribute='stdout') | list }}

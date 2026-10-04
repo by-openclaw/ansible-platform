@@ -1,0 +1,24 @@
+{# Managed by Ansible (roles/postgresql). The cluster's DYNAMIC configuration: stored in etcd,
+   identical on every member. Rendered twice — as bootstrap.dcs in patroni.yml (what a member
+   uses before the store holds a configuration) and as dcs.yml (what `patronictl edit-config
+   --replace` converges the store to). #}
+ttl: {{ pg_patroni_ttl }}
+loop_wait: {{ pg_patroni_loop_wait }}
+retry_timeout: {{ pg_patroni_retry_timeout }}
+maximum_lag_on_failover: {{ pg_patroni_maximum_lag_on_failover }}
+synchronous_mode: {{ pg_synchronous_mode | bool | lower }}
+postgresql:
+  use_pg_rewind: true
+  use_slots: true
+  parameters:
+    max_connections: {{ pg_max_connections }}
+    max_locks_per_transaction: {{ pg_max_locks_per_transaction }}
+    wal_level: replica
+    hot_standby: "on"
+    max_wal_senders: 10
+    max_replication_slots: 10
+    wal_keep_size: 512MB
+    password_encryption: scram-sha-256
+    log_connections: "{{ 'on' if pg_log_connections | bool else 'off' }}"
+    log_disconnections: "{{ 'on' if pg_log_disconnections | bool else 'off' }}"
+    log_statement: "{{ pg_log_statement }}"

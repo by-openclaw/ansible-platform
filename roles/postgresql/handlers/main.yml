@@ -6,3 +6,12 @@
     cmd: docker exec {{ pg_container_name }} psql -tAU postgres -c "SELECT pg_reload_conf()"
   changed_when: true
   listen: "tls_cert changed"
+
+# Patroni re-reads patroni.yml on SIGHUP and applies what changed; PostgreSQL keeps running.
+# A container that does not run yet (first run) reads the file when it starts.
+- name: Reload patroni
+  ansible.builtin.command:
+    cmd: docker kill --signal HUP {{ pg_container_name }}
+  register: pg_patroni_reload
+  changed_when: pg_patroni_reload.rc == 0
+  failed_when: false

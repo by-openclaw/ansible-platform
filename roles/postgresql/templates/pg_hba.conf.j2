@@ -8,6 +8,12 @@ host     all       all   ::1/128         scram-sha-256
 {% for cidr in pg_app_cidrs %}
 {{ pg_app_hba_type }}  all       all   {{ cidr }}      scram-sha-256
 {% endfor %}
+# Streaming replication between the members (TLS, scram): each member's address, plus the SVC
+# IPv6 zone because a host sources IPv6 from its SLAAC address, not the static one.
+{% for h in pg_cluster_members %}
+hostssl  replication  {{ pg_replication_user }}  {{ hostvars[h].ansible_host }}/32  scram-sha-256
+{% endfor %}
+hostssl  replication  {{ pg_replication_user }}  {{ platform_zones.svc.cidr6 }}  scram-sha-256
 {% if pg_exporter_hba_user %}
 # Metrics only: PostgreSQL runs in a container, so a client on this host arrives as the docker
 # bridge gateway whatever address it dials. ONE user, ONE database, ONE address — the alternative

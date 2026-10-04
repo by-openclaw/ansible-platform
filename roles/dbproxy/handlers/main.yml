@@ -1,0 +1,9 @@
+---
+# HAProxy re-reads its configuration on SIGHUP (master-worker): the new worker takes the
+# listeners, the old one finishes the sessions it holds.
+- name: Reload dbproxy
+  ansible.builtin.command:
+    cmd: docker kill --signal HUP {{ dbproxy_container_name }}
+  register: dbproxy_reload
+  changed_when: dbproxy_reload.rc == 0
+  failed_when: false

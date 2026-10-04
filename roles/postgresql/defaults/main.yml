@@ -1,19 +1,21 @@
 ---
 # ==============================================================================
-# Role: postgresql — PostgreSQL 17 as a Docker container (lxc-pgsql-01, SVC)
+# Role: postgresql — one member of the PostgreSQL 17 cluster, as a Docker container (SVC).
 # All-Docker pivot (upgrade-by-tag, k8s-future). Internal-only TCP service.
-# Single-node now; HA-adoptable (wal_level=replica) so a future Patroni promotion
-# needs no rebuild. Data persists in a named volume across container re-creation.
+# Three members under Patroni (services/0004): the leader is elected through etcd, the others
+# stream from it; the first member ADOPTED the former standalone data directory unchanged.
+# Data persists in a named volume across container re-creation.
 # ==============================================================================
 # Exact pin, never a stream tag: ":17" would silently roll forward to whatever
 # 17.x is newest on any re-pull, changing the database version with no commit.
+pg_state: present                 # absent = remove THIS member and its data (tasks/absent.yml; confirmed by name)
 pg_image: "postgres:17.11"       # upgrade = bump this tag deliberately
 pg_container_name: "postgres"
 
 # Publish only on loopback + the SVC IP (apps connect over SVC). Dual-stack:
 # also publish on the host's SVC IPv6 so v6-capable clients reach the DB (pg_hba
 # already permits fd01:3::/64). Requires docker_ipv6 on this host (ip6tables).
-pg_listen_ip: "{{ hostvars[groups['postgresql'] | first].ansible_host }}"
+pg_listen_ip: "{{ hostvars[inventory_hostname].ansible_host }}"   # each member publishes on its OWN address
 pg_listen_ip6: "{{ hostvars[inventory_hostname].platform_host_v6 }}"
 pg_port: 5432
 pg_data_volume: "pgdata"
@@ -80,6 +82,51 @@ pg_exporter_hba_source: "{{ platform_docker_bridge_gw4 }}/32"
 
 # Controller-side secret store.
 pg_superuser_vault_path: "{{ platform_env }}/postgres/superuser"   # Vault KV — no controller file
+
+# --- Cluster (Patroni) -----------------------------------------------------------------------
+# The platform image = the pinned server image + Patroni from the image's OWN package
+# repository (PGDG): same base, same glibc collations, same binaries — the data directory of
+# the former standalone server is adopted as it is. Built on each member (the Verdaccio pattern).
+pg_patroni_version: "4.1.5-2.pgdg13+1"    # exact apt pin; bump deliberately, then pg_platform_rev
+pg_platform_rev: 1
+pg_platform_image: "platform/postgres-patroni"
+pg_platform_tag: "{{ pg_image.split(':')[1] }}-p{{ pg_platform_rev }}"
+pg_build_dir: "/opt/postgres-build"
+
+pg_cluster_scope: "{{ platform_pg_cluster_scope }}"
+pg_cluster_members: "{{ platform_pg_members }}"       # inventory hosts
+pg_fqdn: "{{ inventory_hostname }}.{{ platform_domain }}"
+pg_patroni_port: 8008                                  # REST API: health for the endpoint, member-to-member checks
+pg_patroni_conf_host_dir: "/etc/postgres/patroni"
+pg_patroni_conf: "{{ pg_patroni_conf_host_dir }}/patroni.yml"
+pg_patroni_dcs_file: "{{ pg_patroni_conf_host_dir }}/dcs.yml"
+pg_ca_bundle: "/etc/ssl/certs/ca-certificates.crt"     # host CA store, mounted read-only
+pg_etcd_client_port: 2379
+pg_etcd_hosts: "{{ pg_cluster_members | map('regex_replace', '^(.*)$', '\\1.' ~ platform_domain ~ ':' ~ pg_etcd_client_port) | list }}"
+
+# Streaming replication login (created through roles/postgres_db, REPLICATION attribute) and the
+# REST API's write credential (restart / switchover / reinitialise are authenticated; the health
+# endpoints are read-only and open to the members and the endpoint guest).
+pg_replication_user: "replicator"
+pg_replication_vault_path: "{{ platform_env }}/postgres/replication"
+pg_patroni_api_vault_path: "{{ platform_env }}/postgres/patroni-api"
+pg_etcd_vault_path: "{{ platform_etcd_vault_path }}"
+
+# Failover behaviour — the DYNAMIC configuration, stored in etcd and identical on every member
+# (templates/dcs.yml.j2). ttl = how long a leader key lives without renewal: a dead leader is
+# replaced after at most ttl seconds.
+pg_patroni_ttl: 30
+pg_patroni_loop_wait: 10
+pg_patroni_retry_timeout: 10
+pg_patroni_maximum_lag_on_failover: 1048576
+# A commit waits for ONE replica: a failover never loses an acknowledged transaction. Not
+# strict: with no replica available the leader keeps accepting writes.
+pg_synchronous_mode: true
+# Restart the members that carry a pending restart (a postmaster-level parameter changed):
+# replicas first, the leader last. Explicit, because it restarts the database.
+pg_apply_pending_restart: false
+# Seconds a replica may take to copy the leader's data when it first joins (pg_basebackup).
+pg_replica_bootstrap_timeout: 3600
 
 # Daily logical backup (pg_dumpall via docker exec).
 pg_backup_dir: "/var/lib/postgresql/backups"

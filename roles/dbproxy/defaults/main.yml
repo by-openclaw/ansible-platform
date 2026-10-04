@@ -1,0 +1,33 @@
+---
+# ==============================================================================
+# Role: dbproxy — the data endpoint (services/0004): ONE address every consumer connects to,
+# routed to the PostgreSQL member Patroni reports as leader. TCP routing only — no pooling, no
+# TLS termination: the client's TLS session ends on PostgreSQL itself, whose wildcard
+# certificate is valid for the endpoint's name (sslmode=verify-full unchanged).
+# What it costs: PostgreSQL sees the endpoint's address as the client's; the connection log
+# still names the role and the database, and every service has its own role.
+# ==============================================================================
+dbproxy_image: "haproxy:3.4.6"            # exact pin (LTS line), never a stream tag
+dbproxy_container_name: "dbproxy"
+dbproxy_uid: 99                            # haproxy user inside the official image
+dbproxy_conf_host_dir: "/etc/dbproxy"
+dbproxy_listen_ip: "{{ hostvars[inventory_hostname].ansible_host }}"
+dbproxy_listen_ip6: "{{ hostvars[inventory_hostname].platform_host_v6 }}"
+dbproxy_ca_bundle: "/etc/ssl/certs/ca-certificates.crt"   # host CA store, mounted read-only
+
+# --- PostgreSQL ---------------------------------------------------------------------------
+dbproxy_pg_port: 5432
+dbproxy_pg_members: "{{ platform_pg_members }}"
+dbproxy_patroni_port: 8008                 # GET /primary answers 200 on the leader only
+# Leader detection: a member is out after 3 failed checks 3 s apart; its sessions are closed at
+# once so a client reconnects to the new leader instead of talking to a demoted one.
+dbproxy_check_interval: "3s"
+dbproxy_check_fall: 3
+dbproxy_check_rise: 2
+# Idle sessions are kept (application pools hold them for hours); TCP keep-alives detect a dead peer.
+dbproxy_idle_timeout: "12h"
+dbproxy_connect_timeout: "5s"
+dbproxy_maxconn: 1000
+
+# --- Metrics (HAProxy's built-in Prometheus exporter) -----------------------------------------
+dbproxy_metrics_port: 8405

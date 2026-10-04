@@ -1,0 +1,43 @@
+---
+# The container through the scaffold's containers step (the one owner of "run a pinned
+# container"). Flags as environment (ETCD_*): none of them is a secret.
+- name: "container | etcd member (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: etcd
+      containers:
+        - name: "{{ etcd_container_name }}"
+          image: "{{ etcd_image }}"
+          user: "{{ etcd_uid }}:{{ etcd_uid }}"
+          read_only: true
+          cap_drop: [ALL]
+          security_opts: ["no-new-privileges:true"]
+          published:
+            - "{{ etcd_listen_ip }}:{{ etcd_client_port }}:2379"
+            - "[{{ etcd_listen_ip6 }}]:{{ etcd_client_port }}:2379"
+            - "127.0.0.1:{{ etcd_client_port }}:2379"
+            - "{{ etcd_listen_ip }}:{{ etcd_peer_port }}:2380"
+            - "[{{ etcd_listen_ip6 }}]:{{ etcd_peer_port }}:2380"
+          volumes:
+            - "{{ etcd_data_host_dir }}:/etcd-data"
+            - "{{ etcd_cert_host_dir }}:{{ etcd_cert_host_dir }}:ro"
+            - "/etc/ssl/certs:/etc/ssl/certs:ro"
+          env:
+            ETCD_NAME: "{{ inventory_hostname }}"
+            ETCD_DATA_DIR: "/etcd-data"
+            ETCD_LISTEN_CLIENT_URLS: "https://0.0.0.0:2379"
+            ETCD_ADVERTISE_CLIENT_URLS: "https://{{ etcd_fqdn }}:{{ etcd_client_port }}"
+            ETCD_LISTEN_PEER_URLS: "https://0.0.0.0:2380"
+            ETCD_INITIAL_ADVERTISE_PEER_URLS: "https://{{ etcd_fqdn }}:{{ etcd_peer_port }}"
+            ETCD_INITIAL_CLUSTER: "{{ etcd_initial_cluster }}"
+            ETCD_INITIAL_CLUSTER_STATE: "new"
+            ETCD_INITIAL_CLUSTER_TOKEN: "{{ etcd_cluster_token }}"
+            ETCD_CERT_FILE: "{{ etcd_tls_cert }}"
+            ETCD_KEY_FILE: "{{ etcd_tls_key }}"
+            ETCD_PEER_CERT_FILE: "{{ etcd_tls_cert }}"
+            ETCD_PEER_KEY_FILE: "{{ etcd_tls_key }}"
+            ETCD_AUTO_COMPACTION_MODE: "periodic"
+            ETCD_AUTO_COMPACTION_RETENTION: "{{ etcd_auto_compaction_retention }}"
