@@ -29,6 +29,10 @@ path "sys/mounts"                                { capabilities = ["read"] }
 
 # Raft snapshot for the backup playbook (data path, not root-only config).
 path "sys/storage/raft/snapshot"                 { capabilities = ["read"] }
+# The snapshot job's periodic token (roles/vault_backup): this one token role, and tokens of it.
+# A token role is the only way to hand out a policy this identity does not hold itself.
+path "auth/token/roles/{{ vdi_snapshot_token_role }}"  { capabilities = ["create","read","update"] }
+path "auth/token/create/{{ vdi_snapshot_token_role }}" { capabilities = ["create","update"] }
 
 # --- SSO mapping reconciliation (2026-09-04): the OIDC method, its roles and the
 # identity groups/aliases that map Authentik groups → policies are reconciled by

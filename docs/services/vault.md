@@ -21,7 +21,7 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: vault`). Rol
 
 ## Backup (infra/0008)
 
-Class A (`docs/backup.md`): `vault-snapshot.timer` 02:15 → `operator raft snapshot save` → `/var/lib/vault/snapshots/` (0600, 14 days by tmpfiles) → PBS daily guest image (encrypted, replicated off-site with the datastore); restore = `operator raft snapshot restore -force` + unseal (3 of 5 key shares). The data at rest is sealed with the Shamir keys; the raft snapshot carries sealed data.
+Class A (`docs/backup.md`): `vault-snapshot.timer` 02:15 → the raft snapshot API (`sys/storage/raft/snapshot`) → `/var/lib/vault/snapshots/` (0600, 14 days by tmpfiles) → PBS daily guest image (encrypted, replicated off-site with the datastore); restore = `operator raft snapshot restore -force` + unseal (3 of 5 key shares). The data at rest is sealed with the Shamir keys; the raft snapshot carries sealed data.
 
 ## Cluster (services/0004 §Cluster placement)
 

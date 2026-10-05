@@ -23,6 +23,9 @@ platform_alert_email: "alerts@{{ platform_mail_domain }}"
 platform_vault_members: "{{ groups['vault_cluster'] | default(groups['vault']) }}"
 platform_vault_host: "{{ groups['vault'] | first }}"
 platform_vault_addr: "https://{{ platform_vault_host }}.{{ platform_domain }}:8200"
+# Vault policy and token role of the raft snapshot job: one name for roles/vault_backup (which
+# writes both) and roles/vault_deploy_identity (whose policy may write that role and mint its tokens).
+platform_vault_snapshot_role: "snapshot"
 # Same controller as prod: the Terraform repo and its state-backup Python.
 platform_terraform_repo: "{{ lookup('env', 'HOME') }}/repos/infra-terraform-proxmox"
 # The test tier runs on the prod node, so the node's credentials (the Terraform API
