@@ -19,7 +19,13 @@
 # token) — chicken-and-egg. It stays in the secret folder (+ Vaultwarden break-glass).
 # ==============================================================================
 vault_secret_host: "{{ platform_vault_host | default(groups['vault'] | first) }}"          # host running the vault container (delegate target)  # pragma: allowlist secret
-vault_secret_container: "vault"  # pragma: allowlist secret
+# Vault's HTTP API as the delegate host reaches it (inventory: platform_vault_addr follows
+# platform_vault_host), how long a call may take, and the answers a read / a write may give.
+vault_secret_api_url: "{{ platform_vault_addr }}"
+vault_secret_api_timeout: 15
+vault_secret_read_statuses: [200, 403, 404]   # found · not readable (treated as absent, as before) · absent
+vault_secret_write_statuses: [200, 204]
+vault_secret_container: "vault"  # no longer used by this role (callers still pass it)  # pragma: allowlist secret
 vault_secret_mount: "secret"               # KV v2 mount  # pragma: allowlist secret
 vault_secret_bootstrap_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
 vault_secret_bootstrap_file: "vault-init.json"   # root_token lives here (bootstrap only)  # pragma: allowlist secret

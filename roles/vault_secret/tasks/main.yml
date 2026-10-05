@@ -13,36 +13,40 @@
     vault_secret_token: "{{ vault_deploy_token }}"
   no_log: true
 
+# Vault's HTTP API, called on the Vault node (delegated): the token travels in the module call,
+# never on a command line. 200 = the document; 404 = absent; 403 = not readable with this
+# identity, treated as absent as it always was. Anything else (sealed, unreachable) stops here.
 - name: "Vault secret | Read current KV: {{ vault_secret_path }}"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_secret_token }} {{ vault_secret_container }}
-      vault kv get -mount={{ vault_secret_mount }} -format=json {{ vault_secret_path }}
+  ansible.builtin.uri:
+    url: "{{ vault_secret_api_url }}/v1/{{ vault_secret_mount }}/data/{{ vault_secret_path }}"
+    headers:
+      X-Vault-Token: "{{ vault_secret_token }}"
+    timeout: "{{ vault_secret_api_timeout }}"
+    status_code: "{{ vault_secret_read_statuses }}"
   delegate_to: "{{ vault_secret_host }}"
-  become: true
   register: vault_secret_get
   changed_when: false
   failed_when: false
-  check_mode: false   # read-only `kv get` — must also run under --check so consumers can preview
+  check_mode: false   # read-only — must also run under --check so consumers can preview
   no_log: true
 
+- name: "Vault secret | Vault answered (anything but found / absent is an error, shown without the token)"
+  ansible.builtin.assert:
+    that: (vault_secret_get.status | default(-1)) in vault_secret_read_statuses
+    fail_msg: >-
+      Vault did not answer the read of '{{ vault_secret_path }}' at {{ vault_secret_api_url }}:
+      HTTP {{ vault_secret_get.status | default('none') }} {{ vault_secret_get.json.errors | default([]) | join('; ') }}
+      {{ vault_secret_get.msg | default('') }}
+    quiet: true
+
 - name: "Vault secret | Read the custom metadata (when asked)"
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "VAULT_TOKEN={{ vault_secret_token }}"
-      - "{{ vault_secret_container }}"
-      - vault
-      - kv
-      - metadata
-      - get
-      - "-mount={{ vault_secret_mount }}"
-      - -format=json
-      - "{{ vault_secret_path }}"
+  ansible.builtin.uri:
+    url: "{{ vault_secret_api_url }}/v1/{{ vault_secret_mount }}/metadata/{{ vault_secret_path }}"
+    headers:
+      X-Vault-Token: "{{ vault_secret_token }}"
+    timeout: "{{ vault_secret_api_timeout }}"
+    status_code: "{{ vault_secret_read_statuses }}"
   delegate_to: "{{ vault_secret_host }}"
-  become: true
   register: vault_secret_meta_get
   changed_when: false
   failed_when: false
@@ -53,9 +57,9 @@
 - name: "Vault secret | Publish the metadata as `vault_secret_metadata`"
   ansible.builtin.set_fact:
     vault_secret_metadata: >-
-      {{ {'custom': ((vault_secret_meta_get.stdout | from_json).data.custom_metadata | default({}, true)),
-          'current_version': (vault_secret_meta_get.stdout | from_json).data.current_version}
-         if (vault_secret_meta_get.rc | default(1)) == 0 else {} }}
+      {{ {'custom': (vault_secret_meta_get.json.data.custom_metadata | default({}, true)),
+          'current_version': vault_secret_meta_get.json.data.current_version}
+         if (vault_secret_meta_get.status | default(-1)) == 200 else {} }}
   when: vault_secret_read_metadata | bool
 
 - name: "Vault secret | Fail when absent and no init given (read-only consumer)"
@@ -64,43 +68,49 @@
       Vault secret '{{ vault_secret_path }}' does not exist and no vault_secret_init
       was provided. A read-only consumer requires the secret to already be in Vault
       (its owning role must create it first).
+      Vault's answer: HTTP {{ vault_secret_get.status }}{{ ' (not readable with the deploy identity)' if vault_secret_get.status == 403 else '' }}.
   when:
-    - vault_secret_get.rc != 0
+    - vault_secret_get.status != 200
     - vault_secret_init | length == 0
     - not (vault_secret_optional | bool)
 
-- name: "Vault secret | Initialize secret in Vault when absent (stdin, no argv)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -i -e VAULT_TOKEN={{ vault_secret_token }} {{ vault_secret_container }}
-      vault kv put -mount={{ vault_secret_mount }} {{ vault_secret_path }} -
-    stdin: "{{ vault_secret_init | to_json }}"
+- name: "Vault secret | Initialize secret in Vault when absent"
+  ansible.builtin.uri:
+    url: "{{ vault_secret_api_url }}/v1/{{ vault_secret_mount }}/data/{{ vault_secret_path }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_secret_token }}"
+    timeout: "{{ vault_secret_api_timeout }}"
+    body_format: json
+    body:
+      data: "{{ vault_secret_init }}"
+    status_code: "{{ vault_secret_write_statuses }}"
   delegate_to: "{{ vault_secret_host }}"
-  become: true
   # Nothing to write means nothing is written: without the init guard an optional
   # read of an absent path created an EMPTY secret there (and reported changed).
   when:
-    - vault_secret_get.rc != 0
+    - vault_secret_get.status != 200
     - vault_secret_init | length > 0
   changed_when: true
   no_log: true
 
 - name: "Vault secret | Re-read after init"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_secret_token }} {{ vault_secret_container }}
-      vault kv get -mount={{ vault_secret_mount }} -format=json {{ vault_secret_path }}
+  ansible.builtin.uri:
+    url: "{{ vault_secret_api_url }}/v1/{{ vault_secret_mount }}/data/{{ vault_secret_path }}"
+    headers:
+      X-Vault-Token: "{{ vault_secret_token }}"
+    timeout: "{{ vault_secret_api_timeout }}"
+    status_code: "{{ vault_secret_read_statuses }}"
   delegate_to: "{{ vault_secret_host }}"
-  become: true
   register: vault_secret_get2
   changed_when: false
-  check_mode: false   # read-only `kv get`
+  check_mode: false   # read-only
   # Under --check the init write above was skipped, so there is nothing to re-read.
-  failed_when: vault_secret_get2.rc != 0 and not ansible_check_mode
+  failed_when: (vault_secret_get2.status | default(-1)) != 200 and not ansible_check_mode
   no_log: true
   # Only when something was written: an optional read of an absent path has no init.
   when:
-    - vault_secret_get.rc != 0
+    - vault_secret_get.status != 200
     - vault_secret_init | length > 0
 
 # Rotation mode (SEC-09): when vault_secret_force_fields is set, those fields are
@@ -111,38 +121,44 @@
 - name: "Vault secret | The document the rotation merges into (stored > just initialised > none)"
   ansible.builtin.set_fact:
     vault_secret_merge_base: >-
-      {{ (vault_secret_get.stdout | from_json).data.data
-         if vault_secret_get.rc == 0
-         else ((vault_secret_get2.stdout | from_json).data.data
-               if (vault_secret_get2.rc | default(1)) == 0 else {}) }}
+      {{ vault_secret_get.json.data.data
+         if vault_secret_get.status == 200
+         else (vault_secret_get2.json.data.data
+               if (vault_secret_get2.status | default(-1)) == 200 else {}) }}
   no_log: true
   when: vault_secret_force_fields | default({}) | length > 0
 
 - name: "Vault secret | Force-write rotated fields (SEC-09 rotation; merged into the document)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -i -e VAULT_TOKEN={{ vault_secret_token }} {{ vault_secret_container }}
-      vault kv put -mount={{ vault_secret_mount }} {{ vault_secret_path }} -
-    stdin: "{{ vault_secret_merge_base | combine(vault_secret_force_fields) | to_json }}"
+  ansible.builtin.uri:
+    url: "{{ vault_secret_api_url }}/v1/{{ vault_secret_mount }}/data/{{ vault_secret_path }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_secret_token }}"
+    timeout: "{{ vault_secret_api_timeout }}"
+    body_format: json
+    body:
+      data: "{{ vault_secret_merge_base | combine(vault_secret_force_fields) }}"
+    status_code: "{{ vault_secret_write_statuses }}"
   delegate_to: "{{ vault_secret_host }}"
-  become: true
   when: vault_secret_force_fields | default({}) | length > 0
   changed_when: true
   no_log: true
 
+# The custom metadata of the document becomes exactly this map (Vault stores strings).
 - name: "Vault secret | Write custom metadata (audit trail)"
-  ansible.builtin.command:
-    argv: >-
-      {{ ['docker', 'exec', '-e', 'VAULT_TOKEN=' ~ vault_secret_token, vault_secret_container,
-          'vault', 'kv', 'metadata', 'put', '-mount=' ~ vault_secret_mount]
-         + (vault_secret_metadata_put | dict2items | map(attribute='key')
-            | zip(vault_secret_metadata_put | dict2items | map(attribute='value'))
-            | map('join', '=') | map('regex_replace', '^', '-custom-metadata=') | list)
-         + [vault_secret_path] }}
+  ansible.builtin.uri:
+    url: "{{ vault_secret_api_url }}/v1/{{ vault_secret_mount }}/metadata/{{ vault_secret_path }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_secret_token }}"
+    timeout: "{{ vault_secret_api_timeout }}"
+    body_format: json
+    body:
+      custom_metadata: "{{ dict(vault_secret_metadata_put.keys() | map('string') | zip(vault_secret_metadata_put.values() | map('string'))) }}"
+    status_code: "{{ vault_secret_write_statuses }}"
   delegate_to: "{{ vault_secret_host }}"
-  become: true
   changed_when: true
-  no_log: true   # argv carries the token
+  no_log: true
   when:
     - vault_secret_metadata_put | default({}) | length > 0
     - not ansible_check_mode
@@ -154,9 +170,9 @@
     vault_secret_result: >-
       {{ (vault_secret_merge_base | combine(vault_secret_force_fields))
          if (vault_secret_force_fields | default({}) | length > 0)
-         else ((vault_secret_get.stdout | from_json).data.data
-               if vault_secret_get.rc == 0
-               else ((vault_secret_get2.stdout | from_json).data.data
-                     if (vault_secret_get2.rc | default(1)) == 0
+         else (vault_secret_get.json.data.data
+               if vault_secret_get.status == 200
+               else (vault_secret_get2.json.data.data
+                     if (vault_secret_get2.status | default(-1)) == 200
                      else (vault_secret_init if ansible_check_mode else {}))) }}
   no_log: true
