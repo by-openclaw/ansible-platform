@@ -1,0 +1,41 @@
+---
+# After the rotation: the gateway runs with the new key (an object written with the SSE header
+# reads back), the offsite replication is running, and the gateway has logged no object it
+# could not decrypt since it restarted.
+- name: "Rotate SSE key | An object written with the SSE header reads back with the new key"
+  ansible.builtin.include_tasks: sse_proof.yml
+  vars:
+    seaweedfs_sse_proof_with_header: true
+
+- name: "Rotate SSE key | The offsite replication runs with the new key"
+  community.docker.docker_container_info:
+    name: "{{ seaweedfs_backup_container }}"
+  register: seaweedfs_sse_backup_state
+  failed_when: not (seaweedfs_sse_backup_state.container.State.Running | default(false))
+  when: seaweedfs_offsite_enabled | bool
+
+- name: "Rotate SSE key | The offsite replication's log since it restarted"
+  ansible.builtin.command:
+    argv: [docker, logs, --since, "{{ seaweedfs_sse_backup_state.container.State.StartedAt }}", "{{ seaweedfs_backup_container }}"]
+  register: seaweedfs_sse_backup_log
+  changed_when: false
+  when: seaweedfs_offsite_enabled | bool
+
+- name: "Rotate SSE key | The gateway's log since it restarted"
+  ansible.builtin.command:
+    argv: [docker, logs, --since, "{{ seaweedfs_sse_gateway_info.container.State.StartedAt }}", "{{ seaweedfs_container }}"]
+  register: seaweedfs_sse_gateway_log
+  changed_when: false
+
+- name: "Rotate SSE key | No object it could not decrypt (one would be bound to the former key)"
+  ansible.builtin.assert:
+    that: seaweedfs_sse_undecryptable | length == 0
+    fail_msg: >-
+      {{ seaweedfs_sse_undecryptable | length }} line(s) "{{ seaweedfs_sse_decrypt_error }}" in the gateway's or the offsite replication's log: objects
+      written under the former key exist. The former key is in Vault's version history — docs/services/seaweedfs.md.
+    success_msg: "SSE-S3 key rotated: an object with the SSE header reads back, the offsite replication runs, no undecryptable object logged"
+  vars:
+    seaweedfs_sse_undecryptable: >-
+      {{ (seaweedfs_sse_gateway_log.stdout_lines + seaweedfs_sse_gateway_log.stderr_lines
+          + (seaweedfs_sse_backup_log.stdout_lines | default([])) + (seaweedfs_sse_backup_log.stderr_lines | default([])))
+         | select('search', seaweedfs_sse_decrypt_error) | list }}
