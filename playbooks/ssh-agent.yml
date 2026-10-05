@@ -90,21 +90,28 @@
         _approle: "{{ (lookup('file', approle_secret_file) | from_json).fields }}"
       no_log: true
 
+    # Vault's HTTP API on the Vault host: the role id, the secret id and the token travel in the
+    # module call, never on a command line.
     - name: "Agent | AppRole login (short-lived scoped token)"
-      ansible.builtin.command:
-        argv: ["docker", "exec", "{{ vault_container_name }}",
-               "vault", "write", "-field=token", "auth/approle/login",
-               "role_id={{ _approle.role_id }}", "secret_id={{ _approle.secret_id }}"]
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/auth/approle/login"
+        method: POST
+        body_format: json
+        body:
+          role_id: "{{ _approle.role_id }}"
+          secret_id: "{{ _approle.secret_id }}"
+        timeout: "{{ vault_api_timeout }}"
       register: _approle_token
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
       no_log: true
 
     - name: "Agent | Read the svc passphrases"
-      ansible.builtin.command:
-        argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ _approle_token.stdout }}", "{{ vault_container_name }}",
-               "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-field=passphrase",
-               "{{ platform_env }}/{{ item }}/ssh-passphrase"]
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/{{ vault_kv_path }}/data/{{ platform_env }}/{{ item }}/ssh-passphrase"
+        headers:
+          X-Vault-Token: "{{ _approle_token.json.auth.client_token }}"
+        timeout: "{{ vault_api_timeout }}"
       loop: [svc-ansible, svc-rune]
       register: _pass_reads
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
@@ -115,8 +122,8 @@
       ansible.builtin.set_fact:
         # An expression, not a mapping: Ansible does not template mapping KEYS.
         agent_passphrases: >-
-          {{ {'svc-ansible-' ~ platform_env: _pass_reads.results[0].stdout,
-              'svc-rune-' ~ platform_env: _pass_reads.results[1].stdout} }}
+          {{ {'svc-ansible-' ~ platform_env: _pass_reads.results[0].json.data.data.passphrase,
+              'svc-rune-' ~ platform_env: _pass_reads.results[1].json.data.data.passphrase} }}
       no_log: true
 
 - name: "Load the agent (controller)"
