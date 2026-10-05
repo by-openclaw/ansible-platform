@@ -7,35 +7,52 @@
     update_cache: true
     cache_valid_time: 3600
 
-- name: "SecAudit | Stage the OS-posture helper"
-  ansible.builtin.copy:
-    src: os_posture.py
-    dest: /usr/local/bin/os_posture.py
-    mode: "0755"
+# The helper this role used to stage here is superseded by the tasks below (git holds its history).
+- name: "SecAudit | The staged OS-posture helper is gone"
+  ansible.builtin.file:
+    path: "{{ security_audit_helper_dir }}/os_posture.py"
+    state: absent
   become: true
 
-- name: "SecAudit | Collect OS posture"
-  ansible.builtin.shell: |
-    set -o pipefail
-    . /etc/os-release
-    SUITE="{{ security_audit_debsecan_suite or '' }}"; [ -n "$SUITE" ] || SUITE="$VERSION_CODENAME"
-    SEC=$(apt-get -s dist-upgrade 2>/dev/null | grep '^Inst' | grep -ci security || true)
-    TOT=$(apt-get -s dist-upgrade 2>/dev/null | grep -c '^Inst' || true)
-    # debsecan: CVEs with a fix available for installed packages
-    CVE=$(debsecan --suite "$SUITE" --only-fixed --format packages 2>/dev/null | sort -u | wc -l || echo 0)
-    CVELIST=$(debsecan --suite "$SUITE" --only-fixed --format detail 2>/dev/null | grep -oE 'CVE-[0-9]{4}-[0-9]+' | sort -u | head -50 | tr '\n' ' ')
-    RB=$([ -f /var/run/reboot-required ] && echo yes || echo no)
-    SEC="$SEC" TOT="$TOT" CVE="$CVE" RB="$RB" CVELIST="$CVELIST" python3 /usr/local/bin/os_posture.py
-  args: { executable: /bin/bash }
-  register: security_audit_os_raw
-  failed_when: false   # the helper is staged by a task --check skips; an empty posture is reported instead
+- name: "SecAudit | Pending upgrades (simulation)"
+  ansible.builtin.command:
+    argv: [apt-get, -s, dist-upgrade]
+  register: security_audit_apt_sim
+  failed_when: false
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
+
+# debsecan, restricted to CVEs with a fix available for installed packages: once as a package
+# list, once in detail (the CVE identifiers).
+- name: "SecAudit | Fixable CVEs (debsecan)"
+  ansible.builtin.command:
+    argv:
+      - debsecan
+      - --suite
+      - "{{ security_audit_debsecan_suite or ansible_facts.distribution_release }}"
+      - --only-fixed
+      - --format
+      - "{{ item }}"
+  loop: [packages, detail]
+  register: security_audit_debsecan
+  failed_when: false   # installed by a task --check skips; an empty list is reported instead
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+
+- name: "SecAudit | Reboot flag"
+  ansible.builtin.stat:
+    path: "{{ security_audit_reboot_flag }}"
+  register: security_audit_reboot
 
 - name: "SecAudit | Parse OS posture"
   ansible.builtin.set_fact:
     security_audit_os: >-
-      {{ (security_audit_os_raw.stdout | default('') | trim | from_json)
-         if (security_audit_os_raw.rc | default(1)) == 0 and (security_audit_os_raw.stdout | default('') | trim)
-         else {'security_updates': 0, 'total_updates': 0, 'fixable_cve_pkgs': 0,
-               'reboot_required': false, 'cves': [], 'not_collected': true} }}
+      {{ {'security_updates': security_audit_pending | select('search', '(?i)security') | list | length,
+          'total_updates': security_audit_pending | length,
+          'fixable_cve_pkgs': (security_audit_debsecan.results | selectattr('item', 'eq', 'packages') | first).stdout_lines
+                              | default([]) | unique | length,
+          'reboot_required': 'yes' if security_audit_reboot.stat.exists else 'no',
+          'cves': ((security_audit_debsecan.results | selectattr('item', 'eq', 'detail') | first).stdout | default('')
+                   | regex_findall('CVE-[0-9]{4}-[0-9]+') | unique | sort)[:security_audit_cve_list_max | int]} }}
+  vars:
+    security_audit_pending: "{{ security_audit_apt_sim.stdout_lines | default([]) | select('match', 'Inst') | list }}"
