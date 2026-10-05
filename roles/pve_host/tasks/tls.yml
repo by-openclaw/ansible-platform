@@ -11,13 +11,15 @@
     tls_cert_key: "{{ pve_host_cert_key }}"
     tls_cert_key_mode: "0600"
 
+- name: "PVE host | The certificate pveproxy serves"
+  ansible.builtin.stat:
+    path: "{{ pve_host_served_cert }}"
+  register: pve_host_served_cert_file
+
 - name: "PVE host | Fingerprints: the staged certificate and the one pveproxy serves"
-  ansible.builtin.shell:
-    executable: /bin/bash
-    cmd: |
-      set -o pipefail
-      echo "staged=$(openssl x509 -noout -fingerprint -sha256 -in {{ pve_host_cert_crt }} | cut -d= -f2)"
-      echo "served=$(test -f /etc/pve/local/pveproxy-ssl.pem && openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pveproxy-ssl.pem | cut -d= -f2)"
+  ansible.builtin.command:
+    argv: [openssl, x509, -noout, -fingerprint, -sha256, -in, "{{ item }}"]
+  loop: "{{ [pve_host_cert_crt] + ([pve_host_served_cert] if pve_host_served_cert_file.stat.exists else []) }}"
   register: pve_host_cert_fp
   changed_when: false
   check_mode: false   # read-only probe
@@ -27,8 +29,8 @@
   ansible.builtin.command:
     argv: [pvenode, cert, set, "{{ pve_host_cert_crt }}", "{{ pve_host_cert_key }}", --force, "1", --restart, "1"]
   vars:
-    _staged: "{{ pve_host_cert_fp.stdout_lines | default([]) | select('match', '^staged=') | first | default('staged=') | split('=', 1) | last }}"
-    _served: "{{ pve_host_cert_fp.stdout_lines | default([]) | select('match', '^served=') | first | default('served=') | split('=', 1) | last }}"
+    _staged: "{{ (pve_host_cert_fp.results | selectattr('item', 'eq', pve_host_cert_crt) | map(attribute='stdout') | first | default('')).split('=', 1) | last }}"
+    _served: "{{ (pve_host_cert_fp.results | selectattr('item', 'eq', pve_host_served_cert) | map(attribute='stdout') | first | default('')).split('=', 1) | last }}"
   when:
     - _staged | length > 0
     - _staged != _served

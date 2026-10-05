@@ -18,13 +18,10 @@
     fail_msg: "pve_host_ceph_enabled is false but /etc/pve/storage.cfg has rbd/cephfs storage"
     quiet: true
 
+# One line per unit: name, load state, active state, sub state, description.
 - name: "PVE host | Ceph daemon units on this node"
-  ansible.builtin.shell: >-
-    set -o pipefail;
-    systemctl list-units --all --plain --no-legend 'ceph-mon@*' 'ceph-mgr@*' 'ceph-mds@*' 'ceph-osd@*' 'ceph-crash.service'
-    | awk '{print $1, $2}'
-  args:
-    executable: /bin/bash
+  ansible.builtin.command:
+    argv: "{{ ['systemctl', 'list-units', '--all', '--plain', '--no-legend'] + pve_host_ceph_unit_patterns }}"
   register: pve_host_ceph_units
   changed_when: false
   check_mode: false   # read-only probe
@@ -34,7 +31,7 @@
     name: "{{ item.split()[0] }}"
     state: stopped
     enabled: false
-  loop: "{{ pve_host_ceph_units.stdout_lines | reject('search', ' masked$') | list }}"
+  loop: "{{ pve_host_ceph_units.stdout_lines | reject('match', '\\S+\\s+masked(\\s|$)') | list }}"
   when: not ansible_check_mode
 
 - name: "PVE host | Ceph daemons masked (a reboot must not start them again)"

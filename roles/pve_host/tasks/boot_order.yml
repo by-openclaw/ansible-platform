@@ -1,26 +1,41 @@
 ---
 # Cold-start sequence (pve_host_boot_order): `startup: order=N,up=S` on each guest, set online.
-- name: "PVE host | Guests of this node (id, kind, name, current startup)"
-  ansible.builtin.shell:
-    executable: /bin/bash
-    cmd: |
-      set -o pipefail
-      for f in /etc/pve/qemu-server/*.conf /etc/pve/lxc/*.conf; do
-        id=$(basename "$f" .conf)
-        case "$f" in */qemu-server/*) kind=qm; name=$(awk '/^name:/{print $2; exit}' "$f");; *) kind=pct; name=$(awk '/^hostname:/{print $2; exit}' "$f");; esac
-        echo "$id $kind $name $(awk '/^startup:/{print $2; exit}' "$f")"
-      done
+- name: "PVE host | Guest configuration files of this node"
+  ansible.builtin.find:
+    paths: "{{ pve_host_guest_config_dirs | map(attribute='path') | list }}"
+    patterns: "*.conf"
+  register: pve_host_boot_configs
+  check_mode: false   # read-only probe
+
+# One line per key found: <file>:<key>: <value>. A file's own configuration comes before its
+# snapshot sections, so the first occurrence of a key is the current value.
+- name: "PVE host | Name and current startup of each guest"
+  ansible.builtin.command:
+    argv: "{{ ['grep', '-H', '-E', '^(' ~ (((pve_host_guest_config_dirs | map(attribute='name_key') | list) + ['startup']) | unique | join('|')) ~ '):']
+              + (pve_host_boot_configs.files | map(attribute='path') | sort | list) }}"
   register: pve_host_boot_guests
   changed_when: false
+  failed_when: pve_host_boot_guests.rc > 1   # 1 = no guest on this node
   check_mode: false   # read-only probe
+  when: pve_host_boot_configs.files | length > 0
 
 - name: "PVE host | Guest table"
   ansible.builtin.set_fact:
     pve_host_boot_table: >-
       {%- set out = {} -%}
-      {%- for line in pve_host_boot_guests.stdout_lines -%}
-        {%- set f = line.split() -%}
-        {%- set _ = out.update({f[2]: {'id': f[0], 'kind': f[1], 'startup': (f[3] if f | length > 3 else '')}}) -%}
+      {%- for d in pve_host_guest_config_dirs -%}
+        {%- set found = {} -%}
+        {%- for line in pve_host_boot_guests.stdout_lines | default([]) if line.startswith(d.path ~ '/') -%}
+          {%- set parts = line.split(':', 2) -%}
+          {%- set id = (parts[0] | basename | splitext)[0] -%}
+          {%- if id not in found -%}{%- set _ = found.update({id: {}}) -%}{%- endif -%}
+          {%- if parts[1] not in found[id] -%}
+            {%- set _ = found[id].update({parts[1]: (parts[2].split() | first | default(''))}) -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- for id, conf in found.items() if d.name_key in conf -%}
+          {%- set _ = out.update({conf[d.name_key]: {'id': id, 'kind': d.kind, 'startup': conf.startup | default('')}}) -%}
+        {%- endfor -%}
       {%- endfor -%}
       {{ out }}
 
