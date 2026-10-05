@@ -12,21 +12,47 @@
       list foreign/install-artifact accounts, never {{ user_mgmt_org }} or svc-*.
     quiet: true
 
-- name: "User-mgmt | Archive the home of a foreign account before it is deleted (never lose data)"
-  ansible.builtin.shell:
-    cmd: >-
-      set -o pipefail;
-      h=$(getent passwd "{{ item }}" | cut -d: -f6);
-      if [ -n "$h" ] && [ -d "$h" ]; then
-        mkdir -p /var/backups/retired-accounts && chmod 0700 /var/backups/retired-accounts;
-        tar -czf "/var/backups/retired-accounts/{{ item }}-$(date +%Y%m%dT%H%M%S).tar.gz" -C "$(dirname "$h")" "$(basename "$h")" && echo archived;
-      fi
-    executable: /bin/bash
+- name: "User-mgmt | The foreign accounts as the host knows them"
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ item }}"
+    fail_key: false
   loop: "{{ user_mgmt_purge_accounts }}"
   loop_control:
     label: "{{ item }}"
-  register: user_mgmt_purge_archive
-  changed_when: "'archived' in user_mgmt_purge_archive.stdout"
+  register: user_mgmt_purge_entries
+
+# An account the host does not know is skipped here, so nothing is looked up or archived for it.
+# (the home is the sixth field of a passwd entry: index 4 of what getent returns after the name)
+- name: "User-mgmt | Their home directories"
+  ansible.builtin.stat:
+    path: "{{ item.ansible_facts.getent_passwd[item.item][4] }}"
+  loop: "{{ user_mgmt_purge_entries.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: (item.ansible_facts.getent_passwd | default({}))[item.item] | default(none, true) is not none
+  register: user_mgmt_purge_homes
+
+- name: "User-mgmt | Archive directory (kept a week by the hardening baseline)"
+  ansible.builtin.file:
+    path: "{{ user_mgmt_retired_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: user_mgmt_purge_homes.results | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir') | list | length > 0
+
+- name: "User-mgmt | Archive the home of a foreign account before it is deleted (never lose data)"
+  community.general.archive:
+    path: "{{ item.stat.path }}"
+    dest: "{{ user_mgmt_retired_dir }}/{{ item.item.item }}-{{ now(utc=true, fmt='%Y%m%dT%H%M%S') }}.tar.gz"
+    format: gz
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ user_mgmt_purge_homes.results | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir') | list }}"
+  loop_control:
+    label: "{{ item.item.item }}"
   when: not ansible_check_mode
 
 - name: "User-mgmt | Delete foreign account (+ home, mail spool)"

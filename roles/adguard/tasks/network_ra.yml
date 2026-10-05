@@ -18,16 +18,16 @@
 - name: "Apply netplan now (so RA is off before flushing)"
   ansible.builtin.meta: flush_handlers
 
+# One line per address: index, interface, family, address/prefix, then its flags.
+- name: "Global IPv6 addresses of the interface"
+  ansible.builtin.command:
+    argv: [ip, -o, "-6", addr, show, dev, "{{ adguard_primary_iface }}", scope, global]
+  register: adguard_ra_addresses
+  changed_when: false
+  check_mode: false   # read-only probe
+
 - name: "Flush stale dynamic (SLAAC) global IPv6 addresses"
-  ansible.builtin.shell: |
-    set -o pipefail
-    removed=0
-    for a in $(ip -o -6 addr show dev {{ adguard_primary_iface }} scope global \
-              | awk '/dynamic/{print $4}'); do
-      ip -6 addr del "$a" dev {{ adguard_primary_iface }} && removed=1
-    done
-    echo "removed=${removed}"
-  args:
-    executable: /bin/bash
-  register: adguard_ra_flush
-  changed_when: "'removed=1' in adguard_ra_flush.stdout"
+  ansible.builtin.command:
+    argv: [ip, "-6", addr, del, "{{ item }}", dev, "{{ adguard_primary_iface }}"]
+  loop: "{{ adguard_ra_addresses.stdout_lines | select('search', '\\bdynamic\\b') | map('split') | map(attribute=3) | list }}"
+  changed_when: true

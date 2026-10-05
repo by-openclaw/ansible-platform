@@ -6,11 +6,16 @@
     purge: true
     autoremove: true
 
-- name: "Mailcow | Nothing but Docker holds the SMTP port on the host"
-  ansible.builtin.shell:
-    executable: /bin/bash
-    cmd: "set -o pipefail; ss -ltnpH 'sport = :25' | grep -v docker-proxy || true"
+# One line per listening socket on the port, with the process that holds it.
+- name: "Mailcow | Listeners on the SMTP port of the host"
+  ansible.builtin.command:
+    argv: [ss, -ltnpH, "sport = :{{ mailcow_host_smtp_port }}"]
   register: mailcow_port25_holders
   changed_when: false
   check_mode: false   # read-only probe
-  failed_when: mailcow_port25_holders.stdout | trim | length > 0
+
+- name: "Mailcow | Nothing but Docker holds the SMTP port on the host"
+  ansible.builtin.assert:
+    that: mailcow_port25_holders.stdout_lines | reject('search', mailcow_host_smtp_holder) | list | length == 0
+    fail_msg: "a process other than {{ mailcow_host_smtp_holder }} listens on port {{ mailcow_host_smtp_port }}: {{ mailcow_port25_holders.stdout_lines | reject('search', mailcow_host_smtp_holder) | list }}"
+    quiet: true
