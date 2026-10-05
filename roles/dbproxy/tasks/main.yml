@@ -42,6 +42,7 @@
       docker run --rm --user 0:0
       --volume %s:/tmp/haproxy.cfg:ro --volume {{ dbproxy_ca_bundle | dirname }}:{{ dbproxy_ca_bundle | dirname }}:ro
       {{ dbproxy_image }} haproxy -c -f /tmp/haproxy.cfg
+  register: dbproxy_config_file
   no_log: true      # carries the Redis check's password
   notify: Reload dbproxy
   tags: [dbproxy, config]
@@ -105,18 +106,19 @@
 # hard-stop-after ends it. A worker started before that setting existed has no such bound: it
 # is still there after the delay, and the endpoint is restarted once (every client reconnects).
 # One haproxy process is the master, one the worker of the current configuration: any other is
-# a former worker. The listing fails the task when it cannot be read (it must not pass unseen).
-- name: "dbproxy | Former workers have ended (hard-stop-after {{ dbproxy_hard_stop_after }})"
-  ansible.builtin.shell:
-    executable: /bin/bash
-    cmd: |
-      set -euo pipefail
-      for attempt in $(seq 1 {{ dbproxy_former_worker_retries }}); do
-        processes=$(docker top {{ dbproxy_container_name }} -eo pid,comm | awk '$2 == "haproxy"' | wc -l)
-        [ "$processes" -le 2 ] && break
-        sleep {{ dbproxy_former_worker_delay }}
-      done
-      echo "$processes"
+# a former worker. After a reload it is given the time its bound allows, then the listing is
+# read once — a listing that cannot be read fails the task (it must not pass unseen).
+- name: "dbproxy | A reload leaves the former worker {{ dbproxy_hard_stop_after }} to end"
+  ansible.builtin.wait_for:
+    timeout: "{{ dbproxy_hard_stop_after_seconds | int + dbproxy_former_worker_margin_seconds | int }}"
+  when:
+    - dbproxy_config_file is changed
+    - not ansible_check_mode
+  tags: [dbproxy, config]
+
+- name: "dbproxy | Processes of the endpoint"
+  ansible.builtin.command:
+    argv: [docker, top, "{{ dbproxy_container_name }}", -eo, "pid,comm"]
   register: dbproxy_processes
   changed_when: false
   check_mode: false   # read-only probe
@@ -128,7 +130,7 @@
   changed_when: true
   when:
     - not ansible_check_mode
-    - dbproxy_processes.stdout | trim | int > 2
+    - dbproxy_processes.stdout_lines | select('search', ' haproxy$') | list | length > 2   # the master and one worker
   tags: [dbproxy, config]
 
 # The endpoint's own view: exactly one PostgreSQL member is up behind it — the leader.

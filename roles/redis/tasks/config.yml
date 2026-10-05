@@ -17,19 +17,80 @@
   no_log: true
 
 # ACLs do not replicate: every member renders the same file. A change is loaded live (ACL LOAD,
-# tasks/container.yml) — no restart for a login.
-- name: "config | Render the ACL file (the default user and one login per consumer, passwords hashed)"
+# tasks/container.yml) — no restart for a login. The file is first rendered as a CANDIDATE and
+# loaded by a throwaway Redis of the same image: a file Redis cannot read never replaces the
+# one the member starts with.
+- name: "config | Render the ACL candidate (the default user and one login per consumer, passwords hashed)"
   ansible.builtin.template:
     src: users.acl.j2
-    dest: "{{ redis_acl_file }}"
+    dest: "{{ redis_acl_candidate_file }}"
     owner: "{{ redis_uid }}"
     group: "{{ redis_uid }}"
     mode: "0640"
-    # Loaded by a throwaway Redis of the same image BEFORE it replaces the file: Redis exits at
-    # once on a file it cannot read, and still runs after {{ redis_acl_validate_seconds }} s on one it accepts.
-    validate: >-
-      docker run --rm --user 0:0 --network none --volume %s:/tmp/users.acl:ro {{ redis_image }}
-      sh -c "timeout {{ redis_acl_validate_seconds }} redis-server --port 6399 --save '' --appendonly no --aclfile /tmp/users.acl >/dev/null; test $? -eq 124"
+  register: redis_acl_candidate
+  no_log: true
+
+- name: "config | A throwaway Redis of the same image loads the candidate"
+  when:
+    - redis_acl_candidate is changed
+    - not ansible_check_mode
+  block:
+    - name: "config | Start it (roles/service_scaffold containers; no network, the candidate read-only)"
+      ansible.builtin.include_role:
+        name: service_scaffold
+        tasks_from: containers
+      vars:
+        service_scaffold_def:
+          name: "{{ redis_acl_check_container }}"
+          containers:
+            - name: "{{ redis_acl_check_container }}"
+              image: "{{ redis_image }}"
+              user: "{{ redis_uid }}:{{ redis_uid }}"
+              command: ["redis-server", "--port", "{{ redis_acl_check_port | string }}", "--save", "", "--appendonly", "no", "--aclfile", "{{ redis_acl_file }}"]
+              network_mode: none
+              restart_policy: "no"
+              read_only: true
+              tmpfs: ["/data"]
+              cap_drop: [ALL]
+              volumes:
+                - "{{ redis_acl_candidate_file }}:{{ redis_acl_file }}:ro"
+
+    - name: "config | It lists every declared login (a file it cannot read stops it at once)"
+      community.docker.docker_container_exec:
+        container: "{{ redis_acl_check_container }}"
+        argv: [redis-cli, --no-auth-warning, -p, "{{ redis_acl_check_port | string }}", ACL, USERS]
+        env:
+          REDISCLI_AUTH: "{{ redis_requirepass }}"
+      register: redis_acl_check
+      retries: "{{ redis_acl_check_retries }}"
+      delay: "{{ redis_acl_check_delay }}"
+      until: >-
+        (redis_acl_check.rc | default(1)) == 0 and
+        ((redis_users | map(attribute='name') | list + ['default'])
+         | difference(redis_acl_check.stdout_lines | default([])) | length == 0)
+      changed_when: false
+      no_log: true
+  always:
+    - name: "config | Remove the throwaway Redis (roles/service_scaffold containers)"
+      ansible.builtin.include_role:
+        name: service_scaffold
+        tasks_from: containers
+      vars:
+        service_scaffold_def:
+          name: "{{ redis_acl_check_container }}"
+          containers:
+            - name: "{{ redis_acl_check_container }}"
+              image: "{{ redis_image }}"
+              state: absent
+
+- name: "config | The ACL file the member reads = the candidate that loaded"
+  ansible.builtin.copy:
+    src: "{{ redis_acl_candidate_file }}"
+    dest: "{{ redis_acl_file }}"
+    remote_src: true
+    owner: "{{ redis_uid }}"
+    group: "{{ redis_uid }}"
+    mode: "0640"
   register: redis_acl_rendered
   no_log: true
 
@@ -37,13 +98,25 @@
 # file is NEWER than the running process — not "when this run changed it": a run interrupted
 # after the render would otherwise leave a process on the old settings for good, and a
 # readiness check that needs the new settings could never pass (rehearsal 2026-10-04).
-- name: "config | Is redis.conf newer than the running member?"
-  ansible.builtin.shell: |
-    started=$(docker inspect --format '{{ '{{' }}.State.StartedAt{{ '}}' }}' {{ redis_container_name }} 2>/dev/null) || exit 0
-    [ "$(stat -c %Y {{ redis_conf_file }})" -gt "$(date -d "$started" +%s)" ] && echo newer || echo current
-  register: redis_conf_age
-  changed_when: false
+- name: "config | The running member (when there is one)"
+  community.docker.docker_container_info:
+    name: "{{ redis_container_name }}"
+  register: redis_container_now
   check_mode: false   # read-only probe
+
+- name: "config | redis.conf as it is on disk"
+  ansible.builtin.stat:
+    path: "{{ redis_conf_file }}"
+  register: redis_conf_stat
+
+- name: "config | First start of this member? Is redis.conf newer than the running process?"
+  ansible.builtin.set_fact:
+    redis_first_start: "{{ not redis_container_now.exists }}"
+    redis_conf_newer: >-
+      {{ redis_container_now.exists and (redis_conf_stat.stat.exists | default(false)) and
+         (redis_conf_stat.stat.mtime | default(0) | int)
+         > (((redis_container_now.container.State.StartedAt[0:19] ~ '+0000')
+             | to_datetime('%Y-%m-%dT%H:%M:%S%z')).timestamp() | int) }}
 
 # --- The start file: static, and not writable by Redis ------------------------------------------
 # When the Sentinels change a member's role they also ask it to rewrite the file it started
@@ -56,10 +129,6 @@
 # applied, and WHO IS PRIMARY is the Sentinels' word alone: a member that restarts comes up
 # claiming to be a master and the Sentinels make it a replica again within seconds — the
 # endpoint sends nothing to a member the Sentinels do not name.
-- name: "config | First start of this member? (it has no container yet)"
-  ansible.builtin.set_fact:
-    redis_first_start: "{{ (redis_conf_age.stdout | default('') | trim) | length == 0 }}"
-
 - name: "config | Start-file directory (root's: Redis cannot rewrite the file in it)"
   ansible.builtin.file:
     path: "{{ redis_runtime_host_dir }}"

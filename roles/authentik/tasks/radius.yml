@@ -167,57 +167,92 @@
     - not ansible_check_mode
 
 # The whole path, from another host: UDP in, shared secret, the outpost's call to this
-# instance, the flow, the group binding. The client reads the secret from a file it writes
-# in its own memory-backed /tmp and the login from its standard input — nothing is on a
-# command line. Judged on the client's summary (one request sent per case).
-- name: "radius | Self-test from the monitoring host: the probe is accepted, a wrong password is refused"
-  ansible.builtin.command:
-    argv:
-      - docker
-      - run
-      - --rm
-      - --read-only
-      - --tmpfs
-      - /tmp
-      - --cap-drop
-      - ALL
-      - --user
-      - "{{ authentik_radius_test_user }}"
-      - -e
-      - RADIUS_SECRET
-      - -e
-      - RADIUS_USER
-      - -e
-      - RADIUS_PASSWORD
-      - --entrypoint
-      - sh
-      - "{{ authentik_radius_test_image }}"
-      - -c
-      - >-
-        umask 077 && printf '%s' "$RADIUS_SECRET" > /tmp/secret &&
-        printf 'User-Name = "%s"\nUser-Password = "%s"\n' "$RADIUS_USER" "$RADIUS_PASSWORD"
-        | {{ authentik_radius_test_client }} -s -t {{ authentik_radius_test_timeout }} -r 1 -S /tmp/secret
-        {{ authentik_listen_ip }}:{{ authentik_radius_port }} auth 2>&1
-  environment:
-    RADIUS_SECRET: "{{ authentik_radius_secrets.selftest_secret }}"
-    RADIUS_USER: "{{ authentik_radius_selftest_user }}"
-    RADIUS_PASSWORD: "{{ authentik_radius_secrets.probe_password if item.case == 'accepted' else 'not-the-password' }}"
-  delegate_to: "{{ authentik_radius_test_host }}"
-  register: authentik_radius_selftest
-  loop:
-    - { case: accepted, expect: 'Accepted *: *1' }
-    - { case: refused, expect: 'Rejected *: *1' }
-  loop_control:
-    label: "{{ item.case }}"
-  until: authentik_radius_selftest.stdout is search(item.expect)
-  retries: "{{ authentik_radius_test_retries }}"
-  delay: "{{ authentik_radius_test_delay }}"
-  changed_when: false
-  failed_when: authentik_radius_selftest.stdout is not search(item.expect)
-  check_mode: false
+# instance, the flow, the group binding. The client reads the shared secret and the request
+# from two files (never from its command line): they are written to memory on the test host
+# (`/run`), readable by the client's user only, and removed whatever the outcome.
+- name: "radius | Self-test from the monitoring host"
   when:
     - authentik_radius_present | bool
     - not ansible_check_mode
+  block:
+    - name: "radius | Self-test directory in memory"
+      ansible.builtin.file:
+        path: "{{ authentik_radius_test_dir }}"
+        state: directory
+        owner: "{{ authentik_radius_test_user.split(':')[0] }}"
+        group: "{{ authentik_radius_test_user.split(':')[1] }}"
+        mode: "0700"
+      delegate_to: "{{ authentik_radius_test_host }}"
+
+    - name: "radius | The self-test provider's shared secret (file in memory)"
+      ansible.builtin.copy:
+        dest: "{{ authentik_radius_test_dir }}/secret"
+        content: "{{ authentik_radius_secrets.selftest_secret }}"
+        owner: "{{ authentik_radius_test_user.split(':')[0] }}"
+        group: "{{ authentik_radius_test_user.split(':')[1] }}"
+        mode: "0400"
+      delegate_to: "{{ authentik_radius_test_host }}"
+      no_log: true
+
+    - name: "radius | The two requests: the probe's login, and the same with a wrong password"
+      ansible.builtin.copy:
+        dest: "{{ authentik_radius_test_dir }}/{{ item.case }}"
+        content: |
+          User-Name = "{{ authentik_radius_selftest_user }}"
+          User-Password = "{{ authentik_radius_secrets.probe_password if item.case == 'accepted' else authentik_radius_test_wrong_password }}"
+        owner: "{{ authentik_radius_test_user.split(':')[0] }}"
+        group: "{{ authentik_radius_test_user.split(':')[1] }}"
+        mode: "0400"
+      delegate_to: "{{ authentik_radius_test_host }}"
+      loop: "{{ authentik_radius_test_cases }}"
+      loop_control:
+        label: "{{ item.case }}"
+      no_log: true
+
+    - name: "radius | The probe is accepted, a wrong password is refused"
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --read-only
+          - --cap-drop
+          - ALL
+          - --user
+          - "{{ authentik_radius_test_user }}"
+          - --volume
+          - "{{ authentik_radius_test_dir }}:{{ authentik_radius_test_dir }}:ro"
+          - --entrypoint
+          - "{{ authentik_radius_test_client }}"
+          - "{{ authentik_radius_test_image }}"
+          - -s
+          - -t
+          - "{{ authentik_radius_test_timeout | string }}"
+          - -r
+          - "1"
+          - -S
+          - "{{ authentik_radius_test_dir }}/secret"
+          - -f
+          - "{{ authentik_radius_test_dir }}/{{ item.case }}"
+          - "{{ authentik_listen_ip }}:{{ authentik_radius_port }}"
+          - auth
+      delegate_to: "{{ authentik_radius_test_host }}"
+      register: authentik_radius_selftest
+      loop: "{{ authentik_radius_test_cases }}"
+      loop_control:
+        label: "{{ item.case }}"
+      until: (authentik_radius_selftest.stdout ~ authentik_radius_selftest.stderr) is search(item.expect)
+      retries: "{{ authentik_radius_test_retries }}"
+      delay: "{{ authentik_radius_test_delay }}"
+      changed_when: false
+      failed_when: (authentik_radius_selftest.stdout ~ authentik_radius_selftest.stderr) is not search(item.expect)
+      check_mode: false
+  always:
+    - name: "radius | Remove the self-test files"
+      ansible.builtin.file:
+        path: "{{ authentik_radius_test_dir }}"
+        state: absent
+      delegate_to: "{{ authentik_radius_test_host }}"
 
 - name: "radius | Report"
   ansible.builtin.debug:
