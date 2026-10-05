@@ -1,0 +1,50 @@
+---
+# One running image (security_audit_image = [name, size in bytes]). The free space is measured
+# now, not once per host: an earlier scan may have downloaded the databases. The image is scanned
+# when it fits, and the outcome is recorded either way.
+- name: "SecAudit | Free space on Docker's directory"
+  ansible.builtin.command:
+    argv: [df, --output=avail, -B1, "{{ security_audit_docker_root.stdout | trim }}"]
+  register: security_audit_docker_free
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+
+# Trivy prints one line per finding: its severity. `timeout` stops the scanner after the allowed
+# time (Docker passes the signal on to the container, which --rm then removes).
+- name: "SecAudit | Trivy scan"
+  ansible.builtin.command:
+    argv:
+      - timeout
+      - --signal=TERM
+      - "--kill-after={{ security_audit_trivy_stop_grace_s }}"
+      - "{{ security_audit_trivy_scan_timeout_s }}"
+      - docker
+      - run
+      - --rm
+      - --name
+      - "{{ security_audit_trivy_container_name }}"
+      - -v
+      - "{{ security_audit_trivy_cache_volume }}:/root/.cache/"
+      - -v
+      - "{{ security_audit_docker_socket }}:{{ security_audit_docker_socket }}"
+      - "{{ security_audit_trivy_image }}"
+      - image
+      - --quiet
+      - --scanners
+      - vuln
+      - --severity
+      - "{{ security_audit_trivy_severity }}"
+      - --format
+      - template
+      - --template
+      - "{{ security_audit_trivy_template }}"
+      - "{{ security_audit_image[0] }}"
+  register: security_audit_trivy
+  when: security_audit_image_fits | bool
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  failed_when: false
+
+- name: "SecAudit | Record the outcome"
+  ansible.builtin.set_fact:
+    security_audit_containers: "{{ security_audit_containers + [security_audit_image_record] }}"

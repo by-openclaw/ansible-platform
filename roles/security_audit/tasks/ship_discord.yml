@@ -12,14 +12,15 @@
     security_audit_c_high: "{{ security_audit_fleet | map(attribute='container_high') | map('int') | sum }}"
     security_audit_c_crit: "{{ security_audit_fleet | map(attribute='container_critical') | map('int') | sum }}"
     security_audit_c_reboots: "{{ security_audit_fleet | selectattr('os.reboot_required', 'equalto', 'yes') | list | length }}"
+    security_audit_c_unscanned: "{{ security_audit_fleet | map(attribute='container_not_scanned', default=0) | map('int') | sum }}"
 
 - name: "SecAudit | Build the message"
   ansible.builtin.set_fact:
     security_audit_msg: >-
       **Security audit {{ security_audit_stamp }}** — {{ security_audit_fleet | length }} hosts ·
       sec-updates {{ security_audit_c_sec }} · container HIGH/CRIT {{ security_audit_c_high }}/{{ security_audit_c_crit }} ·
-      reboots {{ security_audit_c_reboots }} ·
-      {% if security_audit_hot | length > 0 %}⚠ {{ security_audit_hot | map(attribute='host') | join(', ') }}{% else %}✅ clear{% endif %}
+      reboots {{ security_audit_c_reboots }} · images not scanned {{ security_audit_c_unscanned }} ·
+      {% if security_audit_hot | length > 0 %}⚠ {{ security_audit_hot | map(attribute='host') | join(', ') }}{% elif security_audit_c_unscanned | int > 0 %}⚠ incomplete{% else %}✅ clear{% endif %}
 
 - name: "SecAudit | Send to Discord"
   ansible.builtin.uri:

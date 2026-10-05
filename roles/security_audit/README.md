@@ -7,7 +7,7 @@ Read-only fleet **CVE / update-currency audit** (identity/0008 · security). It 
 | Layer | Tool | Sees |
 |---|---|---|
 | **OS** | `debsecan` (Debian CVE↔package) + `apt-get -s dist-upgrade` + `/var/run/reboot-required` | host CVEs with a fix available, security-update count, pending reboot |
-| **Containers** | **Trivy** (`aquasec/trivy:0.58.1`, cached DB volume) against every **running** image | the real service CVE surface — host apt cannot see inside containers |
+| **Containers** | **Trivy** (`aquasec/trivy:0.58.1`, cached DB volume) against every **running** image that fits in the host's free space | the real service CVE surface — host apt cannot see inside containers |
 | **Appliance** | OPNsense firmware audit (API) — via the opnsense role's firmware check | firewall currency |
 | **Report** | consolidated dated JSON → Loki + Discord `#alerts` + optional GitLab issues | one place, tracked over time |
 
@@ -28,7 +28,7 @@ Schedule weekly (CronCreate on the controller, or a systemd timer): `security-au
 
 ## Knobs (`defaults/main.yml`)
 
-`security_audit_scan_containers`, `security_audit_trivy_severity` (HIGH,CRITICAL), `security_audit_severity_gate`, `security_audit_discord_webhook_vault_path`, `security_audit_loki_url`, `security_audit_gitlab_issues` (off until reviewed).
+`security_audit_scan_containers`, `security_audit_trivy_severity` (HIGH,CRITICAL), `security_audit_severity_gate`, `security_audit_discord_webhook_vault_path`, `security_audit_loki_url`, `security_audit_gitlab_issues` (off until reviewed); for the container scan: `security_audit_trivy_db_room_mb`, `security_audit_trivy_min_free_mb`, `security_audit_trivy_scan_timeout_s`.
 
 ## Backup & restore
 
@@ -38,4 +38,5 @@ Class **D** (code) — reports are disposable, regenerated each run. No state to
 
 - No findings shipped? Check `debsecan` installed and the Trivy DB pulled (needs host egress to ghcr/github). `docker run ... aquasec/trivy image --download-db-only` warms the cache.
 - Discord silent → `vault kv get prod/discord/webhook-alerts` present; the `#alerts` channel exists (roles/discord_guild).
-- Trivy slow first run = DB download (~40 MB, cached in the `trivy-db` volume afterwards).
+- Trivy slow first run = database download (about 1.4 GB with the Java index, cached in the `trivy-db` volume afterwards).
+- **"not scanned"** in a host record (`containers[].scanned: false`, `reason`) is never "no findings". Trivy exports an image into a temporary file as large as the image; an image is scanned only when `image + security_audit_trivy_db_room_mb + security_audit_trivy_min_free_mb` fits in the free space of Docker's directory, and a scan is stopped after `security_audit_trivy_scan_timeout_s`. Fix the host (remove superseded images, or grow its disk), then run the audit on that host again.
