@@ -29,11 +29,12 @@ What a client sees when a member dies, and what the time is made of. Measured by
 
 | Service | Measured (member killed) | Before | Detection | Takeover | The endpoint or the edge follows |
 |---|---|---|---|---|---|
-| PostgreSQL | **25.1 s** | 39 s | the leader lock expires: `ttl 20` (`loop_wait 3`, `retry_timeout 3`) | Patroni promotes the synchronous standby (no write lost) | checks every second, two good answers |
+| PostgreSQL | **25.1 s** | 39 s | the leader lock expires: `ttl 20` (`loop_wait 3`, `retry_timeout 8`) | Patroni promotes the synchronous standby (no write lost) | checks every second, two good answers |
 | Redis | **5.8 s** (about 7 s in two other runs; 9.7 s with the first routing rule) | 21 s | the Sentinels: `down-after 3 s`, quorum 2 | a Sentinel promotes the replica | checks every second, one good answer; a member is used only while it says master **and** two Sentinels name it |
 | Vault | **3.4 s** | 6 s | raft heartbeat (`performance_multiplier 1`) | raft election, then the new active node loads its state | the edge checks `/v1/sys/health` every second |
 | Authentik | — (two active instances; not part of this run) | — | — | — | the edge checks the liveness path every 2 s |
 
+- **`retry_timeout` is not part of the failover time:** it is how long the leader may fail to reach the consensus store before it steps down by itself. 8 s is the most a 20 s lock allows (`loop_wait + 2 x retry_timeout <= ttl`); with 3 s the leader stepped down on 2026-10-05 00:00:47 UTC during a stall of its own guest.
 - **PostgreSQL's floor is Patroni's:** `ttl` cannot be lower than 20 s (a lower value is raised to 20 without a message; etcd shows the lock's granted lifetime). A lost leader — the whole member, Patroni included — is therefore replaced after about 20 s plus the promotion and the endpoint's check. A planned switchover takes about a second; PostgreSQL crashing under a living Patroni is handled by Patroni at once.
 - **Sessions of a former configuration:** a reload starts a new worker; the former one keeps the sessions it holds and no longer checks the members, so a dead member does not end them. `hard-stop-after` ({{ dbproxy_hard_stop_after }} in the role) bounds that: the former worker closes its sessions and the clients reconnect to the worker that watches. The role restarts the endpoint once when a worker without that bound is still present.
 - **The configuration is validated before it lands:** the pinned image parses the rendered file before it replaces the one on disk.

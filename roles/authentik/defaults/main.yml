@@ -157,7 +157,7 @@ authentik_ldap_flow: "ldap-authentication"
 authentik_ldap_flow_title: "LDAP bind"
 authentik_ldap_users_ou: "ou=users"                # where the outpost presents the accounts
 # The bind test: connection timeout (s), and how long it waits for a restarted outpost.
-authentik_ldap_bind_test_timeout: 10
+authentik_ldap_test_package: "python3-ldap"       # what the Ansible LDAP module needs on the host that binds
 authentik_ldap_bind_test_retries: 6
 authentik_ldap_bind_test_delay: 5
 authentik_ldap_bind_vault_path: "{{ platform_env }}/authentik/ldap-bind"
@@ -210,6 +210,11 @@ authentik_radius_selftest_networks:
 authentik_radius_test_image: "freeradius/freeradius-server:3.2.9-alpine"
 authentik_radius_test_client: "/opt/bin/radclient"
 authentik_radius_test_user: "65534:65534"        # the client runs as nobody: it needs no right
+authentik_radius_test_dir: "/run/radius-selftest"            # in memory on the test host, for the seconds the test lasts
+authentik_radius_test_wrong_password: "not-the-password"     # pragma: allowlist secret
+authentik_radius_test_cases:
+  - { case: accepted, expect: 'Accepted *: *1' }
+  - { case: refused, expect: 'Rejected *: *1' }
 # Seconds the client waits for the answer. A login runs the whole flow through the outpost and
 # takes about 6 s for the probe (measured 2026-10-04: its app password is tried after the
 # password back ends, each of which costs one password hash) — a 5 s client gave up before
