@@ -15,17 +15,19 @@
   no_log: true
   when: vault_login_ar_stat.stat.exists
 
+# Vault's HTTP API, called on the Vault node (delegated): the role id and the secret id travel
+# in the module call, never on a command line. The address comes from the inventory
+# (platform_vault_addr follows platform_vault_host) — it is not derived here.
 - name: "Vault login | AppRole login → token"
-  ansible.builtin.command:
-    # No VAULT_ADDR override: the container's own env is authoritative (same as
-    # vault_secret / opnsense_api_creds). Deriving it from platform_domain broke
-    # every non-prod inventory (lxc-vault-01.test.<domain> does not resolve).
-    cmd: >-
-      docker exec {{ vault_login_container }}
-      vault write -field=token auth/approle/login
-      role_id={{ vault_login_ar.role_id }} secret_id={{ vault_login_ar.secret_id }}
+  ansible.builtin.uri:
+    url: "{{ vault_login_api_url }}/v1/auth/approle/login"
+    method: POST
+    body_format: json
+    body:
+      role_id: "{{ vault_login_ar.role_id }}"
+      secret_id: "{{ vault_login_ar.secret_id }}"
+    timeout: "{{ vault_login_api_timeout }}"
   delegate_to: "{{ vault_login_host }}"
-  become: true
   register: vault_login_result
   check_mode: false          # a login is read-only; FW plays must be dry-runnable
   changed_when: false
@@ -35,14 +37,14 @@
 
 - name: "Vault login | Adopt the AppRole token"
   ansible.builtin.set_fact:
-    vault_deploy_token: "{{ vault_login_result.stdout | trim }}"
+    vault_deploy_token: "{{ vault_login_result.json.auth.client_token }}"
     vault_deploy_auth: approle
   no_log: true
   when:
     - vault_login_ar_stat.stat.exists
-    - (vault_login_result.stdout | default('') | trim) | length > 0
+    - (vault_login_result.json.auth.client_token | default('')) | length > 0
 
-# AppRole yielded no token. Surface the REAL cause (rc + Vault's stderr, UUIDs
+# AppRole yielded no token. Surface the REAL cause (HTTP status + Vault's errors, UUIDs
 # redacted, token never shown) instead of silently falling back — a silent
 # fallback to the retired root token is what killed every flow (SEC-06).
 - name: "Vault login | AppRole login failed — fail loudly with the cause"
@@ -50,12 +52,12 @@
     msg: >-
       ansible-deploy AppRole login produced no token
       (approle file present: {{ vault_login_ar_stat.stat.exists }},
-      rc={{ vault_login_result.rc | default('skipped') }},
-      stderr={{ (vault_login_result.stderr | default(''))
+      HTTP {{ vault_login_result.status | default('skipped') }} at {{ vault_login_api_url }},
+      errors={{ ((vault_login_result.json.errors | default([]) | join('; ')) ~ ' ' ~ (vault_login_result.msg | default('')))
                 | regex_replace('[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '<uuid>')
                 | regex_replace('\\s+', ' ') | trim }}).
       Fix the AppRole path ({{ vault_login_secret_dir }}/{{ vault_login_approle_file }},
-      delegated sudo/docker on {{ vault_login_host }}); do NOT rely on the retired
+      Vault reachable from {{ vault_login_host }}); do NOT rely on the retired
       root token. Set vault_login_allow_root_fallback=true ONLY for Vault genesis.
   when:
     - vault_deploy_token is not defined
