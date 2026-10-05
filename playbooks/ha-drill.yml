@@ -28,11 +28,12 @@
   tags: [postgresql]
   vars_files:
     - ../roles/postgresql/defaults/main.yml
+    - vars/ha_drill.yml
   vars:
     ha_drill_patronictl: [docker, exec, "{{ pg_container_name }}", patronictl, -c, "{{ pg_patroni_conf }}"]
     ha_drill_pg_conninfo: >-
       host={{ platform_pg_host }} port={{ pg_port }} dbname=postgres user=postgres
-      sslmode=verify-full sslrootcert=/etc/ssl/certs/ca-certificates.crt connect_timeout=2
+      sslmode=verify-full sslrootcert={{ ha_drill_ca_bundle }} connect_timeout={{ ha_drill_pg_connect_timeout }}
     ha_drill_pg_probe:
       - docker
       - exec
@@ -105,8 +106,8 @@
       environment:
         PGPASSWORD: "{{ ha_drill_pg_password }}"
       register: ha_drill_pg_w1
-      retries: 90
-      delay: 1
+      retries: "{{ ha_drill_follow_retries }}"
+      delay: "{{ ha_drill_follow_delay }}"
       until: ha_drill_pg_w1.rc == 0
       changed_when: false
       no_log: true
@@ -120,8 +121,8 @@
       ansible.builtin.command:
         argv: "{{ ha_drill_patronictl + ['list', '-f', 'json'] }}"
       register: ha_drill_pg_after
-      retries: 40
-      delay: 3
+      retries: "{{ ha_drill_rejoin_retries }}"
+      delay: "{{ ha_drill_rejoin_delay }}"
       until: >-
         ha_drill_pg_after.rc == 0 and
         (ha_drill_pg_after.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | first | default('')) == ha_drill_pg_candidate and
@@ -146,10 +147,13 @@
   tags: [redis]
   vars_files:
     - ../roles/redis_sentinel/defaults/main.yml
+    - ../roles/dbproxy/defaults/main.yml          # dbproxy_container_name, dbproxy_redis_check_user
+    - vars/ha_drill.yml
   vars:
     ha_drill_redis_cli:
       - docker
       - exec
+      - -i
       - -e
       - REDISCLI_AUTH
       - "{{ redis_sentinel_container_name }}"
@@ -157,12 +161,10 @@
       - --no-auth-warning
       - --tls
       - --cacert
-      - /etc/ssl/certs/ca-certificates.crt
+      - "{{ ha_drill_ca_bundle }}"
     ha_drill_redis_sentinel: "{{ ha_drill_redis_cli + ['-h', redis_sentinel_fqdn, '-p', redis_sentinel_port | string] }}"
     ha_drill_redis_endpoint: >-
-      {{ ha_drill_redis_cli + ['-h', platform_redis_host, '-p', redis_sentinel_redis_port | string, '--user', 'healthcheck'] }}
-    # A safety bound only: the step releases the pause itself once the former primary is a replica.
-    ha_drill_redis_pause_ms: 30000
+      {{ ha_drill_redis_cli + ['-h', platform_redis_host, '-p', redis_sentinel_redis_port | string, '--user', dbproxy_redis_check_user] }}
     ha_drill_redis_primary: "{{ ha_drill_redis_cli + ['-h', ha_drill_redis_before.stdout_lines | first, '-p', redis_sentinel_redis_port | string] }}"
   tasks:
     - name: "Redis | The Sentinel's and the check login's passwords (Vault, read)"
@@ -170,7 +172,7 @@
       loop:
         - {key: sentinel, path: "{{ redis_sentinel_vault_path }}"}
         - {key: admin, path: "{{ redis_sentinel_redis_vault_path }}"}
-        - {key: healthcheck, path: "{{ platform_redis_users_vault_prefix }}/healthcheck"}
+        - {key: healthcheck, path: "{{ platform_redis_users_vault_prefix }}/{{ dbproxy_redis_check_user }}"}
       loop_control:
         loop_var: ha_drill_secret
         label: "{{ ha_drill_secret.key }}"
@@ -206,56 +208,76 @@
       register: ha_drill_redis_t0
       changed_when: false
 
-    # ONE step, so no task latency sits between its parts:
-    #   1. writes are paused on the primary (clients wait; a pause also stops the Sentinels'
-    #      hello on that member, so they would fail over by themselves after down-after —
-    #      the order below only makes it immediate);
-    #   2. WAIT confirms the replica has acknowledged every write;
-    #   3. the Sentinels are asked to fail over;
-    #   4. as soon as they name the other member, the former primary is made its replica here
+    # The change, one command per task (the client reads several commands from its input where
+    # they belong to the same member):
+    #   1. writes are paused on the primary (clients wait) and the replica confirms it has
+    #      acknowledged every write;
+    #   2. the Sentinels are asked to fail over;
+    #   3. as soon as they name the other member, the former primary is made its replica here
     #      (left to the Sentinels it happens only when the pause ends, and until then it is
     #      still a master in the endpoint's eyes) and the pause is released.
-    - name: "Redis | Pause writes, confirm the replica, fail over, demote the former primary"
-      ansible.builtin.shell:
-        executable: /bin/bash
-        cmd: |
-          set -euo pipefail
-          cli() { docker exec -e REDISCLI_AUTH "{{ redis_sentinel_container_name }}" redis-cli --no-auth-warning --tls --cacert /etc/ssl/certs/ca-certificates.crt "$@"; }
-          old="{{ ha_drill_redis_before.stdout_lines | first }}"
-          REDISCLI_AUTH="$ADMIN_PW" cli -h "$old" -p {{ redis_sentinel_redis_port }} CLIENT PAUSE {{ ha_drill_redis_pause_ms }} WRITE
-          acked=$(REDISCLI_AUTH="$ADMIN_PW" cli -h "$old" -p {{ redis_sentinel_redis_port }} WAIT 1 5000)
-          [ "$acked" = "1" ] || { REDISCLI_AUTH="$ADMIN_PW" cli -h "$old" -p {{ redis_sentinel_redis_port }} CLIENT UNPAUSE; echo "replica not in sync (acked=$acked): no failover"; exit 1; }
-          REDISCLI_AUTH="$SENTINEL_PW" cli -h "{{ redis_sentinel_fqdn }}" -p {{ redis_sentinel_port }} SENTINEL FAILOVER "{{ redis_sentinel_master_name }}"
-          new="$old"
-          for _ in $(seq 1 40); do
-            new=$(REDISCLI_AUTH="$SENTINEL_PW" cli -h "{{ redis_sentinel_fqdn }}" -p {{ redis_sentinel_port }} SENTINEL GET-MASTER-ADDR-BY-NAME "{{ redis_sentinel_master_name }}" | head -1)
-            [ "$new" != "$old" ] && break
-            sleep 0.5
-          done
-          [ "$new" != "$old" ] || { REDISCLI_AUTH="$ADMIN_PW" cli -h "$old" -p {{ redis_sentinel_redis_port }} CLIENT UNPAUSE; echo "the Sentinels did not fail over"; exit 1; }
-          REDISCLI_AUTH="$ADMIN_PW" timeout 10 docker exec -e REDISCLI_AUTH "{{ redis_sentinel_container_name }}" redis-cli --no-auth-warning --tls --cacert /etc/ssl/certs/ca-certificates.crt -h "$old" -p {{ redis_sentinel_redis_port }} REPLICAOF "$new" {{ redis_sentinel_redis_port }} || true
-          REDISCLI_AUTH="$ADMIN_PW" cli -h "$old" -p {{ redis_sentinel_redis_port }} CLIENT UNPAUSE || true
-          echo "failed over: $old -> $new"
-      environment:
-        ADMIN_PW: "{{ ha_drill_secrets.admin }}"
-        SENTINEL_PW: "{{ ha_drill_secrets.sentinel }}"
-      register: ha_drill_redis_order
-      changed_when: true   # the passwords travel in the environment, never in the command text
-
-    - name: "Redis | The step's outcome"
-      ansible.builtin.debug:
-        msg: "{{ ha_drill_redis_order.stdout_lines | last }}"
-
-    - name: "Redis | The Sentinels name the other member"
+    # Whatever fails after the pause, the pause is released.
+    - name: "Redis | Pause writes on the primary; the replica confirms it has them all"
       ansible.builtin.command:
-        argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'GET-MASTER-ADDR-BY-NAME', redis_sentinel_master_name] }}"
+        argv: "{{ ha_drill_redis_primary }}"
+        stdin: |
+          CLIENT PAUSE {{ ha_drill_redis_pause_ms }} WRITE
+          WAIT 1 {{ ha_drill_redis_wait_ms }}
       environment:
-        REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
-      register: ha_drill_redis_after
-      retries: 60
-      delay: 1
-      until: ha_drill_redis_after.stdout_lines | first != ha_drill_redis_before.stdout_lines | first
-      changed_when: false
+        REDISCLI_AUTH: "{{ ha_drill_secrets.admin }}"
+      register: ha_drill_redis_paused
+      changed_when: true
+      timeout: "{{ ha_drill_redis_step_timeout }}"
+
+    - name: "Redis | Fail over, then make the former primary a replica and release the pause"
+      block:
+        - name: "Redis | The replica has every write"
+          ansible.builtin.assert:
+            that: (ha_drill_redis_paused.stdout_lines | last | trim) == '1'
+            fail_msg: "the replica did not confirm (answer: {{ ha_drill_redis_paused.stdout_lines | last | default('none') }}): no failover"
+            quiet: true
+
+        - name: "Redis | Ask the Sentinels to fail over"
+          ansible.builtin.command:
+            argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'FAILOVER', redis_sentinel_master_name] }}"
+          environment:
+            REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
+          register: ha_drill_redis_order
+          changed_when: true
+          failed_when: "'OK' not in ha_drill_redis_order.stdout"
+
+        - name: "Redis | The Sentinels name the other member"
+          ansible.builtin.command:
+            argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'GET-MASTER-ADDR-BY-NAME', redis_sentinel_master_name] }}"
+          environment:
+            REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
+          register: ha_drill_redis_after
+          retries: "{{ ha_drill_recovery_retries }}"
+          delay: "{{ ha_drill_poll_delay }}"
+          until: ha_drill_redis_after.rc == 0 and (ha_drill_redis_after.stdout_lines | first) != (ha_drill_redis_before.stdout_lines | first)
+          changed_when: false
+
+        - name: "Redis | The former primary follows the new one, and the pause ends"
+          ansible.builtin.command:
+            argv: "{{ ha_drill_redis_primary }}"
+            stdin: |
+              REPLICAOF {{ ha_drill_redis_after.stdout_lines | first }} {{ redis_sentinel_redis_port }}
+              CLIENT UNPAUSE
+          environment:
+            REDISCLI_AUTH: "{{ ha_drill_secrets.admin }}"
+          changed_when: true
+          timeout: "{{ ha_drill_redis_step_timeout }}"
+      rescue:
+        - name: "Redis | Release the pause (the change did not complete)"
+          ansible.builtin.command:
+            argv: "{{ ha_drill_redis_primary + ['CLIENT', 'UNPAUSE'] }}"
+          environment:
+            REDISCLI_AUTH: "{{ ha_drill_secrets.admin }}"
+          changed_when: true
+
+        - name: "Redis | Stop here"
+          ansible.builtin.fail:
+            msg: "the planned change did not complete; writes were released on the primary"
 
     - name: "Redis | The endpoint answers from the new primary"
       ansible.builtin.command:
@@ -263,8 +285,8 @@
       environment:
         REDISCLI_AUTH: "{{ ha_drill_secrets.healthcheck }}"
       register: ha_drill_redis_e1
-      retries: 90
-      delay: 1
+      retries: "{{ ha_drill_follow_retries }}"
+      delay: "{{ ha_drill_follow_delay }}"
       until: ha_drill_redis_e1.rc == 0 and 'role:master' in ha_drill_redis_e1.stdout and 'connected_slaves:1' in ha_drill_redis_e1.stdout
       changed_when: false
 
@@ -275,13 +297,8 @@
 
     # The endpoint's own log is the measure (this play's clock includes its own task latency).
     - name: "Redis | What the endpoint saw"
-      ansible.builtin.shell:
-        executable: /bin/bash
-        cmd: |
-          set -o pipefail
-          docker logs --since 4m -t "{{ dbproxy_container_name | default('dbproxy') }}" 2>&1 \
-            | grep -E 'redis/[a-z0-9-]+ is (DOWN|UP)' \
-            | sed -E 's/^[0-9-]+T([0-9:.]{12}).*Server (redis\/[a-z0-9-]+) is (DOWN|UP).*/\1 \2 \3/' | sort -u | tail -4
+      ansible.builtin.command:
+        argv: [docker, logs, --since, "{{ ha_drill_redis_log_window }}", -t, "{{ dbproxy_container_name }}"]
       register: ha_drill_redis_seen
       changed_when: false
       failed_when: false
@@ -292,7 +309,11 @@
           DRILL redis: primary {{ ha_drill_redis_before.stdout_lines | first }} → {{ ha_drill_redis_after.stdout_lines | first }};
           writes paused on the old primary (replica confirmed in sync), former primary demoted at once; the endpoint answers from the new primary
           with its replica attached {{ (ha_drill_redis_t1.stdout | float - ha_drill_redis_t0.stdout | float) | round(1) }} s after the pause
-          ({{ ha_drill_redis_e1.attempts }} attempt(s)); endpoint log: {{ ha_drill_redis_seen.stdout_lines | default([]) | join(' | ') }}
+          ({{ ha_drill_redis_e1.attempts }} attempt(s)); endpoint log:
+          {{ ((ha_drill_redis_seen.stdout_lines | default([])) + (ha_drill_redis_seen.stderr_lines | default([]))) | sort
+             | select('search', 'Server redis/[a-z0-9-]+ is (DOWN|UP)')
+             | map('regex_replace', '^\S+T(\S{12})\S* .*Server (redis/[a-z0-9-]+) is (DOWN|UP).*$', '\1 \2 \3')
+             | list | unique | join(' | ') }}
 
 # Vault: the ACTIVE member is lost (its container restarts, so it comes back sealed). The
 # two others must elect a new active node and the edge must follow it; then the restarted
@@ -304,6 +325,7 @@
   tags: [vault]
   vars_files:
     - ../roles/vault/defaults/main.yml
+    - vars/ha_drill.yml
   vars:
     ha_drill_vault_edge: "https://{{ platform_service_fqdns.vault }}/v1/sys/health"
   tasks:
@@ -349,8 +371,8 @@
         url: "{{ ha_drill_vault_edge }}"
         status_code: [200]
       register: ha_drill_vault_edge_after
-      retries: 60
-      delay: 1
+      retries: "{{ ha_drill_follow_retries }}"
+      delay: "{{ ha_drill_follow_delay }}"
       until: ha_drill_vault_edge_after.status == 200
 
     - name: "Vault | Clock"
@@ -373,8 +395,9 @@
           {{ (ha_drill_vault_t1.stdout | float - ha_drill_vault_t0.stdout | float) | round(1) }} s after the restart
           ({{ ha_drill_vault_edge_after.attempts | default(1) }} attempt(s))
 
-# --- Unplanned: the active member is killed and stays down until the play starts it. The gap is
-# measured through the edge by ONE loop on a member that stays up.
+# --- Unplanned: the active member's container is killed and stays down until the play starts
+# it. The takeover is read from the records: when Docker says the container stopped, and since
+# when the new active node says it is active. The edge follows at its next check of the members.
 - name: "HA drill | Vault loses its active member (killed)"
   hosts: "{{ groups['vault'] | first }}"
   become: true
@@ -385,11 +408,15 @@
     - vars/ha_drill.yml
   vars:
     ha_drill_vault_edge: "https://{{ platform_service_fqdns.vault }}/v1/sys/health"
-    ha_drill_vault_prober: "{{ platform_vault_members | difference([ha_drill_vault_active]) | first }}"
+    ha_drill_vault_status: [docker, exec, "{{ vault_container_name }}", vault, status, -format=json]
+    ha_drill_vault_witness: "{{ platform_vault_members | difference([ha_drill_vault_active]) | first }}"
+    ha_drill_vault_new_active: >-
+      {{ (ha_drill_vault_takeover.stdout | from_json).leader_address | default('')
+         | regex_replace('^https://', '') | regex_replace('[.:].*$', '') }}
   tasks:
     - name: "Vault | State of every member before"
       ansible.builtin.command:
-        argv: [docker, exec, "{{ vault_container_name }}", vault, status, -format=json]
+        argv: "{{ ha_drill_vault_status }}"
       delegate_to: "{{ item }}"
       loop: "{{ platform_vault_members }}"
       register: ha_drill_vault_before
@@ -408,45 +435,45 @@
         fail_msg: "no active member named by the cluster: {{ ha_drill_vault_active }}"
         quiet: true
 
-    - name: "Vault | Probe the edge three times a second (starts now, ends when an active member answers again)"
-      ansible.builtin.shell:
-        executable: /bin/bash
-        cmd: |
-          s=$(date +%s); down=""; up=""
-          while [ $(( $(date +%s) - s )) -lt {{ ha_drill_probe_max_seconds }} ]; do
-            if [ "$(curl -s -o /dev/null -m {{ ha_drill_probe_timeout }} --cacert {{ ha_drill_ca_bundle }} -w '%{http_code}' '{{ ha_drill_vault_edge }}')" = "200" ]; then
-              if [ -n "$down" ]; then up=$(date +%s.%N); break; fi
-            else
-              [ -n "$down" ] || down=$(date +%s.%N)
-            fi
-            sleep {{ ha_drill_probe_interval }}
-          done
-          echo "down=${down:-0} up=${up:-0}"
-      delegate_to: "{{ ha_drill_vault_prober }}"
-      async: "{{ ha_drill_probe_async }}"
-      poll: 0
-      register: ha_drill_vault_probe
-      changed_when: false
-
-    - name: "Vault | Let the probe see the active member answering first"
-      ansible.builtin.pause:
-        seconds: "{{ ha_drill_probe_warmup_seconds }}"
-
     - name: "Vault | Kill the active member's container ({{ ha_drill_vault_active }})"
       ansible.builtin.command:
         argv: [docker, kill, "{{ vault_container_name }}"]
       delegate_to: "{{ ha_drill_vault_active }}"
       changed_when: true
 
-    - name: "Vault | Wait for the probe's verdict"
-      ansible.builtin.async_status:
-        jid: "{{ ha_drill_vault_probe.ansible_job_id }}"
-      delegate_to: "{{ ha_drill_vault_prober }}"
-      register: ha_drill_vault_verdict
-      retries: "{{ ha_drill_verdict_retries }}"
-      delay: "{{ ha_drill_verdict_delay }}"
-      until: ha_drill_vault_verdict.finished
+    - name: "Vault | When it stopped (Docker's record)"
+      community.docker.docker_container_info:
+        name: "{{ vault_container_name }}"
+      delegate_to: "{{ ha_drill_vault_active }}"
+      register: ha_drill_vault_killed
+
+    - name: "Vault | Another member is active (asked from a member that stayed up)"
+      ansible.builtin.command:
+        argv: "{{ ha_drill_vault_status }}"
+      delegate_to: "{{ ha_drill_vault_witness }}"
+      register: ha_drill_vault_takeover
+      retries: "{{ ha_drill_recovery_retries }}"
+      delay: "{{ ha_drill_recovery_delay }}"
+      until: >-
+        ha_drill_vault_takeover.rc == 0 and
+        ha_drill_vault_new_active in (platform_vault_members | difference([ha_drill_vault_active]))
       changed_when: false
+
+    - name: "Vault | Since when the new active node is active (its own record)"
+      ansible.builtin.command:
+        argv: "{{ ha_drill_vault_status }}"
+      delegate_to: "{{ ha_drill_vault_new_active }}"
+      register: ha_drill_vault_active_since
+      changed_when: false
+
+    - name: "Vault | The edge answers from it"
+      ansible.builtin.uri:
+        url: "{{ ha_drill_vault_edge }}"
+        status_code: [200]
+      register: ha_drill_vault_edge_after
+      retries: "{{ ha_drill_recovery_retries }}"
+      delay: "{{ ha_drill_recovery_delay }}"
+      until: ha_drill_vault_edge_after.status == 200
 
     - name: "Vault | Start the killed member again (it comes back sealed)"
       ansible.builtin.command:
@@ -454,20 +481,15 @@
       delegate_to: "{{ ha_drill_vault_active }}"
       changed_when: true
 
-    - name: "Vault | The new active member, asked from the member that probed"
-      ansible.builtin.command:
-        argv: [docker, exec, "{{ vault_container_name }}", vault, status, -format=json]
-      delegate_to: "{{ ha_drill_vault_prober }}"
-      register: ha_drill_vault_after
-      changed_when: false
-
     - name: "Vault | Result"
       ansible.builtin.debug:
         msg: >-
-          DRILL vault (active killed): {{ ha_drill_vault_active }} killed; the edge had no active member for
-          {{ ((ha_drill_vault_verdict.stdout | regex_search('up=[0-9.]+') | default('up=0', true)).split('=')[1] | float
-              - (ha_drill_vault_verdict.stdout | regex_search('down=[0-9.]+') | default('down=0', true)).split('=')[1] | float) | round(1) }} s;
-          active now {{ (ha_drill_vault_after.stdout | from_json).leader_address | default('?') }}
+          DRILL vault (active killed): {{ ha_drill_vault_active }} stopped at {{ ha_drill_vault_killed.container.State.FinishedAt }};
+          {{ ha_drill_vault_new_active }} is active since {{ (ha_drill_vault_active_since.stdout | from_json).active_time }},
+          {{ ha_drill_gap_seconds }} s later; the edge answers from it (it checks the members every second)
+      vars:
+        ha_drill_from: "{{ ha_drill_vault_killed.container.State.FinishedAt }}"
+        ha_drill_to: "{{ (ha_drill_vault_active_since.stdout | from_json).active_time }}"
 
 - name: "HA drill | Vault — the restarted member is unsealed and follows the cluster"
   hosts: "{{ groups['vault_cluster'] | default(groups['vault']) }}"
@@ -481,9 +503,8 @@
         name: vault
         tasks_from: init
 
-# --- Unplanned: the member is killed (docker kill: it stays down until the play starts it) ----
-# The gap is measured by ONE loop that runs on another host from before the kill until writes
-# work again — no task latency inside the number.
+# --- Unplanned: the member's container is killed and stays down until the play starts it. The
+# gap is read from the records (vars/ha_drill.yml), not probed.
 - name: "HA drill | PostgreSQL loses its leader (killed)"
   hosts: "{{ groups['patroni'] | first }}"
   become: true
@@ -491,34 +512,24 @@
   tags: [never, postgresql-kill]
   vars_files:
     - ../roles/postgresql/defaults/main.yml
+    - ../roles/dbproxy/defaults/main.yml          # dbproxy_container_name
     - vars/ha_drill.yml
   vars:
     ha_drill_patronictl: [docker, exec, "{{ pg_container_name }}", patronictl, -c, "{{ pg_patroni_conf }}"]
-    ha_drill_pg_conninfo: >-
-      host={{ platform_pg_host }} port={{ pg_port }} dbname=postgres user=postgres
-      sslmode=verify-full sslrootcert={{ ha_drill_ca_bundle }} connect_timeout={{ ha_drill_probe_timeout }}
+    ha_drill_endpoint_host: "{{ groups['pg_endpoint'] | first }}"
   tasks:
-    - name: "PostgreSQL | Superuser password (Vault, read)"
-      ansible.builtin.include_role:
-        name: vault_secret
-      vars:
-        vault_secret_path: "{{ pg_superuser_vault_path }}"   # pragma: allowlist secret
-        vault_secret_action: read   # pragma: allowlist secret
-
     - name: "PostgreSQL | Members before"
       ansible.builtin.command:
         argv: "{{ ha_drill_patronictl + ['list', '-f', 'json'] }}"
       register: ha_drill_pg_before
       changed_when: false
 
-    - name: "PostgreSQL | Leader and the member that probes (the synchronous standby)"
+    - name: "PostgreSQL | Leader, and a member that stays up"
       ansible.builtin.set_fact:
-        ha_drill_pg_password: "{{ vault_secret_result.password }}"
         ha_drill_pg_leader: "{{ _m | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | first }}"
-        ha_drill_pg_prober: "{{ _m | selectattr('Role', 'equalto', 'Sync Standby') | map(attribute='Member') | first }}"
+        ha_drill_pg_witness: "{{ _m | selectattr('Role', 'equalto', 'Sync Standby') | map(attribute='Member') | first }}"
       vars:
         _m: "{{ ha_drill_pg_before.stdout | from_json }}"
-      no_log: true
 
     - name: "PostgreSQL | Every member is healthy before the drill"
       ansible.builtin.assert:
@@ -531,48 +542,39 @@
       vars:
         _m: "{{ ha_drill_pg_before.stdout | from_json }}"
 
-    - name: "PostgreSQL | Probe writes through the endpoint, three times a second (starts now, ends when they work again)"
-      ansible.builtin.shell:
-        executable: /bin/bash
-        cmd: |
-          s=$(date +%s); down=""; up=""
-          while [ $(( $(date +%s) - s )) -lt {{ ha_drill_probe_max_seconds }} ]; do
-            if docker exec -e PGPASSWORD "{{ pg_container_name }}" psql "{{ ha_drill_pg_conninfo }}" -Atc "create temp table ha_drill (x int)" >/dev/null 2>&1; then
-              if [ -n "$down" ]; then up=$(date +%s.%N); break; fi
-            else
-              [ -n "$down" ] || down=$(date +%s.%N)
-            fi
-            sleep {{ ha_drill_probe_interval }}
-          done
-          echo "down=${down:-0} up=${up:-0}"
-      environment:
-        PGPASSWORD: "{{ ha_drill_pg_password }}"
-      delegate_to: "{{ ha_drill_pg_prober }}"
-      async: "{{ ha_drill_probe_async }}"
-      poll: 0
-      register: ha_drill_pg_probe
-      changed_when: false
-      no_log: true
-
-    - name: "PostgreSQL | Let the probe see writes working first"
-      ansible.builtin.pause:
-        seconds: "{{ ha_drill_probe_warmup_seconds }}"
-
     - name: "PostgreSQL | Kill the leader's container ({{ ha_drill_pg_leader }})"
       ansible.builtin.command:
         argv: [docker, kill, "{{ pg_container_name }}"]
       delegate_to: "{{ ha_drill_pg_leader }}"
       changed_when: true
 
-    - name: "PostgreSQL | Wait for the probe's verdict"
-      ansible.builtin.async_status:
-        jid: "{{ ha_drill_pg_probe.ansible_job_id }}"
-      delegate_to: "{{ ha_drill_pg_prober }}"
-      register: ha_drill_pg_verdict
-      retries: "{{ ha_drill_verdict_retries }}"
-      delay: "{{ ha_drill_verdict_delay }}"
-      until: ha_drill_pg_verdict.finished
+    - name: "PostgreSQL | When it stopped (Docker's record)"
+      community.docker.docker_container_info:
+        name: "{{ pg_container_name }}"
+      delegate_to: "{{ ha_drill_pg_leader }}"
+      register: ha_drill_pg_killed
+
+    # The endpoint writes one line when a member starts to receive traffic.
+    - name: "PostgreSQL | The endpoint routes to another member (its own log, read until it says so)"
+      ansible.builtin.command:
+        argv: [docker, logs, --since, "{{ ha_drill_pg_killed.container.State.FinishedAt }}", -t, "{{ dbproxy_container_name }}"]
+      delegate_to: "{{ ha_drill_endpoint_host }}"
+      register: ha_drill_pg_endpoint_log
+      retries: "{{ ha_drill_recovery_retries }}"
+      delay: "{{ ha_drill_recovery_delay }}"
+      until: ha_drill_pg_up | length > 0
       changed_when: false
+      vars:
+        ha_drill_pg_up: >-
+          {{ ((ha_drill_pg_endpoint_log.stdout_lines | default([])) + (ha_drill_pg_endpoint_log.stderr_lines | default([])))
+             | select('search', 'Server postgres/[a-z0-9-]+ is UP') | reject('search', 'postgres/' ~ ha_drill_pg_leader ~ ' ') | list }}
+
+    - name: "PostgreSQL | When that was"
+      ansible.builtin.set_fact:
+        ha_drill_pg_recovered: >-
+          {{ ((ha_drill_pg_endpoint_log.stdout_lines + ha_drill_pg_endpoint_log.stderr_lines) | sort
+              | select('search', 'Server postgres/[a-z0-9-]+ is UP') | reject('search', 'postgres/' ~ ha_drill_pg_leader ~ ' ')
+              | map('regex_search', '^\S+') | first) }}
 
     - name: "PostgreSQL | Start the killed member again"
       ansible.builtin.command:
@@ -583,25 +585,27 @@
     - name: "PostgreSQL | The former leader follows again"
       ansible.builtin.command:
         argv: "{{ ha_drill_patronictl + ['list', '-f', 'json'] }}"
-      delegate_to: "{{ ha_drill_pg_prober }}"
+      delegate_to: "{{ ha_drill_pg_witness }}"
       register: ha_drill_pg_after
       retries: "{{ ha_drill_rejoin_retries }}"
       delay: "{{ ha_drill_rejoin_delay }}"
       until: >-
         ha_drill_pg_after.rc == 0 and
         (ha_drill_pg_after.stdout | from_json | length) == (platform_pg_members | length) and
-        (ha_drill_pg_after.stdout | from_json | rejectattr('State', 'in', ['running', 'streaming']) | list | length) == 0
+        (ha_drill_pg_after.stdout | from_json | rejectattr('Role', 'equalto', 'Leader') | rejectattr('State', 'equalto', 'streaming') | list | length) == 0
       changed_when: false
 
     - name: "PostgreSQL | Result"
       ansible.builtin.debug:
         msg: >-
-          DRILL postgresql (leader killed): {{ ha_drill_pg_leader }} killed; writes through the endpoint failed for
-          {{ ((ha_drill_pg_verdict.stdout | regex_search('up=[0-9.]+') | default('up=0', true)).split('=')[1] | float
-              - (ha_drill_pg_verdict.stdout | regex_search('down=[0-9.]+') | default('down=0', true)).split('=')[1] | float) | round(1) }} s;
+          DRILL postgresql (leader killed): {{ ha_drill_pg_leader }} stopped at {{ ha_drill_pg_killed.container.State.FinishedAt }};
+          the endpoint routed to another member {{ ha_drill_gap_seconds }} s later;
           members: {{ ha_drill_pg_after.stdout | from_json | map(attribute='Member')
                       | zip(ha_drill_pg_after.stdout | from_json | map(attribute='Role'),
                             ha_drill_pg_after.stdout | from_json | map(attribute='State')) | map('join', ' ') | join(', ') }}
+      vars:
+        ha_drill_from: "{{ ha_drill_pg_killed.container.State.FinishedAt }}"
+        ha_drill_to: "{{ ha_drill_pg_recovered }}"
 
 - name: "HA drill | Redis loses its primary (killed)"
   hosts: "{{ groups['pg_endpoint'] | first }}"
@@ -611,17 +615,18 @@
   vars_files:
     - ../roles/redis/defaults/main.yml            # redis_container_name
     - ../roles/redis_sentinel/defaults/main.yml
-    - ../roles/dbproxy/defaults/main.yml          # dbproxy_container_name, dbproxy_redis_check_user
+    - ../roles/dbproxy/defaults/main.yml          # dbproxy_container_name, dbproxy_redis_sentinels, dbproxy_redis_sentinel_quorum
     - vars/ha_drill.yml
   vars:
     ha_drill_redis_cli: [docker, exec, -e, REDISCLI_AUTH, "{{ redis_sentinel_container_name }}", redis-cli, --no-auth-warning, --tls, --cacert, "{{ ha_drill_ca_bundle }}"]
     ha_drill_redis_sentinel: "{{ ha_drill_redis_cli + ['-h', redis_sentinel_fqdn, '-p', redis_sentinel_port | string] }}"
+    ha_drill_redis_killed: "{{ (ha_drill_redis_before.stdout_lines | first).split('.')[0] }}"
+    ha_drill_redis_new: "{{ (ha_drill_redis_named.stdout_lines | first).split('.')[0] }}"
   tasks:
-    - name: "Redis | The Sentinel's and the check login's passwords (Vault, read)"
+    - name: "Redis | The Sentinels' password (Vault, read)"
       ansible.builtin.include_tasks: tasks/ha-drill-login.yml
       loop:
         - {key: sentinel, path: "{{ redis_sentinel_vault_path }}"}
-        - {key: healthcheck, path: "{{ platform_redis_users_vault_prefix }}/{{ dbproxy_redis_check_user }}"}
       loop_control:
         loop_var: ha_drill_secret
         label: "{{ ha_drill_secret.key }}"
@@ -643,57 +648,69 @@
       changed_when: false
       failed_when: "'OK' not in ha_drill_redis_quorum.stdout"
 
-    - name: "Redis | Probe the endpoint three times a second (starts now, ends when a primary answers again)"
-      ansible.builtin.shell:
-        executable: /bin/bash
-        cmd: |
-          s=$(date +%s); down=""; up=""
-          while [ $(( $(date +%s) - s )) -lt {{ ha_drill_probe_max_seconds }} ]; do
-            if timeout {{ ha_drill_redis_probe_timeout }} docker exec -e REDISCLI_AUTH "{{ redis_sentinel_container_name }}" redis-cli --no-auth-warning --tls --cacert {{ ha_drill_ca_bundle }} -h "{{ platform_redis_host }}" -p {{ redis_sentinel_redis_port }} --user {{ dbproxy_redis_check_user }} INFO replication 2>/dev/null | grep -q "^role:[m]aster"; then   # written this way for the image-pin check, which reads x:master as a moving tag
-              if [ -n "$down" ]; then up=$(date +%s.%N); break; fi
-            else
-              [ -n "$down" ] || down=$(date +%s.%N)
-            fi
-            sleep {{ ha_drill_probe_interval }}
-          done
-          echo "down=${down:-0} up=${up:-0}"
-      environment:
-        REDISCLI_AUTH: "{{ ha_drill_secrets.healthcheck }}"
-      async: "{{ ha_drill_probe_async }}"
-      poll: 0
-      register: ha_drill_redis_probe
-      changed_when: false
-      no_log: true
-
-    - name: "Redis | Let the probe see the primary answering first"
-      ansible.builtin.pause:
-        seconds: "{{ ha_drill_probe_warmup_seconds }}"
-
-    - name: "Redis | Kill the primary's container ({{ ha_drill_redis_before.stdout_lines | first }})"
+    - name: "Redis | Kill the primary's container ({{ ha_drill_redis_killed }})"
       ansible.builtin.command:
         argv: [docker, kill, "{{ redis_container_name }}"]
-      delegate_to: "{{ (ha_drill_redis_before.stdout_lines | first).split('.')[0] }}"
+      delegate_to: "{{ ha_drill_redis_killed }}"
       changed_when: true
 
-    - name: "Redis | Wait for the probe's verdict"
-      ansible.builtin.async_status:
-        jid: "{{ ha_drill_redis_probe.ansible_job_id }}"
-      register: ha_drill_redis_verdict
-      retries: "{{ ha_drill_verdict_retries }}"
-      delay: "{{ ha_drill_verdict_delay }}"
-      until: ha_drill_redis_verdict.finished
+    - name: "Redis | When it stopped (Docker's record)"
+      community.docker.docker_container_info:
+        name: "{{ redis_container_name }}"
+      delegate_to: "{{ ha_drill_redis_killed }}"
+      register: ha_drill_redis_stopped
+
+    - name: "Redis | The Sentinels name the other member"
+      ansible.builtin.command:
+        argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'GET-MASTER-ADDR-BY-NAME', redis_sentinel_master_name] }}"
+      environment:
+        REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
+      register: ha_drill_redis_named
+      retries: "{{ ha_drill_recovery_retries }}"
+      delay: "{{ ha_drill_recovery_delay }}"
+      until: ha_drill_redis_named.rc == 0 and (ha_drill_redis_named.stdout_lines | first) != (ha_drill_redis_before.stdout_lines | first)
       changed_when: false
 
-    - name: "Redis | Clock (the endpoint's log is read from here)"
-      ansible.builtin.command: date -u +%Y-%m-%dT%H:%M:%SZ
-      register: ha_drill_redis_restart_at
+    # A member receives traffic once it says master AND enough Sentinels name it: the endpoint
+    # writes one line for each of those state changes.
+    - name: "Redis | The endpoint routes to the new primary (its own log, read until it says so)"
+      ansible.builtin.command:
+        argv: [docker, logs, --since, "{{ ha_drill_redis_stopped.container.State.FinishedAt }}", -t, "{{ dbproxy_container_name }}"]
+      register: ha_drill_redis_endpoint_log
+      retries: "{{ ha_drill_recovery_retries }}"
+      delay: "{{ ha_drill_recovery_delay }}"
+      until: ha_drill_redis_member_up | length > 0 and ha_drill_redis_named_up | length >= (dbproxy_redis_sentinel_quorum | int)
       changed_when: false
+      vars: &redis_eligibility
+        ha_drill_redis_lines: >-
+          {{ ((ha_drill_redis_endpoint_log.stdout_lines | default([])) + (ha_drill_redis_endpoint_log.stderr_lines | default([]))) | sort }}
+        ha_drill_redis_member_up: >-
+          {{ ha_drill_redis_lines | select('search', 'Server redis/' ~ ha_drill_redis_new ~ ' is UP') | map('regex_search', '^\S+') | list }}
+        ha_drill_redis_named_up: >-
+          {%- set out = [] -%}
+          {%- for s in dbproxy_redis_sentinels -%}
+            {%- set first = ha_drill_redis_lines | select('search', 'Server redis_named_' ~ ha_drill_redis_new ~ '/' ~ s ~ ' is UP')
+                            | map('regex_search', '^\S+') | first | default('') -%}
+            {%- if first | length > 0 -%}{%- set _ = out.append(first) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ out | sort }}
+
+    - name: "Redis | When that was (the member says master, and the Sentinels' quorum names it)"
+      ansible.builtin.set_fact:
+        ha_drill_redis_recovered: "{{ [ha_drill_redis_member_up | first, ha_drill_redis_named_up[(dbproxy_redis_sentinel_quorum | int) - 1]] | max }}"
+      vars: *redis_eligibility
 
     - name: "Redis | Start the killed member again (it comes back claiming to be a primary)"
       ansible.builtin.command:
         argv: [docker, start, "{{ redis_container_name }}"]
-      delegate_to: "{{ (ha_drill_redis_before.stdout_lines | first).split('.')[0] }}"
+      delegate_to: "{{ ha_drill_redis_killed }}"
       changed_when: true
+
+    - name: "Redis | When it started (Docker's record)"
+      community.docker.docker_container_info:
+        name: "{{ redis_container_name }}"
+      delegate_to: "{{ ha_drill_redis_killed }}"
+      register: ha_drill_redis_restarted
 
     - name: "Redis | The Sentinels see it as a replica again"
       ansible.builtin.command:
@@ -710,63 +727,50 @@
       changed_when: false
 
     # The endpoint logs a session when it ENDS: a line written after the return can be a session
-    # of hours ago that a client closes late (the first version of this check counted those — 27
-    # on 2026-10-04, none of them new). What counts is when the session was ACCEPTED.
-    - name: "Redis | Sessions the endpoint accepted for the restarted member after its return (must be none)"
-      ansible.builtin.shell:
-        executable: /bin/bash
-        cmd: |
-          set -o pipefail
-          docker logs --since "{{ ha_drill_redis_restart_at.stdout }}" "{{ dbproxy_container_name }}" 2>&1 \
-            | { grep " redis/{{ (ha_drill_redis_before.stdout_lines | first).split('.')[0] }} " || true; } \
-            | python3 -c '
-          import datetime, re, sys
-          since = datetime.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")
-          accepted = 0
-          for line in sys.stdin:
-              m = re.search(r"\[(\d\d/\w{3}/\d{4}:\d\d:\d\d:\d\d)\.\d+\]", line)
-              if m and datetime.datetime.strptime(m.group(1), "%d/%b/%Y:%H:%M:%S") >= since:
-                  accepted += 1
-          print(accepted)' "{{ ha_drill_redis_restart_at.stdout }}"
-      register: ha_drill_redis_stale
+    # of hours ago that a client closes late. What counts is when the session was ACCEPTED (the
+    # date in brackets).
+    - name: "Redis | The endpoint's log since the member is back"
+      ansible.builtin.command:
+        argv: [docker, logs, --since, "{{ ha_drill_redis_restarted.container.State.StartedAt }}", "{{ dbproxy_container_name }}"]
+      register: ha_drill_redis_endpoint_after
       changed_when: false
 
-    - name: "Redis | Sessions open on the restarted member now (must be none: it is a replica)"
+    - name: "Redis | Sessions open on the restarted member now"
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ dbproxy_metrics_port }}/metrics"
         return_content: true
       register: ha_drill_redis_open
-      changed_when: false
 
     - name: "Redis | The restarted member received nothing"
       ansible.builtin.assert:
         that:
-          - ha_drill_redis_stale.stdout | trim | int == 0
+          - ha_drill_redis_accepted_after | length == 0
           - ha_drill_redis_open_now | int == 0
         fail_msg: >-
-          the endpoint used the restarted member: {{ ha_drill_redis_stale.stdout | trim }} session(s) accepted after its
+          the endpoint used the restarted member: {{ ha_drill_redis_accepted_after | length }} session(s) accepted after its
           return, {{ ha_drill_redis_open_now }} open now
         quiet: true
-      vars:
+      vars: &redis_received
+        ha_drill_redis_accepted_after: >-
+          {{ ((ha_drill_redis_endpoint_after.stdout_lines + ha_drill_redis_endpoint_after.stderr_lines)
+              | select('search', ' redis redis/' ~ ha_drill_redis_killed ~ ' ') | join('\n'))
+             | regex_findall('\[(\d\d/\w{3}/\d{4}:\d\d:\d\d:\d\d)\.\d+\] redis redis/' ~ ha_drill_redis_killed ~ ' ')
+             | map('to_datetime', '%d/%b/%Y:%H:%M:%S')
+             | select('ge', (ha_drill_redis_restarted.container.State.StartedAt.split('.')[0] | regex_replace('Z$', ''))
+                            | to_datetime('%Y-%m-%dT%H:%M:%S'))
+             | list }}
         ha_drill_redis_open_now: >-
           {{ ha_drill_redis_open.content
-             | regex_findall('haproxy_server_current_sessions\{proxy="redis",server="'
-                             ~ (ha_drill_redis_before.stdout_lines | first).split('.')[0] ~ '"\} ([0-9]+)')
+             | regex_findall('haproxy_server_current_sessions\{proxy="redis",server="' ~ ha_drill_redis_killed ~ '"\} ([0-9]+)')
              | first | default('0') }}
-
-    - name: "Redis | New primary"
-      ansible.builtin.command:
-        argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'GET-MASTER-ADDR-BY-NAME', redis_sentinel_master_name] }}"
-      environment:
-        REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
-      register: ha_drill_redis_after
-      changed_when: false
 
     - name: "Redis | Result"
       ansible.builtin.debug:
         msg: >-
-          DRILL redis (primary killed): {{ ha_drill_redis_before.stdout_lines | first }} killed, primary now
-          {{ ha_drill_redis_after.stdout_lines | first }}; the endpoint had no primary for
-          {{ ((ha_drill_redis_verdict.stdout | regex_search('up=[0-9.]+') | default('up=0', true)).split('=')[1] | float
-              - (ha_drill_redis_verdict.stdout | regex_search('down=[0-9.]+') | default('down=0', true)).split('=')[1] | float) | round(1) }} s;
-          sessions accepted for the restarted member after its return: {{ ha_drill_redis_stale.stdout | trim }}
+          DRILL redis (primary killed): {{ ha_drill_redis_killed }} stopped at {{ ha_drill_redis_stopped.container.State.FinishedAt }},
+          primary now {{ ha_drill_redis_new }}; the endpoint routed to it {{ ha_drill_gap_seconds }} s later;
+          sessions accepted for the restarted member after its return: {{ ha_drill_redis_accepted_after | length }}
+      vars:
+        <<: *redis_received
+        ha_drill_from: "{{ ha_drill_redis_stopped.container.State.FinishedAt }}"
+        ha_drill_to: "{{ ha_drill_redis_recovered }}"

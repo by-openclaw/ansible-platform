@@ -25,13 +25,13 @@ Class E (`docs/backup.md`): no data. The guest is in the PBS job; rebuild = the 
 
 ## Failover budget (tuned and measured 2026-10-04)
 
-What a client sees when a member dies, and what the time is made of. Measured by `playbooks/ha-drill.yml --tags postgresql-kill | redis-kill | vault-kill`: the member's container is killed and one probe loop on a host that stays up (three probes a second) times the gap. The node was under the nightly verification's I/O load during the run, so these are worst-case figures.
+What a client sees when a member dies, and what the time is made of. Measured by `playbooks/ha-drill.yml --tags postgresql-kill | redis-kill | vault-kill`: the member's container is killed and the gap is read from the services' own records: from the container's recorded end to the first record that clients are served again (PostgreSQL and Redis: the endpoint's log line `Server <backend>/<member> is UP`, for Redis also the Sentinels naming the new primary; Vault: the new active node's `active_time`). No probe loop runs. The node was under the nightly verification's I/O load during the run, so these are worst-case figures.
 
 | Service | Measured (member killed) | Before | Detection | Takeover | The endpoint or the edge follows |
 |---|---|---|---|---|---|
-| PostgreSQL | **25.1 s** | 39 s | the leader lock expires: `ttl 20` (`loop_wait 3`, `retry_timeout 8`) | Patroni promotes the synchronous standby (no write lost) | checks every second, two good answers |
-| Redis | **5.8 s** (about 7 s in two other runs; 9.7 s with the first routing rule) | 21 s | the Sentinels: `down-after 3 s`, quorum 2 | a Sentinel promotes the replica | checks every second, one good answer; a member is used only while it says master **and** two Sentinels name it |
-| Vault | **3.4 s** | 6 s | raft heartbeat (`performance_multiplier 1`) | raft election, then the new active node loads its state | the edge checks `/v1/sys/health` every second |
+| PostgreSQL | **24.4 s** (25.1 s seen by a client probe) | 39 s | the leader lock expires: `ttl 20` (`loop_wait 3`, `retry_timeout 8`) | Patroni promotes the synchronous standby (no write lost) | checks every second, two good answers |
+| Redis | **7.0 s** (a client probe reported 5.8 s for the same run: it under-measured; 9.7 s with the first routing rule) | 21 s | the Sentinels: `down-after 3 s`, quorum 2 | a Sentinel promotes the replica | checks every second, one good answer; a member is used only while it says master **and** two Sentinels name it |
+| Vault | **3.4 s** (client probe) | 6 s | raft heartbeat (`performance_multiplier 1`) | raft election, then the new active node loads its state | the edge checks `/v1/sys/health` every second |
 | Authentik | — (two active instances; not part of this run) | — | — | — | the edge checks the liveness path every 2 s |
 
 - **`retry_timeout` is not part of the failover time:** it is how long the leader may fail to reach the consensus store before it steps down by itself. 8 s is the most a 20 s lock allows (`loop_wait + 2 x retry_timeout <= ttl`); with 3 s the leader stepped down on 2026-10-05 00:00:47 UTC during a stall of its own guest.

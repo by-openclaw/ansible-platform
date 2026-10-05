@@ -1,17 +1,34 @@
 ---
 # ==============================================================================
 # Settings of playbooks/ha-drill.yml — what the kill drills measure with, in one place.
-# A probe is ONE loop on a host that stays up: it starts before the kill and ends at the
-# first good answer after a bad one, so no task latency is inside the measured gap.
+# No probe runs. The gap is read from what the systems themselves recorded: the moment a
+# container stopped is Docker's (State.FinishedAt); the moment the service was back is the
+# endpoint's own state-change log line (PostgreSQL, Redis) or the new active node's
+# "active since" (Vault). A probe that tries, waits for its own timeout and only then notes
+# the failure measures less than the client saw (5.8 s where the records say 7.0 s, 2026-10-04).
 # ==============================================================================
-ha_drill_ca_bundle: "/etc/ssl/certs/ca-certificates.crt"   # the host CA store (also mounted into the containers the probes use)
-ha_drill_probe_interval: 0.3          # seconds between two probes (three a second)
-ha_drill_probe_timeout: 1             # seconds one probe may take
-ha_drill_redis_probe_timeout: 2       # the Redis probe starts a client in a container: a little more
-ha_drill_probe_max_seconds: 120       # a probe that sees no recovery gives up after this long
-ha_drill_probe_async: 180             # the loop's own ceiling (above the previous line)
-ha_drill_probe_warmup_seconds: 5      # the probe must see the service working before the kill
-ha_drill_verdict_retries: 70          # waiting for the loop to end …
-ha_drill_verdict_delay: 2             # … every this many seconds
+ha_drill_ca_bundle: "/etc/ssl/certs/ca-certificates.crt"   # the host CA store (also mounted into the containers the clients run in)
+ha_drill_recovery_retries: 60         # waiting for the recovery to show in the records …
+ha_drill_recovery_delay: 2            # … every this many seconds
 ha_drill_rejoin_retries: 60           # waiting for the killed member to follow the cluster again …
 ha_drill_rejoin_delay: 3              # … every this many seconds
+ha_drill_follow_retries: 90           # planned change: waiting for the endpoint or the edge to follow …
+ha_drill_follow_delay: 1              # … every this many seconds
+ha_drill_poll_delay: 0                # inside the planned Redis change: ask again at once (writes are paused meanwhile)
+ha_drill_pg_connect_timeout: 2        # seconds the planned switchover's client waits for a connection
+# Planned Redis change: how long writes may stay paused at most (the step releases the pause
+# itself), how long the replica may take to confirm it has every write, and the time one step
+# of it may take.
+ha_drill_redis_pause_ms: 30000
+ha_drill_redis_wait_ms: 5000
+ha_drill_redis_step_timeout: 25
+ha_drill_redis_log_window: "4m"       # how far back the endpoint's log is read for the report
+
+# Seconds between two timestamps as Docker and Vault write them (RFC 3339, UTC, any number of
+# decimals). The task that asks sets ha_drill_from and ha_drill_to.
+ha_drill_gap_seconds: >-
+  {{ (((((ha_drill_to.split('.')[0] | regex_replace('Z$', '')) ~ '+0000') | to_datetime('%Y-%m-%dT%H:%M:%S%z')).timestamp()
+       + (('0.' ~ (ha_drill_to.split('.')[1] | regex_replace('[^0-9].*$', ''))) | float if '.' in ha_drill_to else 0))
+      - ((((ha_drill_from.split('.')[0] | regex_replace('Z$', '')) ~ '+0000') | to_datetime('%Y-%m-%dT%H:%M:%S%z')).timestamp()
+       + (('0.' ~ (ha_drill_from.split('.')[1] | regex_replace('[^0-9].*$', ''))) | float if '.' in ha_drill_from else 0)))
+     | round(1) }}

@@ -33,9 +33,9 @@ What clients see on a planned change: writes wait, then errors until the endpoin
 
 ## A member lost, and a member restarted (kill drills of 2026-10-04)
 
-`playbooks/ha-drill.yml --tags redis-kill`: the primary's container is killed, a probe on the endpoint's host times the gap, the member is started again and must return as a replica without having received a session.
+`playbooks/ha-drill.yml --tags redis-kill`: the primary's container is killed, the gap is read from the container's recorded end and the endpoint's log (new primary up **and** named by two Sentinels), the member is started again and must return as a replica without having received a session.
 
-- **Gap for clients:** 5.8 s in the last run, about 7 s in two others (9.7 s with the endpoint's first routing rule, 21 s before the tuning): the Sentinels need about 4.5 s (`down-after 3 s`, agreement, promotion), the endpoint about 2 s more (the new primary's own check, then two Sentinels naming it).
+- **Gap for clients:** 7.0 s (9.7 s with the endpoint's first routing rule, 21 s before the tuning; a client probe once reported 5.8 s, which under-measured): the Sentinels need about 4.5 s (`down-after 3 s`, agreement, promotion), the endpoint about 2 s more (the new primary's own check, then two Sentinels naming it).
 - **A restarted member claims to be a master** until the Sentinels make it a replica again (some seconds). The endpoint sends it nothing in that time: a member is used only while the Sentinels name it.
 - **Its start file is static** (`include redis.conf`, root's): Redis cannot rewrite it. Until this drill a member that had been through a failover could not restart — the rewritten file declared every login a second time and loaded the image's bundled modules a second time. See `roles/redis/README.md`.
 - **Planned change** (`--tags redis`) with the same endpoint rule: about 3 s of refused connections after the pause.
