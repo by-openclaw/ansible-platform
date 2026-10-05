@@ -8,18 +8,30 @@
     update_cache: true
     cache_valid_time: 3600
 
-- name: "Promtail | Grafana APT signing key (dearmored)"
-  ansible.builtin.shell:
-    cmd: "set -o pipefail; curl -fsSL {{ promtail_apt_key_url }} | gpg --dearmor -o /usr/share/keyrings/grafana.gpg"
-    creates: /usr/share/keyrings/grafana.gpg
-  args:
-    executable: /bin/bash
-  register: promtail_apt_key
-  changed_when: "'skipped' not in (promtail_apt_key.stdout | default(''))"
+- name: "Promtail | Keyring present?"
+  ansible.builtin.stat:
+    path: "{{ promtail_apt_keyring }}"
+  register: promtail_apt_keyring_file
+
+# The key is published armored; apt's `signed-by` keyring here is the binary form: downloaded,
+# then converted by gpg, once (the keyring is what marks it done).
+- name: "Promtail | Signing key as published (armored)"
+  ansible.builtin.get_url:
+    url: "{{ promtail_apt_key_url }}"
+    dest: "{{ promtail_apt_keyring }}.asc"
+    owner: root
+    group: root
+    mode: "0644"
+  when: not promtail_apt_keyring_file.stat.exists
+
+- name: "Promtail | Signing key (dearmored)"
+  ansible.builtin.command:
+    argv: [gpg, --batch, --dearmor, -o, "{{ promtail_apt_keyring }}", "{{ promtail_apt_keyring }}.asc"]
+    creates: "{{ promtail_apt_keyring }}"
 
 - name: "Promtail | Keyring world-readable (apt's sandboxed verifier)"
   ansible.builtin.file:
-    path: /usr/share/keyrings/grafana.gpg
+    path: "{{ promtail_apt_keyring }}"
     mode: "0644"
     owner: root
     group: root

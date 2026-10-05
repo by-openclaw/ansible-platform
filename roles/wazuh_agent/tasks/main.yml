@@ -20,16 +20,30 @@
     update_cache: true
     cache_valid_time: 3600
 
-- name: "Wazuh agent | Signing key"
-  ansible.builtin.shell:
-    cmd: "set -o pipefail; curl -fsSL {{ wazuh_agent_apt_key_url }} | gpg --dearmor -o /usr/share/keyrings/wazuh.gpg"
-    creates: /usr/share/keyrings/wazuh.gpg
-  args:
-    executable: /bin/bash
+- name: "Wazuh agent | Keyring present?"
+  ansible.builtin.stat:
+    path: "{{ wazuh_agent_apt_keyring }}"
+  register: wazuh_agent_apt_keyring_file
+
+# The key is published armored; apt's `signed-by` keyring here is the binary form: downloaded,
+# then converted by gpg, once (the keyring is what marks it done).
+- name: "Wazuh agent | Signing key as published (armored)"
+  ansible.builtin.get_url:
+    url: "{{ wazuh_agent_apt_key_url }}"
+    dest: "{{ wazuh_agent_apt_keyring }}.asc"
+    owner: root
+    group: root
+    mode: "0644"
+  when: not wazuh_agent_apt_keyring_file.stat.exists
+
+- name: "Wazuh agent | Signing key (dearmored)"
+  ansible.builtin.command:
+    argv: [gpg, --batch, --dearmor, -o, "{{ wazuh_agent_apt_keyring }}", "{{ wazuh_agent_apt_keyring }}.asc"]
+    creates: "{{ wazuh_agent_apt_keyring }}"
 
 - name: "Wazuh agent | Keyring world-readable (apt's sandboxed verifier)"
   ansible.builtin.file:
-    path: /usr/share/keyrings/wazuh.gpg
+    path: "{{ wazuh_agent_apt_keyring }}"
     mode: "0644"
 
 - name: "Wazuh agent | APT repository"
