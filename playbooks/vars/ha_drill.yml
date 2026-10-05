@@ -16,12 +16,6 @@ ha_drill_follow_retries: 90           # planned change: waiting for the endpoint
 ha_drill_follow_delay: 1              # … every this many seconds
 ha_drill_poll_delay: 0                # inside the planned Redis change: ask again at once (writes are paused meanwhile)
 ha_drill_pg_connect_timeout: 2        # seconds the planned switchover's client waits for a connection
-# Planned Redis change: how long writes may stay paused at most (the step releases the pause
-# itself), how long the replica may take to confirm it has every write, and the time one step
-# of it may take.
-ha_drill_redis_pause_ms: 30000
-ha_drill_redis_wait_ms: 5000
-ha_drill_redis_step_timeout: 25
 ha_drill_redis_log_window: "4m"       # how far back the endpoint's log is read for the report
 
 # Seconds between two timestamps as Docker and Vault write them (RFC 3339, UTC, any number of
@@ -38,5 +32,4 @@ ha_drill_gap_seconds: >-
 # process list). Line 0 of every answer is then AUTH's own OK; the command's answer starts at line 1.
 ha_drill_backslash: "\\"
 ha_drill_redis_auth_sentinel: 'AUTH "{{ ha_drill_secrets.sentinel | replace(ha_drill_backslash, ha_drill_backslash ~ ha_drill_backslash) | replace(''"'', ha_drill_backslash ~ ''"'') }}"'
-ha_drill_redis_auth_admin: 'AUTH "{{ ha_drill_secrets.admin | replace(ha_drill_backslash, ha_drill_backslash ~ ha_drill_backslash) | replace(''"'', ha_drill_backslash ~ ''"'') }}"'
 ha_drill_redis_auth_check: 'AUTH {{ dbproxy_redis_check_user }} "{{ ha_drill_secrets.healthcheck | replace(ha_drill_backslash, ha_drill_backslash ~ ha_drill_backslash) | replace(''"'', ha_drill_backslash ~ ''"'') }}"'
