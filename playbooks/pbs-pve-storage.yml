@@ -134,6 +134,9 @@
     pbs_ip: "{{ hostvars[groups['pbs'] | first].ansible_host }}"
     pbs_svc_subnet: "{{ platform_zones.svc.cidr4 }}"     # SVC VLAN (where PBS lives)
     pbs_fw_oob_ip: "{{ hostvars[groups['opnsense'] | first].ansible_host }}"     # FW OOB IP the node routes SVC traffic through
+    # Guests whose agent cannot freeze the filesystem: the agent setting they get, and how it reads in `qm config`.
+    pbs_no_fsfreeze_agent: "enabled=1,type=virtio,freeze-fs-on-backup=0"
+    pbs_no_fsfreeze_marker: "freeze-fs-on-backup=0"
   tasks:
     - name: "PVE-wire | Read the backup API token from Vault"
       ansible.builtin.include_role:
@@ -212,35 +215,24 @@
     # Converge the pinned fingerprint on an EXISTING storage: `pvesm add` only sets it at creation.
     # When the server's certificate changes (the wildcard, each renewal) the storage would stay
     # pinned to the old one and go inactive ("fingerprint … not verified") — found 2026-10-03.
-    - name: "PVE-wire | Fingerprint pinned on the storage today"
-      ansible.builtin.shell:
-        executable: /bin/bash
-        cmd: |
-          set -o pipefail
-          awk -v id="{{ pbs_pve_storage_id }}" '$1 == "pbs:" {f = ($2 == id)} f && $1 == "fingerprint" {print $2}' /etc/pve/storage.cfg
-      register: r_fp_now
-      check_mode: false  # read-only probe
+    - name: "PVE-wire | The storage as PVE holds it (fingerprint, username)"
+      ansible.builtin.command:
+        argv: [pvesh, get, "/storage/{{ pbs_pve_storage_id }}", --output-format, json]
+      register: r_storage_now
+      check_mode: false  # read-only probe: must run under --check too (later tasks read its result)
       changed_when: false
+      failed_when: false   # absent on a first run under --check: the comparisons below then see nothing
 
     - name: "PVE-wire | The storage pins the certificate the server presents now"
       ansible.builtin.command:
         argv: [pvesm, set, "{{ pbs_pve_storage_id }}", --fingerprint, "{{ pbs_fp }}"]
       when:
         - pbs_fp | length > 0
-        - (r_fp_now.stdout | trim | lower) != (pbs_fp | lower)
+        - ((r_storage_now.stdout | default('{}', true) | from_json).fingerprint | default('') | lower) != (pbs_fp | lower)
       changed_when: true
 
     # Converge credentials on an EXISTING storage (e.g. the backup-user rename):
     # pvesm add can't update; compare the configured username and set on drift.
-    - name: "PVE-wire | Current storage username"
-      ansible.builtin.shell: |
-        set -o pipefail
-        awk '/^pbs: {{ pbs_pve_storage_id }}$/{f=1} f&&/username/{print $2; exit}' /etc/pve/storage.cfg
-      args: { executable: /bin/bash }
-      register: r_user
-      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-      changed_when: false
-
     - name: "PVE-wire | Converge storage credentials (username/token drift)"
       ansible.builtin.command:
         argv:
@@ -254,7 +246,7 @@
       no_log: true
       when:
         - pbs_pve_storage_id in r_pvesm.stdout
-        - (r_user.stdout | trim) != pbs_tok.tokenid
+        - ((r_storage_now.stdout | default('{}', true) | from_json).username | default('')) != pbs_tok.tokenid
       register: r_set
       changed_when: r_set is not skipped
 
@@ -341,20 +333,37 @@
     # The all-guests S3 job would include the PBS VM; backing the backup server up
     # into the datastore it serves deadlocks ("http upgrade request timed out").
     # PBS's real DR copy is the NFS/vzdump job — so exclude PBS by its own VMID.
+    - name: "PVE-wire | Guests of the cluster (id by name)"
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+      register: r_guests
+      check_mode: false  # read-only probe: must run under --check too (later tasks read its result)
+      changed_when: false
+
+    - name: "PVE-wire | Backup jobs now (the PBS job and what it excludes)"
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/backup, --output-format, json]
+      register: r_jobs_now
+      check_mode: false  # read-only probe: must run under --check too (later tasks read its result)
+      changed_when: false
+
+    - name: "PVE-wire | The PBS VM, the PBS job and its exclusions"
+      ansible.builtin.set_fact:
+        pbs_self_vmid: "{{ r_guests.stdout | from_json | selectattr('name', 'defined') | selectattr('name', 'eq', pbs_self_vm_name) | map(attribute='vmid') | map('string') | list | default([''], true) | first }}"
+        pbs_job_id: "{{ r_jobs_now.stdout | from_json | selectattr('storage', 'defined') | selectattr('storage', 'eq', pbs_pve_storage_id) | map(attribute='id') | list | default([''], true) | first }}"
+        pbs_job_excluded: >-
+          {{ (r_jobs_now.stdout | from_json | selectattr('storage', 'defined') | selectattr('storage', 'eq', pbs_pve_storage_id)
+              | map(attribute='exclude', default='') | list | default([''], true) | first | string).split(',') | map('trim') | select() | list }}
+
+    # The exclusions already on the job are kept; the PBS VM is added to them.
     - name: "PVE-wire | Exclude the PBS VM from its own S3 job (idempotent)"
-      ansible.builtin.shell:
-        cmd: |
-          set -e
-          vmid=$(qm list | awk -v n='{{ pbs_self_vm_name }}' '$2==n {print $1}')
-          jid=$(pvesh get /cluster/backup --output-format json \
-                | python3 -c "import sys,json; print(next((j['id'] for j in json.load(sys.stdin) if j.get('storage')=='{{ pbs_pve_storage_id }}'), ''))")
-          [ -z "$vmid" ] || [ -z "$jid" ] && { echo "SKIP (vmid=$vmid jid=$jid)"; exit 0; }
-          cur=$(pvesh get /cluster/backup/$jid --output-format json \
-                | python3 -c "import sys,json; print(json.load(sys.stdin).get('exclude',''))")
-          if echo ",$cur," | grep -q ",$vmid,"; then echo "NOCHANGE ($vmid already excluded)";
-          else pvesh set /cluster/backup/$jid --exclude "$vmid" && echo "EXCLUDED $vmid"; fi
-      register: r_excl
-      changed_when: "'EXCLUDED' in r_excl.stdout"
+      ansible.builtin.command:
+        argv: [pvesh, set, "/cluster/backup/{{ pbs_job_id }}", --exclude, "{{ (pbs_job_excluded + [pbs_self_vmid]) | join(',') }}"]
+      when:
+        - pbs_self_vmid | length > 0
+        - pbs_job_id | length > 0
+        - pbs_self_vmid not in pbs_job_excluded
+      changed_when: true
 
     # --- Guests whose agent can't fs-freeze (FreeBSD/OPNsense) ------------------
     # fs-freeze fails ("Resource deadlock avoided") and errors the whole job, even
@@ -362,17 +371,25 @@
     # Disable freeze-on-backup for them. Telmate 2.9.x can't express this and the
     # OPNsense TF module ignores agent drift, so Ansible owns it. NOTE: it takes
     # effect on the guest's next `qm reboot` (a guest-OS reboot does NOT cycle QEMU).
-    - name: "PVE-wire | Disable fs-freeze on backup for FreeBSD/OPNsense guests"
-      ansible.builtin.shell:
-        cmd: |
-          set -e
-          vmid=$(qm list | awk -v n='{{ item }}' '$2==n {print $1}')
-          [ -z "$vmid" ] && { echo "NOTFOUND ({{ item }})"; exit 0; }
-          if qm config "$vmid" | grep -q 'freeze-fs-on-backup=0'; then echo "NOCHANGE ($vmid)";
-          else qm set "$vmid" --agent enabled=1,type=virtio,freeze-fs-on-backup=0 && echo "SET $vmid (applies on next qm reboot)"; fi
-      register: r_freeze
-      changed_when: "'SET' in r_freeze.stdout"
-      loop: "{{ pbs_no_fsfreeze_vms }}"
+    - name: "PVE-wire | Agent setting of the FreeBSD/OPNsense guests"
+      ansible.builtin.command:
+        argv: [qm, config, "{{ pbs_guest_ids[item] }}"]
+      loop: "{{ pbs_no_fsfreeze_vms | select('in', pbs_guest_ids.keys()) | list }}"
+      register: r_agent
+      check_mode: false  # read-only probe: must run under --check too (the next task reads its result)
+      changed_when: false
+      vars: &pbs_guest_ids
+        pbs_guest_ids: "{{ dict(r_guests.stdout | from_json | selectattr('name', 'defined') | map(attribute='name') | zip(r_guests.stdout | from_json | selectattr('name', 'defined') | map(attribute='vmid') | map('string'))) }}"
+
+    - name: "PVE-wire | Disable fs-freeze on backup for FreeBSD/OPNsense guests (applies on the next qm reboot)"
+      ansible.builtin.command:
+        argv: [qm, set, "{{ pbs_guest_ids[item.item] }}", --agent, "{{ pbs_no_fsfreeze_agent }}"]
+      loop: "{{ r_agent.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: pbs_no_fsfreeze_marker not in item.stdout
+      changed_when: true
+      vars: *pbs_guest_ids
 
     # The backup signal reads the storage of every job: written again now that the PBS
     # job exists, so the Backup* alerts cover this copy from the first night.
