@@ -85,9 +85,16 @@
   no_log: true
   when: vault_status.sealed | default(true)
 
+# The member's own HTTP API (it answers while sealed, and this call needs no token): the key
+# travels in the module call, never on a command line.
 - name: "init | Unseal Vault"
-  ansible.builtin.command:
-    cmd: "docker exec {{ vault_container_name }} vault operator unseal {{ item }}"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/unseal"
+    method: PUT
+    body_format: json
+    body:
+      key: "{{ item }}"
+    timeout: "{{ vault_api_timeout }}"
   loop: "{{ vault_unseal_keys[:vault_key_threshold] }}"
   when: vault_status.sealed | default(true)
   no_log: true
