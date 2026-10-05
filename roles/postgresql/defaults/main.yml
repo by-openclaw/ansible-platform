@@ -112,6 +112,7 @@ pg_etcd_hosts: "{{ pg_cluster_members | map('regex_replace', '^(.*)$', '\\1.' ~ 
 # REST API's write credential (restart / switchover / reinitialise are authenticated; the health
 # endpoints are read-only and open to the members and the endpoint guest).
 pg_replication_user: "replicator"
+pg_socket_dir: "/var/run/postgresql"     # PostgreSQL's socket, inside the member's container only (tmpfs)
 pg_replication_vault_path: "{{ platform_env }}/postgres/replication"
 pg_patroni_api_vault_path: "{{ platform_env }}/postgres/patroni-api"
 pg_etcd_vault_path: "{{ platform_etcd_vault_path }}"
@@ -125,12 +126,16 @@ pg_etcd_vault_path: "{{ platform_etcd_vault_path }}"
 # here for a few hours and etcd showed the lock granted for 20 s). So a lost leader — the
 # whole member, Patroni included — cannot be replaced faster than that; a planned switchover
 # takes about a second, and PostgreSQL crashing under a living Patroni is handled by Patroni
-# at once. retry_timeout is also how long an etcd hiccup may last before the leader demotes
-# itself: lower than 3 s (Patroni's minimum too), a slow second on the hypervisor becomes a
-# failover of its own.
+# at once.
+# retry_timeout is how long the leader may fail to reach the consensus store before it demotes
+# itself. It costs nothing on a real failover (that is the lock's ttl), and Patroni's rule
+# loop_wait + 2 x retry_timeout <= ttl leaves room for 8 s under a 20 s lock. It was 3 s — the
+# value a 10 s lock would have needed — and on 2026-10-05 00:00:47 UTC the leader demoted
+# itself after three requests of about 1.5 s each had timed out on a saturated node (midnight
+# timers of every guest, an image build on its own guest): a failover nobody had asked for.
 pg_patroni_ttl: 20
 pg_patroni_loop_wait: 3
-pg_patroni_retry_timeout: 3
+pg_patroni_retry_timeout: 8
 pg_patroni_maximum_lag_on_failover: 1048576
 # A commit waits for ONE replica: a failover never loses an acknowledged transaction. Not
 # strict: with no replica available the leader keeps accepting writes.
