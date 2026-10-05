@@ -13,27 +13,38 @@
     cache_valid_time: 600
   changed_when: false
 
-- name: "Ladder | Running release, repository candidate, pending upgrades"
-  ansible.builtin.shell:
-    executable: /bin/bash
-    cmd: >-
-      set -o pipefail;
-      echo "running=$(dpkg-query -W -f '${Version}' {{ apt_release_ladder_package }})";
-      echo "candidate=$(apt-cache policy {{ apt_release_ladder_package }} | awk '/Candidate/{print $2}')";
-      echo "pending=$(apt list --upgradable 2>/dev/null | grep -v Listing | cut -d/ -f1 | paste -sd' ')"
-  register: apt_release_ladder_state
+- name: "Ladder | Running release"
+  ansible.builtin.command:
+    argv: [dpkg-query, -W, -f, "${Version}", "{{ apt_release_ladder_package }}"]
+  register: apt_release_ladder_installed
   changed_when: false
   check_mode: false
 
-- name: "Ladder | The three facts of the report (no regex: the lines are key=value)"
+- name: "Ladder | Repository candidate"
+  ansible.builtin.command:
+    argv: [apt-cache, policy, "{{ apt_release_ladder_package }}"]
+  register: apt_release_ladder_policy
+  changed_when: false
+  check_mode: false
+
+- name: "Ladder | Pending upgrades"
+  ansible.builtin.command:
+    argv: [apt, list, --upgradable]
+  register: apt_release_ladder_upgradable
+  changed_when: false
+  check_mode: false
+
+- name: "Ladder | The three facts of the report"
   ansible.builtin.set_fact:
-    apt_release_ladder_running: "{{ apt_release_ladder_state.stdout_lines | select('match', '^running=') | first | default('running=') | split('=', 1) | last }}"
-    apt_release_ladder_candidate: "{{ apt_release_ladder_state.stdout_lines | select('match', '^candidate=') | first | default('candidate=') | split('=', 1) | last }}"
-    apt_release_ladder_pending: "{{ apt_release_ladder_state.stdout_lines | select('match', '^pending=') | first | default('pending=') | split('=', 1) | last | trim }}"
+    apt_release_ladder_running: "{{ apt_release_ladder_installed.stdout | trim }}"
+    apt_release_ladder_candidate: "{{ apt_release_ladder_policy.stdout | regex_search('Candidate: *(\\S+)', '\\1') | default([''], true) | first }}"
+    apt_release_ladder_pending: >-
+      {{ apt_release_ladder_upgradable.stdout_lines | reject('search', 'Listing') | select('search', '/')
+         | map('split', '/') | map('first') | join(' ') }}
 
 - name: "Ladder | Report — {{ apt_release_ladder_service }}"
   ansible.builtin.debug:
-    msg: "{{ apt_release_ladder_state.stdout_lines + ['declared=' ~ apt_release_ladder_version] }}"
+    msg: "{{ ['running=' ~ apt_release_ladder_running, 'candidate=' ~ apt_release_ladder_candidate, 'pending=' ~ apt_release_ladder_pending, 'declared=' ~ apt_release_ladder_version] }}"
 
 - name: "Ladder | The pin is the repository's candidate (move the pin first, never fall behind silently)"
   ansible.builtin.assert:
