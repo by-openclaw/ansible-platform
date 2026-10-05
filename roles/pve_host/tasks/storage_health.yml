@@ -1,37 +1,54 @@
 ---
-- name: "Storage | Pool, logical volumes, physical drives"
-  ansible.builtin.shell:
-    executable: /bin/bash
-    cmd: |
-      set -o pipefail
-      echo "pool_state=$(zpool list -H -o health {{ pve_host_zfs_pool }})"
-      ssacli ctrl slot={{ pve_host_smartarray_slot }} ld all show status | awk '/logicaldrive/{gsub(":","",$2); print "ld " $2 " " $NF}'
-      ssacli ctrl slot={{ pve_host_smartarray_slot }} pd all show status | awk '/physicaldrive/{print "pd " $2 " " $NF}'
-  register: pve_storage_state
+- name: "Storage | Pool state"
+  ansible.builtin.command:
+    argv: [zpool, list, -H, -o, health, "{{ pve_host_zfs_pool }}"]
+  register: pve_storage_pool
   changed_when: false
   check_mode: false   # read-only probe
 
-- name: "Storage | Per-drive wear (SMART through the controller)"
-  ansible.builtin.shell:
-    executable: /bin/bash
-    cmd: |
-      n=$(ssacli ctrl slot={{ pve_host_smartarray_slot }} pd all show status | grep -c physicaldrive)
-      for i in $(seq 0 $((n - 1))); do
-        out=$(smartctl -a -d cciss,$i /dev/sda 2>/dev/null)
-        g=$(echo "$out" | awk -F: '/grown defect list/{gsub(/ /,"",$2); print $2}')
-        u=$(echo "$out" | awk '/^(read|write|verify):/{s+=$NF} END{print s+0}')
-        h=$(echo "$out" | awk -F: '/SMART Health Status/{gsub(/^ /,"",$2); print $2}')
-        echo "bay $((i + 1)) health=${h:-?} grown_defects=${g:-?} uncorrected=${u:-?}"
-      done
-  register: pve_storage_wear
+- name: "Storage | Logical volumes and physical drives (controller)"
+  ansible.builtin.command:
+    argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", "{{ item }}", all, show, status]
+  loop: [ld, pd]
+  register: pve_storage_state
   changed_when: false
   check_mode: false   # read-only probe
 
 - name: "Storage | Facts of the report"
   ansible.builtin.set_fact:
-    pve_storage_pool_state: "{{ pve_storage_state.stdout_lines | select('match', '^pool_state=') | first | split('=', 1) | last }}"
-    pve_storage_ld_failed: "{{ pve_storage_state.stdout_lines | select('match', '^ld ') | reject('search', ' OK$') | map('split', ' ') | map(attribute=1) | list }}"
-    pve_storage_pd_not_ok: "{{ pve_storage_state.stdout_lines | select('match', '^pd ') | reject('search', ' OK$') | map('split', ' ') | map(attribute=1) | list }}"
+    pve_storage_pool_state: "{{ pve_storage_pool.stdout | trim }}"
+    pve_storage_ld_failed: >-
+      {{ (pve_storage_state.results | selectattr('item', 'eq', 'ld') | first).stdout_lines | select('search', 'logicaldrive')
+         | reject('search', ' OK *$') | map('split') | map(attribute=1) | map('replace', ':', '') | list }}
+    pve_storage_pd_not_ok: >-
+      {{ (pve_storage_state.results | selectattr('item', 'eq', 'pd') | first).stdout_lines | select('search', 'physicaldrive')
+         | reject('search', ' OK *$') | map('split') | map(attribute=1) | list }}
+    pve_storage_pd_count: >-
+      {{ (pve_storage_state.results | selectattr('item', 'eq', 'pd') | first).stdout_lines | select('search', 'physicaldrive') | list | length }}
+
+- name: "Storage | Per-drive SMART record (through the controller)"
+  ansible.builtin.command:
+    argv: [smartctl, -a, -d, "cciss,{{ item }}", "{{ pve_host_smartarray_device }}"]
+  loop: "{{ range(0, pve_storage_pd_count | int) | list }}"
+  register: pve_storage_smart
+  changed_when: false
+  failed_when: false   # smartctl's exit status is a bit mask of findings, not a failed read
+  check_mode: false   # read-only probe
+
+# Per bay: the health word, the grown defect list, and the uncorrected errors summed over the
+# read, write and verify rows of the error counter log (their last column).
+- name: "Storage | Per-drive wear"
+  ansible.builtin.set_fact:
+    pve_storage_wear: >-
+      {%- set out = [] -%}
+      {%- for r in pve_storage_smart.results -%}
+        {%- set health = r.stdout | default('') | regex_search('SMART Health Status: *(\\S.*)', '\\1') -%}
+        {%- set grown = r.stdout | default('') | regex_search('grown defect list: *(\\S+)', '\\1') -%}
+        {%- set uncorrected = r.stdout_lines | default([]) | select('match', '(read|write|verify):') | map('split') | map('last') | map('float') | sum | int -%}
+        {%- set _ = out.append('bay ' ~ (r.item + 1) ~ ' health=' ~ ((health | first | trim) if health else '?')
+                               ~ ' grown_defects=' ~ ((grown | first) if grown else '?') ~ ' uncorrected=' ~ uncorrected) -%}
+      {%- endfor -%}
+      {{ out }}
 
 - name: "Storage | Report"
   ansible.builtin.debug:
@@ -40,7 +57,7 @@
       - "logical volumes not OK: {{ pve_storage_ld_failed | default([], true) }}"
       - "physical drives not OK: {{ pve_storage_pd_not_ok | default([], true) }}"
       - "drive wear (bay, health, grown defects, uncorrected errors):"
-      - "{{ pve_storage_wear.stdout_lines }}"
+      - "{{ pve_storage_wear }}"
 
 # Repair: only a volume whose physical drive the controller reports OK (a failed drive needs a
 # replacement, not a re-enable).

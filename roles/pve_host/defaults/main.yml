@@ -23,10 +23,12 @@ pve_host_repo_ceph_enabled: true         # the repo stays: pve-manager needs cep
 # leftover mon + mgr restart-looped at boot. tasks/ceph.yml masks them while no
 # storage uses Ceph (asserted).
 pve_host_ceph_enabled: false
+pve_host_ceph_unit_patterns: ["ceph-mon@*", "ceph-mgr@*", "ceph-mds@*", "ceph-osd@*", "ceph-crash.service"]
 # Devices that still carry the labels of a DEAD ZFS pool (declared per node in the
 # inventory: {device: <by-id path>, pool_guid: <the dead pool>}); tasks/zfs_stale_labels.yml
 # clears them only after proving each one (see there).
 pve_host_zfs_stale_labels: []
+pve_host_zfs_import_unit_pattern: "zfs-import@*"   # their import failed at every boot while the dead pool was visible
 pve_host_repo_ceph_uri: "http://download.proxmox.com/debian/ceph-squid"
 pve_host_repo_ceph_component: no-subscription
 pve_host_repo_files_absent:            # install-time leftovers
@@ -162,6 +164,7 @@ pve_host_node_fqdn: "{{ inventory_hostname }}.{{ platform_domain }}"
 pve_host_cert_dir: "/etc/ssl/{{ platform_org }}"
 pve_host_cert_crt: "{{ pve_host_cert_dir }}/wildcard.crt"
 pve_host_cert_key: "{{ pve_host_cert_dir }}/wildcard.key"
+pve_host_served_cert: "/etc/pve/local/pveproxy-ssl.pem"   # what pveproxy serves once a custom certificate is installed
 pve_host_backend_url: "https://{{ pve_host_node_fqdn if pve_host_console_cert | bool else ansible_host }}:{{ pve_host_ui_port }}"
 
 # --- netfilter modules for the GUESTS ---------------------------------------------------
@@ -246,6 +249,11 @@ pve_host_smartarray_package: ssacli
 # platform needed 17 minutes to settle. Declared per node in the inventory (guest = the name PVE
 # shows; the VMID is read from the node — Terraform and the firewall seed own the ids).
 pve_host_boot_order: []        # [{guest: <name>, order: <n>, up: <seconds>}]
+# Where PVE keeps the guests' configuration, the command that manages each kind and the key
+# that carries the guest's name.
+pve_host_guest_config_dirs:
+  - {path: /etc/pve/qemu-server, kind: qm, name_key: name}
+  - {path: /etc/pve/lxc, kind: pct, name_key: hostname}
 
 # --- Storage health and repair (playbooks/pve-storage-health.yml) --------------------------------
 # Report: the pool, the controller's logical volumes and physical drives, per-drive wear (SMART).
@@ -254,5 +262,6 @@ pve_host_boot_order: []        # [{guest: <name>, order: <n>, up: <seconds>}]
 # errors — the sequence run by hand on 2026-10-03, now a play.
 pve_host_zfs_pool: tank
 pve_host_smartarray_slot: 0
+pve_host_smartarray_device: /dev/sda   # any block device of the controller: smartctl addresses the drives through it
 pve_storage_reenable: false
 pve_storage_scrub: false            # a scrub after the report (always done after a repair)
