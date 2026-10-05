@@ -125,7 +125,7 @@
       delay: "{{ ha_drill_rejoin_delay }}"
       until: >-
         ha_drill_pg_after.rc == 0 and
-        (ha_drill_pg_after.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | first | default('')) == ha_drill_pg_candidate and
+        (ha_drill_pg_after.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | list | default([''], true) | first) == ha_drill_pg_candidate and
         (ha_drill_pg_after.stdout | from_json | rejectattr('State', 'in', ['running', 'streaming']) | list | length) == 0 and
         (ha_drill_pg_after.stdout | from_json | selectattr('Role', 'equalto', 'Sync Standby') | list | length) == 1
       changed_when: false
@@ -435,51 +435,57 @@
         fail_msg: "no active member named by the cluster: {{ ha_drill_vault_active }}"
         quiet: true
 
-    - name: "Vault | Kill the active member's container ({{ ha_drill_vault_active }})"
-      ansible.builtin.command:
-        argv: [docker, kill, "{{ vault_container_name }}"]
-      delegate_to: "{{ ha_drill_vault_active }}"
-      changed_when: true
+    # Whatever the waits do, the killed member is started again (always).
+    - name: "Vault | The active member is killed; another member must take over"
+      block:
+        - name: "Vault | Kill the active member's container ({{ ha_drill_vault_active }})"
+          ansible.builtin.command:
+            argv: [docker, kill, "{{ vault_container_name }}"]
+          delegate_to: "{{ ha_drill_vault_active }}"
+          changed_when: true
 
-    - name: "Vault | When it stopped (Docker's record)"
-      community.docker.docker_container_info:
-        name: "{{ vault_container_name }}"
-      delegate_to: "{{ ha_drill_vault_active }}"
-      register: ha_drill_vault_killed
+        - name: "Vault | When it stopped (Docker's record)"
+          community.docker.docker_container_info:
+            name: "{{ vault_container_name }}"
+          delegate_to: "{{ ha_drill_vault_active }}"
+          register: ha_drill_vault_killed
 
-    - name: "Vault | Another member is active (asked from a member that stayed up)"
-      ansible.builtin.command:
-        argv: "{{ ha_drill_vault_status }}"
-      delegate_to: "{{ ha_drill_vault_witness }}"
-      register: ha_drill_vault_takeover
-      retries: "{{ ha_drill_recovery_retries }}"
-      delay: "{{ ha_drill_recovery_delay }}"
-      until: >-
-        ha_drill_vault_takeover.rc == 0 and
-        ha_drill_vault_new_active in (platform_vault_members | difference([ha_drill_vault_active]))
-      changed_when: false
+        - name: "Vault | Another member is active (asked from a member that stayed up)"
+          ansible.builtin.command:
+            argv: "{{ ha_drill_vault_status }}"
+          delegate_to: "{{ ha_drill_vault_witness }}"
+          register: ha_drill_vault_takeover
+          retries: "{{ ha_drill_recovery_retries }}"
+          delay: "{{ ha_drill_recovery_delay }}"
+          # Written in full (no variable that reads this task's own result).
+          until: >-
+            ha_drill_vault_takeover.rc == 0 and
+            ((ha_drill_vault_takeover.stdout | from_json).leader_address | default('')
+             | regex_replace('^https://', '') | regex_replace('[.:].*$', ''))
+            in (platform_vault_members | difference([ha_drill_vault_active]))
+          changed_when: false
 
-    - name: "Vault | Since when the new active node is active (its own record)"
-      ansible.builtin.command:
-        argv: "{{ ha_drill_vault_status }}"
-      delegate_to: "{{ ha_drill_vault_new_active }}"
-      register: ha_drill_vault_active_since
-      changed_when: false
+        - name: "Vault | Since when the new active node is active (its own record)"
+          ansible.builtin.command:
+            argv: "{{ ha_drill_vault_status }}"
+          delegate_to: "{{ ha_drill_vault_new_active }}"
+          register: ha_drill_vault_active_since
+          changed_when: false
 
-    - name: "Vault | The edge answers from it"
-      ansible.builtin.uri:
-        url: "{{ ha_drill_vault_edge }}"
-        status_code: [200]
-      register: ha_drill_vault_edge_after
-      retries: "{{ ha_drill_recovery_retries }}"
-      delay: "{{ ha_drill_recovery_delay }}"
-      until: ha_drill_vault_edge_after.status == 200
-
-    - name: "Vault | Start the killed member again (it comes back sealed)"
-      ansible.builtin.command:
-        argv: [docker, start, "{{ vault_container_name }}"]
-      delegate_to: "{{ ha_drill_vault_active }}"
-      changed_when: true
+        - name: "Vault | The edge answers from it"
+          ansible.builtin.uri:
+            url: "{{ ha_drill_vault_edge }}"
+            status_code: [200]
+          register: ha_drill_vault_edge_after
+          retries: "{{ ha_drill_recovery_retries }}"
+          delay: "{{ ha_drill_recovery_delay }}"
+          until: ha_drill_vault_edge_after.status == 200
+      always:
+        - name: "Vault | Start the killed member again (it comes back sealed)"
+          ansible.builtin.command:
+            argv: [docker, start, "{{ vault_container_name }}"]
+          delegate_to: "{{ ha_drill_vault_active }}"
+          changed_when: true
 
     - name: "Vault | Result"
       ansible.builtin.debug:
@@ -542,32 +548,41 @@
       vars:
         _m: "{{ ha_drill_pg_before.stdout | from_json }}"
 
-    - name: "PostgreSQL | Kill the leader's container ({{ ha_drill_pg_leader }})"
-      ansible.builtin.command:
-        argv: [docker, kill, "{{ pg_container_name }}"]
-      delegate_to: "{{ ha_drill_pg_leader }}"
-      changed_when: true
+    # Whatever the wait does, the killed member is started again (always).
+    - name: "PostgreSQL | The leader is killed; the endpoint must route to another member"
+      block:
+        - name: "PostgreSQL | Kill the leader's container ({{ ha_drill_pg_leader }})"
+          ansible.builtin.command:
+            argv: [docker, kill, "{{ pg_container_name }}"]
+          delegate_to: "{{ ha_drill_pg_leader }}"
+          changed_when: true
 
-    - name: "PostgreSQL | When it stopped (Docker's record)"
-      community.docker.docker_container_info:
-        name: "{{ pg_container_name }}"
-      delegate_to: "{{ ha_drill_pg_leader }}"
-      register: ha_drill_pg_killed
+        - name: "PostgreSQL | When it stopped (Docker's record)"
+          community.docker.docker_container_info:
+            name: "{{ pg_container_name }}"
+          delegate_to: "{{ ha_drill_pg_leader }}"
+          register: ha_drill_pg_killed
 
-    # The endpoint writes one line when a member starts to receive traffic.
-    - name: "PostgreSQL | The endpoint routes to another member (its own log, read until it says so)"
-      ansible.builtin.command:
-        argv: [docker, logs, --since, "{{ ha_drill_pg_killed.container.State.FinishedAt }}", -t, "{{ dbproxy_container_name }}"]
-      delegate_to: "{{ ha_drill_endpoint_host }}"
-      register: ha_drill_pg_endpoint_log
-      retries: "{{ ha_drill_recovery_retries }}"
-      delay: "{{ ha_drill_recovery_delay }}"
-      until: ha_drill_pg_up | length > 0
-      changed_when: false
-      vars:
-        ha_drill_pg_up: >-
-          {{ ((ha_drill_pg_endpoint_log.stdout_lines | default([])) + (ha_drill_pg_endpoint_log.stderr_lines | default([])))
-             | select('search', 'Server postgres/[a-z0-9-]+ is UP') | reject('search', 'postgres/' ~ ha_drill_pg_leader ~ ' ') | list }}
+        # The endpoint writes one line when a member starts to receive traffic.
+        - name: "PostgreSQL | The endpoint routes to another member (its own log, read until it says so)"
+          ansible.builtin.command:
+            argv: [docker, logs, --since, "{{ ha_drill_pg_killed.container.State.FinishedAt }}", -t, "{{ dbproxy_container_name }}"]
+          delegate_to: "{{ ha_drill_endpoint_host }}"
+          register: ha_drill_pg_endpoint_log
+          retries: "{{ ha_drill_recovery_retries }}"
+          delay: "{{ ha_drill_recovery_delay }}"
+          # Written in full: a task variable that reads this task's own result is not evaluated again
+          # between retries.
+          until: >-
+            ((ha_drill_pg_endpoint_log.stdout_lines | default([])) + (ha_drill_pg_endpoint_log.stderr_lines | default([])))
+            | select('search', 'Server postgres/[a-z0-9-]+ is UP') | reject('search', 'postgres/' ~ ha_drill_pg_leader ~ ' ') | list | length > 0
+          changed_when: false
+      always:
+        - name: "PostgreSQL | Start the killed member again"
+          ansible.builtin.command:
+            argv: [docker, start, "{{ pg_container_name }}"]
+          delegate_to: "{{ ha_drill_pg_leader }}"
+          changed_when: true
 
     - name: "PostgreSQL | When that was"
       ansible.builtin.set_fact:
@@ -575,12 +590,6 @@
           {{ ((ha_drill_pg_endpoint_log.stdout_lines + ha_drill_pg_endpoint_log.stderr_lines) | sort
               | select('search', 'Server postgres/[a-z0-9-]+ is UP') | reject('search', 'postgres/' ~ ha_drill_pg_leader ~ ' ')
               | map('regex_search', '^\S+') | first) }}
-
-    - name: "PostgreSQL | Start the killed member again"
-      ansible.builtin.command:
-        argv: [docker, start, "{{ pg_container_name }}"]
-      delegate_to: "{{ ha_drill_pg_leader }}"
-      changed_when: true
 
     - name: "PostgreSQL | The former leader follows again"
       ansible.builtin.command:
@@ -648,40 +657,61 @@
       changed_when: false
       failed_when: "'OK' not in ha_drill_redis_quorum.stdout"
 
-    - name: "Redis | Kill the primary's container ({{ ha_drill_redis_killed }})"
-      ansible.builtin.command:
-        argv: [docker, kill, "{{ redis_container_name }}"]
-      delegate_to: "{{ ha_drill_redis_killed }}"
-      changed_when: true
+    # Whatever the waits do, the killed member is started again (always).
+    - name: "Redis | The primary is killed; the Sentinels and the endpoint must move to the other member"
+      block:
+        - name: "Redis | Kill the primary's container ({{ ha_drill_redis_killed }})"
+          ansible.builtin.command:
+            argv: [docker, kill, "{{ redis_container_name }}"]
+          delegate_to: "{{ ha_drill_redis_killed }}"
+          changed_when: true
 
-    - name: "Redis | When it stopped (Docker's record)"
-      community.docker.docker_container_info:
-        name: "{{ redis_container_name }}"
-      delegate_to: "{{ ha_drill_redis_killed }}"
-      register: ha_drill_redis_stopped
+        - name: "Redis | When it stopped (Docker's record)"
+          community.docker.docker_container_info:
+            name: "{{ redis_container_name }}"
+          delegate_to: "{{ ha_drill_redis_killed }}"
+          register: ha_drill_redis_stopped
 
-    - name: "Redis | The Sentinels name the other member"
-      ansible.builtin.command:
-        argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'GET-MASTER-ADDR-BY-NAME', redis_sentinel_master_name] }}"
-      environment:
-        REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
-      register: ha_drill_redis_named
-      retries: "{{ ha_drill_recovery_retries }}"
-      delay: "{{ ha_drill_recovery_delay }}"
-      until: ha_drill_redis_named.rc == 0 and (ha_drill_redis_named.stdout_lines | first) != (ha_drill_redis_before.stdout_lines | first)
-      changed_when: false
+        - name: "Redis | The Sentinels name the other member"
+          ansible.builtin.command:
+            argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'GET-MASTER-ADDR-BY-NAME', redis_sentinel_master_name] }}"
+          environment:
+            REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
+          register: ha_drill_redis_named
+          retries: "{{ ha_drill_recovery_retries }}"
+          delay: "{{ ha_drill_recovery_delay }}"
+          until: ha_drill_redis_named.rc == 0 and (ha_drill_redis_named.stdout_lines | first) != (ha_drill_redis_before.stdout_lines | first)
+          changed_when: false
 
-    # A member receives traffic once it says master AND enough Sentinels name it: the endpoint
-    # writes one line for each of those state changes.
-    - name: "Redis | The endpoint routes to the new primary (its own log, read until it says so)"
-      ansible.builtin.command:
-        argv: [docker, logs, --since, "{{ ha_drill_redis_stopped.container.State.FinishedAt }}", -t, "{{ dbproxy_container_name }}"]
-      register: ha_drill_redis_endpoint_log
-      retries: "{{ ha_drill_recovery_retries }}"
-      delay: "{{ ha_drill_recovery_delay }}"
-      until: ha_drill_redis_member_up | length > 0 and ha_drill_redis_named_up | length >= (dbproxy_redis_sentinel_quorum | int)
-      changed_when: false
-      vars: &redis_eligibility
+        # A member receives traffic once it says master AND enough Sentinels name it: the endpoint
+        # writes one line for each of those state changes.
+        - name: "Redis | The endpoint routes to the new primary (its own log, read until it says so)"
+          ansible.builtin.command:
+            argv: [docker, logs, --since, "{{ ha_drill_redis_stopped.container.State.FinishedAt }}", -t, "{{ dbproxy_container_name }}"]
+          register: ha_drill_redis_endpoint_log
+          retries: "{{ ha_drill_recovery_retries }}"
+          delay: "{{ ha_drill_recovery_delay }}"
+          # Written in full: a task variable that reads this task's own result is not evaluated again
+          # between retries.
+          until: >-
+            (((ha_drill_redis_endpoint_log.stdout_lines | default([])) + (ha_drill_redis_endpoint_log.stderr_lines | default([])))
+              | select('search', 'Server redis/' ~ ha_drill_redis_new ~ ' is UP') | list | length > 0)
+            and
+            (((ha_drill_redis_endpoint_log.stdout_lines | default([])) + (ha_drill_redis_endpoint_log.stderr_lines | default([])))
+              | map('regex_search', 'Server redis_named_' ~ ha_drill_redis_new ~ '/(\\S+) is UP', '\\1') | select() | map('first') | unique | list | length
+             >= (dbproxy_redis_sentinel_quorum | int))
+          changed_when: false
+      always:
+        - name: "Redis | Start the killed member again (it comes back claiming to be a primary)"
+          ansible.builtin.command:
+            argv: [docker, start, "{{ redis_container_name }}"]
+          delegate_to: "{{ ha_drill_redis_killed }}"
+          changed_when: true
+
+    - name: "Redis | When that was (the member says master, and the Sentinels' quorum names it)"
+      ansible.builtin.set_fact:
+        ha_drill_redis_recovered: "{{ [ha_drill_redis_member_up | first, ha_drill_redis_named_up[(dbproxy_redis_sentinel_quorum | int) - 1]] | max }}"
+      vars:
         ha_drill_redis_lines: >-
           {{ ((ha_drill_redis_endpoint_log.stdout_lines | default([])) + (ha_drill_redis_endpoint_log.stderr_lines | default([]))) | sort }}
         ha_drill_redis_member_up: >-
@@ -689,22 +719,12 @@
         ha_drill_redis_named_up: >-
           {%- set out = [] -%}
           {%- for s in dbproxy_redis_sentinels -%}
-            {%- set first = ha_drill_redis_lines | select('search', 'Server redis_named_' ~ ha_drill_redis_new ~ '/' ~ s ~ ' is UP')
-                            | map('regex_search', '^\S+') | first | default('') -%}
-            {%- if first | length > 0 -%}{%- set _ = out.append(first) -%}{%- endif -%}
+            {%- set moments = ha_drill_redis_lines | select('search', 'Server redis_named_' ~ ha_drill_redis_new ~ '/' ~ s ~ ' is UP')
+                              | map('regex_search', '^\S+') | list -%}
+            {%- if moments | length > 0 -%}{%- set _ = out.append(moments[0]) -%}{%- endif -%}
           {%- endfor -%}
           {{ out | sort }}
 
-    - name: "Redis | When that was (the member says master, and the Sentinels' quorum names it)"
-      ansible.builtin.set_fact:
-        ha_drill_redis_recovered: "{{ [ha_drill_redis_member_up | first, ha_drill_redis_named_up[(dbproxy_redis_sentinel_quorum | int) - 1]] | max }}"
-      vars: *redis_eligibility
-
-    - name: "Redis | Start the killed member again (it comes back claiming to be a primary)"
-      ansible.builtin.command:
-        argv: [docker, start, "{{ redis_container_name }}"]
-      delegate_to: "{{ ha_drill_redis_killed }}"
-      changed_when: true
 
     - name: "Redis | When it started (Docker's record)"
       community.docker.docker_container_info:
@@ -762,7 +782,7 @@
         ha_drill_redis_open_now: >-
           {{ ha_drill_redis_open.content
              | regex_findall('haproxy_server_current_sessions\{proxy="redis",server="' ~ ha_drill_redis_killed ~ '"\} ([0-9]+)')
-             | first | default('0') }}
+             | default(['0'], true) | first }}
 
     - name: "Redis | Result"
       ansible.builtin.debug:
