@@ -32,3 +32,11 @@ ha_drill_gap_seconds: >-
       - ((((ha_drill_from.split('.')[0] | regex_replace('Z$', '')) ~ '+0000') | to_datetime('%Y-%m-%dT%H:%M:%S%z')).timestamp()
        + (('0.' ~ (ha_drill_from.split('.')[1] | regex_replace('[^0-9].*$', ''))) | float if '.' in ha_drill_from else 0)))
      | round(1) }}
+
+# Redis and Sentinel calls: the password is the first line written on redis-cli's standard
+# input (never an argument, never the task environment — both are readable in the host's
+# process list). Line 0 of every answer is then AUTH's own OK; the command's answer starts at line 1.
+ha_drill_backslash: "\\"
+ha_drill_redis_auth_sentinel: 'AUTH "{{ ha_drill_secrets.sentinel | replace(ha_drill_backslash, ha_drill_backslash ~ ha_drill_backslash) | replace(''"'', ha_drill_backslash ~ ''"'') }}"'
+ha_drill_redis_auth_admin: 'AUTH "{{ ha_drill_secrets.admin | replace(ha_drill_backslash, ha_drill_backslash ~ ha_drill_backslash) | replace(''"'', ha_drill_backslash ~ ''"'') }}"'
+ha_drill_redis_auth_check: 'AUTH {{ dbproxy_redis_check_user }} "{{ ha_drill_secrets.healthcheck | replace(ha_drill_backslash, ha_drill_backslash ~ ha_drill_backslash) | replace(''"'', ha_drill_backslash ~ ''"'') }}"'
