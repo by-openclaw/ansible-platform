@@ -16,3 +16,12 @@ security_audit_debsecan_suite: ""                             # auto from os-rel
 security_audit_discord_webhook_vault_path: "{{ platform_env }}/discord/webhook-alerts"
 security_audit_loki_url: "http://{{ groups['monitoring'] | first }}.{{ platform_domain }}:3100/loki/api/v1/push"
 security_audit_gitlab_issues: false                          # open a GitLab issue per HIGH/CRITICAL host (off until reviewed)
+# What the tasks read on a host: where the former helpers were staged, the reboot flag, the
+# Docker socket Trivy is given, how the running images and Trivy's findings are printed, and how
+# many CVE identifiers the report lists per host.
+security_audit_helper_dir: "/usr/local/bin"
+security_audit_reboot_flag: "/var/run/reboot-required"
+security_audit_docker_socket: "/var/run/docker.sock"
+security_audit_image_format: "{% raw %}{{.Image}}{% endraw %}"
+security_audit_trivy_template: "{% raw %}{{ range . }}{{ range .Vulnerabilities }}{{ .Severity }}{{ \"\\n\" }}{{ end }}{{ end }}{% endraw %}"
+security_audit_cve_list_max: 50

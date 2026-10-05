@@ -16,19 +16,19 @@
   ansible.builtin.import_tasks: os.yml
 
 # Not every host runs containers (the resolver, the reverse proxy and the appliances are native):
-# probe first, so the container layer is skipped instead of failing on `docker ps`.
+# the container layer runs where the Docker socket exists. (Until 2026-10-05 this probe called the
+# shell builtin `command` through a module that runs no shell: it failed everywhere, and no
+# container image was ever scanned.)
 - name: "SecAudit | Does this host run containers?"
-  ansible.builtin.command: "command -v docker"
+  ansible.builtin.stat:
+    path: "{{ security_audit_docker_socket }}"
   register: security_audit_docker
-  changed_when: false
-  failed_when: false
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
 
 - name: "SecAudit | Container image CVEs (Trivy)"
   ansible.builtin.import_tasks: containers.yml
   when:
     - security_audit_scan_containers | bool
-    - security_audit_docker.rc == 0
+    - security_audit_docker.stat.exists
 
 - name: "SecAudit | Per-host record"
   ansible.builtin.set_fact:
