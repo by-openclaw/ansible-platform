@@ -33,72 +33,106 @@
   ansible.builtin.set_fact:
     vdi_hcl: "{{ lookup('template', 'deploy-policy.hcl.j2') }}"
 
+# Vault's HTTP API, called on the Vault node (delegated): the token and a minted secret id travel
+# in the module call and its answer, never on a command line.
 - name: "Deploy identity | Read current policy (tolerate absent)"
-  ansible.builtin.command:
-    cmd: docker exec -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }} vault policy read {{ vdi_name }}
+  ansible.builtin.uri:
+    url: "{{ vdi_api_url }}/v1/sys/policies/acl/{{ vdi_name }}"
+    headers:
+      X-Vault-Token: "{{ vdi_root_token }}"
+    timeout: "{{ vdi_api_timeout }}"
+    status_code: [200, 404]
   delegate_to: "{{ vdi_host }}"
-  become: true
   register: vdi_current
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  failed_when: false
   no_log: true
 
 - name: "Deploy identity | Write the policy on drift"
-  ansible.builtin.command:
-    cmd: docker exec -i -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }} vault policy write {{ vdi_name }} -
-    stdin: "{{ vdi_hcl }}"
+  ansible.builtin.uri:
+    url: "{{ vdi_api_url }}/v1/sys/policies/acl/{{ vdi_name }}"
+    method: PUT
+    headers:
+      X-Vault-Token: "{{ vdi_root_token }}"
+    timeout: "{{ vdi_api_timeout }}"
+    body_format: json
+    body:
+      policy: "{{ vdi_hcl }}"
+    status_code: [200, 204]
   delegate_to: "{{ vdi_host }}"
-  become: true
-  when: (vdi_current.stdout | default('') | trim) != (vdi_hcl | trim)
+  when: (vdi_current.json.data.policy | default('') | trim) != (vdi_hcl | trim)
   changed_when: true
   no_log: true
 
-- name: "Deploy identity | Ensure approle auth is enabled"
-  ansible.builtin.shell: |
-    set -o pipefail
-    docker exec -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }} \
-      sh -c 'vault auth list -format=json | grep -q "approle/" || vault auth enable approle'
-  args: { executable: /bin/bash }
+- name: "Deploy identity | Auth methods"
+  ansible.builtin.uri:
+    url: "{{ vdi_api_url }}/v1/sys/auth"
+    headers:
+      X-Vault-Token: "{{ vdi_root_token }}"
+    timeout: "{{ vdi_api_timeout }}"
   delegate_to: "{{ vdi_host }}"
-  become: true
-  register: vdi_approle_en
-  changed_when: "'Success' in (vdi_approle_en.stderr | default('')) or 'enabled' in (vdi_approle_en.stdout | default(''))"
+  register: vdi_auth_list
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  no_log: true
+
+- name: "Deploy identity | Ensure approle auth is enabled"
+  ansible.builtin.uri:
+    url: "{{ vdi_api_url }}/v1/sys/auth/{{ vdi_approle_mount }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vdi_root_token }}"
+    timeout: "{{ vdi_api_timeout }}"
+    body_format: json
+    body:
+      type: approle
+    status_code: [200, 204]
+  delegate_to: "{{ vdi_host }}"
+  when: (vdi_approle_mount ~ '/') not in vdi_auth_list.json.data
+  changed_when: true
   no_log: true
 
 - name: "Deploy identity | Read current AppRole (tolerate absent)"
-  ansible.builtin.command:
-    cmd: docker exec -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }} vault read -format=json auth/approle/role/{{ vdi_name }}
+  ansible.builtin.uri:
+    url: "{{ vdi_api_url }}/v1/auth/{{ vdi_approle_mount }}/role/{{ vdi_name }}"
+    headers:
+      X-Vault-Token: "{{ vdi_root_token }}"
+    timeout: "{{ vdi_api_timeout }}"
+    status_code: [200, 404]
   delegate_to: "{{ vdi_host }}"
-  become: true
   register: vdi_role_read
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  failed_when: false
   no_log: true
 
 - name: "Deploy identity | Create/update the AppRole"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }}
-      vault write auth/approle/role/{{ vdi_name }}
-      token_policies={{ vdi_name }}
-      token_ttl={{ vdi_token_ttl }} token_max_ttl={{ vdi_token_max_ttl }}
-      secret_id_ttl={{ vdi_secret_id_ttl }}
+  ansible.builtin.uri:
+    url: "{{ vdi_api_url }}/v1/auth/{{ vdi_approle_mount }}/role/{{ vdi_name }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vdi_root_token }}"
+    timeout: "{{ vdi_api_timeout }}"
+    body_format: json
+    body:
+      token_policies: ["{{ vdi_name }}"]
+      token_ttl: "{{ vdi_token_ttl }}"
+      token_max_ttl: "{{ vdi_token_max_ttl }}"
+      secret_id_ttl: "{{ vdi_secret_id_ttl }}"
+    status_code: [200, 204]
   delegate_to: "{{ vdi_host }}"
-  become: true
-  register: vdi_role_write
   when: >-
-    vdi_role_read.rc != 0
-    or (vdi_role_read.stdout | default('{}') | from_json).data.token_policies | default([]) != [vdi_name]
-  changed_when: vdi_role_write.rc == 0
+    vdi_role_read.status != 200
+    or (vdi_role_read.json.data.token_policies | default([])) != [vdi_name]
+  changed_when: true
   no_log: true
 
 - name: "Deploy identity | Read role_id"
-  ansible.builtin.command:
-    cmd: docker exec -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }} vault read -field=role_id auth/approle/role/{{ vdi_name }}/role-id
+  ansible.builtin.uri:
+    url: "{{ vdi_api_url }}/v1/auth/{{ vdi_approle_mount }}/role/{{ vdi_name }}/role-id"
+    headers:
+      X-Vault-Token: "{{ vdi_root_token }}"
+    timeout: "{{ vdi_api_timeout }}"
   delegate_to: "{{ vdi_host }}"
-  become: true
   register: vdi_role_id
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
@@ -112,10 +146,13 @@
   register: vdi_creds_stat
 
 - name: "Deploy identity | Mint secret_id (first run only)"
-  ansible.builtin.command:
-    cmd: docker exec -e VAULT_TOKEN={{ vdi_root_token }} {{ vdi_container }} vault write -field=secret_id -f auth/approle/role/{{ vdi_name }}/secret-id
+  ansible.builtin.uri:
+    url: "{{ vdi_api_url }}/v1/auth/{{ vdi_approle_mount }}/role/{{ vdi_name }}/secret-id"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vdi_root_token }}"
+    timeout: "{{ vdi_api_timeout }}"
   delegate_to: "{{ vdi_host }}"
-  become: true
   register: vdi_secret_id
   changed_when: true
   no_log: true
@@ -126,8 +163,8 @@
     dest: "{{ vdi_secret_dir }}/{{ vdi_creds_file }}"
     mode: "0600"
     content: >-
-      {{ {'fields': {'role_id': vdi_role_id.stdout | trim,
-                     'secret_id': vdi_secret_id.stdout | trim,
+      {{ {'fields': {'role_id': vdi_role_id.json.data.role_id,
+                     'secret_id': vdi_secret_id.json.data.secret_id,
                      'policy': vdi_name}} | to_nice_json }}
   delegate_to: localhost
   become: false
