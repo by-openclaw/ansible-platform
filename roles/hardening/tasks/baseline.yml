@@ -231,12 +231,12 @@
   when: "'auditd' in ansible_facts.packages | default({})"
   notify: Reload auditd rules
 
-- name: "Baseline | Detect networkd-managed links (apt-daily wait-online guard)"
-  ansible.builtin.shell: |
-    set -o pipefail
-    networkctl list --no-legend 2>/dev/null | awk '$4 != "unmanaged" && $2 != "lo"' | wc -l
-  args: { executable: /bin/bash }
-  register: hardening_networkd_managed
+# One line per link: index, name, type, operational state, setup state. A link networkd does
+# not manage has the setup state "unmanaged".
+- name: "Baseline | Links as networkd sees them (apt-daily wait-online guard)"
+  ansible.builtin.command:
+    argv: [networkctl, list, --no-legend]
+  register: hardening_networkd_links
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
@@ -248,7 +248,9 @@
     name: systemd-networkd-wait-online.service
     enabled: false
     masked: true
-  when: (hardening_networkd_managed.stdout | default('1') | trim | int) == 0
+  when: >-
+    (hardening_networkd_links.stdout_lines | default([]) | map('split') | rejectattr(1, 'eq', 'lo')
+     | map('last') | reject('eq', 'unmanaged') | list | length) == 0
 
 - name: "Baseline | auditd log readable by group adm (promtail ships the trail)"
   ansible.builtin.lineinfile:
@@ -306,20 +308,18 @@
 # wtmpdb-rotate.timer after wtmpdb left, the retired netbird-approval-notify, the
 # masked ipmitool collector. Only NOT-FOUND and MASKED units are reset: a real
 # failure of a unit that can still run stays visible.
-- name: "Baseline | Failed units that are gone or masked"
-  ansible.builtin.shell: >-
-    set -o pipefail;
-    systemctl list-units --all --failed --plain --no-legend | awk '$2 == "not-found" || $2 == "masked" {print $1}'
-  args:
-    executable: /bin/bash
-  register: hardening_vanished_failed
+# One line per failed unit: name, load state, active state, sub state, description.
+- name: "Baseline | Failed units"
+  ansible.builtin.command:
+    argv: [systemctl, list-units, --all, --failed, --plain, --no-legend]
+  register: hardening_failed_units
   changed_when: false
   check_mode: false   # read-only probe
 
 - name: "Baseline | Clear their failed state"
   ansible.builtin.command:
     argv: [systemctl, reset-failed, "{{ item }}"]
-  loop: "{{ hardening_vanished_failed.stdout_lines }}"
+  loop: "{{ hardening_failed_units.stdout_lines | map('split') | selectattr(1, 'in', hardening_reset_failed_load_states) | map('first') | list }}"
   changed_when: true
   when: not ansible_check_mode
 
