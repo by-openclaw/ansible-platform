@@ -41,24 +41,19 @@
     argv:
       - docker
       - exec
-      - -e
-      - REDISCLI_AUTH
+      - -i
       - "{{ redis_sentinel_container_name }}"
       - redis-cli
       - --no-auth-warning
       - --tls
       - --cacert
-      - /etc/ssl/certs/ca-certificates.crt
+      - "{{ redis_sentinel_ca_bundle }}"
       - -h
       - "{{ redis_sentinel_rot_host }}.{{ platform_domain }}"
       - -p
       - "{{ redis_sentinel_port | string }}"
-      - SENTINEL
-      - GET-MASTER-ADDR-BY-NAME
-      - "{{ redis_sentinel_master_name }}"
+    stdin: "AUTH {{ redis_sentinel_new_password }}\nSENTINEL GET-MASTER-ADDR-BY-NAME {{ redis_sentinel_master_name }}"
   delegate_to: "{{ redis_sentinel_rot_host }}"
-  environment:
-    REDISCLI_AUTH: "{{ redis_sentinel_new_password }}"
   register: redis_sentinel_rot_back
   retries: 20
   delay: 2

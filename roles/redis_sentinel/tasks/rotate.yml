@@ -4,8 +4,9 @@
 # every Sentinel USES the new one towards the others, then the old one is removed.
 # Run it for all Sentinels in one play (never --limit):
 #   ansible-playbook playbooks/redis.yml -e redis_sentinel_rotate=true
-# No password travels in a command line: the new one is added by its hash, and the one line
-# that needs it in clear is fed on standard input.
+# No password travels in a command line nor in a task environment: every call authenticates with
+# an AUTH line on redis-cli's standard input (line 0 of the answer is AUTH's own OK), the new
+# password is added by its hash, and the one line that needs it in clear is fed on standard input too.
 - name: "Rotate | The new password (one for every Sentinel)"
   ansible.builtin.set_fact:
     redis_sentinel_new_password: "{{ lookup('community.general.random_string', length=40, special=false) }}"
@@ -14,12 +15,11 @@
 
 - name: "Rotate | Every Sentinel accepts the new password next to the old one"
   ansible.builtin.command:
-    argv: "{{ redis_sentinel_cli + ['ACL', 'SETUSER', 'default', '#' ~ (redis_sentinel_new_password | hash('sha256'))] }}"
-  environment:
-    REDISCLI_AUTH: "{{ redis_sentinel_password }}"
+    argv: "{{ redis_sentinel_cli }}"
+    stdin: "{{ redis_sentinel_auth }}\nACL SETUSER default #{{ redis_sentinel_new_password | hash('sha256') }}"
   register: redis_sentinel_rot_accept
   changed_when: true
-  failed_when: "'OK' not in redis_sentinel_rot_accept.stdout"
+  failed_when: "'OK' not in (redis_sentinel_rot_accept.stdout_lines[1:] | default([]))"
   no_log: true
 
 - name: "Rotate | Store it in Vault (the password field of the stored document is replaced)"
@@ -34,12 +34,10 @@
 - name: "Rotate | Every Sentinel uses the new password towards the others"
   ansible.builtin.command:
     argv: "{{ redis_sentinel_cli }}"
-    stdin: "SENTINEL CONFIG SET sentinel-pass {{ redis_sentinel_new_password }}"
-  environment:
-    REDISCLI_AUTH: "{{ redis_sentinel_password }}"
+    stdin: "{{ redis_sentinel_auth }}\nSENTINEL CONFIG SET sentinel-pass {{ redis_sentinel_new_password }}"
   register: redis_sentinel_rot_use
   changed_when: true
-  failed_when: "'OK' not in redis_sentinel_rot_use.stdout"
+  failed_when: "'OK' not in (redis_sentinel_rot_use.stdout_lines[1:] | default([]))"
   no_log: true
 
 # Sentinel owns its file, and what it writes back for the default user is its own business:
@@ -56,9 +54,8 @@
 
 - name: "Rotate | The old password is removed and the Sentinel records its configuration"
   ansible.builtin.command:
-    argv: "{{ redis_sentinel_cli + item }}"
-  environment:
-    REDISCLI_AUTH: "{{ redis_sentinel_new_password }}"
+    argv: "{{ redis_sentinel_cli }}"
+    stdin: "AUTH {{ redis_sentinel_new_password }}\n{{ item | join(' ') }}"   # the new password is alphanumeric (generated above)
   loop:
     - ["ACL", "SETUSER", "default", "!{{ redis_sentinel_password | hash('sha256') }}"]
     - ["SENTINEL", "FLUSHCONFIG"]
@@ -67,17 +64,18 @@
   register: redis_sentinel_rot_drop
   changed_when: true
   # after its restart a Sentinel may not know the old password any more: nothing to remove
-  failed_when: "'OK' not in redis_sentinel_rot_drop.stdout and 'does not exist' not in redis_sentinel_rot_drop.stdout"
+  failed_when: >-
+    'OK' not in (redis_sentinel_rot_drop.stdout_lines[1:] | default([]))
+    and 'does not exist' not in redis_sentinel_rot_drop.stdout
   no_log: true
 
 - name: "Rotate | The old password is refused, the new one accepted"
   ansible.builtin.command:
-    argv: "{{ redis_sentinel_cli + ['PING'] }}"
-  environment:
-    REDISCLI_AUTH: "{{ item.pw }}"
+    argv: "{{ redis_sentinel_cli }}"
+    stdin: "{{ item.auth }}\nPING"
   loop:
-    - {which: new, pw: "{{ redis_sentinel_new_password }}", expect: "PONG"}
-    - {which: old, pw: "{{ redis_sentinel_password }}", expect: "WRONGPASS"}
+    - {which: new, auth: "AUTH {{ redis_sentinel_new_password }}", expect: "PONG"}
+    - {which: old, auth: "{{ redis_sentinel_auth }}", expect: "WRONGPASS"}
   loop_control:
     label: "{{ item.which }}"
   register: redis_sentinel_rot_check

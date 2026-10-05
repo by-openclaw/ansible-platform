@@ -23,19 +23,22 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: redis`). Rol
 
 Class E/B (`docs/backup.md`): caches rebuild; the append-only file and RDB snapshots under the `redis-data` volume are in the PBS guest image (daily). Restore = play + the volume from PBS (or an empty instance: consumers repopulate their caches; NetBox re-queues).
 
-## Planned change of the primary (drills of 2026-10-04)
+## Planned change of the primary
 
-`playbooks/ha-drill.yml --tags redis`. One atomic step: writes are paused on the primary (`CLIENT PAUSE … WRITE`), `WAIT 1` confirms the replica has every write, the Sentinels fail over, the former primary is made a replica at once, the pause is released.
+`playbooks/ha-drill.yml --tags redis`: one failover order to the Sentinels (`SENTINEL FAILOVER`). They promote the replica and make the former primary follow it; the endpoint uses a member only while it says master **and** two Sentinels name it, so it moves with them.
 
-Why the pause: the endpoint follows a new primary only after six good checks (about 18 s — the margin that keeps a restarted old primary out of rotation until the Sentinels have demoted it). Without the pause the old primary stays writable during that time and those writes are discarded when it becomes a replica (first drill: promoted 12:35:39.9, endpoint on the new primary 12:35:58.0). A pause alone is not enough either: it also stops the Sentinels' hello on that member, so they fail over by themselves after `down-after` (5 s) and can only demote the paused member when the pause ends (second drill).
-
-What clients see on a planned change: writes wait, then errors until the endpoint is on the new primary; nothing is lost. Third drill, with the atomic step: writes paused 15:21:54.9, replica promoted 15:21:56.1, former primary a replica 15:21:56.7, endpoint on the new primary 15:22:11.4 — 16.5 s. An unplanned failure (the primary is gone) has no such window: measured 21 s in the rehearsal.
+- **What clients see** (measured 2026-10-05 22:10 UTC): the Sentinels switched in 1.1 s (order 22:10:27.4, done 22:10:28.5). The endpoint used the new primary's answers from 22:10:28.97, when two Sentinels named it, but for 5.4 s more it still counted the former primary as named too and — two candidates — refused connections until 22:10:34.4. Then it served from the new primary. The former primary kept claiming to be a master until 22:10:44; the endpoint no longer used it.
+- **To shorten:** those 5.4 s are the time the endpoint takes to drop a member the Sentinels no longer name (its `fall` on that check). Lowering it is a tuning of `roles/dbproxy`, to be measured by this drill.
+- **What can be lost:** a write the former primary accepted between the order and the moment the endpoint stopped using it alone (about 1.5 s in that run) and had not yet replicated. There is no write pause before the order.
+- **Why no pause any more.** Until 2026-10-05 the change paused writes on the primary first (`CLIENT PAUSE … WRITE`), so that nothing could be lost. A pause also holds the Sentinels' own messages to the primary: after `down-after` (3 s) they declare it down and start a failover of their own. As one script the whole change took about a second and stayed under that limit; as separate Ansible tasks, seconds apart, it did not — on 2026-10-05 the primary changed three times in 21 s (02 → 01 → 02 → 01) and clients were disturbed for about 40 s.
+- **The zero-loss alternative** is to stop the primary's container cleanly: Redis hands its last writes to the replica before it exits, and the Sentinels then fail over as for a lost member (the gap of the next section, nothing lost).
+- **Two minutes after any failover**, the Sentinels will not start another one for the same primary (twice `failover-timeout`, 60 s): a second failure in that window waits for it. Measured 2026-10-05: a primary killed 2 minutes after the flapping above was replaced only after 126 s.
 
 ## A member lost, and a member restarted (kill drills of 2026-10-04)
 
 `playbooks/ha-drill.yml --tags redis-kill`: the primary's container is killed, the gap is read from the container's recorded end and the endpoint's log (new primary up **and** named by two Sentinels), the member is started again and must return as a replica without having received a session.
 
-- **Gap for clients:** 7.6 s on 2026-10-05, 7.0 s on 2026-10-04 (9.7 s with the endpoint's first routing rule, 21 s before the tuning): the Sentinels need about 4.5 s (`down-after 3 s`, agreement, promotion), the endpoint about 2 s more (the new primary's own check, then two Sentinels naming it).
+- **Gap for clients:** 7.6 s and 7.3 s on 2026-10-05 (two runs), 7.0 s on 2026-10-04 (9.7 s with the endpoint's first routing rule, 21 s before the tuning): the Sentinels need about 4.5 s (`down-after 3 s`, agreement, promotion), the endpoint about 2 s more (the new primary's own check, then two Sentinels naming it).
 - **A restarted member claims to be a master** until the Sentinels make it a replica again (some seconds). The endpoint sends it nothing in that time: a member is used only while the Sentinels name it.
 - **Its start file is static** (`include redis.conf`, root's): Redis cannot rewrite it. Until this drill a member that had been through a failover could not restart — the rewritten file declared every login a second time and loaded the image's bundled modules a second time. See `roles/redis/README.md`.
 - **Planned change** (`--tags redis`) with the same endpoint rule: about 3 s of refused connections after the pause.

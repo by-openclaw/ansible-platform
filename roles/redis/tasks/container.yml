@@ -40,10 +40,10 @@
     argv:
       - docker
       - exec
-      - -e
-      - REDISCLI_AUTH
+      - -i
       - "{{ redis_container_name }}"
       - redis-cli
+      - --no-auth-warning
       - --tls
       - --cacert
       - "{{ redis_ca_bundle }}"
@@ -51,9 +51,7 @@
       - "{{ redis_fqdn }}"
       - -p
       - "{{ redis_tls_port | string }}"
-      - ping
-  environment:
-    REDISCLI_AUTH: "{{ redis_requirepass }}"
+    stdin: "{{ redis_cli_auth }}\nPING"
   register: redis_ping
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   retries: 15
@@ -67,12 +65,11 @@
 # role never sets who replicates from whom.
 - name: "container | A new member follows the initial primary (first start only)"
   ansible.builtin.command:
-    argv: "{{ redis_cli + ['REPLICAOF', redis_initial_primary ~ '.' ~ platform_domain, redis_tls_port | string] }}"
-  environment:
-    REDISCLI_AUTH: "{{ redis_requirepass }}"
+    argv: "{{ redis_cli }}"
+    stdin: "{{ redis_cli_auth }}\nREPLICAOF {{ redis_initial_primary }}.{{ platform_domain }} {{ redis_tls_port }}"
   register: redis_first_follow
   changed_when: true
-  failed_when: "'OK' not in redis_first_follow.stdout"
+  failed_when: "'OK' not in (redis_first_follow.stdout_lines[1:] | default([]))"   # line 0 answers AUTH
   no_log: true
   when:
     - redis_first_start | bool
@@ -83,12 +80,11 @@
 # leaves the logins as they are and fails here).
 - name: "container | Load the changed ACL file"
   ansible.builtin.command:
-    argv: "{{ redis_cli + ['ACL', 'LOAD'] }}"
-  environment:
-    REDISCLI_AUTH: "{{ redis_requirepass }}"
+    argv: "{{ redis_cli }}"
+    stdin: "{{ redis_cli_auth }}\nACL LOAD"
   register: redis_acl_load
   changed_when: true
-  failed_when: "'OK' not in redis_acl_load.stdout"
+  failed_when: "'OK' not in (redis_acl_load.stdout_lines[1:] | default([]))"   # line 0 answers AUTH
   no_log: true
   when:
     - redis_acl_rendered is changed
@@ -97,15 +93,14 @@
 # What the member really holds: every declared login, and the default user.
 - name: "container | Logins the member holds"
   ansible.builtin.command:
-    argv: "{{ redis_cli + ['ACL', 'USERS'] }}"
-  environment:
-    REDISCLI_AUTH: "{{ redis_requirepass }}"
+    argv: "{{ redis_cli }}"
+    stdin: "{{ redis_cli_auth }}\nACL USERS"
   register: redis_acl_users
   changed_when: false
   check_mode: false   # read-only probe
   failed_when: >-
     redis_acl_users.rc != 0 or
-    ((redis_users | map(attribute='name') | list + ['default']) | difference(redis_acl_users.stdout_lines) | length > 0)
+    ((redis_users | map(attribute='name') | list + ['default']) | difference(redis_acl_users.stdout_lines[1:]) | length > 0)
   when: not ansible_check_mode
 
 # A replica is only useful when its link to the primary is up. A member that has just started
@@ -115,9 +110,8 @@
 # the run that repairs the replica.
 - name: "container | Role and replication link"
   ansible.builtin.command:
-    argv: "{{ redis_cli + ['info', 'replication'] }}"
-  environment:
-    REDISCLI_AUTH: "{{ redis_requirepass }}"
+    argv: "{{ redis_cli }}"
+    stdin: "{{ redis_cli_auth }}\nINFO replication"
   register: redis_role_after
   check_mode: false   # read-only probe
   retries: "{{ redis_settle_retries }}"

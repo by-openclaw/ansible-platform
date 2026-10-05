@@ -41,19 +41,25 @@ redis_sentinel_vault_path: "{{ platform_env }}/redis/sentinel"
 # SEC-09: -e redis_sentinel_rotate=true gives the Sentinels a new password of their own
 # (tasks/rotate.yml: accepted next to the old one, used, then the old one removed).
 redis_sentinel_rotate: false
-# The Sentinel's own command line (its password comes in REDISCLI_AUTH, never as an argument).
+# The Sentinel's own command line. Its password is the first line each call writes on
+# redis-cli's standard input (an AUTH line built by redis_sentinel_auth_for): neither an argument
+# nor a variable of the task environment — both are readable in the host's process list.
+# redis-cli answers one line for AUTH (OK) before the answer to the command.
+redis_sentinel_backslash: "\\"
+redis_sentinel_auth: 'AUTH "{{ redis_sentinel_password | replace(redis_sentinel_backslash, redis_sentinel_backslash ~ redis_sentinel_backslash) | replace(''"'', redis_sentinel_backslash ~ ''"'') }}"'
+redis_sentinel_redis_auth: 'AUTH "{{ redis_sentinel_redis_password | replace(redis_sentinel_backslash, redis_sentinel_backslash ~ redis_sentinel_backslash) | replace(''"'', redis_sentinel_backslash ~ ''"'') }}"'
+redis_sentinel_ca_bundle: "/etc/ssl/certs/ca-certificates.crt"   # the host CA store, mounted in the containers
+redis_sentinel_redis_container_name: "redis"                      # the Redis member's container on a member host
 redis_sentinel_cli:
   - docker
   - exec
   - -i
-  - -e
-  - REDISCLI_AUTH
   - "{{ redis_sentinel_container_name }}"
   - redis-cli
   - --no-auth-warning
   - --tls
   - --cacert
-  - /etc/ssl/certs/ca-certificates.crt
+  - "{{ redis_sentinel_ca_bundle }}"
   - -h
   - "{{ redis_sentinel_fqdn }}"
   - -p

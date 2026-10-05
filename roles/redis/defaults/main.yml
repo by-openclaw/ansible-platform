@@ -46,13 +46,16 @@ redis_initial_primary: "{{ redis_members | first }}"
 redis_runtime_host_dir: "/var/lib/redis-runtime"
 redis_runtime_file: "{{ redis_runtime_host_dir }}/runtime.conf"
 
-# The client the role's own tasks use inside the member's container (password in the task
-# environment, never on a command line).
+# The client the role's own tasks use inside the member's container. The password is the first
+# line each call writes on redis-cli's standard input (redis_cli_auth): it is neither on a
+# command line nor in the task environment — both are readable in the host's process list.
+# redis-cli then answers one line for AUTH (OK) before the answer to the command.
+redis_cli_backslash: "\\"
+redis_cli_auth: 'AUTH "{{ redis_requirepass | replace(redis_cli_backslash, redis_cli_backslash ~ redis_cli_backslash) | replace(''"'', redis_cli_backslash ~ ''"'') }}"'
 redis_cli:
   - docker
   - exec
-  - -e
-  - REDISCLI_AUTH
+  - -i
   - "{{ redis_container_name }}"
   - redis-cli
   - --no-auth-warning

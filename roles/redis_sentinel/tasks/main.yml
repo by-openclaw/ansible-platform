@@ -87,21 +87,18 @@
         argv:
           - docker
           - exec
-          - -e
-          - REDISCLI_AUTH
-          - redis
+          - -i
+          - "{{ redis_sentinel_redis_container_name }}"
           - redis-cli
+          - --no-auth-warning
           - --tls
           - --cacert
-          - /etc/ssl/certs/ca-certificates.crt
+          - "{{ redis_sentinel_ca_bundle }}"
           - -h
           - "{{ redis_sentinel_member }}.{{ platform_domain }}"
           - -p
           - "{{ redis_sentinel_redis_port | string }}"
-          - info
-          - replication
-      environment:
-        REDISCLI_AUTH: "{{ redis_sentinel_redis_password }}"
+        stdin: "{{ redis_sentinel_redis_auth }}\nINFO replication"
       delegate_to: "{{ redis_sentinel_member }}"
       throttle: 1   # every Sentinel host asks the SAME members: one at a time (parallel first connections to one host raced, 2026-10-04)
       register: redis_sentinel_roles
@@ -183,12 +180,8 @@
     # running Sentinel, which records it itself (idempotent — the same commands every run).
     - name: "sentinel | Declared settings on the running Sentinel (check login, detection time)"
       ansible.builtin.command:
-        argv: >-
-          {{ ['docker', 'exec', '-e', 'REDISCLI_AUTH', redis_sentinel_container_name, 'redis-cli', '--no-auth-warning',
-              '--tls', '--cacert', '/etc/ssl/certs/ca-certificates.crt',
-              '-h', redis_sentinel_fqdn, '-p', redis_sentinel_port | string] + item }}
-      environment:
-        REDISCLI_AUTH: "{{ redis_sentinel_password }}"
+        argv: "{{ redis_sentinel_cli }}"
+        stdin: "{{ redis_sentinel_auth }}\n{{ item | join(' ') }}"
       loop:
         - "{{ ['ACL', 'SETUSER', redis_sentinel_check_user, 'reset', 'on', '#' ~ (redis_sentinel_check_password | hash('sha256'))] + redis_sentinel_check_rules.split() }}"
         - ["SENTINEL", "SET", "{{ redis_sentinel_master_name }}", "down-after-milliseconds", "{{ redis_sentinel_down_after_ms | string }}"]
@@ -198,7 +191,7 @@
       register: redis_sentinel_declared
       retries: 10
       delay: 3
-      until: redis_sentinel_declared.rc == 0 and 'OK' in redis_sentinel_declared.stdout
+      until: redis_sentinel_declared.rc == 0 and 'OK' in (redis_sentinel_declared.stdout_lines[1:] | default([]))   # line 0 answers AUTH
       changed_when: false
       no_log: true
       tags: [redis_sentinel, config]
@@ -206,25 +199,8 @@
     # What this Sentinel sees: the primary, how many replicas, how many other Sentinels.
     - name: "sentinel | This Sentinel's view of the pair"
       ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - -e
-          - REDISCLI_AUTH
-          - "{{ redis_sentinel_container_name }}"
-          - redis-cli
-          - --tls
-          - --cacert
-          - /etc/ssl/certs/ca-certificates.crt
-          - -h
-          - "{{ redis_sentinel_fqdn }}"
-          - -p
-          - "{{ redis_sentinel_port | string }}"
-          - sentinel
-          - master
-          - "{{ redis_sentinel_master_name }}"
-      environment:
-        REDISCLI_AUTH: "{{ redis_sentinel_password }}"
+        argv: "{{ redis_sentinel_cli }}"
+        stdin: "{{ redis_sentinel_auth }}\nSENTINEL MASTER {{ redis_sentinel_master_name }}"
       register: redis_sentinel_view
       check_mode: false   # read-only probe
       retries: 15

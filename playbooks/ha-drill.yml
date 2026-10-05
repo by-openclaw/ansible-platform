@@ -4,12 +4,12 @@
 # an application: PostgreSQL is probed with a temporary table (only a leader accepts it), Redis
 # with the endpoint's check login (the endpoint routes to the member that reports `master`).
 #
-# Redis, planned change: writes are PAUSED on the primary, the replica confirms it has them
-# all, the Sentinels fail over and the former primary is made a replica at once. Without the
-# pause the old primary stays writable until the endpoint has switched (about 18 s) and
-# those writes are discarded when it becomes a replica (found by the drill of 2026-10-04).
-# Clients see errors (never lost writes) until the endpoint follows the new primary — its
-# check needs six good answers, about 18 s. An unplanned failure has no such window.
+# Redis, planned change: ONE failover order to the Sentinels; they promote the replica and make
+# the former primary follow it. The endpoint uses a member only while it says master and two
+# Sentinels name it, so it leaves the former primary within its next checks. A write the former
+# primary accepted in that instant and had not replicated is lost — the price of not pausing
+# writes: a pause holds the Sentinels' own messages too, and the steps of a play are seconds
+# apart (2026-10-05: the Sentinels declared the paused primary down and it changed three times).
 #
 #   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/ha-drill.yml
 #        --tags postgresql | redis | vault   one of the three
@@ -154,8 +154,6 @@
       - docker
       - exec
       - -i
-      - -e
-      - REDISCLI_AUTH
       - "{{ redis_sentinel_container_name }}"
       - redis-cli
       - --no-auth-warning
@@ -164,14 +162,12 @@
       - "{{ ha_drill_ca_bundle }}"
     ha_drill_redis_sentinel: "{{ ha_drill_redis_cli + ['-h', redis_sentinel_fqdn, '-p', redis_sentinel_port | string] }}"
     ha_drill_redis_endpoint: >-
-      {{ ha_drill_redis_cli + ['-h', platform_redis_host, '-p', redis_sentinel_redis_port | string, '--user', dbproxy_redis_check_user] }}
-    ha_drill_redis_primary: "{{ ha_drill_redis_cli + ['-h', ha_drill_redis_before.stdout_lines | first, '-p', redis_sentinel_redis_port | string] }}"
+      {{ ha_drill_redis_cli + ['-h', platform_redis_host, '-p', redis_sentinel_redis_port | string] }}
   tasks:
     - name: "Redis | The Sentinel's and the check login's passwords (Vault, read)"
       ansible.builtin.include_tasks: tasks/ha-drill-login.yml
       loop:
         - {key: sentinel, path: "{{ redis_sentinel_vault_path }}"}
-        - {key: admin, path: "{{ redis_sentinel_redis_vault_path }}"}
         - {key: healthcheck, path: "{{ platform_redis_users_vault_prefix }}/{{ dbproxy_redis_check_user }}"}
       loop_control:
         loop_var: ha_drill_secret
@@ -179,123 +175,67 @@
 
     - name: "Redis | Primary before (as the Sentinels know it)"
       ansible.builtin.command:
-        argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'GET-MASTER-ADDR-BY-NAME', redis_sentinel_master_name] }}"
-      environment:
-        REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
+        argv: "{{ ha_drill_redis_sentinel }}"
+        stdin: "{{ ha_drill_redis_auth_sentinel }}\nSENTINEL GET-MASTER-ADDR-BY-NAME {{ redis_sentinel_master_name }}"
       register: ha_drill_redis_before
       changed_when: false
 
     - name: "Redis | The Sentinels agree and a replica is ready"
       ansible.builtin.command:
-        argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'CKQUORUM', redis_sentinel_master_name] }}"
-      environment:
-        REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
+        argv: "{{ ha_drill_redis_sentinel }}"
+        stdin: "{{ ha_drill_redis_auth_sentinel }}\nSENTINEL CKQUORUM {{ redis_sentinel_master_name }}"
       register: ha_drill_redis_quorum
       changed_when: false
-      failed_when: "'OK' not in ha_drill_redis_quorum.stdout"
+      failed_when: "'OK' not in (ha_drill_redis_quorum.stdout_lines[1:] | default([]) | join(' '))"   # line 0 answers AUTH
 
     - name: "Redis | The endpoint answers from the primary before"
       ansible.builtin.command:
-        argv: "{{ ha_drill_redis_endpoint + ['INFO', 'replication'] }}"
-      environment:
-        REDISCLI_AUTH: "{{ ha_drill_secrets.healthcheck }}"
+        argv: "{{ ha_drill_redis_endpoint }}"
+        stdin: "{{ ha_drill_redis_auth_check }}\nINFO replication"
       register: ha_drill_redis_e0
       changed_when: false
       failed_when: "'role:master' not in ha_drill_redis_e0.stdout"
 
-    - name: "Redis | Clock"
-      ansible.builtin.command: date +%s.%N
-      register: ha_drill_redis_t0
-      changed_when: false
-
-    # The change, one command per task (the client reads several commands from its input where
-    # they belong to the same member):
-    #   1. writes are paused on the primary (clients wait) and the replica confirms it has
-    #      acknowledged every write;
-    #   2. the Sentinels are asked to fail over;
-    #   3. as soon as they name the other member, the former primary is made its replica here
-    #      (left to the Sentinels it happens only when the pause ends, and until then it is
-    #      still a master in the endpoint's eyes) and the pause is released.
-    # Whatever fails after the pause, the pause is released.
-    - name: "Redis | Pause writes on the primary; the replica confirms it has them all"
+    # The change is ONE order to the Sentinels, and they do the rest (promote the replica, make
+    # the former primary follow it). No write pause before it: a pause also holds the Sentinels'
+    # own messages to the primary, they declare it down after `down-after` and start failovers of
+    # their own on top of the ordered one — on 2026-10-05 the primary changed three times in 21 s
+    # that way, because the steps of a play are seconds apart. The price: a write the former
+    # primary accepted in the instant before the switch and had not yet replicated is lost.
+    - name: "Redis | Ask the Sentinels to fail over"
       ansible.builtin.command:
-        argv: "{{ ha_drill_redis_primary }}"
-        stdin: |
-          CLIENT PAUSE {{ ha_drill_redis_pause_ms }} WRITE
-          WAIT 1 {{ ha_drill_redis_wait_ms }}
-      environment:
-        REDISCLI_AUTH: "{{ ha_drill_secrets.admin }}"
-      register: ha_drill_redis_paused
+        argv: "{{ ha_drill_redis_sentinel }}"
+        stdin: "{{ ha_drill_redis_auth_sentinel }}\nSENTINEL FAILOVER {{ redis_sentinel_master_name }}"
+      register: ha_drill_redis_order
       changed_when: true
-      timeout: "{{ ha_drill_redis_step_timeout }}"
+      failed_when: "'OK' not in (ha_drill_redis_order.stdout_lines[1:] | default([]))"   # line 0 answers AUTH
+      no_log: true
 
-    - name: "Redis | Fail over, then make the former primary a replica and release the pause"
-      block:
-        - name: "Redis | The replica has every write"
-          ansible.builtin.assert:
-            that: (ha_drill_redis_paused.stdout_lines | last | trim) == '1'
-            fail_msg: "the replica did not confirm (answer: {{ ha_drill_redis_paused.stdout_lines | last | default('none') }}): no failover"
-            quiet: true
-
-        - name: "Redis | Ask the Sentinels to fail over"
-          ansible.builtin.command:
-            argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'FAILOVER', redis_sentinel_master_name] }}"
-          environment:
-            REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
-          register: ha_drill_redis_order
-          changed_when: true
-          failed_when: "'OK' not in ha_drill_redis_order.stdout"
-
-        - name: "Redis | The Sentinels name the other member"
-          ansible.builtin.command:
-            argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'GET-MASTER-ADDR-BY-NAME', redis_sentinel_master_name] }}"
-          environment:
-            REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
-          register: ha_drill_redis_after
-          retries: "{{ ha_drill_recovery_retries }}"
-          delay: "{{ ha_drill_poll_delay }}"
-          until: ha_drill_redis_after.rc == 0 and (ha_drill_redis_after.stdout_lines | first) != (ha_drill_redis_before.stdout_lines | first)
-          changed_when: false
-
-        - name: "Redis | The former primary follows the new one, and the pause ends"
-          ansible.builtin.command:
-            argv: "{{ ha_drill_redis_primary }}"
-            stdin: |
-              REPLICAOF {{ ha_drill_redis_after.stdout_lines | first }} {{ redis_sentinel_redis_port }}
-              CLIENT UNPAUSE
-          environment:
-            REDISCLI_AUTH: "{{ ha_drill_secrets.admin }}"
-          changed_when: true
-          timeout: "{{ ha_drill_redis_step_timeout }}"
-      rescue:
-        - name: "Redis | Release the pause (the change did not complete)"
-          ansible.builtin.command:
-            argv: "{{ ha_drill_redis_primary + ['CLIENT', 'UNPAUSE'] }}"
-          environment:
-            REDISCLI_AUTH: "{{ ha_drill_secrets.admin }}"
-          changed_when: true
-
-        - name: "Redis | Stop here"
-          ansible.builtin.fail:
-            msg: "the planned change did not complete; writes were released on the primary"
+    - name: "Redis | The Sentinels name the other member"
+      ansible.builtin.command:
+        argv: "{{ ha_drill_redis_sentinel }}"
+        stdin: "{{ ha_drill_redis_auth_sentinel }}\nSENTINEL GET-MASTER-ADDR-BY-NAME {{ redis_sentinel_master_name }}"
+      register: ha_drill_redis_after
+      retries: "{{ ha_drill_recovery_retries }}"
+      delay: "{{ ha_drill_poll_delay }}"
+      until: >-
+        ha_drill_redis_after.rc == 0 and (ha_drill_redis_after.stdout_lines | length) > 1
+        and ha_drill_redis_after.stdout_lines[1] != ha_drill_redis_before.stdout_lines[1]
+      changed_when: false
+      no_log: true
 
     - name: "Redis | The endpoint answers from the new primary"
       ansible.builtin.command:
-        argv: "{{ ha_drill_redis_endpoint + ['INFO', 'replication'] }}"
-      environment:
-        REDISCLI_AUTH: "{{ ha_drill_secrets.healthcheck }}"
+        argv: "{{ ha_drill_redis_endpoint }}"
+        stdin: "{{ ha_drill_redis_auth_check }}\nINFO replication"
       register: ha_drill_redis_e1
       retries: "{{ ha_drill_follow_retries }}"
       delay: "{{ ha_drill_follow_delay }}"
       until: ha_drill_redis_e1.rc == 0 and 'role:master' in ha_drill_redis_e1.stdout and 'connected_slaves:1' in ha_drill_redis_e1.stdout
       changed_when: false
 
-    - name: "Redis | Clock"
-      ansible.builtin.command: date +%s.%N
-      register: ha_drill_redis_t1
-      changed_when: false
-
-    # The endpoint's own log is the measure (this play's clock includes its own task latency).
+    # The endpoint's own log is the measure: when it stopped using the former primary and when it
+    # started using the new one. Clients are refused only between the two, when the first comes first.
     - name: "Redis | What the endpoint saw"
       ansible.builtin.command:
         argv: [docker, logs, --since, "{{ ha_drill_redis_log_window }}", -t, "{{ dbproxy_container_name }}"]
@@ -306,9 +246,8 @@
     - name: "Redis | Result"
       ansible.builtin.debug:
         msg: >-
-          DRILL redis: primary {{ ha_drill_redis_before.stdout_lines | first }} → {{ ha_drill_redis_after.stdout_lines | first }};
-          writes paused on the old primary (replica confirmed in sync), former primary demoted at once; the endpoint answers from the new primary
-          with its replica attached {{ (ha_drill_redis_t1.stdout | float - ha_drill_redis_t0.stdout | float) | round(1) }} s after the pause
+          DRILL redis (planned): primary {{ ha_drill_redis_before.stdout_lines[1].split('.')[0] }} → {{ ha_drill_redis_after.stdout_lines[1].split('.')[0] }}
+          by one order to the Sentinels; the endpoint answers from the new primary with its replica attached
           ({{ ha_drill_redis_e1.attempts }} attempt(s)); endpoint log:
           {{ ((ha_drill_redis_seen.stdout_lines | default([])) + (ha_drill_redis_seen.stderr_lines | default([]))) | sort
              | select('search', 'Server redis/[a-z0-9-]+ is (DOWN|UP)')
@@ -627,10 +566,10 @@
     - ../roles/dbproxy/defaults/main.yml          # dbproxy_container_name, dbproxy_redis_sentinels, dbproxy_redis_sentinel_quorum
     - vars/ha_drill.yml
   vars:
-    ha_drill_redis_cli: [docker, exec, -e, REDISCLI_AUTH, "{{ redis_sentinel_container_name }}", redis-cli, --no-auth-warning, --tls, --cacert, "{{ ha_drill_ca_bundle }}"]
+    ha_drill_redis_cli: [docker, exec, -i, "{{ redis_sentinel_container_name }}", redis-cli, --no-auth-warning, --tls, --cacert, "{{ ha_drill_ca_bundle }}"]
     ha_drill_redis_sentinel: "{{ ha_drill_redis_cli + ['-h', redis_sentinel_fqdn, '-p', redis_sentinel_port | string] }}"
-    ha_drill_redis_killed: "{{ (ha_drill_redis_before.stdout_lines | first).split('.')[0] }}"
-    ha_drill_redis_new: "{{ (ha_drill_redis_named.stdout_lines | first).split('.')[0] }}"
+    ha_drill_redis_killed: "{{ ha_drill_redis_before.stdout_lines[1].split('.')[0] }}"
+    ha_drill_redis_new: "{{ ha_drill_redis_named.stdout_lines[1].split('.')[0] }}"
   tasks:
     - name: "Redis | The Sentinels' password (Vault, read)"
       ansible.builtin.include_tasks: tasks/ha-drill-login.yml
@@ -642,20 +581,18 @@
 
     - name: "Redis | Primary before (as the Sentinels know it)"
       ansible.builtin.command:
-        argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'GET-MASTER-ADDR-BY-NAME', redis_sentinel_master_name] }}"
-      environment:
-        REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
+        argv: "{{ ha_drill_redis_sentinel }}"
+        stdin: "{{ ha_drill_redis_auth_sentinel }}\nSENTINEL GET-MASTER-ADDR-BY-NAME {{ redis_sentinel_master_name }}"
       register: ha_drill_redis_before
       changed_when: false
 
     - name: "Redis | The Sentinels agree and a replica is ready"
       ansible.builtin.command:
-        argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'CKQUORUM', redis_sentinel_master_name] }}"
-      environment:
-        REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
+        argv: "{{ ha_drill_redis_sentinel }}"
+        stdin: "{{ ha_drill_redis_auth_sentinel }}\nSENTINEL CKQUORUM {{ redis_sentinel_master_name }}"
       register: ha_drill_redis_quorum
       changed_when: false
-      failed_when: "'OK' not in ha_drill_redis_quorum.stdout"
+      failed_when: "'OK' not in (ha_drill_redis_quorum.stdout_lines[1:] | default([]) | join(' '))"   # line 0 answers AUTH
 
     # Whatever the waits do, the killed member is started again (always).
     - name: "Redis | The primary is killed; the Sentinels and the endpoint must move to the other member"
@@ -674,13 +611,14 @@
 
         - name: "Redis | The Sentinels name the other member"
           ansible.builtin.command:
-            argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'GET-MASTER-ADDR-BY-NAME', redis_sentinel_master_name] }}"
-          environment:
-            REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
+            argv: "{{ ha_drill_redis_sentinel }}"
+            stdin: "{{ ha_drill_redis_auth_sentinel }}\nSENTINEL GET-MASTER-ADDR-BY-NAME {{ redis_sentinel_master_name }}"
           register: ha_drill_redis_named
           retries: "{{ ha_drill_recovery_retries }}"
           delay: "{{ ha_drill_recovery_delay }}"
-          until: ha_drill_redis_named.rc == 0 and (ha_drill_redis_named.stdout_lines | first) != (ha_drill_redis_before.stdout_lines | first)
+          until: >-
+            ha_drill_redis_named.rc == 0 and (ha_drill_redis_named.stdout_lines | length) > 1
+            and ha_drill_redis_named.stdout_lines[1] != ha_drill_redis_before.stdout_lines[1]
           changed_when: false
 
         # A member receives traffic once it says master AND enough Sentinels name it: the endpoint
@@ -734,15 +672,14 @@
 
     - name: "Redis | The Sentinels see it as a replica again"
       ansible.builtin.command:
-        argv: "{{ ha_drill_redis_sentinel + ['SENTINEL', 'REPLICAS', redis_sentinel_master_name] }}"
-      environment:
-        REDISCLI_AUTH: "{{ ha_drill_secrets.sentinel }}"
+        argv: "{{ ha_drill_redis_sentinel }}"
+        stdin: "{{ ha_drill_redis_auth_sentinel }}\nSENTINEL REPLICAS {{ redis_sentinel_master_name }}"
       register: ha_drill_redis_replicas
       retries: "{{ ha_drill_rejoin_retries }}"
       delay: "{{ ha_drill_rejoin_delay }}"
       until: >-
         ha_drill_redis_replicas.rc == 0 and
-        (ha_drill_redis_before.stdout_lines | first) in ha_drill_redis_replicas.stdout and
+        ha_drill_redis_before.stdout_lines[1] in ha_drill_redis_replicas.stdout and
         's_down' not in ha_drill_redis_replicas.stdout and 'disconnected' not in ha_drill_redis_replicas.stdout
       changed_when: false
 
