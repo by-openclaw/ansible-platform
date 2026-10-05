@@ -16,31 +16,67 @@
     vault_oidc: "{{ (lookup('file', vault_secret_dir + '/' + vault_oidc_secret_file) | from_json).fields }}"
   no_log: true
 
-- name: "oidc | Write the admins policy"
-  ansible.builtin.command:
-    cmd: "docker exec -i -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }} vault policy write {{ vault_admin_policy_name }} -"
-    stdin: "{{ lookup('template', 'admins-policy.hcl.j2') }}"
+# Vault's HTTP API on this member: the token and the client secret travel in the module call,
+# never on a command line.
+- name: "oidc | The admins policy as Vault holds it"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/policies/acl/{{ vault_admin_policy_name }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 404]
+  register: vault_admin_policy_current
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  no_log: true
+
+- name: "oidc | Write the admins policy (on drift)"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/policies/acl/{{ vault_admin_policy_name }}"
+    method: PUT
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      policy: "{{ lookup('template', 'admins-policy.hcl.j2') }}"
+    status_code: [200, 204]
+  when: (vault_admin_policy_current.json.data.policy | default('') | trim) != (lookup('template', 'admins-policy.hcl.j2') | trim)
   no_log: true
   changed_when: true
 
 - name: "oidc | List auth methods"
-  ansible.builtin.command:
-    cmd: "docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }} vault auth list -format=json"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/auth"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
   register: vault_auth_list
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   no_log: true
 
 - name: "oidc | Enable the OIDC auth method"
-  ansible.builtin.command:
-    cmd: "docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }} vault auth enable oidc"
-  when: "'oidc/' not in (vault_auth_list.stdout | from_json)"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/auth/{{ vault_oidc_mount }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      type: oidc
+    status_code: [200, 204]
+  when: (vault_oidc_mount ~ '/') not in vault_auth_list.json.data
   no_log: true
   changed_when: true
 
 - name: "oidc | Capture the OIDC mount accessor"
-  ansible.builtin.command:
-    cmd: "docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }} vault auth list -format=json"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/auth"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
   register: vault_auth_list2
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
@@ -48,57 +84,85 @@
 
 - name: "oidc | Set accessor fact"
   ansible.builtin.set_fact:
-    vault_oidc_accessor: "{{ (vault_auth_list2.stdout | from_json)['oidc/'].accessor }}"
+    vault_oidc_accessor: "{{ vault_auth_list2.json.data[vault_oidc_mount ~ '/'].accessor }}"
   no_log: true
 
 - name: "oidc | Configure auth/oidc (Authentik discovery + client)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
-      vault write auth/oidc/config
-      oidc_discovery_url={{ vault_oidc_discovery_url }}
-      oidc_client_id={{ vault_oidc.client_id }}
-      oidc_client_secret={{ vault_oidc.client_secret }}
-      default_role={{ vault_oidc_default_role }}
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/auth/{{ vault_oidc_mount }}/config"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      oidc_discovery_url: "{{ vault_oidc_discovery_url }}"
+      oidc_client_id: "{{ vault_oidc.client_id }}"
+      oidc_client_secret: "{{ vault_oidc.client_secret }}"
+      default_role: "{{ vault_oidc_default_role }}"
+    status_code: [200, 204]
   no_log: true
   changed_when: true
 
 - name: "oidc | Configure the default OIDC role"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
-      vault write auth/oidc/role/{{ vault_oidc_default_role }}
-      user_claim=sub groups_claim=groups token_policies=default token_ttl=1h
-      oidc_scopes=openid oidc_scopes=profile oidc_scopes=email oidc_scopes=groups
-      {% for u in vault_oidc.redirect_uris %}allowed_redirect_uris={{ u }} {% endfor %}
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/auth/{{ vault_oidc_mount }}/role/{{ vault_oidc_default_role }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      user_claim: "{{ vault_oidc_user_claim }}"
+      groups_claim: "{{ vault_oidc_groups_claim }}"
+      token_policies: "{{ vault_oidc_token_policies }}"
+      token_ttl: "{{ vault_oidc_token_ttl }}"
+      oidc_scopes: "{{ vault_oidc_scopes }}"
+      allowed_redirect_uris: "{{ vault_oidc.redirect_uris }}"
+    status_code: [200, 204]
   no_log: true
   changed_when: true
 
 - name: "oidc | Create/update the external admin identity group"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
-      vault write identity/group name={{ vault_oidc_admin_group }} type=external policies={{ vault_admin_policy_name }}
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/identity/group"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      name: "{{ vault_oidc_admin_group }}"
+      type: external
+      policies: ["{{ vault_admin_policy_name }}"]
+    status_code: [200, 204]
   no_log: true
   changed_when: true
 
 - name: "oidc | Read the admin group (id + current alias)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
-      vault read -format=json identity/group/name/{{ vault_oidc_admin_group }}
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/identity/group/name/{{ vault_oidc_admin_group }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
   register: vault_group_read
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   no_log: true
 
 - name: "oidc | Map the Authentik group → Vault group (alias, once)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
-      vault write identity/group-alias name={{ vault_oidc_admin_group }}
-      mount_accessor={{ vault_oidc_accessor }}
-      canonical_id={{ (vault_group_read.stdout | from_json).data.id }}
-  when: not ((vault_group_read.stdout | from_json).data.alias | default({}))
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/identity/group-alias"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      name: "{{ vault_oidc_admin_group }}"
+      mount_accessor: "{{ vault_oidc_accessor }}"
+      canonical_id: "{{ vault_group_read.json.data.id }}"
+    status_code: [200, 204]
+  when: not (vault_group_read.json.data.alias | default({}))
   no_log: true
   changed_when: true
