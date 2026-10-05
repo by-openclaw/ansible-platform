@@ -7,9 +7,13 @@
     state: started
     restart: true
   when: not ansible_check_mode
+# A changed DYNAMIC file needs no restart: the file provider watches the directory
+# (traefik.yml: providers.file.watch) and loads the change by itself. Until 2026-10-05 this
+# handler restarted the container exactly like the one above, so every dynamic change cut
+# every route for some seconds (2026-10-04 18:45 and 23:32 UTC, each seen by the probes).
+# It now only confirms the edge still answers.
 - name: Reload traefik
-  community.docker.docker_container:
-    name: traefik
-    state: started
-    restart: true
+  ansible.builtin.wait_for:
+    port: "{{ traefik_reload_check_port }}"
+    timeout: "{{ traefik_reload_check_timeout }}"
   when: not ansible_check_mode
