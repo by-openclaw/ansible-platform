@@ -74,10 +74,13 @@
   vars:
     seaweedfs_sse_written_count: "{{ seaweedfs_sse_written.results | map(attribute='s3_keys', default=[]) | map('length') | sum }}"
 
-# The proof that follows the rotation is run once NOW, with the current key: if its tooling did
-# not work, that is found before anything is replaced (it leaves no object behind).
+# The proof that follows the rotation is run once NOW: if its tooling did not work, that is
+# found before anything is replaced. Without the SSE header, so that nothing is written under
+# the key about to be replaced.
 - name: "Rotate SSE key | The proof works before anything changes"
   ansible.builtin.include_tasks: sse_proof.yml
+  vars:
+    seaweedfs_sse_proof_with_header: false
 
 # 32 random bytes, written as 64 hex digits (what `[s3.sse] kek` takes). Never printed.
 - name: "Rotate SSE key | The new key"

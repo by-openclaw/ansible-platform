@@ -1,7 +1,9 @@
 ---
-# One object written with the SSE header reads back, in a scratch bucket that is removed again.
-# Run BEFORE a rotation it proves the proof itself works (with the current key, and leaves no
-# object behind); run AFTER it proves the gateway uses the key that is in Vault.
+# One object written into a scratch bucket reads back; the bucket is removed again.
+# BEFORE a rotation it runs WITHOUT the SSE header (seaweedfs_sse_proof_with_header: false): it
+# proves the tooling works while writing nothing that is bound to the key about to be replaced
+# (the offsite replication would have to decrypt such an object with a key it no longer has).
+# AFTER the rotation it runs WITH the header: it proves the gateway uses the key that is in Vault.
 - name: "SSE proof | A scratch bucket"
   amazon.aws.s3_bucket:
     endpoint_url: "{{ seaweedfs_s3_local_url }}"
@@ -12,9 +14,9 @@
     state: present
   no_log: true
 
-- name: "SSE proof | Write, read back and remove an object with the SSE header"
+- name: "SSE proof | Write, read back and remove an object"
   block:
-    - name: "SSE proof | Write it (server-side encryption asked for)"
+    - name: "SSE proof | Write it (server-side encryption asked for: {{ seaweedfs_sse_proof_with_header | bool }})"
       amazon.aws.s3_object:
         endpoint_url: "{{ seaweedfs_s3_local_url }}"
         access_key: "{{ seaweedfs_creds.admin_access_key }}"
@@ -24,7 +26,7 @@
         object: "{{ seaweedfs_sse_check_object }}"
         content: "{{ seaweedfs_sse_check_content }}"
         mode: put
-        encrypt: true
+        encrypt: "{{ seaweedfs_sse_proof_with_header | bool }}"
         encryption_mode: AES256
         permission: []
       no_log: true
@@ -44,7 +46,7 @@
     - name: "SSE proof | It is the content that was written"
       ansible.builtin.assert:
         that: seaweedfs_sse_readback.contents == seaweedfs_sse_check_content
-        fail_msg: "the object written with the SSE header does not read back"
+        fail_msg: "the object written into the scratch bucket does not read back"
         quiet: true
   always:
     - name: "SSE proof | Remove the scratch bucket and its object"
