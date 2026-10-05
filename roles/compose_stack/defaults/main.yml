@@ -16,3 +16,10 @@ compose_stack_env_files: []           # e.g. mailcow-style interpolation files
 compose_stack_state: present          # absent = stop the project: containers go, volumes stay
 compose_stack_environment: {}         # environment for the compose CLI (e.g. COMPOSE_HTTP_TIMEOUT)
 compose_stack_recreate: auto          # always = recreate even when Compose sees no change (a bind-mounted file changed)
+
+# The repair of a container left without a network: the label that ties a container to its
+# project, what is read of each running container, and the network modes that have no
+# network of their own by design.
+compose_stack_project_label: "com.docker.compose.project.working_dir"
+compose_stack_inspect_format: "{% raw %}{{ index .Config.Labels \"com.docker.compose.service\" }} {{ .HostConfig.NetworkMode }} {{ len .NetworkSettings.Networks }}{% endraw %}"
+compose_stack_no_network_modes: ["host", "none"]

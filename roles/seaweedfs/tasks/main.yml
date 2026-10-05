@@ -37,6 +37,13 @@
     group: "{{ seaweedfs_group }}"
     mode: "0750"
 
+- name: "SeaweedFS | Rotate the SSE-S3 key (on request: -e seaweedfs_sse_rotate=true)"
+  ansible.builtin.include_tasks: rotate_sse.yml
+  when:
+    - seaweedfs_sse_rotate | bool
+    - seaweedfs_sse_enabled | bool
+    - not ansible_check_mode
+
 - name: "SeaweedFS | S3 admin identity and encryption key, from Vault"
   ansible.builtin.include_role:
     name: vault_secret
@@ -253,6 +260,21 @@
   until: seaweedfs_s3_ready.status in [200, 403]
   retries: 40
   delay: 3
+
+- name: "SeaweedFS | The gateway as it runs now (for the rotation's proof)"
+  community.docker.docker_container_info:
+    name: "{{ seaweedfs_container }}"
+  register: seaweedfs_sse_gateway_info
+  when:
+    - seaweedfs_sse_rotate | bool
+    - not ansible_check_mode
+
+- name: "SeaweedFS | The rotated SSE-S3 key is in use"
+  ansible.builtin.include_tasks: rotate_sse_verify.yml
+  when:
+    - seaweedfs_sse_rotate | bool
+    - seaweedfs_sse_enabled | bool
+    - not ansible_check_mode
 
 - name: "SeaweedFS | External bucket mirrors (seaweedfs_mirrors)"
   ansible.builtin.include_tasks: mirrors.yml

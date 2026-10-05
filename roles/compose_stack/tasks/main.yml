@@ -24,31 +24,44 @@
 # (2026-10-03: mailcow's Postfix after a host daemon had held port 25). Compose sees no change and
 # does not repair it, so the stack owner does: a running container of this project whose network
 # mode names a network but which is attached to none is recreated.
-- name: "Compose stack | Running containers of the project without a network attachment — {{ compose_stack_dir }}"
-  ansible.builtin.shell:
-    executable: /bin/bash
-    cmd: |
-      set -o pipefail
-      ids=$(docker ps -q --filter "label=com.docker.compose.project.working_dir={{ compose_stack_dir }}")
-      [ -z "$ids" ] && exit 0
-      docker inspect $ids --format '{{ "{{" }} index .Config.Labels "com.docker.compose.service" {{ "}}" }} {{ "{{" }} .HostConfig.NetworkMode {{ "}}" }} {{ "{{" }} len .NetworkSettings.Networks {{ "}}" }}' \
-        | awk '$3 == 0 && $2 != "host" && $2 != "none" && $2 !~ /^(container|service):/ {print $1}'
-  register: compose_stack_detached
+- name: "Compose stack | Running containers of the project — {{ compose_stack_dir }}"
+  ansible.builtin.command:
+    argv: [docker, ps, -q, --filter, "label={{ compose_stack_project_label }}={{ compose_stack_dir }}"]
+  register: compose_stack_running
   changed_when: false
   check_mode: false   # read-only probe
+  when: compose_stack_state == 'present'
+
+# One line per container: its compose service, its network mode, the number of networks it is attached to.
+- name: "Compose stack | Their service, network mode and network attachments — {{ compose_stack_dir }}"
+  ansible.builtin.command:
+    argv: "{{ ['docker', 'inspect', '--format', compose_stack_inspect_format] + compose_stack_running.stdout_lines }}"
+  register: compose_stack_networks
+  changed_when: false
+  check_mode: false   # read-only probe
+  when:
+    - compose_stack_state == 'present'
+    - compose_stack_running.stdout_lines | default([]) | length > 0
+
+- name: "Compose stack | Services running without a network attachment — {{ compose_stack_dir }}"
+  ansible.builtin.set_fact:
+    compose_stack_detached_services: >-
+      {{ compose_stack_networks.stdout_lines | default([]) | map('split') | selectattr(2, 'eq', '0')
+         | rejectattr(1, 'in', compose_stack_no_network_modes) | rejectattr(1, 'match', '(container|service):')
+         | map('first') | list }}
   when: compose_stack_state == 'present'
 
 - name: "Compose stack | Recreate the detached containers — {{ compose_stack_dir }}"
   community.docker.docker_compose_v2:
     project_src: "{{ compose_stack_dir }}"
     state: present
-    services: "{{ compose_stack_detached.stdout_lines }}"
+    services: "{{ compose_stack_detached_services }}"
     recreate: always
     env_files: "{{ compose_stack_env_files if compose_stack_env_files | length > 0 else omit }}"
   environment: "{{ compose_stack_environment }}"
   when:
     - compose_stack_state == 'present'
-    - compose_stack_detached.stdout_lines | default([]) | length > 0
+    - compose_stack_detached_services | default([]) | length > 0
 
 # Absent: stop the project if there is one. Volumes stay (archive-before-destroy);
 # a directory without a compose file means there is nothing left to stop.

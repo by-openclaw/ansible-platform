@@ -117,23 +117,38 @@
     restart: true
   when: (authentik_ldap_cert_changed | bool) or (authentik_ldap_provider_patch is changed)
 
-- name: "LDAP cert | Served certificate on :636 matches the wildcard"
-  ansible.builtin.shell: |
-    set -o pipefail
-    timeout 10 openssl s_client -connect 127.0.0.1:636 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 -enddate
-  args: { executable: /bin/bash }
+# The served leaf must be the wildcard itself: its PEM, without white space, is looked for in
+# the wildcard's chain file read above. One command, no pipe; s_client ends when its input does.
+- name: "LDAP cert | Served certificate on :{{ authentik_ldap_port }} is the wildcard"
+  ansible.builtin.command:
+    argv:
+      - timeout
+      - "{{ authentik_ldap_cert_check_timeout }}"
+      - openssl
+      - s_client
+      - -connect
+      - "{{ authentik_listen_ip }}:{{ authentik_ldap_port }}"
+      - -servername
+      - "{{ authentik_ldap_fqdn }}"
+    stdin: ""
+    stdin_add_newline: false
   register: authentik_ldap_cert_served
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  # a restarted outpost needs a few seconds before it listens and serves the provider's certificate
+  no_log: true   # s_client also prints the material of its own session
+  # a restarted outpost needs a few seconds before it listens and serves the provider's certificate.
+  # The expression is written here in full: a task variable that reads this task's own result is
+  # not evaluated again between retries. '#' (never part of a PEM) stands for "nothing served".
   until: >-
-    authentik_ldap_cert_served.rc == 0 and
-    ((authentik_ldap_cert_served.stdout | regex_search('Fingerprint=([0-9A-Fa-f:]+)', '\\1') | default([''], true))[0] | lower | replace(':', ''))
-    == authentik_ldap_cert_fp
+    (authentik_ldap_cert_served.rc | default(1)) == 0
+    and ((authentik_ldap_cert_served.stdout | default('')
+          | regex_search('-----BEGIN CERTIFICATE-----[\\s\\S]+?-----END CERTIFICATE-----') | default('#', true)
+          | regex_replace('\\s', ''))
+         in (authentik_ldap_cert_pem | regex_replace('\\s', '')))
     or ansible_check_mode
   retries: 12
   delay: 5
 
 - name: "LDAP cert | Result"
   ansible.builtin.debug:
-    msg: "LDAP outpost serves the wildcard: {{ authentik_ldap_cert_served.stdout | regex_search('notAfter=.*') }} (changed={{ authentik_ldap_cert_changed }})"
+    msg: "LDAP outpost serves the wildcard: notAfter={{ authentik_ldap_cert_enddate }} (changed={{ authentik_ldap_cert_changed }})"

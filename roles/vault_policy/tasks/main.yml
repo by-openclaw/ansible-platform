@@ -18,30 +18,41 @@
   ansible.builtin.set_fact:
     vault_policy_name: "{{ vault_policy_service }}-{{ vault_policy_env }}"
 
+# Vault's HTTP API, called on the Vault node (delegated): the token and a minted secret id travel
+# in the module call and its answer, never on a command line.
 # ============================ ABSENT ==========================================
 - name: "Vault policy | Remove AppRole + policy (state=absent)"
   when: vault_policy_state == 'absent'
   delegate_to: "{{ vault_policy_host }}"
-  become: true
   block:
-    - name: "Vault policy | Delete the AppRole — {{ vault_policy_name }}"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
-          vault delete auth/approle/role/{{ vault_policy_name }}
-      register: vault_policy_del_role
-      changed_when: "'Success' in vault_policy_del_role.stdout or vault_policy_del_role.rc == 0"
-      failed_when: false
+    - name: "Vault policy | The AppRole and the policy as Vault holds them — {{ vault_policy_name }}"
+      ansible.builtin.uri:
+        url: "{{ vault_policy_api_url }}/v1/{{ item }}"
+        headers:
+          X-Vault-Token: "{{ vault_policy_token }}"
+        timeout: "{{ vault_policy_api_timeout }}"
+        status_code: [200, 404]
+      loop:
+        - "auth/{{ vault_policy_approle_mount }}/role/{{ vault_policy_name }}"
+        - "sys/policies/acl/{{ vault_policy_name }}"
+      register: vault_policy_existing
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+      changed_when: false
       no_log: true
 
-    - name: "Vault policy | Delete the policy — {{ vault_policy_name }}"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
-          vault policy delete {{ vault_policy_name }}
-      register: vault_policy_del_pol
-      changed_when: vault_policy_del_pol.rc == 0
-      failed_when: false
+    - name: "Vault policy | Delete the AppRole, then the policy — {{ vault_policy_name }}"
+      ansible.builtin.uri:
+        url: "{{ vault_policy_api_url }}/v1/{{ item.item }}"
+        method: DELETE
+        headers:
+          X-Vault-Token: "{{ vault_policy_token }}"
+        timeout: "{{ vault_policy_api_timeout }}"
+        status_code: [200, 204]
+      loop: "{{ vault_policy_existing.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.status == 200
+      changed_when: true
       no_log: true
 
 # ============================ PRESENT =========================================
@@ -53,84 +64,108 @@
         vault_policy_hcl: "{{ lookup('template', 'policy.hcl.j2') }}"
 
     - name: "Vault policy | Read the current policy (tolerate absent)"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
-          vault policy read {{ vault_policy_name }}
+      ansible.builtin.uri:
+        url: "{{ vault_policy_api_url }}/v1/sys/policies/acl/{{ vault_policy_name }}"
+        headers:
+          X-Vault-Token: "{{ vault_policy_token }}"
+        timeout: "{{ vault_policy_api_timeout }}"
+        status_code: [200, 404]
       delegate_to: "{{ vault_policy_host }}"
-      become: true
       register: vault_policy_current
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
-      failed_when: false
       no_log: true
 
     - name: "Vault policy | Write the policy only on drift — {{ vault_policy_name }}"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec -i -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
-          vault policy write {{ vault_policy_name }} -
-        stdin: "{{ vault_policy_hcl }}"
+      ansible.builtin.uri:
+        url: "{{ vault_policy_api_url }}/v1/sys/policies/acl/{{ vault_policy_name }}"
+        method: PUT
+        headers:
+          X-Vault-Token: "{{ vault_policy_token }}"
+        timeout: "{{ vault_policy_api_timeout }}"
+        body_format: json
+        body:
+          policy: "{{ vault_policy_hcl }}"
+        status_code: [200, 204]
       delegate_to: "{{ vault_policy_host }}"
-      become: true
-      when: (vault_policy_current.stdout | default('') | trim) != (vault_policy_hcl | trim)
+      when: (vault_policy_current.json.data.policy | default('') | trim) != (vault_policy_hcl | trim)
       changed_when: true
       no_log: true
 
-    - name: "Vault policy | Ensure the approle auth method is enabled"
-      ansible.builtin.shell: |
-        set -o pipefail
-        docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }} \
-          sh -c 'vault auth list -format=json | grep -q "approle/" || vault auth enable approle'
-      args:
-        executable: /bin/bash
+    - name: "Vault policy | Auth methods"
+      ansible.builtin.uri:
+        url: "{{ vault_policy_api_url }}/v1/sys/auth"
+        headers:
+          X-Vault-Token: "{{ vault_policy_token }}"
+        timeout: "{{ vault_policy_api_timeout }}"
       delegate_to: "{{ vault_policy_host }}"
-      become: true
-      register: vault_policy_approle_enable
-      changed_when: "'Success' in (vault_policy_approle_enable.stderr | default('')) or 'enabled' in (vault_policy_approle_enable.stdout | default(''))"
+      register: vault_policy_auth_list
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+      changed_when: false
+      no_log: true
+
+    - name: "Vault policy | Ensure the approle auth method is enabled"
+      ansible.builtin.uri:
+        url: "{{ vault_policy_api_url }}/v1/sys/auth/{{ vault_policy_approle_mount }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_policy_token }}"
+        timeout: "{{ vault_policy_api_timeout }}"
+        body_format: json
+        body:
+          type: approle
+        status_code: [200, 204]
+      delegate_to: "{{ vault_policy_host }}"
+      when: (vault_policy_approle_mount ~ '/') not in vault_policy_auth_list.json.data
+      changed_when: true
       no_log: true
 
     - name: "Vault policy | Read the current AppRole (tolerate absent)"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
-          vault read -format=json auth/approle/role/{{ vault_policy_name }}
+      ansible.builtin.uri:
+        url: "{{ vault_policy_api_url }}/v1/auth/{{ vault_policy_approle_mount }}/role/{{ vault_policy_name }}"
+        headers:
+          X-Vault-Token: "{{ vault_policy_token }}"
+        timeout: "{{ vault_policy_api_timeout }}"
+        status_code: [200, 404]
       delegate_to: "{{ vault_policy_host }}"
-      become: true
       register: vault_policy_role_read
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
-      failed_when: false
       no_log: true
 
     - name: "Vault policy | Create/update the AppRole bound to the policy — {{ vault_policy_name }}"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
-          vault write auth/approle/role/{{ vault_policy_name }}
-          token_policies={{ vault_policy_name }}
-          token_ttl={{ vault_policy_token_ttl }}
-          token_max_ttl={{ vault_policy_token_max_ttl }}
-          secret_id_ttl={{ vault_policy_secret_id_ttl }}
+      ansible.builtin.uri:
+        url: "{{ vault_policy_api_url }}/v1/auth/{{ vault_policy_approle_mount }}/role/{{ vault_policy_name }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_policy_token }}"
+        timeout: "{{ vault_policy_api_timeout }}"
+        body_format: json
+        body:
+          token_policies: ["{{ vault_policy_name }}"]
+          token_ttl: "{{ vault_policy_token_ttl }}"
+          token_max_ttl: "{{ vault_policy_token_max_ttl }}"
+          secret_id_ttl: "{{ vault_policy_secret_id_ttl }}"
+        status_code: [200, 204]
       delegate_to: "{{ vault_policy_host }}"
-      become: true
-      register: vault_policy_role_write
       when: >-
-        vault_policy_role_read.rc != 0
-        or (vault_policy_role_read.stdout | default('{}') | from_json).data.token_policies | default([]) != [vault_policy_name]
-      changed_when: vault_policy_role_write.rc == 0
+        vault_policy_role_read.status != 200
+        or (vault_policy_role_read.json.data.token_policies | default([])) != [vault_policy_name]
+      changed_when: true
       no_log: true
 
     - name: "Vault policy | Read the role_id"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
-          vault read -field=role_id auth/approle/role/{{ vault_policy_name }}/role-id
+      ansible.builtin.uri:
+        url: "{{ vault_policy_api_url }}/v1/auth/{{ vault_policy_approle_mount }}/role/{{ vault_policy_name }}/role-id"
+        headers:
+          X-Vault-Token: "{{ vault_policy_token }}"
+        timeout: "{{ vault_policy_api_timeout }}"
       delegate_to: "{{ vault_policy_host }}"
-      become: true
       register: vault_policy_role_id
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
+      # Under --check a role that does not exist yet was not created above.
+      failed_when: vault_policy_role_id.status != 200 and not ansible_check_mode
       no_log: true
 
     # secret_id is minted ONCE (each mint creates a new one) — reuse the persisted
@@ -143,12 +178,13 @@
       register: vault_policy_creds_stat
 
     - name: "Vault policy | Mint a secret_id (first run only)"
-      ansible.builtin.command:
-        cmd: >-
-          docker exec -e VAULT_TOKEN={{ vault_policy_token }} {{ vault_policy_container }}
-          vault write -field=secret_id -f auth/approle/role/{{ vault_policy_name }}/secret-id
+      ansible.builtin.uri:
+        url: "{{ vault_policy_api_url }}/v1/auth/{{ vault_policy_approle_mount }}/role/{{ vault_policy_name }}/secret-id"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_policy_token }}"
+        timeout: "{{ vault_policy_api_timeout }}"
       delegate_to: "{{ vault_policy_host }}"
-      become: true
       register: vault_policy_secret_id
       changed_when: true
       no_log: true
@@ -159,10 +195,10 @@
         dest: "{{ vault_policy_secret_dir }}/{{ vault_policy_creds_file }}"
         mode: "0600"
         content: >-
-          {{ {'fields': {'role_id': vault_policy_role_id.stdout | trim,
-                         'secret_id': vault_policy_secret_id.stdout | trim,
+          {{ {'fields': {'role_id': vault_policy_role_id.json.data.role_id,
+                         'secret_id': vault_policy_secret_id.json.data.secret_id,
                          'policy': vault_policy_name,
-                         'mount': 'approle'}} | to_nice_json }}
+                         'mount': vault_policy_approle_mount}} | to_nice_json }}
       delegate_to: localhost
       become: false
       no_log: true

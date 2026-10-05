@@ -99,6 +99,20 @@ seaweedfs_backup_time_ago: ""
 # (envelope encryption). Required for multipart uploads when clients request SSE
 # (amazon.aws.s3_object sends encrypt=true by default). KEK from the secret store.
 seaweedfs_sse_enabled: true
+# Rotation of that key (tasks/rotate_sse.yml), on request only.
+seaweedfs_sse_rotate: false
+seaweedfs_sse_kek_hex_length: 64                    # 32 bytes
+seaweedfs_sse_kek_alphabet: "0123456789abcdef"
+seaweedfs_s3_local_url: "http://127.0.0.1:{{ seaweedfs_s3_port }}"   # the gateway, asked on its own host
+seaweedfs_s3_region: "us-east-1"                    # what S3 clients must name; SeaweedFS has no regions
+# Prefixes that are WRITTEN with the SSE header (the rotation refuses to run while one holds an
+# object): the mailbox exports — Ansible's S3 module asks for server-side encryption by default.
+seaweedfs_sse_written_prefixes: "{{ platform_sse_written_prefixes | default([]) }}"
+# The proof (tasks/sse_proof.yml, before and after a rotation): a scratch bucket, one object, removed again.
+seaweedfs_sse_check_bucket: "sse-rotation-check"
+seaweedfs_sse_check_object: "check"
+seaweedfs_sse_check_content: "SSE-S3 key rotation read-back check"
+seaweedfs_sse_decrypt_error: "failed to decrypt DEK"   # what the gateway logs for an object bound to another key
 
 # Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
 seaweedfs_grpc_offset: 10000               # SeaweedFS gRPC = port + 10000

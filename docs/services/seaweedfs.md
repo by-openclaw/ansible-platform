@@ -22,3 +22,11 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: seaweedfs`, 
 ## Backup (infra/0008)
 
 Class A (`docs/backup.md`): `/data` is replicated one way, continuously, to the off-site bucket (`weed filer.backup`, SSE-encrypted objects, credentials from Vault); the node's second daily vzdump covers the dataset; the guest image in PBS (daily, ct 550) carries the configuration only (`/data` is excluded from the image on purpose — PBS itself lives in a bucket here). Restore = dataset (or replica pull) + play.
+
+## Rotation of the SSE-S3 key (security/0001 SEC-09)
+
+`ansible-playbook playbooks/seaweedfs.yml -e seaweedfs_sse_rotate=true` (`roles/seaweedfs/tasks/rotate_sse.yml`). It restarts the S3 gateway and the offsite replication once: announce it, outside the backup window and not during a datastore verification.
+
+- **What the key protects:** only objects written with the S3 server-side-encryption header (or into a bucket that encrypts by default). Each carries its own data key, wrapped by the key-encryption key in use when it was written; SeaweedFS holds one such key and has no rotation of its own. With another key such an object answers 500 on GET, and the offsite replication would retry it for ever.
+- **What the rotation does:** it refuses to run while a bucket encrypts by default or an object exists under a prefix that is written with the header (`platform_sse_written_prefixes`, looked for in every bucket); it runs its own read-back test once without the header (the tooling is proven, nothing is written under the key about to be replaced); it writes a new key to Vault (the former one stays in the version history); the role renders it and restarts the two processes that hold it; then an object written with the header must read back, the offsite replication must run, and neither the gateway's log nor the offsite replication's may show "failed to decrypt DEK".
+- **If objects under the former key exist:** they must be copied under the new key first — a second, temporary gateway started with the former key on the same filer serves them for reading, and each is written again through the gateway that holds the new key. Not automated: no such object existed at the first rotation (inventory of 2026-10-04: 21 buckets, none encrypting by default, no object under `leavers/`, no SSE header on the sampled objects of each bucket).

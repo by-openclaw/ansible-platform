@@ -28,11 +28,12 @@
     seaweedfs_bucket_key: "{{ vault_secret_result }}"
   no_log: true
 
+# weed shell reads its commands on standard input: nothing of a command (and no access key)
+# appears on a command line.
 - name: "SeaweedFS bucket | List existing buckets"
-  ansible.builtin.shell: >-
-    set -o pipefail; echo 's3.bucket.list' | {{ seaweedfs_bucket_bin }} shell -master {{ seaweedfs_bucket_master }} 2>/dev/null
-  args:
-    executable: /bin/bash
+  ansible.builtin.command:
+    argv: "{{ seaweedfs_bucket_shell }}"
+    stdin: "s3.bucket.list"
   register: seaweedfs_bucket_existing
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
@@ -40,10 +41,9 @@
   become: true
 
 - name: "SeaweedFS bucket | Create missing buckets"
-  ansible.builtin.shell: >-
-    set -o pipefail; echo 's3.bucket.create -name {{ item }}' | {{ seaweedfs_bucket_bin }} shell -master {{ seaweedfs_bucket_master }}
-  args:
-    executable: /bin/bash
+  ansible.builtin.command:
+    argv: "{{ seaweedfs_bucket_shell }}"
+    stdin: "s3.bucket.create -name {{ item }}"
   when: item not in seaweedfs_bucket_existing.stdout
   loop: "{{ seaweedfs_bucket_names }}"
   changed_when: true
@@ -51,10 +51,9 @@
   become: true
 
 - name: "SeaweedFS bucket | Read current S3 identity config"
-  ansible.builtin.shell: >-
-    set -o pipefail; echo 's3.configure' | {{ seaweedfs_bucket_bin }} shell -master {{ seaweedfs_bucket_master }} 2>/dev/null
-  args:
-    executable: /bin/bash
+  ansible.builtin.command:
+    argv: "{{ seaweedfs_bucket_shell }}"
+    stdin: "s3.configure"
   register: seaweedfs_bucket_cfg
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
@@ -63,14 +62,14 @@
   no_log: true
 
 - name: "SeaweedFS bucket | Configure the scoped identity (dynamic, no restart)"
-  ansible.builtin.shell: >-
-    set -o pipefail; echo 's3.configure -user {{ seaweedfs_bucket_identity }}
-    -access_key {{ seaweedfs_bucket_key.access_key }}
-    -secret_key {{ seaweedfs_bucket_key.secret_key }}
-    -actions {{ seaweedfs_bucket_names | product(seaweedfs_bucket_actions) | map("reverse") | map("join", ":") | join(",") }}
-    -apply' | {{ seaweedfs_bucket_bin }} shell -master {{ seaweedfs_bucket_master }}
-  args:
-    executable: /bin/bash
+  ansible.builtin.command:
+    argv: "{{ seaweedfs_bucket_shell }}"
+    stdin: >-
+      s3.configure -user {{ seaweedfs_bucket_identity }}
+      -access_key {{ seaweedfs_bucket_key.access_key }}
+      -secret_key {{ seaweedfs_bucket_key.secret_key }}
+      -actions {{ seaweedfs_bucket_names | product(seaweedfs_bucket_actions) | map("reverse") | map("join", ":") | join(",") }}
+      -apply
   when: seaweedfs_bucket_key.access_key not in (seaweedfs_bucket_cfg.stdout | default(''))
   changed_when: true
   delegate_to: "{{ seaweedfs_bucket_host }}"

@@ -23,18 +23,19 @@
   register: platform_ca_roots
   check_mode: false
 
+# openssl's sha256 fingerprint of a certificate is the sha256 of its DER encoding, printed as
+# colon-separated upper-case pairs; the certificate goes in on standard input.
 - name: "platform_ca | Fingerprint of the fetched root (sha256 of the DER)"
-  ansible.builtin.shell:
-    cmd: printf '%s' "$PEM" | openssl x509 -outform DER | sha256sum | cut -d' ' -f1
-  environment:
-    PEM: "{{ platform_ca_roots.content }}"
+  ansible.builtin.command:
+    argv: [openssl, x509, -noout, -fingerprint, -sha256]
+    stdin: "{{ platform_ca_roots.content }}"
   register: platform_ca_fetched_fp
   changed_when: false
   check_mode: false
 
 - name: "platform_ca | Refuse a root that does not match the escrowed fingerprint"
   ansible.builtin.assert:
-    that: platform_ca_fetched_fp.stdout | trim == platform_ca_fingerprint
+    that: (platform_ca_fetched_fp.stdout | trim | split('=', 1) | last | replace(':', '') | lower) == (platform_ca_fingerprint | lower)
     fail_msg: "roots.pem from {{ platform_ca_url }} does not match Vault {{ platform_ca_vault_path }} — CA replaced or MITM; not installing"
     quiet: true
 

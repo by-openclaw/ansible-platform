@@ -32,7 +32,10 @@ vault_policy_creds_file: "fabric/app-vault-approle-{{ vault_policy_service }}.js
 
 # --- Vault connection (mirror vault_secret) -----------------------------------
 vault_policy_host: "{{ platform_vault_host | default(groups['vault'] | first) }}"
-vault_policy_container: "vault"
+vault_policy_api_url: "{{ platform_vault_addr }}"   # Vault's HTTP API as the delegate host reaches it (inventory)
+vault_policy_api_timeout: 15
+vault_policy_approle_mount: "approle"
+vault_policy_container: "vault"   # no longer used by this role (callers may still pass it)
 vault_policy_mount: "secret"
 vault_policy_bootstrap_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
 vault_policy_bootstrap_file: "vault-init.json"

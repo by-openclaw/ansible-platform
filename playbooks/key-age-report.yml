@@ -27,11 +27,15 @@
         vault_root_token: "{{ vault_deploy_token }}"
       no_log: true
 
+    # Vault's HTTP API on this member: the token travels in the module call, never on a command line.
     - name: "Keyage | Read created stamps"
-      ansible.builtin.command:
-        argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
-               "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-field=created",
-               "{{ platform_env }}/{{ item }}/ssh-passphrase"]
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/{{ vault_kv_path }}/data/{{ platform_env }}/{{ item }}/ssh-passphrase"
+        headers:
+          X-Vault-Token: "{{ vault_root_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        status_code: [200, 403, 404]   # found · not readable · absent
+      no_log: true   # the document also holds the passphrase
       loop: "{{ key_age_services }}"
       register: key_age_reads
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
@@ -43,12 +47,13 @@
         key_age_rows: >-
           {{ (key_age_rows | default([])) + [{
                'service': item.item,
-               'created': (item.stdout if item.rc == 0 else 'MISSING'),
+               'created': (item.json.data.data.created | default('MISSING')) if item.status == 200 else 'MISSING',
                'age_days': (((ansible_date_time.epoch | int) -
-                             ((item.stdout + ' 00:00:00') | to_datetime).strftime('%s') | int) // 86400)
-                            if item.rc == 0 else -1 }] }}
+                             ((item.json.data.data.created + ' 00:00:00') | to_datetime).strftime('%s') | int) // 86400)
+                            if (item.status == 200 and item.json.data.data.created is defined) else -1 }] }}
       loop: "{{ key_age_reads.results }}"
       loop_control: { label: "{{ item.item }}" }
+      no_log: true   # the loop item is the whole document
 
     - name: "Keyage | Report"
       ansible.builtin.debug:

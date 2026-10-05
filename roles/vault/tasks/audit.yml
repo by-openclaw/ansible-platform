@@ -10,30 +10,38 @@
     name: vault_login
   when: inventory_hostname == vault_first_member
 
+# Vault's HTTP API on this member: the token travels in the module call, never on a command line.
 - name: "audit | List audit devices"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_ADDR={{ vault_api_addr }}
-      -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
-      vault audit list -format=json
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/audit"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
   register: vault_audit_list
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  failed_when: false
   no_log: true
   when: inventory_hostname == vault_first_member
 
 - name: "audit | Enable the file audit device (idempotent)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e VAULT_ADDR={{ vault_api_addr }}
-      -e VAULT_TOKEN={{ vault_deploy_token }} {{ vault_container_name }}
-      vault audit enable file file_path=/vault/logs/audit.log mode=0640
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/audit/{{ vault_audit_device }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      type: file
+      options:
+        file_path: "{{ vault_audit_file_path }}"
+        mode: "{{ vault_audit_file_mode }}"
+    status_code: [200, 204]
   when:
     - inventory_hostname == vault_first_member
-    - "'file/' not in (vault_audit_list.stdout | default(''))"
-  register: vault_audit_enable
-  changed_when: vault_audit_enable is not skipped
+    - (vault_audit_device ~ '/') not in vault_audit_list.json.data
+  no_log: true
+  changed_when: true
 
 - name: "audit | Rotate the audit log (copytruncate — the device keeps its fd)"
   ansible.builtin.include_role:

@@ -41,24 +41,26 @@
     name: apache2-utils
     state: present
 
-- name: "Verdaccio | Seed the admin htpasswd entry (idempotent)"
-  ansible.builtin.shell: |
-    set -o pipefail
-    F={{ verdaccio_conf_dir }}/htpasswd
-    if [ ! -f "$F" ] || ! grep -q '^{{ verdaccio_admin_user }}:' "$F"; then
-      htpasswd -bB -c "$F" '{{ verdaccio_admin_user }}' "$VPW" >/dev/null 2>&1
-      echo changed
-    fi
-  args: { executable: /bin/bash }
-  environment:
-    VPW: "{{ verdaccio_admin_password }}"
-  register: verdaccio_htpasswd
-  changed_when: "'changed' in verdaccio_htpasswd.stdout"
+- name: "Verdaccio | Admin entry in the htpasswd file?"
+  ansible.builtin.command:
+    argv: [grep, -c, "^{{ verdaccio_admin_user }}:", "{{ verdaccio_htpasswd_file }}"]
+  register: verdaccio_htpasswd_entry
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  failed_when: verdaccio_htpasswd_entry.rc > 2   # 1 = no such entry, 2 = no such file
+
+# htpasswd reads the password on standard input (-i): it is on no command line.
+- name: "Verdaccio | Seed the admin htpasswd entry (bcrypt)"
+  ansible.builtin.command:
+    argv: [htpasswd, -iB, -c, "{{ verdaccio_htpasswd_file }}", "{{ verdaccio_admin_user }}"]
+    stdin: "{{ verdaccio_admin_password }}"
+  when: verdaccio_htpasswd_entry.rc != 0
+  changed_when: true
   no_log: true
 
 - name: "Verdaccio | Own the htpasswd by the container uid"
   ansible.builtin.file:
-    path: "{{ verdaccio_conf_dir }}/htpasswd"
+    path: "{{ verdaccio_htpasswd_file }}"
     owner: "10001"
     group: "65533"
     mode: "0640"

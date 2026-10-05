@@ -15,16 +15,19 @@
   failed_when: false
   check_mode: false
 
-- name: "PVE host | Kernel name and mounts of each declared device (read-only)"
-  ansible.builtin.shell: >-
-    set -o pipefail; d=$(readlink -f {{ item.device | quote }});
-    echo "$d $(findmnt -rn -S "$d" | wc -l)"
-  args:
-    executable: /bin/bash
+- name: "PVE host | Kernel name of each declared device (read-only)"
+  ansible.builtin.stat:
+    path: "{{ item.device }}"
+    follow: false
   loop: "{{ pve_host_zfs_stale_labels }}"
   loop_control:
     label: "{{ item.device | basename }}"
   register: pve_host_zfs_stale_dev
+
+- name: "PVE host | Source of every mount (read-only)"
+  ansible.builtin.command:
+    argv: [findmnt, -rn, -o, SOURCE]
+  register: pve_host_zfs_stale_mounts
   changed_when: false
   check_mode: false
 
@@ -39,9 +42,11 @@
     pve_host_zfs_stale_proven: >-
       {%- set out = [] -%}
       {%- for z, d in pve_host_zfs_stale_zdb.results | zip(pve_host_zfs_stale_dev.results) -%}
-        {%- set kname, mounts = d.stdout.split() -%}
+        {%- set kname = d.stat.lnk_source | default(z.item.device) -%}
+        {%- set mounts = pve_host_zfs_stale_mounts.stdout_lines | select('eq', kname) | list | length -%}
         {%- set disk_id = z.item.device | basename | regex_replace('-part[0-9]+$', '') -%}
-        {%- if ('pool_guid: ' ~ z.item.pool_guid) in z.stdout
+        {%- if d.stat.exists
+              and ('pool_guid: ' ~ z.item.pool_guid) in z.stdout
               and (kname ~ ' ') not in (pve_host_zpool_members.stdout ~ ' ')
               and (kname ~ '\n') not in (pve_host_zpool_members.stdout ~ '\n')
               and disk_id not in pve_host_zpool_members.stdout
@@ -82,13 +87,20 @@
 
 # zfs-import@<pool> failed at every boot on "more than one matching pool"; with the
 # ambiguity gone its old failure is history.
-- name: "PVE host | Clear the old import failure"
-  ansible.builtin.shell: >-
-    set -o pipefail; systemctl list-units --failed --plain --no-legend 'zfs-import@*'
-    | awk '{print $1}' | xargs -r systemctl reset-failed
-  args:
-    executable: /bin/bash
+- name: "PVE host | Import units left in a failed state"
+  ansible.builtin.command:
+    argv: [systemctl, list-units, --failed, --plain, --no-legend, "{{ pve_host_zfs_import_unit_pattern }}"]
+  register: pve_host_zfs_import_failed
   changed_when: false
   when:
     - pve_host_zfs_stale_proven | length > 0
     - not ansible_check_mode
+
+- name: "PVE host | Clear the old import failure"
+  ansible.builtin.command:
+    argv: "{{ ['systemctl', 'reset-failed'] + (pve_host_zfs_import_failed.stdout_lines | default([]) | map('split') | map('first') | list) }}"
+  changed_when: false
+  when:
+    - pve_host_zfs_stale_proven | length > 0
+    - not ansible_check_mode
+    - pve_host_zfs_import_failed.stdout_lines | default([]) | length > 0
