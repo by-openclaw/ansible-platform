@@ -130,11 +130,6 @@
   when: vault_backup_token_to_store | length > 0
   no_log: true
 
-- name: "vault_backup | The bare token file of the former job is gone"
-  ansible.builtin.file:
-    path: "{{ vault_backup_token_file }}"
-    state: absent
-
 - name: "vault_backup | Snapshot dir (0700)"
   ansible.builtin.file:
     path: "{{ vault_backup_dir }}"
@@ -196,4 +191,11 @@
   ansible.builtin.systemd_service:
     name: "{{ vault_backup_job_name }}.service"
     state: started
+  when: not ansible_check_mode
+
+# Last, once the new job has taken a snapshot: until then the former job can be put back as it was.
+- name: "vault_backup | The bare token file of the former job is gone"
+  ansible.builtin.file:
+    path: "{{ vault_backup_token_file }}"
+    state: absent
   when: not ansible_check_mode
