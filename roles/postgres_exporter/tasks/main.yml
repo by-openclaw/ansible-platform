@@ -24,17 +24,19 @@
   check_mode: false   # read-only probe
 
 - name: "PG exporter | The monitoring role exists, with pg_monitor only"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec {{ pg_container_name }} psql -tAU postgres -d postgres -c
-      "DO $$ BEGIN
-         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{{ postgres_exporter_db_user }}') THEN
-           CREATE ROLE {{ postgres_exporter_db_user }} LOGIN PASSWORD '{{ postgres_exporter_password }}';
-         ELSE
-           ALTER ROLE {{ postgres_exporter_db_user }} LOGIN PASSWORD '{{ postgres_exporter_password }}';
-         END IF;
-         GRANT pg_monitor TO {{ postgres_exporter_db_user }};
-       END $$;"
+  community.docker.docker_container_exec:
+    container: "{{ pg_container_name }}"
+    argv: "{{ postgres_exporter_psql }}"
+    # the statement carries the password: on standard input, never on a command line
+    stdin: |
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{{ postgres_exporter_db_user }}') THEN
+          CREATE ROLE {{ postgres_exporter_db_user }} LOGIN PASSWORD '{{ postgres_exporter_password_sql }}';
+        ELSE
+          ALTER ROLE {{ postgres_exporter_db_user }} LOGIN PASSWORD '{{ postgres_exporter_password_sql }}';
+        END IF;
+        GRANT pg_monitor TO {{ postgres_exporter_db_user }};
+      END $$;
   register: postgres_exporter_role
   changed_when: false     # the statement is idempotent; the password is the one Vault holds
   no_log: true

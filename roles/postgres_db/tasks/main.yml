@@ -43,11 +43,13 @@
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
+# A statement that carries a password goes to psql on standard input (and the probe's password
+# into the exec's environment, through the Docker API): never on a command line.
 - name: "Postgresdb | Create role {{ postgres_db_user }}"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec {{ postgres_db_container }} psql -U postgres -d postgres
-      -c "CREATE ROLE {{ postgres_db_user }} LOGIN {{ postgres_db_role_attributes | join(' ') }} PASSWORD '{{ postgres_db_password }}'"
+  community.docker.docker_container_exec:
+    container: "{{ postgres_db_container }}"
+    argv: "{{ postgres_db_psql }}"
+    stdin: "CREATE ROLE {{ postgres_db_user }} LOGIN {{ postgres_db_role_attributes | join(' ') }} PASSWORD '{{ postgres_db_password_sql }}';"
   delegate_to: "{{ postgres_db_host }}"
   when: postgres_db_role_exists.stdout | trim != '1'
   no_log: true
@@ -57,10 +59,11 @@
 # Vault so a rebuilt/re-pointed app reconnects cleanly. Vault mode only (file-mode
 # services keep their current password untouched).
 - name: "Postgresdb | Probe whether the live password already matches Vault"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec -e PGPASSWORD={{ postgres_db_password }} {{ postgres_db_container }}
-      psql -h 127.0.0.1 -U {{ postgres_db_user }} -d postgres -tAc "SELECT 1"
+  community.docker.docker_container_exec:
+    container: "{{ postgres_db_container }}"
+    argv: [psql, -h, "{{ postgres_db_probe_host }}", -U, "{{ postgres_db_user }}", -d, postgres, -tAc, "SELECT 1"]
+    env:
+      PGPASSWORD: "{{ postgres_db_password }}"
   delegate_to: "{{ postgres_db_host }}"
   register: postgres_db_pw_probe
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
@@ -71,10 +74,10 @@
     - postgres_db_role_exists.stdout | trim == '1'
 
 - name: "Postgresdb | Sync existing role password to Vault ({{ postgres_db_user }})"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec {{ postgres_db_container }} psql -U postgres -d postgres
-      -c "ALTER ROLE {{ postgres_db_user }} LOGIN PASSWORD '{{ postgres_db_password }}'"
+  community.docker.docker_container_exec:
+    container: "{{ postgres_db_container }}"
+    argv: "{{ postgres_db_psql }}"
+    stdin: "ALTER ROLE {{ postgres_db_user }} LOGIN PASSWORD '{{ postgres_db_password_sql }}';"
   delegate_to: "{{ postgres_db_host }}"
   when:
     - postgres_db_role_exists.stdout | trim == '1'
