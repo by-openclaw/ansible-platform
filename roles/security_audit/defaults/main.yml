@@ -25,3 +25,45 @@ security_audit_docker_socket: "/var/run/docker.sock"
 security_audit_image_format: "{% raw %}{{.Image}}{% endraw %}"
 security_audit_trivy_template: "{% raw %}{{ range . }}{{ range .Vulnerabilities }}{{ .Severity }}{{ \"\\n\" }}{{ end }}{{ end }}{% endraw %}"
 security_audit_cve_list_max: 50
+security_audit_docker_root_format: "{% raw %}{{.DockerRootDir}}{% endraw %}"
+security_audit_image_size_format: "{% raw %}{{.Size}}{% endraw %}"
+# Room a container scan needs on Docker's directory. Trivy exports the image into a temporary file
+# as large as the image and keeps its databases (vulnerabilities + Java index, about 1.4 GB) in the
+# cache volume. An image is scanned only when the export, the room the databases may take and the
+# space the host must keep all fit in the free space; otherwise the report says "not scanned".
+security_audit_trivy_db_room_mb: 1536         # databases downloaded or refreshed during a scan
+security_audit_trivy_min_free_mb: 1024        # free space that must remain during a scan
+security_audit_trivy_scan_timeout_s: 900      # one image; the scanner is stopped after that
+security_audit_trivy_stop_grace_s: 60         # time the scanner gets to stop before it is killed
+security_audit_trivy_timeout_rc: 124          # what `timeout` returns when it stopped the scanner
+security_audit_trivy_container_name: "security-audit-trivy"
+security_audit_bytes_per_mb: 1048576
+# Derived — the running images, and for the image being scanned (tasks/scan_image.yml) the free
+# space, the space it needs, whether it was scanned and, when it was not, why.
+security_audit_image_names: "{{ security_audit_images.stdout_lines | default([]) | unique | sort }}"
+security_audit_image_free_mb: "{{ ((security_audit_docker_free.stdout_lines | default(['0']) | last | trim | int) / security_audit_bytes_per_mb) | int }}"
+security_audit_image_size_mb: "{{ ((security_audit_image[1] | trim | int) / security_audit_bytes_per_mb) | round(0, 'ceil') | int }}"
+security_audit_image_need_mb: "{{ (security_audit_image_size_mb | int) + (security_audit_trivy_db_room_mb | int) + (security_audit_trivy_min_free_mb | int) }}"
+security_audit_image_fits: "{{ (security_audit_image_free_mb | int) >= (security_audit_image_need_mb | int) }}"
+security_audit_image_rc: "{{ security_audit_trivy.rc | default(-1) }}"
+security_audit_image_scanned: "{{ (security_audit_image_fits | bool) and (security_audit_image_rc | int) == 0 }}"
+security_audit_image_severities: "{{ (security_audit_trivy.stdout_lines | default([]) | map('trim') | list) if (security_audit_image_scanned | bool) else [] }}"
+security_audit_image_reason_no_room: >-
+  no room: {{ security_audit_image_need_mb }} MB needed (the image, Trivy's databases and
+  {{ security_audit_trivy_min_free_mb }} MB kept free), {{ security_audit_image_free_mb }} MB free
+security_audit_image_reason_timeout: "stopped after {{ security_audit_trivy_scan_timeout_s }} s"
+security_audit_image_reason_failed: "the scanner failed (rc {{ security_audit_image_rc }})"
+# An expression, not an if-block: a block that prints nothing yields null, and the reason of a
+# scanned image is the empty string.
+security_audit_image_reason: >-
+  {{ security_audit_image_reason_no_room if not (security_audit_image_fits | bool)
+     else security_audit_image_reason_timeout if (security_audit_image_rc | int) == (security_audit_trivy_timeout_rc | int)
+     else security_audit_image_reason_failed if (security_audit_image_rc | int) != 0
+     else '' }}
+security_audit_image_record:
+  image: "{{ security_audit_image[0] }}"
+  size_mb: "{{ security_audit_image_size_mb | int }}"
+  scanned: "{{ security_audit_image_scanned | bool }}"
+  reason: "{{ security_audit_image_reason }}"
+  critical: "{{ security_audit_image_severities | select('eq', 'CRITICAL') | list | length }}"
+  high: "{{ security_audit_image_severities | select('eq', 'HIGH') | list | length }}"
