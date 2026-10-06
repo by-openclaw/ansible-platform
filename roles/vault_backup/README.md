@@ -13,6 +13,7 @@ Vault (all KV secrets, policies, mounts, auth) into a fresh server.
   PBS job) through `roles/host_job`. No script and no shell: the job renews its token and
   downloads the snapshot from Vault's HTTP API with `curl`, refuses an empty file, and `logrotate`
   gives it its dated name (`vault-<UTC date>.snap`). The token never appears on a command line.
+- The job is installed on **every member of the cluster** and runs on the **active** one only (a start condition on Vault's health endpoint; a standby cannot serve a complete snapshot). The files of a given night are on the node that was active that night.
 - All of it over Vault's HTTP API on the node (`vault_api_addr`). Run
   `playbooks/vault-deploy-identity.yml` first on a Vault whose deploy policy predates the token role.
 - Snapshots land in `{{ vault_backup_dir }}` (`/var/lib/vault/snapshots`), keeping

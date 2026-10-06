@@ -40,6 +40,14 @@ vault_backup_current: "vault.snap"                       # the download; renamed
 vault_backup_extension: ".snap"
 vault_backup_dateformat: "-%Y%m%dT%H%M%SZ"
 vault_backup_rotate_conf: "/etc/vault/snapshot-rotate.conf"
+# The job is installed on every member of the cluster and runs on the ACTIVE one only: a standby
+# cannot serve a complete snapshot (2026-10-06: "incomplete snapshot" on node 1 while node 3 led).
+# Vault's health endpoint answers 200 on the active node and 429 on a standby; curl --fail turns
+# anything but 200 into a non-zero exit, which skips the run (ExecCondition, roles/host_job).
+vault_backup_health_url: "{{ vault_api_addr }}/v1/sys/health"
+vault_backup_active_status: 200
+vault_backup_health_statuses: [200, 429, 472, 473, 501, 503]
+vault_backup_former_tmp: "/tmp/vault.snap"               # what the former job left in the container
 
 # Derived from what the tasks read: the first credential file that exists, the token in it,
 # whether Vault still accepts it with the snapshot policy, the token to store, and whether the
@@ -67,4 +75,4 @@ vault_backup_pull_to_controller: true
 vault_backup_controller_dir: "{{ (vault_secret_dir | expanduser) }}/backups/vault"
 
 # Reused from the vault role defaults (loaded via vars_files in the play):
-#   vault_api_addr, vault_api_timeout, vault_secret_dir
+#   vault_api_addr, vault_api_timeout, vault_container_name, vault_secret_dir

@@ -1,18 +1,19 @@
 ---
 # ==============================================================================
-# Vault DR backup: install the daily raft-snapshot timer on the vault host and
-# pull the newest snapshot to the controller store for an immediate off-host copy.
+# Vault DR backup: install the daily raft-snapshot timer on every member of the Vault cluster (it
+# runs on the active one) and pull each member's newest snapshot to the controller store for an
+# immediate off-host copy.
 # On-host snapshots also ride the node's vzdump jobs → Synology (NFS) + SeaweedFS
-# (S3). Restore: see roles/vault_backup/README.md (or playbooks/vault-restore.yml).
+# (S3). Restore: see roles/vault_backup/README.md.
 #
 #   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/vault-backup.yml
 # ==============================================================================
 - name: "Vault raft-snapshot backups"
-  hosts: vault
+  hosts: "{{ groups['vault_cluster'] | default(groups['vault']) }}"   # every member: the active one takes the snapshot
   become: true
   gather_facts: false
   vars_files:
-    - ../roles/vault/defaults/main.yml     # vault_container_name, vault_secret_dir, vault_init_secret
+    - ../roles/vault/defaults/main.yml     # vault_api_addr, vault_container_name, vault_secret_dir
   roles:
     - vault_backup
   post_tasks:

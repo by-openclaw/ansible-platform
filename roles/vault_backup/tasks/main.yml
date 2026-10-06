@@ -157,8 +157,8 @@
     group: root
     mode: "0644"
 
-# The daily raft snapshot (roles/host_job: systemd service + timer, no script, no shell). Steps
-# run in order: renew the token (`-` = a failed renew is tolerated, as before), download the
+# The daily raft snapshot (roles/host_job: systemd service + timer, no script, no shell). It runs
+# on the active node only (the condition below). Steps run in order: renew the token (`-` = a failed renew is tolerated, as before), download the
 # snapshot from the API, close its mode, refuse an empty file, give it its dated name.
 - name: "vault_backup | Daily raft snapshot (roles/host_job)"
   ansible.builtin.include_role:
@@ -168,6 +168,8 @@
     host_job_description: "Vault raft snapshot"
     host_job_on_calendar: "{{ vault_backup_schedule }}"
     host_job_runtime_directory: "{{ vault_backup_job_name }}"
+    host_job_exec_condition:
+      - "/usr/bin/curl {{ vault_backup_curl_options }} --output /dev/null {{ vault_backup_health_url }}"
     host_job_environment:
       TZ: UTC
     host_job_exec:
@@ -187,15 +189,34 @@
       - { path: "{{ vault_backup_dir }}", age: "{{ vault_backup_keep }}d" }
     host_job_legacy_script: /usr/local/bin/vault-snapshot.sh
 
-- name: "vault_backup | Take a snapshot now (verify the chain works)"
+# The former job saved the snapshot inside the container and copied it out with `docker cp`, which
+# cannot read the in-memory /tmp the hardened container has (every run failed from 2026-10-05 on):
+# the file of its last attempt is still there.
+- name: "vault_backup | The former job's temporary file in the container is gone"
+  community.docker.docker_container_exec:
+    container: "{{ vault_container_name }}"
+    argv: [rm, -f, "{{ vault_backup_former_tmp }}"]
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: "vault_backup | Is this node the active one?"
+  ansible.builtin.uri:
+    url: "{{ vault_backup_health_url }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: "{{ vault_backup_health_statuses }}"
+  register: vault_backup_health
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+
+- name: "vault_backup | Take a snapshot now on the active node (verify the chain works)"
   ansible.builtin.systemd_service:
     name: "{{ vault_backup_job_name }}.service"
     state: started
-  when: not ansible_check_mode
+  when:
+    - not ansible_check_mode
+    - vault_backup_health.status == vault_backup_active_status
 
-# Last, once the new job has taken a snapshot: until then the former job can be put back as it was.
 - name: "vault_backup | The bare token file of the former job is gone"
   ansible.builtin.file:
     path: "{{ vault_backup_token_file }}"
     state: absent
-  when: not ansible_check_mode
