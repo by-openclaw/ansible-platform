@@ -22,7 +22,7 @@
     _row: >-
       {{ (platform_services | default([]) | selectattr('name', 'equalto', decommission_target)
           | list | first) | default({}, true) }}
-    _stamp: "{{ lookup('pipe', 'date +%Y-%m-%d') }}"
+    _stamp: "{{ now(utc=true).strftime('%Y-%m-%d') }}"
 
 - name: "decommission | The service must be known somewhere"
   ansible.builtin.assert:
@@ -54,12 +54,59 @@
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
 
+    - name: "decommission | Dump directory on the leader (root only)"
+      ansible.builtin.file:
+        path: "{{ decommission_pg_dump_host_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      delegate_to: "{{ decommission_pg_host }}"
+      when: (_dbchk.stdout | trim) == '1'
+
+    # pg_dump writes the archive to its standard output; a transient systemd unit sends that
+    # output to the file (truncate: an earlier file is replaced) under a 0077 umask, and its
+    # exit status is pg_dump's — no shell redirect.
     - name: "decommission | Dump the DB before dropping (custom format)"
-      ansible.builtin.shell:
-        cmd: "docker exec {{ decommission_pg_container }} pg_dump -U postgres -Fc {{ _svc.db.database }} > /tmp/{{ _svc.db.database }}.dump"
+      ansible.builtin.command:
+        argv: >-
+          {{ decommission_pg_unit + ['--property=StandardOutput=truncate:' ~ decommission_pg_dump_file,
+             'docker', 'exec', decommission_pg_container, 'pg_dump', '-U', 'postgres', '-Fc', _svc.db.database] }}
       delegate_to: "{{ decommission_pg_host }}"
       changed_when: true
       when: (_dbchk.stdout | trim) == '1'
+
+    # An archive that cannot be read back is not an archive: pg_restore lists it (the file is the
+    # unit's standard input) before anything is dropped.
+    - name: "decommission | The dump reads back (pg_restore lists its contents)"
+      ansible.builtin.command:
+        argv: >-
+          {{ decommission_pg_unit + ['--property=StandardInput=file:' ~ decommission_pg_dump_file,
+             '--property=StandardOutput=truncate:' ~ decommission_pg_dump_file ~ '.list',
+             'docker', 'exec', '-i', decommission_pg_container, 'pg_restore', '-l'] }}
+      delegate_to: "{{ decommission_pg_host }}"
+      changed_when: false
+      when:
+        - (_dbchk.stdout | trim) == '1'
+        - not ansible_check_mode
+
+    - name: "decommission | Its table of contents"
+      ansible.builtin.slurp:
+        src: "{{ decommission_pg_dump_file }}.list"
+      delegate_to: "{{ decommission_pg_host }}"
+      register: decommission_pg_dump_list
+      when:
+        - (_dbchk.stdout | trim) == '1'
+        - not ansible_check_mode
+
+    - name: "decommission | The dump is the archive of this database"
+      ansible.builtin.assert:
+        that: decommission_pg_dump_dbname == _svc.db.database
+        fail_msg: "the dump of {{ _svc.db.database }} does not read back as its archive — nothing was dropped"
+        success_msg: "dump of {{ _svc.db.database }}: {{ decommission_pg_dump_entries }} entries listed"
+      when:
+        - (_dbchk.stdout | trim) == '1'
+        - not ansible_check_mode
 
     - name: "decommission | Ensure the controller archive dir"
       ansible.builtin.file:
@@ -69,12 +116,24 @@
       delegate_to: localhost
       when: (_dbchk.stdout | trim) == '1'
 
-    - name: "decommission | Fetch the dump to the controller archive"
+    - name: "decommission | Fetch the dump to the controller archive (checksum verified)"
       ansible.builtin.fetch:
-        src: "/tmp/{{ _svc.db.database }}.dump"
+        src: "{{ decommission_pg_dump_file }}"
         dest: "{{ decommission_dump_dir }}/{{ _svc.db.database }}-{{ _stamp }}.dump"
         flat: true
       delegate_to: "{{ decommission_pg_host }}"
+      when:
+        - (_dbchk.stdout | trim) == '1'
+        - not ansible_check_mode   # a dry run takes no dump: there is nothing to fetch
+
+    - name: "decommission | The copy on the leader is removed (the archive is on the controller)"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      delegate_to: "{{ decommission_pg_host }}"
+      loop:
+        - "{{ decommission_pg_dump_file }}"
+        - "{{ decommission_pg_dump_file }}.list"
       when: (_dbchk.stdout | trim) == '1'
 
     - name: "decommission | DROP DATABASE (FORCE)"
@@ -82,17 +141,28 @@
         argv: [docker, exec, "{{ decommission_pg_container }}", psql, -U, postgres, -c,
                "DROP DATABASE IF EXISTS {{ _svc.db.database }} WITH (FORCE);"]
       delegate_to: "{{ decommission_pg_host }}"
-      register: _dbdrop
-      changed_when: "'DROP DATABASE' in _dbdrop.stdout"
+      changed_when: true
+      when: (_dbchk.stdout | trim) == '1'
+
+    - name: "decommission | Login role present?"
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ decommission_pg_container }}", psql, -U, postgres, -tAc,
+               "select 1 from pg_roles where rolname='{{ _svc.db.role }}'"]
+      delegate_to: "{{ decommission_pg_host }}"
+      register: _rolechk
+      check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+      changed_when: false
+      when: _svc.db.role is defined
 
     - name: "decommission | DROP ROLE"
       ansible.builtin.command:
         argv: [docker, exec, "{{ decommission_pg_container }}", psql, -U, postgres, -c,
                "DROP ROLE IF EXISTS {{ _svc.db.role }};"]
       delegate_to: "{{ decommission_pg_host }}"
-      register: _roledrop
-      changed_when: "'DROP ROLE' in _roledrop.stdout"
-      when: _svc.db.role is defined
+      changed_when: true
+      when:
+        - _svc.db.role is defined
+        - (_rolechk.stdout | default('') | trim) == '1'
 
 # ============================ Secrets (archive) ==============================
 - name: "decommission | Secrets — archive in Vault + move fabric files"
@@ -102,40 +172,20 @@
       ansible.builtin.include_role:
         name: vault_login
 
-    - name: "decommission | Use the deploy token"
-      ansible.builtin.set_fact:
-        _vault_root_token: "{{ vault_deploy_token }}"
-      no_log: true
+    # Copy, read the copy back, then remove the original — through Vault's HTTP API, from the
+    # Vault host (the controller has no route to Vault). No token file, no staged program.
+    - name: "decommission | Archive each secret in Vault (copy, verify, remove the original)"
+      ansible.builtin.include_tasks: vault_archive_one.yml
+      loop: "{{ _svc.secrets }}"
+      loop_control:
+        loop_var: decommission_secret
 
-    - name: "decommission | Stage the token on the vault host (0600)"
-      ansible.builtin.copy:
-        dest: /tmp/.vt
-        content: "{{ _vault_root_token }}"
-        mode: "0600"
-      delegate_to: "{{ platform_vault_host | default(groups['vault'][0]) }}"
-      no_log: true
-
-    - name: "decommission | Stage the archive script on the vault host"
-      ansible.builtin.copy:
-        src: vault_archive_secret.py
-        dest: /tmp/vault_archive_secret.py
-        mode: "0644"
-      delegate_to: "{{ platform_vault_host | default(groups['vault'][0]) }}"
-
-    - name: "decommission | Archive the secrets in Vault (-> fabric/archive/)"
-      ansible.builtin.command:
-        argv: "{{ ['python3', '/tmp/vault_archive_secret.py'] + _svc.secrets }}"
-      environment:
-        VAULT_ADDR: "{{ platform_vault_addr }}"
-      delegate_to: "{{ platform_vault_host | default(groups['vault'][0]) }}"
-      register: _secarch
-      changed_when: "'CHANGED=0' not in _secarch.stdout"
-
-    - name: "decommission | Remove the staged token"
+    - name: "decommission | The former staged files are gone from the Vault host"
       ansible.builtin.file:
-        path: /tmp/.vt
+        path: "{{ item }}"
         state: absent
-      delegate_to: "{{ platform_vault_host | default(groups['vault'][0]) }}"
+      delegate_to: "{{ decommission_vault_host }}"
+      loop: "{{ decommission_vault_former_files }}"
 
     - name: "decommission | Move the fabric secret files to _stale (controller)"
       ansible.builtin.command:
@@ -153,28 +203,23 @@
   become: true
   block:
     - name: "decommission | S3 identities and buckets now"
-      ansible.builtin.shell: >-
-        set -o pipefail; printf 's3.configure\ns3.bucket.list\n'
-        | {{ decommission_weed_bin }} shell -master {{ decommission_weed_master }} 2>/dev/null
-      args:
-        executable: /bin/bash
+      ansible.builtin.command:
+        argv: "{{ decommission_weed_shell }}"
+        stdin: "s3.configure\ns3.bucket.list"
       register: _s3now
       changed_when: false
       check_mode: false   # read-only probe
       no_log: true        # the identity config carries keys
 
     - name: "decommission | Remove the S3 identity (and its keys)"
-      ansible.builtin.shell: >-
-        set -o pipefail; echo 's3.configure -user {{ _svc.s3_identity }} -delete -apply'
-        | {{ decommission_weed_bin }} shell -master {{ decommission_weed_master }}
-      args:
-        executable: /bin/bash
+      ansible.builtin.command:
+        argv: "{{ decommission_weed_shell }}"
+        stdin: "s3.configure -user {{ _svc.s3_identity }} -delete -apply"
       when:
         - _svc.s3_identity is defined
-        # weed prints `"name":  "<id>"` (two spaces); match the JSON, not one spacing
-        - >-
-          _s3now.stdout is search('"name":\\s*"' ~ (_svc.s3_identity | regex_escape) ~ '"')
+        - _svc.s3_identity in decommission_s3_identities
       changed_when: true
+      no_log: true        # weed prints the remaining identities, with their keys
 
     - name: "decommission | The bucket as listed"
       ansible.builtin.set_fact:
@@ -190,11 +235,9 @@
       when: _svc.s3_bucket is defined
 
     - name: "decommission | Remove the empty bucket"
-      ansible.builtin.shell: >-
-        set -o pipefail; echo 's3.bucket.delete -name {{ _svc.s3_bucket }}'
-        | {{ decommission_weed_bin }} shell -master {{ decommission_weed_master }}
-      args:
-        executable: /bin/bash
+      ansible.builtin.command:
+        argv: "{{ decommission_weed_shell }}"
+        stdin: "s3.bucket.delete -name {{ _svc.s3_bucket }}"
       when:
         - _svc.s3_bucket is defined
         - _s3_bucket_line | length > 0
@@ -218,21 +261,94 @@
 - name: "decommission | Remove the Authentik app + provider (+ group)"
   when: _svc.authentik_app is defined
   block:
-    - name: "decommission | Stage the Authentik remover"
-      ansible.builtin.copy:
-        src: authentik_remove_app.py
-        dest: /tmp/authentik_remove_app.py
-        mode: "0644"
-      delegate_to: "{{ decommission_authentik_host }}"
+    - name: "decommission | The application is no longer declared for the blueprints"
+      ansible.builtin.assert:
+        that: _svc.authentik_app not in decommission_authentik_declared
+        fail_msg: >-
+          '{{ _svc.authentik_app }}' is still declared in group_vars/all/sso.yml: remove it there
+          first (Authentik re-applies its blueprints every hour and would create it again).
+        quiet: true
 
-    - name: "decommission | Delete the Authentik app + provider (+ group)"
-      ansible.builtin.shell:
-        cmd: >-
-          cat /tmp/authentik_remove_app.py | docker exec -i authentik-server
-          python3 - {{ _svc.authentik_app }} {{ _svc.authentik_group | default('') }}
+    - name: "decommission | Authentik's API token (Vault)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ decommission_authentik_vault_path }}"
+
+    - name: "decommission | Keep it for the calls below"
+      ansible.builtin.set_fact:
+        decommission_authentik_token: "{{ vault_secret_result[decommission_authentik_token_field] }}"
+      no_log: true
+
+    - name: "decommission | The application, by slug"
+      ansible.builtin.uri:
+        url: "{{ decommission_authentik_api }}/core/applications/?slug={{ _svc.authentik_app | urlencode }}&superuser_full_list=true"
+        headers: { Authorization: "Bearer {{ decommission_authentik_token }}" }
       delegate_to: "{{ decommission_authentik_host }}"
-      register: _akdel
-      changed_when: "'CHANGED=0' not in _akdel.stdout"
+      register: decommission_authentik_apps
+      check_mode: false   # read-only probe
+      no_log: true
+
+    # An application is addressed by its slug (not its pk); its provider by its pk.
+    - name: "decommission | Delete the application"
+      ansible.builtin.uri:
+        url: "{{ decommission_authentik_api }}/core/applications/{{ item.slug | urlencode }}/"
+        method: DELETE
+        headers: { Authorization: "Bearer {{ decommission_authentik_token }}" }
+        status_code: [204]
+      delegate_to: "{{ decommission_authentik_host }}"
+      loop: "{{ decommission_authentik_apps.json.results | default([]) | selectattr('slug', 'eq', _svc.authentik_app) | list }}"
+      loop_control:
+        label: "{{ item.slug }}"
+      changed_when: true
+      no_log: true
+
+    - name: "decommission | Delete its provider"
+      ansible.builtin.uri:
+        url: "{{ decommission_authentik_api }}/providers/all/{{ item.provider }}/"
+        method: DELETE
+        headers: { Authorization: "Bearer {{ decommission_authentik_token }}" }
+        status_code: [204]
+      delegate_to: "{{ decommission_authentik_host }}"
+      loop: >-
+        {{ decommission_authentik_apps.json.results | default([]) | selectattr('slug', 'eq', _svc.authentik_app)
+           | selectattr('provider') | list }}
+      loop_control:
+        label: "provider {{ item.provider }}"
+      changed_when: true
+      no_log: true
+
+    - name: "decommission | The group, by name"
+      ansible.builtin.uri:
+        url: "{{ decommission_authentik_api }}/core/groups/?name={{ _svc.authentik_group | urlencode }}"
+        headers: { Authorization: "Bearer {{ decommission_authentik_token }}" }
+      delegate_to: "{{ decommission_authentik_host }}"
+      register: decommission_authentik_groups
+      check_mode: false   # read-only probe
+      no_log: true
+      when: (_svc.authentik_group | default('')) | length > 0
+
+    - name: "decommission | Delete the group"
+      ansible.builtin.uri:
+        url: "{{ decommission_authentik_api }}/core/groups/{{ item.pk }}/"
+        method: DELETE
+        headers: { Authorization: "Bearer {{ decommission_authentik_token }}" }
+        status_code: [204]
+      delegate_to: "{{ decommission_authentik_host }}"
+      loop: >-
+        {{ decommission_authentik_groups.json.results | default([])
+           | selectattr('name', 'eq', _svc.authentik_group | default('')) | list }}
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true
+      no_log: true
+      when: (_svc.authentik_group | default('')) | length > 0
+
+    - name: "decommission | The former staged program is gone from the Authentik host"
+      ansible.builtin.file:
+        path: "{{ decommission_authentik_former_file }}"
+        state: absent
+      delegate_to: "{{ decommission_authentik_host }}"
 
 # ============================ CrowdSec machine ==============================
 - name: "decommission | Delete the CrowdSec machine"
@@ -260,8 +376,8 @@
 - name: "decommission | Summary"
   ansible.builtin.debug:
     msg: >-
-      {{ decommission_target }} ABSENT —
-      db:{{ 'dumped+dropped' if _svc.db is defined else '-' }}
+      {{ 'DRY RUN, nothing was removed. A real run gives: ' if ansible_check_mode else '' }}{{ decommission_target }} ABSENT —
+      db:{{ ('dumped+dropped' if (_dbchk.stdout | default('') | trim) == '1' else 'already absent') if _svc.db is defined else '-' }}
       secrets:{{ (_svc.secrets | default([])) | length }}
       route:{{ 'removed' if _svc.traefik_route is defined else '-' }}
       authentik:{{ 'removed' if _svc.authentik_app is defined else '-' }}
