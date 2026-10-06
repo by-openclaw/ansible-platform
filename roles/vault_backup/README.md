@@ -5,10 +5,17 @@ Vault. A raft snapshot is one consistent, portable file that restores the entire
 Vault (all KV secrets, policies, mounts, auth) into a fresh server.
 
 ## What it does
-- Writes a low-privilege `snapshot` policy + a **self-renewing periodic token**
-  (snapshot-read only — never the root token) stored `0600` on the vault host.
-- Installs `/usr/local/bin/vault-snapshot.sh` + a **daily systemd timer**
-  (`vault-snapshot.timer`, default `02:15`, before the `03:30` PBS job).
+- Writes a low-privilege `snapshot` policy, a **token role** of the same name (the deploy
+  identity may write this one role and mint its tokens — it cannot hand out a policy it does not
+  hold) and a **periodic token** of that role (snapshot-read only — never the root token), stored
+  `0600` on the vault host as the header file curl reads (`/etc/vault/snapshot.header`).
+- Installs a **daily systemd timer** (`vault-snapshot.timer`, default `02:15`, before the `03:30`
+  PBS job) through `roles/host_job`. No script and no shell: the job renews its token and
+  downloads the snapshot from Vault's HTTP API with `curl`, refuses an empty file, and `logrotate`
+  gives it its dated name (`vault-<UTC date>.snap`). The token never appears on a command line.
+- The job is installed on **every member of the cluster** and runs on the **active** one only (a start condition on Vault's health endpoint; a standby cannot serve a complete snapshot). The files of a given night are on the node that was active that night.
+- All of it over Vault's HTTP API on the node (`vault_api_addr`). Run
+  `playbooks/vault-deploy-identity.yml` first on a Vault whose deploy policy predates the token role.
 - Snapshots land in `{{ vault_backup_dir }}` (`/var/lib/vault/snapshots`), keeping
   the newest `vault_backup_keep` (14). That dir is inside the vault LXC, so every
   snapshot is **also carried by the node's vzdump jobs → Synology (NFS) + SeaweedFS

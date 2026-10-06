@@ -21,7 +21,7 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: vault`). Rol
 
 ## Backup (infra/0008)
 
-Class A (`docs/backup.md`): `vault-snapshot.timer` 02:15 → `operator raft snapshot save` → `/var/lib/vault/snapshots/` (0600, 14 days by tmpfiles) → PBS daily guest image (encrypted, replicated off-site with the datastore); restore = `operator raft snapshot restore -force` + unseal (3 of 5 key shares). The data at rest is sealed with the Shamir keys; the raft snapshot carries sealed data.
+Class A (`docs/backup.md`): `vault-snapshot.timer` 02:15 → the raft snapshot API (`sys/storage/raft/snapshot`) → `/var/lib/vault/snapshots/` (0600, 14 days by tmpfiles) → PBS daily guest image (encrypted, replicated off-site with the datastore); restore = `operator raft snapshot restore -force` + unseal (3 of 5 key shares). The data at rest is sealed with the Shamir keys; the raft snapshot carries sealed data.
 
 ## Cluster (services/0004 §Cluster placement)
 
@@ -32,5 +32,5 @@ Three raft voters (quorum 2): `lxc-vault-01` (where the cluster was initialised)
 3. **Seal:** every member seals when it restarts; the unsealer (`roles/warden`) runs at the cold start and then every minute, so a restarted member is unsealed without anyone's help; the play unseals the member it has just restarted. A member that seals while another is down costs the quorum (two of three must be unsealed): on 2026-10-04 the second voter sealed right after its join — the Docker engine's first-configuration restart ran at the end of the play — and Vault had no leader for 4.5 min; that restart now happens inside `roles/docker`, before any container starts.
 4. **Ports:** 8200 (API: the edge, the unsealer, the members, the per-member probe), 8201 (raft and request forwarding, members only) — `group_vars/all/docker_firewall.yml`.
 5. **Signals:** `ProbeFailed` on `vault.<domain>` (no active node behind the edge) and on each member's own `/v1/sys/health?standbyok=true` (a member down or sealed).
-6. **Rolling change:** `playbooks/vault.yml` runs one member at a time (`serial: 1`), node 1 first. A raft snapshot (`vault-snapshot.timer`, node 1) restores the whole cluster.
+6. **Rolling change:** `playbooks/vault.yml` runs one member at a time (`serial: 1`), node 1 first. A raft snapshot (`vault-snapshot.timer`, installed on every member, taken by the active one) restores the whole cluster.
 7. **Proof (2026-10-04):** the active member (`lxc-vault-01`) was restarted — its container came back sealed. Probed once a second through the edge, Vault did not answer for 6 s (15:02:52–15:02:57 UTC), then `lxc-vault-02` served as the active node; the play unsealed the restarted member, which follows the cluster again. `playbooks/ha-drill.yml --tags vault` repeats it.
