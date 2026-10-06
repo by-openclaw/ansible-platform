@@ -19,6 +19,12 @@ postgres_db_patroni_conf: "/etc/postgres/patroni/patroni.yml"
 postgres_db_container: "postgres"
 postgres_db_listen_ip: "{{ hostvars[groups['postgresql'] | first].ansible_host }}"
 postgres_db_port: 5432
+# How a statement that carries a password reaches the server: psql reads it on standard input
+# (stops at the first error), a quote in the password is doubled as SQL wants it, and the probe
+# of the live password connects over TCP so that the password is actually checked.
+postgres_db_psql: [psql, -U, postgres, -d, postgres, -v, ON_ERROR_STOP=1, -tA]
+postgres_db_password_sql: "{{ postgres_db_password | replace(\"'\", \"''\") }}"
+postgres_db_probe_host: "127.0.0.1"
 
 # --- Secret source -----------------------------------------------------------
 # Vault IS the store. Set postgres_db_vault_path (e.g. "{{ platform_env }}/gitlab/db-pgsql")

@@ -21,3 +21,7 @@ postgres_exporter_db_host: "127.0.0.1"
 # The exporter binds the host's SVC address (host networking), so the host firewall must admit
 # the scraper — exactly like node_exporter on :9100 (a missing rule showed up as TargetDown).
 postgres_exporter_scrapers: "{{ [hostvars[groups['monitoring'][0]].ansible_host] }}"
+# The statement that sets the login's password goes to psql on standard input; a quote in the
+# password is doubled as SQL wants it.
+postgres_exporter_psql: [psql, -U, postgres, -d, postgres, -v, ON_ERROR_STOP=1, -tA]
+postgres_exporter_password_sql: "{{ postgres_exporter_password | replace(\"'\", \"''\") }}"
