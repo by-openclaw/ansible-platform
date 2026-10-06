@@ -1,0 +1,32 @@
+---
+# One check (`check`): one command or one HTTP request, then the verdict. No shell: what the
+# answer must (not) contain is matched here.
+- name: "Upgrade_path | {{ check.name }} (command)"
+  ansible.builtin.command:
+    argv: "{{ check.argv }}"
+    chdir: "{{ check.chdir | default(omit) }}"
+  register: upgrade_path_check_cmd
+  changed_when: check.changes | default(false) | bool
+  failed_when: false
+  check_mode: false  # a dry run only gets the read-only checks (see main.yml); they must run under --check too
+  when: check.argv is defined
+
+- name: "Upgrade_path | {{ check.name }} (HTTP)"
+  ansible.builtin.uri:
+    url: "{{ check.url }}"
+    status_code: "{{ check.status | default(200) }}"
+    return_content: true
+  register: upgrade_path_check_http
+  failed_when: false
+  check_mode: false  # read-only
+  when: check.url is defined
+
+- name: "Upgrade_path | {{ check.name }} — verdict"
+  ansible.builtin.assert:
+    that: upgrade_path_check_ok | bool
+    fail_msg: >-
+      {{ upgrade_path_service }}: "{{ check.name }}" failed —
+      {{ 'no valid answer' if not (upgrade_path_check_answered | bool) else '' }}
+      {{ ('missing: ' ~ (upgrade_path_check_missing | join(' , '))) if upgrade_path_check_missing | length > 0 else '' }}
+      {{ ('found but must not be: ' ~ (upgrade_path_check_forbidden | join(' , '))) if upgrade_path_check_forbidden | length > 0 else '' }}
+    quiet: true
