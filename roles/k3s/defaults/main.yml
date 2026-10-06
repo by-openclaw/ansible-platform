@@ -40,6 +40,9 @@ k3s_registry_mirrors:
 # Namespaces with a CI deployer service account (kubeconfig → Vault + GitLab CI variable of the project)
 k3s_ci_namespaces:
   - { name: demo, gitlab_project: "platform/apps/demo" }
+k3s_ci_deployer_object: "gitlab-deployer-token"        # the Kubernetes object that holds the deployer's long-lived credential
+k3s_ci_deployer_wait_retries: 20                               # the token controller fills it shortly after creation
+k3s_ci_deployer_wait_delay: 2
 k3s_vault_path: "{{ k3s_env }}/k3s"                    # <path>/ci-<namespace>: kubeconfig (base64)
 k3s_gitlab_host: "{{ groups['gitlab'] | first }}"                       # where gitlab-rails runs (CI variable upsert)
 # Apps published through the platform Traefik (TLS + SSO forwardAuth) → k3s ingress :80.

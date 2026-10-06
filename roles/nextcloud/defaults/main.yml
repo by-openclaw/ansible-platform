@@ -70,6 +70,21 @@ nextcloud_admin_user: "admin"
 
 # Persistent volume (Nextcloud app code + config; USER DATA lives on S3).
 nextcloud_app_volume: "nextcloud-app"
+# The database credential as a config fragment (tasks/post-install.yml). The name sorts last, so
+# it is the file that wins. PHP single-quoted string: a backslash and a quote are escaped.
+nextcloud_container: "nextcloud"
+nextcloud_config_dir: "/var/www/html/config"
+nextcloud_db_fragment: "zz-platform-db.config.php"
+nextcloud_web_uid: 33                                    # www-data in the official image
+nextcloud_web_gid: 33
+nextcloud_db_fragment_mode: "0640"                       # an octal STRING (the task parses it as one)
+nextcloud_php_backslash: "\\"
+nextcloud_db_fragment_content: |
+  <?php
+  // Managed by Ansible (roles/nextcloud). The database credential: loaded after config.php, it wins.
+  $CONFIG = array (
+    'dbpassword' => '{{ nextcloud_pg_password | replace(nextcloud_php_backslash, nextcloud_php_backslash ~ nextcloud_php_backslash) | replace("'", nextcloud_php_backslash ~ "'") }}',
+  );
 
 # Apps to install/enable after first-run install. user_oidc = Authentik SSO;
 # sharebymail = "share by email" (send a password-protected link to an address).
