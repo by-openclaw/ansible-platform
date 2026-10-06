@@ -103,6 +103,59 @@ def test_a_program_in_a_role_is_counted_and_an_application_config_is_not(tree, m
     assert guard.scan()["script_files"] == {"roles/a/files/reconcile.py": 1, "roles/a/templates/job.sh.j2": 1}
 
 
+def test_a_program_handed_to_an_application_console_is_counted_however_the_command_is_written(tree):
+    tree(
+        "roles/a/tasks/main.yml",
+        "- name: one line\n  ansible.builtin.command:\n    argv: [docker, exec, gitlab, gitlab-rails, runner, 'puts 1']\n"
+        "- name: a templated list\n  ansible.builtin.command:\n"
+        "    argv: \"{{ gitlab_exec + [gitlab_container, 'gitlab-rails', 'runner', code] }}\"\n"
+        "- name: one word per line\n  ansible.builtin.command:\n    argv:\n      - docker\n      - exec\n      - server\n"
+        "      - ak\n      - shell\n      - -c\n      - |\n        print(1)\n"
+        "- name: a command line\n  ansible.builtin.command:\n    cmd: docker exec -i backend python manage.py shell\n"
+        "- name: NetBox's variant\n  ansible.builtin.command:\n    cmd: docker exec -i netbox /opt/netbox/netbox/manage.py nbshell\n",
+    )
+    assert guard.scan()["console_programs"] == {"roles/a/tasks/main.yml": 5}
+
+
+def test_a_task_name_or_a_comment_that_mentions_a_console_is_not_counted(tree):
+    tree(
+        "roles/a/tasks/main.yml",
+        "# formerly: gitlab-rails runner reconcile.rb\n"
+        "- name: \"The directory callers stage for gitlab-rails runner\"\n  ansible.builtin.file:\n    path: /srv/x\n    state: directory\n",
+    )
+    assert guard.scan()["console_programs"] == {}
+
+
+def test_an_application_command_that_takes_no_program_is_not_a_console_program(tree):
+    tree(
+        "roles/a/tasks/main.yml",
+        "- name: a management command\n  ansible.builtin.command:\n    argv: [docker, exec, netbox, /opt/netbox/netbox/manage.py, housekeeping]\n"
+        "- name: a path that holds the word\n  ansible.builtin.command:\n    argv: [cat, /opt/gitlab/embedded/service/gitlab-rails/VERSION]\n"
+        "- name: another tool\n  ansible.builtin.command:\n    argv: [gitlab-ctl, reconfigure]\n"
+        "- name: weed shell reads commands, not a program\n  ansible.builtin.command:\n    argv: [weed, shell, -master, m]\n",
+    )
+    assert guard.scan()["console_programs"] == {}
+
+
+def test_a_shell_command_in_a_pipe_lookup_is_counted(tree):
+    tree(
+        "playbooks/p.yml",
+        "- hosts: all\n  tasks:\n    - name: t\n      ansible.builtin.set_fact:\n        started: \"{{ lookup('pipe', 'date +%s') }}\"\n"
+        "        other: \"{{ lookup('file', 'x') }}{{ query(\\\"pipe\\\", 'id') }}\"\n",
+    )
+    assert guard.scan()["pipe_lookups"] == {"playbooks/p.yml": 2}
+
+
+def test_a_program_written_by_a_task_is_a_script_file_and_a_written_config_is_not(tree):
+    tree(
+        "roles/a/tasks/main.yml",
+        "- name: a staged program\n  ansible.builtin.copy:\n    dest: /tmp/reconcile.py\n    content: |\n      print(1)\n"
+        "- name: a configuration file\n  ansible.builtin.copy:\n    dest: /etc/app/app.conf\n    content: |\n      key = value\n"
+        "- name: a file shipped from the role\n  ansible.builtin.copy:\n    src: seed.rb\n    dest: /srv/scripts/seed.rb\n",
+    )
+    assert guard.scan()["script_files"] == {"roles/a/tasks/main.yml": 1}
+
+
 def test_archived_playbooks_are_not_read(tree):
     tree("playbooks/archive/old.yml", "- hosts: all\n  tasks:\n    - name: x\n      ansible.builtin.shell: a\n")
     assert guard.scan()["shell_tasks"] == {}
