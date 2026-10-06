@@ -1,0 +1,173 @@
+---
+# ARCHIVED 2026-10-06 — not run any more (nothing includes this file).
+# The one-time SQLite → PostgreSQL migration of the NetBird management and activity stores. It
+# ran in 2026-09; the live management.json says postgres since, and a new install starts on
+# PostgreSQL. tasks/store.yml now refuses a store that is still on SQLite and points here.
+# To migrate such a store: put "the stale database" task before the two postgres_db includes of
+# tasks/store.yml and the migration block after them, with this decision first:
+#
+#   - name: "store | Decide whether the one-time migration is due"
+#     ansible.builtin.set_fact:
+#       netbird_store_migrate: >-
+#         {{ netbird_store_engine == 'postgres'
+#            and (netbird_live_mgmt_json.content is defined)
+#            and ((netbird_live_mgmt_json.content | b64decode | from_json).StoreConfig.Engine | default('sqlite')) == 'sqlite' }}
+#       netbird_store_migration_stamp: "{{ now(utc=true).strftime('%Y%m%dT%H%M%S') }}"   # unique: a retry never collides with an earlier archive
+
+# While SQLite is live, a PostgreSQL DB named like the store is by definition not in
+# use (an earlier attempt, or a copy from a failed run). Archive it under a
+# timestamped name — never dropped.
+- name: "store | Archive the stale PostgreSQL database (rename, never drop)"
+  ansible.builtin.shell: |
+    set -o pipefail
+    if docker exec {{ netbird_pg_container }} psql -U postgres -tAc "select 1 from pg_database where datname='{{ netbird_pg_database }}'" | grep -q 1; then
+      docker exec {{ netbird_pg_container }} psql -U postgres -v ON_ERROR_STOP=1 \
+        -c "select pg_terminate_backend(pid) from pg_stat_activity where datname='{{ netbird_pg_database }}'" \
+        -c "alter database \"{{ netbird_pg_database }}\" rename to \"{{ netbird_pg_database }}_archive_{{ netbird_store_migration_stamp }}\""
+      echo ARCHIVED
+    fi
+  args: { executable: /bin/bash }
+  delegate_to: "{{ netbird_pg_delegate }}"
+  register: netbird_stale_db
+  changed_when: "'ARCHIVED' in netbird_stale_db.stdout"
+  when: netbird_store_migrate | bool
+
+- name: "store | One-time SQLite → PostgreSQL migration"
+  when:
+    - netbird_store_migrate | bool
+    - not ansible_check_mode
+  block:
+    - name: "store | pgloader"
+      ansible.builtin.apt:
+        name: pgloader
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "store | Stop management (peers keep their tunnels; logins pause)"
+      community.docker.docker_container:
+        name: netbird-management
+        state: stopped
+
+    - name: "store | Archive directory for the SQLite files"
+      ansible.builtin.file:
+        path: "{{ netbird_sqlite_archive_dir }}/sqlite-{{ netbird_store_migration_stamp }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: "store | Archive store.db and events.db (kept)"
+      ansible.builtin.copy:
+        src: "/var/lib/docker/volumes/{{ netbird_mgmt_volume }}/_data/{{ item }}"
+        dest: "{{ netbird_sqlite_archive_dir }}/sqlite-{{ netbird_store_migration_stamp }}/{{ item }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+      loop: [store.db, events.db]
+
+    # GORM keeps booleans in SQLite `numeric` columns; PostgreSQL needs them boolean
+    # (NetBird #4326). Derived from THIS schema, not a list for another version.
+    - name: "store | Boolean columns of this store (SQLite numeric)"
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import json, sqlite3, sys
+            c = sqlite3.connect(sys.argv[1])
+            out = []
+            for (t,) in c.execute("select name from sqlite_master where type='table' and name not like 'sqlite_%'"):
+                out += [f"{t}.{r[1]}" for r in c.execute(f'pragma table_info("{t}")') if r[2].lower() == "numeric"]
+            print(json.dumps(out))
+          - "{{ netbird_sqlite_archive_dir }}/sqlite-{{ netbird_store_migration_stamp }}/store.db"
+      register: netbird_bool_cols
+      changed_when: false
+
+    - name: "store | pgloader command files (credential via PGPASSWORD env, never in the file)"
+      ansible.builtin.copy:
+        dest: "{{ netbird_sqlite_archive_dir }}/sqlite-{{ netbird_store_migration_stamp }}/{{ item.name }}.load"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          LOAD DATABASE
+               FROM sqlite://{{ netbird_sqlite_archive_dir }}/sqlite-{{ netbird_store_migration_stamp }}/{{ item.name }}.db
+               INTO postgresql://{{ item.user }}@{{ netbird_pg_host }}:{{ netbird_pg_port }}/{{ item.db }}?sslmode=require
+          WITH include drop, create tables, create indexes, reset sequences
+          {% if item.casts | length > 0 %}
+          CAST
+          {% for col in item.casts %}
+               column {{ col }} to boolean{{ ',' if not loop.last else '' }}
+          {% endfor %}
+          {% endif %}
+          ;
+      loop:
+        - { name: store, db: "{{ netbird_pg_database }}", user: "{{ netbird_pg_user }}", casts: "{{ netbird_bool_cols.stdout | from_json }}" }
+        - { name: events, db: "{{ netbird_events_pg_database }}", user: "{{ netbird_events_pg_user }}", casts: [] }
+      loop_control: { label: "{{ item.name }}" }
+
+    - name: "store | Load the SQLite data into PostgreSQL"
+      ansible.builtin.command:
+        argv: [pgloader, "{{ netbird_sqlite_archive_dir }}/sqlite-{{ netbird_store_migration_stamp }}/{{ item.name }}.load"]
+      environment:
+        PGPASSWORD: "{{ item.password }}"
+      loop:
+        - { name: store, password: "{{ netbird_pg_password }}" }
+        - { name: events, password: "{{ netbird_events_pg_password }}" }
+      loop_control: { label: "{{ item.name }}" }
+      register: netbird_pgloader
+      changed_when: true
+      no_log: true
+
+    - name: "store | Row counts in SQLite (every table)"
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import json, sqlite3, sys
+            c = sqlite3.connect(sys.argv[1])
+            print(json.dumps({t: c.execute(f'select count(*) from "{t}"').fetchone()[0]
+                              for (t,) in c.execute("select name from sqlite_master where type='table' and name not like 'sqlite_%'")}))
+          - "{{ netbird_sqlite_archive_dir }}/sqlite-{{ netbird_store_migration_stamp }}/store.db"
+      register: netbird_rows_sqlite
+      changed_when: false
+
+    - name: "store | Row counts in PostgreSQL (the same tables)"
+      ansible.builtin.shell: |
+        set -o pipefail
+        {% for t in (netbird_rows_sqlite.stdout | from_json).keys() %}
+        echo "{{ t }}=$(docker exec {{ netbird_pg_container }} psql -U postgres -d {{ netbird_pg_database }} -tAc 'select count(*) from "{{ t }}"')"
+        {% endfor %}
+      args: { executable: /bin/bash }
+      delegate_to: "{{ netbird_pg_delegate }}"
+      register: netbird_rows_pg
+      changed_when: false
+
+    - name: "store | Every table arrived complete"
+      ansible.builtin.assert:
+        that: >-
+          (netbird_rows_sqlite.stdout | from_json)
+          == dict(netbird_rows_pg.stdout_lines | map('split', '=') | map('first') |
+                  zip(netbird_rows_pg.stdout_lines | map('split', '=') | map('last') | map('int')))
+        fail_msg: >-
+          Row counts differ between SQLite and PostgreSQL — management stays stopped on
+          purpose (the live management.json still says sqlite; the SQLite files are in
+          {{ netbird_sqlite_archive_dir }}/sqlite-{{ netbird_store_migration_stamp }}).
+          sqlite={{ netbird_rows_sqlite.stdout }} pg={{ netbird_rows_pg.stdout_lines }}
+        success_msg: "migrated {{ (netbird_rows_sqlite.stdout | from_json) | length }} tables, row counts equal"
+  rescue:
+    # Nothing was switched: management.json still says sqlite and the volume is
+    # untouched. Bring management back on SQLite, then fail loudly.
+    - name: "store | Migration failed — start management again on SQLite"
+      community.docker.docker_container:
+        name: netbird-management
+        state: started
+
+    - name: "store | Fail with the cause"
+      ansible.builtin.fail:
+        msg: >-
+          NetBird store migration failed at '{{ ansible_failed_task.name }}'; management
+          restarted on its SQLite store. Archive: {{ netbird_sqlite_archive_dir }}/sqlite-{{ netbird_store_migration_stamp }}.
