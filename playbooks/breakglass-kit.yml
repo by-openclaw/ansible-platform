@@ -33,33 +33,31 @@
       ansible.builtin.include_role:
         name: vault_login
 
-    - name: "Kit | Use the deploy token"
-      ansible.builtin.set_fact:
-        vault_root_token: "{{ vault_deploy_token }}"
-      no_log: true
-
+    # Vault's HTTP API on the node (200 = the document; an item Vault does not hold is skipped).
     - name: "Kit | Read each Vault-held kit item"
-      ansible.builtin.command:
-        argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
-               "vault", "kv", "get", "-mount={{ vault_kv_path }}", "-format=json", "{{ item.path }}"]
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/{{ vault_kv_path }}/data/{{ item.path }}"
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        status_code: [200, 403, 404]
       loop: "{{ kit_from_vault }}"
       loop_control: { label: "{{ item.name }}" }
       register: kit_vault_reads
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
-      failed_when: false
       no_log: true
 
     - name: "Kit | Write them into the print kit (controller, 0600)"
       ansible.builtin.copy:
         dest: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets/print-kit/{{ item.item.name }}"
         mode: "0600"
-        content: "{{ (item.stdout | from_json).data.data | to_nice_json }}"  # pragma: allowlist secret
+        content: "{{ item.json.data.data | to_nice_json }}"  # pragma: allowlist secret
       delegate_to: localhost
       become: false
       loop: "{{ kit_vault_reads.results }}"
       loop_control: { label: "{{ item.item.name }}" }
-      when: item.rc == 0
+      when: item.status == 200
       no_log: true
 
 - name: "Assemble the break-glass print kit"
