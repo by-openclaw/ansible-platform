@@ -30,28 +30,38 @@
   ansible.builtin.set_fact:
     opnsense_provision_vm_present: "{{ (opnsense_provision_vm_info.proxmox_vms | default([])) | length > 0 }}"
 
-# Through the hypervisor's API: the backup runs under the node's own daemon, so no session umask is
-# involved (a hardened root shell with umask 027 made container backups fail on 2026-09-22).
+# vzdump as a transient unit with its own umask: a hardened root session (umask 027) makes the
+# backup helpers fail on the temp directory ("pct.conf - Permission denied", 2026-09-22), and a
+# command module has no umask of its own. `systemd-run --wait` returns vzdump's exit code.
+# (community.proxmox.proxmox_backup would be the module for this; in the collection version pinned
+# here, 1.6.0, it fails with "get_storages() got an unexpected keyword argument 'type'".)
 - name: "Decommission | Archive the VM first (vzdump) → {{ opnsense_provision_archive_storage }}"
-  community.proxmox.proxmox_backup:
-    api_host: "{{ opnsense_provision_pve.host }}"
-    api_user: "{{ opnsense_provision_pve.admin_token_id | regex_replace('!.*$', '') }}"
-    api_token_id: "{{ opnsense_provision_pve.admin_token_id | regex_replace('^.*!', '') }}"
-    api_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
-    validate_certs: "{{ opnsense_provision_validate_certs }}"
-    node: "{{ opnsense_provision_node }}"
-    mode: include
-    vmids: ["{{ opnsense_provision_vmid | int }}"]
-    storage: "{{ opnsense_provision_archive_storage }}"
-    backup_mode: snapshot
-    compress: zstd
-    description: "{{ opnsense_provision_archive_note }}"
-    wait: true
-    wait_timeout: "{{ opnsense_provision_archive_timeout }}"
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - --wait
+      - --collect
+      - --quiet
+      - --pipe
+      - "--property=UMask={{ opnsense_provision_archive_umask }}"
+      - /usr/bin/vzdump
+      - "{{ opnsense_provision_vmid }}"
+      - --storage
+      - "{{ opnsense_provision_archive_storage }}"
+      - --mode
+      - snapshot
+      - --compress
+      - zstd
+      - --quiet
+      - "1"
+      - --notes-template
+      - "{{ opnsense_provision_archive_note }}"
   register: opnsense_provision_archive
-  delegate_to: localhost
-  become: false
-  no_log: true
+  changed_when: true
+  delegate_to: "{{ opnsense_provision_pve_node_host }}"
+  become: true
+  vars:
+    ansible_become_password: "{{ hostvars[opnsense_provision_pve_node_host].ansible_become_password | default(omit) }}"
   when: opnsense_provision_vm_present | bool
 
 - name: "Decommission | The archive that was written"
