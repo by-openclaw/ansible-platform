@@ -12,14 +12,67 @@ vault_backup_dir: "/var/lib/vault/snapshots"     # on the Vault host; included i
 vault_backup_keep: 14                             # daily snapshots retained on-host
 vault_backup_schedule: "*-*-* 02:15:00"           # systemd OnCalendar (before 03:30 PBS job)
 
-# Low-privilege token the timer uses (snapshot-read only — never the root token).
-vault_backup_policy_name: "snapshot"
-vault_backup_token_file: "/etc/vault/snapshot.token"     # 0600 on the host
-vault_backup_token_period: "768h"                        # 32d periodic; auto-renews
+# Low-privilege token the timer uses (snapshot-read only — never the root token). The policy and
+# the token role that hands it out carry one name, shared with the deploy identity's policy
+# (roles/vault_deploy_identity) through the inventory.
+vault_backup_policy_name: "{{ platform_vault_snapshot_role }}"
+vault_backup_policy: |
+  path "sys/storage/raft/snapshot" {
+    capabilities = ["read"]
+  }
+vault_backup_token_period: "768h"                        # 32d periodic; the job renews it daily
+vault_backup_token_role:
+  allowed_policies: ["{{ vault_backup_policy_name }}"]
+  orphan: true                                           # must outlive the deploy token that minted it
+  renewable: true
+  token_period: "{{ vault_backup_token_period }}"
+# The job's credential: one header line curl reads with `--header @file` (0600 on the host).
+vault_backup_header_file: "/etc/vault/snapshot.header"
+vault_backup_header_name: "X-Vault-Token"
+vault_backup_token_file: "/etc/vault/snapshot.token"     # the bare token of the former job: taken over once, then removed
+
+# The job (roles/host_job): what it runs and how a finished snapshot gets its name.
+vault_backup_job_name: "vault-snapshot"
+vault_backup_packages: [curl, logrotate]
+vault_backup_curl_max_time: 300                          # seconds one call may take
+vault_backup_curl_options: "--fail --silent --show-error --max-time {{ vault_backup_curl_max_time }}"
+vault_backup_current: "vault.snap"                       # the download; renamed vault-<UTC date>.snap when complete
+vault_backup_extension: ".snap"
+vault_backup_dateformat: "-%Y%m%dT%H%M%SZ"
+vault_backup_rotate_conf: "/etc/vault/snapshot-rotate.conf"
+# The job is installed on every member of the cluster and runs on the ACTIVE one only: a standby
+# cannot serve a complete snapshot (2026-10-06: "incomplete snapshot" on node 1 while node 3 led).
+# Vault's health endpoint answers 200 on the active node and 429 on a standby; curl --fail turns
+# anything but 200 into a non-zero exit, which skips the run (ExecCondition, roles/host_job).
+vault_backup_health_url: "{{ vault_api_addr }}/v1/sys/health"
+vault_backup_active_status: 200
+vault_backup_health_statuses: [200, 429, 472, 473, 501, 503]
+vault_backup_former_tmp: "/tmp/vault.snap"               # what the former job left in the container
+
+# Derived from what the tasks read: the first credential file that exists, the token in it,
+# whether Vault still accepts it with the snapshot policy, the token to store, and whether the
+# token role differs from the settings above.
+vault_backup_stored_path: >-
+  {{ vault_backup_files.results | default([]) | selectattr('stat.exists') | map(attribute='stat.path')
+     | list | first | default('') }}
+vault_backup_stored_token: >-
+  {{ vault_backup_stored.content | default('') | b64decode | trim
+     | regex_replace('^' ~ vault_backup_header_name ~ ': *', '') }}
+vault_backup_token_valid: >-
+  {{ (vault_backup_lookup.status | default(0)) == 200
+     and vault_backup_policy_name in (vault_backup_lookup.json.data.policies | default([])) }}
+vault_backup_token_to_store: "{{ vault_backup_minted.json.auth.client_token | default(vault_backup_stored_token) }}"
+vault_backup_token_role_drift: >-
+  {{ (vault_backup_role_now.status | default(404)) != 200
+     or (vault_backup_role_now.json.data.allowed_policies | default([]) | sort) != (vault_backup_token_role.allowed_policies | sort)
+     or (vault_backup_role_now.json.data.orphan | default(false) | bool) != (vault_backup_token_role.orphan | bool)
+     or (vault_backup_role_now.json.data.renewable | default(false) | bool) != (vault_backup_token_role.renewable | bool)
+     or (vault_backup_role_now.json.data.token_period | default(0) | int)
+        != (vault_backup_token_period | community.general.to_seconds | int) }}
 
 # Off-host copy of the newest snapshot, pulled to the controller store by the play.
 vault_backup_pull_to_controller: true
 vault_backup_controller_dir: "{{ (vault_secret_dir | expanduser) }}/backups/vault"
 
 # Reused from the vault role defaults (loaded via vars_files in the play):
-#   vault_container_name, vault_secret_dir, vault_init_secret
+#   vault_api_addr, vault_api_timeout, vault_container_name, vault_secret_dir

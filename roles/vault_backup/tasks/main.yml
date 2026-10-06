@@ -1,84 +1,133 @@
 ---
 # Install automated Vault raft snapshots on the vault host. The timer runs with a
 # low-privilege, self-renewing periodic token (snapshot-read only), never root.
-- name: "vault_backup | Authenticate to Vault (ansible-deploy AppRole; root fallback)"
+# Everything goes through Vault's HTTP API on the node itself: no token on a command line and
+# no shell, neither in these tasks nor in the job.
+- name: "vault_backup | Authenticate to Vault (ansible-deploy AppRole)"
   ansible.builtin.include_role:
     name: vault_login
 
-- name: "vault_backup | Use the deploy token"
-  ansible.builtin.set_fact:
-    vault_root_token: "{{ vault_deploy_token }}"
-  no_log: true
+- name: "vault_backup | Tools the job runs"
+  ansible.builtin.apt:
+    name: "{{ vault_backup_packages }}"
+    state: present
 
-- name: "vault_backup | Write the snapshot policy (raft snapshot read only)"
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - "-i"
-      - "-e"
-      - "VAULT_TOKEN={{ vault_root_token }}"
-      - "{{ vault_container_name }}"
-      - vault
-      - policy
-      - write
-      - "{{ vault_backup_policy_name }}"
-      - "-"
-    stdin: |
-      path "sys/storage/raft/snapshot" {
-        capabilities = ["read"]
-      }
-  changed_when: true
-  no_log: true
-
-- name: "vault_backup | Existing snapshot token on the host?"
-  ansible.builtin.stat:
-    path: "{{ vault_backup_token_file }}"
-  register: _tok_stat
-
-- name: "vault_backup | Validate the existing token"
-  ansible.builtin.shell:
-    cmd: >-
-      docker exec -e VAULT_TOKEN="$(cat {{ vault_backup_token_file }})"
-      {{ vault_container_name }} vault token lookup >/dev/null 2>&1 && echo valid || echo invalid
-  register: _tok_valid
+- name: "vault_backup | Read the snapshot policy"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/policies/acl/{{ vault_backup_policy_name }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 404]
+  register: vault_backup_policy_now
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  when: _tok_stat.stat.exists
   no_log: true
 
-- name: "vault_backup | Create a periodic snapshot token (absent or invalid)"
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - "-e"
-      - "VAULT_TOKEN={{ vault_root_token }}"
-      - "{{ vault_container_name }}"
-      - vault
-      - token
-      - create
-      - "-policy={{ vault_backup_policy_name }}"
-      - "-period={{ vault_backup_token_period }}"
-      - "-orphan"
-      - "-format=json"
-  register: _newtok
+- name: "vault_backup | Write the snapshot policy on drift (raft snapshot read only)"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/policies/acl/{{ vault_backup_policy_name }}"
+    method: PUT
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      policy: "{{ vault_backup_policy }}"
+    status_code: [200, 204]
+  when: (vault_backup_policy_now.json.data.policy | default('') | trim) != (vault_backup_policy | trim)
   changed_when: true
   no_log: true
-  when: (not _tok_stat.stat.exists) or ((_tok_valid.stdout | default('invalid')) == 'invalid')
 
-- name: "vault_backup | Token dir (0700)"
+# The deploy identity cannot hand out a policy it does not hold itself. A token role fixes what a
+# token of that role gets (the snapshot policy, a period, no parent); the deploy identity may
+# write this one role and mint tokens of it (roles/vault_deploy_identity).
+- name: "vault_backup | Read the token role"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/auth/token/roles/{{ vault_backup_policy_name }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 404]
+  register: vault_backup_role_now
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  no_log: true
+
+- name: "vault_backup | Write the token role on drift"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/auth/token/roles/{{ vault_backup_policy_name }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body: "{{ vault_backup_token_role }}"
+    status_code: [200, 204]
+  when: vault_backup_token_role_drift | bool
+  changed_when: true
+  no_log: true
+
+# The job's credential is a header file curl reads (`--header @file`). Before 2026-10 it was a
+# bare token in another file: that token is taken over when it is still valid.
+- name: "vault_backup | Credential files on the host"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ vault_backup_header_file }}"
+    - "{{ vault_backup_token_file }}"
+  register: vault_backup_files
+
+- name: "vault_backup | Read the stored credential"
+  ansible.builtin.slurp:
+    src: "{{ vault_backup_stored_path }}"
+  register: vault_backup_stored
+  when: vault_backup_stored_path | length > 0
+  no_log: true
+
+- name: "vault_backup | Is the stored token still valid?"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/auth/token/lookup-self"
+    headers:
+      X-Vault-Token: "{{ vault_backup_stored_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 403]
+  register: vault_backup_lookup
+  when: vault_backup_stored_token | length > 0
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  no_log: true
+
+- name: "vault_backup | Mint a periodic snapshot token (none stored, or no longer valid)"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/auth/token/create/{{ vault_backup_policy_name }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      policies: ["{{ vault_backup_policy_name }}"]
+    status_code: [200]
+  register: vault_backup_minted
+  when: not (vault_backup_token_valid | bool)
+  changed_when: true
+  no_log: true
+
+- name: "vault_backup | Credential dir (0700)"
   ansible.builtin.file:
-    path: "{{ vault_backup_token_file | dirname }}"
+    path: "{{ vault_backup_header_file | dirname }}"
     state: directory
     mode: "0700"
 
-- name: "vault_backup | Store the snapshot token (0600)"
+- name: "vault_backup | Store the token as the header file the job gives to curl (0600)"
   ansible.builtin.copy:
-    dest: "{{ vault_backup_token_file }}"
-    content: "{{ (_newtok.stdout | from_json).auth.client_token }}"
+    dest: "{{ vault_backup_header_file }}"
+    content: "{{ vault_backup_header_name }}: {{ vault_backup_token_to_store }}\n"
+    owner: root
+    group: root
     mode: "0600"
-  when: _newtok is defined and (_newtok is not skipped)
+  when: vault_backup_token_to_store | length > 0
   no_log: true
 
 - name: "vault_backup | Snapshot dir (0700)"
@@ -87,37 +136,87 @@
     state: directory
     mode: "0700"
 
-# The daily raft snapshot (roles/host_job: systemd service + timer, no script). Steps
-# run in order; the token is read from its 0600 file at run time. `-` = a failed
-# renew is tolerated (as before); `%%`/`$$` are systemd's escapes for % and $.
+# logrotate gives a finished snapshot its dated name (vault-<UTC date>.snap, as before) and
+# removes nothing (rotate -1): retention is the age rule of roles/host_job below.
+- name: "vault_backup | How a finished snapshot is named"
+  ansible.builtin.copy:
+    dest: "{{ vault_backup_rotate_conf }}"
+    content: |
+      # Managed by Ansible (roles/vault_backup). Read by the {{ vault_backup_job_name }} job only.
+      {{ vault_backup_dir }}/{{ vault_backup_current }} {
+          dateext
+          dateformat {{ vault_backup_dateformat }}
+          extension {{ vault_backup_extension }}
+          rotate -1
+          nocompress
+          nocreate
+          missingok
+          notifempty
+      }
+    owner: root
+    group: root
+    mode: "0644"
+
+# The daily raft snapshot (roles/host_job: systemd service + timer, no script, no shell). It runs
+# on the active node only (the condition below). Steps run in order: renew the token (`-` = a failed renew is tolerated, as before), download the
+# snapshot from the API, close its mode, refuse an empty file, give it its dated name.
 - name: "vault_backup | Daily raft snapshot (roles/host_job)"
   ansible.builtin.include_role:
     name: host_job
   vars:
-    host_job_name: vault-snapshot
+    host_job_name: "{{ vault_backup_job_name }}"
     host_job_description: "Vault raft snapshot"
     host_job_on_calendar: "{{ vault_backup_schedule }}"
+    host_job_runtime_directory: "{{ vault_backup_job_name }}"
+    host_job_exec_condition:
+      - "/usr/bin/curl {{ vault_backup_curl_options }} --output /dev/null {{ vault_backup_health_url }}"
+    host_job_environment:
+      TZ: UTC
     host_job_exec:
       - >-
-        -/bin/bash -c 'docker exec -e VAULT_TOKEN="$$(cat {{ vault_backup_token_file }})"
-        {{ vault_container_name }} vault token renew >/dev/null'
+        -/usr/bin/curl {{ vault_backup_curl_options }} --header @{{ vault_backup_header_file }}
+        --request POST --output /dev/null {{ vault_api_addr }}/v1/auth/token/renew-self
       - >-
-        /bin/bash -c 'docker exec -e VAULT_TOKEN="$$(cat {{ vault_backup_token_file }})"
-        {{ vault_container_name }} vault operator raft snapshot save /tmp/vault.snap'
+        /usr/bin/curl {{ vault_backup_curl_options }} --header @{{ vault_backup_header_file }}
+        --output {{ vault_backup_dir }}/{{ vault_backup_current }} {{ vault_api_addr }}/v1/sys/storage/raft/snapshot
+      - "/usr/bin/chmod 0600 {{ vault_backup_dir }}/{{ vault_backup_current }}"
+      - "/usr/bin/test -s {{ vault_backup_dir }}/{{ vault_backup_current }}"
       - >-
-        /bin/bash -c 'docker cp {{ vault_container_name }}:/tmp/vault.snap
-        {{ vault_backup_dir }}/vault-$$(date -u +%%Y%%m%%dT%%H%%M%%SZ).snap'
-      - "/usr/bin/docker exec {{ vault_container_name }} rm -f /tmp/vault.snap"
-      - >-
-        /bin/bash -c 'chmod 600 {{ vault_backup_dir }}/vault-*.snap;
-        test -s "$$(ls -1t {{ vault_backup_dir }}/vault-*.snap | head -1)"'
+        /usr/sbin/logrotate --force --state /run/{{ vault_backup_job_name }}/rotate.state
+        {{ vault_backup_rotate_conf }}
     # vault_backup_keep daily snapshots = that many days of age.
     host_job_retention:
       - { path: "{{ vault_backup_dir }}", age: "{{ vault_backup_keep }}d" }
     host_job_legacy_script: /usr/local/bin/vault-snapshot.sh
 
-- name: "vault_backup | Take a snapshot now (verify the chain works)"
-  ansible.builtin.systemd_service:
-    name: vault-snapshot.service
-    state: started
+# The former job saved the snapshot inside the container and copied it out with `docker cp`, which
+# cannot read the in-memory /tmp the hardened container has (every run failed from 2026-10-05 on):
+# the file of its last attempt is still there.
+- name: "vault_backup | The former job's temporary file in the container is gone"
+  community.docker.docker_container_exec:
+    container: "{{ vault_container_name }}"
+    argv: [rm, -f, "{{ vault_backup_former_tmp }}"]
+  changed_when: false
   when: not ansible_check_mode
+
+- name: "vault_backup | Is this node the active one?"
+  ansible.builtin.uri:
+    url: "{{ vault_backup_health_url }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: "{{ vault_backup_health_statuses }}"
+  register: vault_backup_health
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+
+- name: "vault_backup | Take a snapshot now on the active node (verify the chain works)"
+  ansible.builtin.systemd_service:
+    name: "{{ vault_backup_job_name }}.service"
+    state: started
+  when:
+    - not ansible_check_mode
+    - vault_backup_health.status == vault_backup_active_status
+
+- name: "vault_backup | The bare token file of the former job is gone"
+  ansible.builtin.file:
+    path: "{{ vault_backup_token_file }}"
+    state: absent
