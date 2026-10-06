@@ -64,3 +64,25 @@ vault_oidc_groups_claim: "groups"
 vault_oidc_token_policies: ["default"]
 vault_oidc_token_ttl: "1h"
 vault_oidc_scopes: ["openid", "profile", "email", "groups"]
+# Derived from what tasks/oidc.yml reads: does Vault hold what is wanted? The client secret is
+# compared through a short hash kept in the admin group's metadata (Vault does not return it).
+vault_oidc_client_mark: "{{ (vault_oidc.client_secret | hash('sha256'))[:16] }}"
+vault_oidc_client_mark_applied: "{{ vault_oidc_group_now.json.data.metadata.oidc_client_mark | default('') }}"
+vault_oidc_config_drift: >-
+  {{ (vault_oidc_config_now.json.data.oidc_discovery_url | default('')) != vault_oidc_discovery_url
+     or (vault_oidc_config_now.json.data.oidc_client_id | default('')) != vault_oidc.client_id
+     or (vault_oidc_config_now.json.data.default_role | default('')) != vault_oidc_default_role
+     or vault_oidc_client_mark_applied != vault_oidc_client_mark }}
+vault_oidc_role_drift: >-
+  {{ (vault_oidc_role_now.status | default(404)) != 200
+     or (vault_oidc_role_now.json.data.user_claim | default('')) != vault_oidc_user_claim
+     or (vault_oidc_role_now.json.data.groups_claim | default('')) != vault_oidc_groups_claim
+     or (vault_oidc_role_now.json.data.token_policies | default([]) | sort) != (vault_oidc_token_policies | sort)
+     or (vault_oidc_role_now.json.data.token_ttl | default(0) | int) != (vault_oidc_token_ttl | community.general.to_seconds | int)
+     or (vault_oidc_role_now.json.data.oidc_scopes | default([]) | sort) != (vault_oidc_scopes | sort)
+     or (vault_oidc_role_now.json.data.allowed_redirect_uris | default([]) | sort) != (vault_oidc.redirect_uris | sort) }}
+vault_oidc_group_drift: >-
+  {{ (vault_oidc_group_now.status | default(404)) != 200
+     or (vault_oidc_group_now.json.data.type | default('')) != 'external'
+     or (vault_oidc_group_now.json.data.policies | default([]) | sort) != [vault_admin_policy_name]
+     or vault_oidc_client_mark_applied != vault_oidc_client_mark }}
