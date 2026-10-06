@@ -63,6 +63,12 @@
              != (nextcloud_post_fingerprint_value | trim)) }}
   tags: [nextcloud, post]
 
+# Outside the fingerprinted block on purpose: it compares the file with Vault's value on every run,
+# so the credential Nextcloud reads never waits for the fingerprint to change.
+- name: "The database credential Nextcloud reads (config fragment)"
+  ansible.builtin.import_tasks: db_credential.yml
+  tags: [nextcloud, post]
+
 - name: Post-install (occ — TLS config, trusted proxy, apps, SSO)
   ansible.builtin.import_tasks: post-install.yml
   when: nextcloud_post_needed | bool
