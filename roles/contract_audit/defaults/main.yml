@@ -9,76 +9,119 @@
 # Each check:
 #   id      stable ADR check ID (NAM-17, SEC-25a, ...)
 #   desc    one-line human description
-#   probe   shell run on the target host (stdout is matched)
-#   expect  regex the probe stdout MUST match to PASS (case-insensitive)
 #   groups  optional list of inventory groups the check applies to; omitted or
 #           ['all'] = every audited host. A host not in `groups` -> SKIP.
-#   absent  optional: PASS when `expect` is NOT found (invert), for "must not"
+#   probes  what is read on the host and what it must say; EVERY probe must hold.
+# A probe reads ONE thing — no shell, no pipe:
+#   argv    a command (a list); its standard output is the text
+#   url     an HTTP GET from the host; the text is the status code, or the body
+#           with `read: content` (redirects are not followed; `validate_certs: false`
+#           for a service's own certificate on its loopback; `timeout` in seconds)
+#   file    a file's content ('' when it does not exist)
+#   value   a value Ansible already holds (a fact, a variable)
+# and states what the text must say (regexes: case-insensitive, `^`/`$` per line):
+#   expect  a regex, or a list of regexes, that must ALL be found
+#   forbid  a regex, or a list of regexes, NONE of which may be found
+#   capture + min    the number captured by `capture` must be >= `min`
+#   count + equals   the number of matches of `count` must be `equals`
+#   sensitive: true  the text carries secrets: the probe's result is never logged
 # Add a requirement = add a row here. Non-automatable ADR clauses stay in the
 # checklist doc for manual review; this role covers the machine-checkable ones.
 # ==============================================================================
 
 contract_audit_enforce: false          # true = fail the play on any FAIL (gate)
 
+contract_audit_groups: "{{ group_names }}"   # the groups that decide which checks apply to the host
+contract_audit_url_timeout: 5          # seconds a URL probe may take (a probe can set its own)
+contract_audit_loopback: "127.0.0.1"   # a service's own listener on its host
+# A Lynis run in progress rewrites its report: SEC-20 waits for it to end (at most retries x delay).
+contract_audit_lynis_wait_retries: 24
+contract_audit_lynis_wait_delay: 5
+contract_audit_lynis_report: "/var/log/lynis-report.dat"
+# Hypervisor: the bridges that carry the firewall's WAN legs (roles/pve_host: pve_host_wan_bridges)
+# and the netfilter modules the guests need preloaded on the host.
+contract_audit_wan_bridges: "{{ pve_host_wan_bridges | default(['vmbrWAN1', 'vmbrWAN2']) }}"
+contract_audit_node_modules: [xt_recent, xt_limit, xt_LOG, xt_conntrack, xt_hl, ip6t_rt, nft_compat]
+contract_audit_node_module_regexes: >-
+  {%- set out = [] -%}
+  {%- for m in contract_audit_node_modules -%}{%- set _ = out.append('^' ~ m ~ ' ') -%}{%- endfor -%}
+  {{ out }}
+# NAM-15: local accounts (/etc/passwd, read by tasks/main.yml) that can log in and are neither the
+# organisation's account nor a service account.
+contract_audit_passwd: "{{ ansible_facts.getent_passwd | default({}) }}"   # name -> [x, uid, gid, gecos, home, shell]
+contract_audit_login_accounts: >-
+  {%- set out = [] -%}
+  {%- for name, f in contract_audit_passwd.items()
+        if (f[1] | int) >= 1000 and (f[1] | int) < 65534 and name != 'nobody'
+           and not (f[5] | default('') is match('.*(nologin|false)$'))
+           and not (name is match('^(' ~ platform_org ~ '|svc-[a-z0-9-]+)$')) -%}
+    {%- set _ = out.append(name) -%}
+  {%- endfor -%}
+  {{ out | sort }}
+
 contract_audit_checks:
   # --- logging (infra/0006) ---------------------------------------------------
   - id: INF-27
     desc: "Promtail agent running (every host)"
-    probe: "systemctl is-active promtail 2>/dev/null || echo inactive"
-    expect: "^active$"
+    probes:
+      - argv: [systemctl, is-active, promtail]
+        expect: "^active$"
 
   - id: SEC-23
     desc: "auditd enabled (audit trail — VMs; kernel audit is host-scoped, N/A in LXC)"
-    probe: "systemctl is-active auditd 2>/dev/null || echo inactive"
-    expect: "^active$"
+    probes:
+      - argv: [systemctl, is-active, auditd]
+        expect: "^active$"
     groups: ["adguard", "mailcow", "gitlab_runner", "pbs"]
 
   # --- hardening / SSH (security/0003 §9, identity/0004 §5) --------------------
   - id: SEC-25a
     desc: "sshd listens on the baseline port (platform_ssh_port)"
-    probe: "sshd -T 2>/dev/null | awk '/^port /{print}'"
-    expect: "port {{ platform_ssh_port }}"
+    probes:
+      - argv: [sshd, -T]
+        expect: "^port {{ platform_ssh_port }}$"
 
   - id: SEC-25b
     desc: "sshd PermitRootLogin no (PVE break-glass carve-out excepted)"
-    probe: "sshd -T 2>/dev/null | awk '/^permitrootlogin /{print}'"
-    expect: "permitrootlogin no"
+    probes:
+      - argv: [sshd, -T]
+        expect: "^permitrootlogin no$"
     groups: ["cluster", "adguard", "mailcow", "gitlab_runner"]
 
   - id: IDN-29
     desc: "sshd PasswordAuthentication no (global)"
-    probe: "sshd -T 2>/dev/null | awk '/^passwordauthentication /{print}'"
-    expect: "passwordauthentication no"
+    probes:
+      - argv: [sshd, -T]
+        expect: "^passwordauthentication no$"
 
   - id: SEC-25c
     desc: "fail2ban active"
-    probe: "systemctl is-active fail2ban 2>/dev/null || echo inactive"
-    expect: "^active$"
+    probes:
+      - argv: [systemctl, is-active, fail2ban]
+        expect: "^active$"
 
   - id: SEC-20
     desc: "Lynis hardening index >= the host's gate (default 80; documented exceptions via hardening_lynis_min_score)"
-    probe: >-
-      for i in $(seq 1 24); do pgrep -x lynis >/dev/null || break; sleep 5; done;
-      awk -F= -v MIN={{ hardening_lynis_min_score | default(80) }}
-      '/hardening_index/{print ($2>=MIN)?"PASS":"FAIL "$2}'
-      /var/log/lynis-report.dat 2>/dev/null | head -1 || echo NOREPORT
-    expect: "^PASS$"
+    probes:
+      - file: "{{ contract_audit_lynis_report }}"
+        capture: "^hardening_index=(\\d+)"
+        min: "{{ hardening_lynis_min_score | default(80) }}"
+
   - id: SEC-21
     desc: "Host firewall (ufw) installed, active AND its chains loaded (policy DROP without chains = self-lockout)"
-    probe: >-
-      ufw status 2>/dev/null | head -1 | grep -q '^Status: active$'
-      && iptables -S INPUT 2>/dev/null | grep -q -- '-j ufw-before-input' && echo PASS || echo FAIL
-    expect: "^PASS$"
+    probes:
+      - argv: [ufw, status]
+        expect: "^Status: active$"
+      - argv: [iptables, -S, INPUT]
+        expect: "-j ufw-before-input"
     groups: ["cluster", "adguard", "mailcow", "gitlab_runner", "pbs", "k3s"]
-
 
   # --- identity naming (naming/0002 §3) — no human/non-svc login accounts -----
   - id: NAM-15
     desc: "No ad-hoc human login accounts (uid>=1000) beyond {{ platform_org }} + svc-*"
-    probe: >-
-      awk -F: '$3>=1000 && $3<65534 && $1!="nobody" && $7!~/(nologin|false)$/{print $1}' /etc/passwd
-      | grep -vE '^({{ platform_org }}|svc-[a-z0-9-]+)$' | tr '\n' ' ' || true
-    expect: "^\\s*$"
+    probes:
+      - value: "{{ contract_audit_login_accounts | join(' ') }}"
+        expect: "^\\s*$"
 
   # SEC-30 (step-ca root CA in every trust store) is deferred to v2 — step-ca is
   # parked (P5); internal TLS currently rides the publicly-trusted LE wildcard,
@@ -88,142 +131,245 @@ contract_audit_checks:
 contract_audit_service_checks:
   - id: SVC-62
     desc: "GitLab DB connection uses sslmode=verify-full"
-    probe: "grep -h db_sslmode /etc/gitlab/gitlab.rb 2>/dev/null || echo none"
-    expect: "verify-full"
+    probes:
+      - file: /etc/gitlab/gitlab.rb
+        expect: "^(?=[^\\n]*db_sslmode)[^\\n]*verify-full"
+        sensitive: true
     groups: ["gitlab"]
 
   - id: SVC-28a
     desc: "NetBox DB connection sslmode=verify-full"
-    probe: "docker exec netbox env 2>/dev/null | grep -o 'DB_SSLMODE=verify-full' || echo none"
-    expect: "verify-full"
+    probes:
+      - argv: [docker, exec, netbox, printenv, DB_SSLMODE]
+        expect: "^verify-full$"
     groups: ["netbox"]
 
   - id: SVC-28b
     desc: "Nextcloud PG sslmode=verify-full (env)"
-    probe: "docker exec nextcloud env 2>/dev/null | grep -o 'PGSSLMODE=verify-full' || echo none"
-    expect: "verify-full"
+    probes:
+      - argv: [docker, exec, nextcloud, printenv, PGSSLMODE]
+        expect: "^verify-full$"
     groups: ["nextcloud"]
 
   - id: SVC-28c
     desc: "Grafana DB ssl_mode=verify-full"
-    probe: "grep -E '^ssl_mode' /etc/grafana/grafana.ini 2>/dev/null || echo none"
-    expect: "verify-full"
+    probes:
+      - file: /etc/grafana/grafana.ini
+        expect: "^ssl_mode[^\\n]*verify-full"
+        sensitive: true
     groups: ["monitoring"]
 
   - id: SVC-62a
     desc: "Harbor external DB ssl_mode=verify-full"
-    probe: "grep -E 'ssl_mode' /opt/harbor/harbor.yml 2>/dev/null | head -1 || echo none"
-    expect: "verify-full"
+    probes:
+      - file: /opt/harbor/harbor.yml
+        expect: "^[^\\n]*ssl_mode[^\\n]*verify-full"
+        sensitive: true
     groups: ["harbor"]
 
   - id: SVC-28d
     desc: "Vaultwarden DATABASE_URL sslmode=verify-full"
-    probe: "docker exec vaultwarden env 2>/dev/null | grep -o 'sslmode=verify-full' || echo none"
-    expect: "verify-full"
+    probes:
+      - argv: [docker, exec, vaultwarden, printenv, DATABASE_URL]
+        expect: "sslmode=verify-full"
+        sensitive: true
     groups: ["vaultwarden"]
 
   - id: IDN-20-vw
     desc: "Vaultwarden native SSO enabled, signups closed"
-    probe: "docker exec vaultwarden env 2>/dev/null | grep -cE 'SSO_ENABLED=true|SIGNUPS_ALLOWED=false' || echo 0"
-    expect: "^2$"
+    probes:
+      - argv: [docker, exec, vaultwarden, printenv, SSO_ENABLED]
+        expect: "^true$"
+      - argv: [docker, exec, vaultwarden, printenv, SIGNUPS_ALLOWED]
+        expect: "^false$"
     groups: ["vaultwarden"]
 
   - id: SEC-33-runner
     desc: "GitLab runner docker executor is NOT privileged"
-    probe: "grep -c 'privileged = false' /etc/gitlab-runner/config.toml 2>/dev/null || echo 0"
-    expect: "^[1-9]"
+    probes:
+      - file: /etc/gitlab-runner/config.toml
+        expect: "privileged = false"
+        sensitive: true
     groups: ["gitlab_runner"]
 
   - id: DOCKER-ONE-ENGINE
     desc: "exactly one container engine installed (docker.io XOR docker-ce) — #454"
-    probe: "dpkg-query -W -f='${Package} ${Status}\n' docker.io docker-ce 2>/dev/null | grep -c 'install ok installed'"
-    expect: "^1$"
+    probes:
+      - argv: [dpkg-query, -W, "-f=${Package} ${Status}\\n", docker.io, docker-ce]
+        count: "install ok installed"
+        equals: 1
     groups: ["docker_hosts"]
+
   - id: SVC-PORTAINER
     desc: "Portainer console API answering on its own guest"
-    probe: "curl -s -o /dev/null -w '%{http_code}' -m5 http://{{ ansible_host }}:9000/api/status || echo 000"
-    expect: "^200$"
+    probes:
+      - url: "http://{{ ansible_host }}:9000/api/status"
+        expect: "^200$"
     groups: ["portainer"]
 
   - id: SVC-WAZUH
     desc: "Wazuh manager API + dashboard answering on the security-monitoring guest"
-    probe: >-
-      curl -sk -o /dev/null -w '%{http_code}' -m5 https://127.0.0.1:55000/ ; curl -s -o /dev/null -w ' %{http_code}' -m5
-      http://{{ ansible_host }}:5601/api/status
-    expect: "^(200|401) (200|302|401)$"
+    probes:
+      - url: "https://{{ contract_audit_loopback }}:55000/"
+        validate_certs: false
+        expect: "^(200|401)$"
+      - url: "http://{{ ansible_host }}:5601/api/status"
+        expect: "^(200|302|401)$"
     groups: ["wazuh"]
 
   - id: SVC-WAZUH-AGENT
     desc: "Wazuh agent running and connected (every guest)"
-    probe: "/var/ossec/bin/wazuh-control status 2>/dev/null | grep -c 'wazuh-agentd is running' || echo 0"
-    expect: "^1$"
+    probes:
+      - argv: [/var/ossec/bin/wazuh-control, status]
+        count: "wazuh-agentd is running"
+        equals: 1
     groups: ["cluster", "adguard", "mailcow", "pbs", "monitoring", "k3s", "gitlab_runner"]
 
   - id: SVC-STEPCA
     desc: "step-ca internal CA health endpoint answering"
-    probe: "curl -sk -o /dev/null -w '%{http_code}' -m5 https://127.0.0.1:9000/health || echo 000"
-    expect: "^200$"
+    probes:
+      - url: "https://{{ contract_audit_loopback }}:9000/health"
+        validate_certs: false
+        expect: "^200$"
     groups: ["step_ca"]
 
   - id: SVC-VERD
     desc: "Verdaccio npm registry answering /-/ping"
-    probe: "curl -s -o /dev/null -w '%{http_code}' -m5 http://127.0.0.1:4873/-/ping || echo 000"
-    expect: "^200$"
+    probes:
+      - url: "http://{{ contract_audit_loopback }}:4873/-/ping"
+        expect: "^200$"
     groups: ["verdaccio"]
 
   - id: NAM-17-nb
     desc: "NetBird API principal is a svc-{function}-{env} service user"
     # The principal's NAME only (never its token), read from Vault by tasks/main.yml.
-    probe: "echo '{{ contract_audit_netbird_principal | default('none') }}'"
-    expect: "svc-netbird-"
+    probes:
+      - value: "{{ contract_audit_netbird_principal | default('none') }}"
+        expect: "svc-netbird-"
     groups: ["netbird"]
-    delegate_localhost: true
 
   # --- hypervisor (roles/pve_host) -----------------------------------------------
   - id: NODE-01
     desc: "Proxmox firewall enabled and running (the node's host firewall; ufw stays off on nodes)"
-    probe: "pve-firewall status 2>/dev/null | head -1"
-    expect: "^Status: enabled/running$"
+    probes:
+      - argv: [pve-firewall, status]
+        expect: "^Status: enabled/running$"
     groups: ["proxmox_nodes"]
+
   - id: NODE-08
     desc: "No global IPv6 address on the WAN bridges of the node (no RA/autoconf from the ISPs)"
-    probe: "n=0; for b in vmbrWAN1 vmbrWAN2; do n=$((n + $(ip -6 -o addr show dev $b scope global 2>/dev/null | wc -l))); done; [ $n = 0 ] && echo PASS || echo FAIL:$n"
-    expect: "^PASS$"
+    probes:
+      - argv: [ip, "-6", -o, addr, show, scope, global]
+        forbid: "^[0-9]+: +({{ contract_audit_wan_bridges | join('|') }}) "
     groups: ["proxmox_nodes"]
+
   - id: NODE-07
     desc: "Node routes the guest zones via the prod firewall's OOB leg (replies must not leave by the OOB default gateway)"
-    probe: "ip route show {{ platform_internal_cidr4 }} | grep -q via && echo PASS || echo FAIL"
-    expect: "^PASS$"
+    probes:
+      - argv: [ip, route, show, "{{ platform_internal_cidr4 }}"]
+        expect: " via "
     groups: ["proxmox_nodes"]
+
   - id: NODE-06
     desc: "Netfilter modules for the guests preloaded on the host (xt_recent, xt_limit, ip6t_rt … — ufw in unprivileged LXCs)"
-    probe: "for m in xt_recent xt_limit xt_LOG xt_conntrack xt_hl ip6t_rt nft_compat; do lsmod | grep -q \"^$m \" || echo missing:$m; done; echo done"
-    expect: "^done$"
+    probes:
+      - argv: [lsmod]
+        expect: "{{ contract_audit_node_module_regexes }}"
     groups: ["proxmox_nodes"]
+
   - id: NODE-05
     desc: "No ufw on the node (the Proxmox firewall is the only host firewall)"
-    probe: "command -v ufw >/dev/null && echo present || echo absent"
-    expect: "^absent$"
+    probes:
+      - argv: [dpkg-query, -W, "-f=${Status}", ufw]
+        forbid: "install ok installed"
     groups: ["proxmox_nodes"]
+
   - id: NODE-02
     desc: "Apt sources as code: deb822 Proxmox file present, no enterprise leftovers"
-    probe: "[ -f /etc/apt/sources.list.d/proxmox.sources ] && ! ls /etc/apt/sources.list.d/ | grep -qE '^pve-enterprise' && echo PASS || echo FAIL"
-    expect: "^PASS$"
+    probes:
+      - argv: [ls, "-1", /etc/apt/sources.list.d/]
+        expect: "^proxmox[.]sources$"
+        forbid: "^pve-enterprise"
     groups: ["proxmox_nodes"]
+
   - id: NODE-03
     desc: "node_exporter active on the hypervisor (Prometheus scrapes it)"
-    probe: "systemctl is-active prometheus-node-exporter node_exporter 2>/dev/null | grep -m1 active || echo inactive"
-    expect: "^active$"
+    probes:
+      - argv: [systemctl, is-active, prometheus-node-exporter, node_exporter]
+        expect: "^active$"
     groups: ["proxmox_nodes"]
+
   - id: NODE-04
     desc: "Datacenter notification sender is the platform alerts address"
-    probe: "pvesh get /cluster/options --output-format json 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get(\"email_from\",\"\"))'"
-    expect: "^{{ platform_alert_email | regex_escape }}$"
+    probes:
+      - argv: [pvesh, get, /cluster/options, --output-format, json]
+        expect: "\"email_from\" *: *\"{{ platform_alert_email | regex_escape }}\""
     groups: ["proxmox_nodes"]
+
   - id: GRC-01
     desc: "Compliance registry advertises SSO on its own endpoint (the binding is a role, not a UI step)"
-    probe: >-
-      curl -sf -m 10 https://{{ platform_service_fqdns.grc }}/api/settings/sso/info/
-      | grep -q '"is_enabled": *true' && echo PASS || echo FAIL
-    expect: "^PASS$"
+    probes:
+      - url: "https://{{ platform_service_fqdns.grc }}/api/settings/sso/info/"
+        read: content
+        timeout: 10
+        expect: "\"is_enabled\": *true"
     groups: ["ciso_assistant"]
+
+# --- Derived (tasks/main.yml) ------------------------------------------------------------------
+contract_audit_all_checks: "{{ contract_audit_checks + contract_audit_service_checks }}"
+# The probes of the checks that apply to this host, each with its key `<check id>#<n>`.
+contract_audit_probe_list: >-
+  {%- set out = [] -%}
+  {%- for c in contract_audit_all_checks
+        if (c.groups is not defined) or ('all' in c.groups) or ((c.groups | intersect(contract_audit_groups)) | length > 0) -%}
+    {%- for p in c.probes -%}
+      {%- set _ = out.append(p | combine({'key': c.id ~ '#' ~ loop.index0})) -%}
+    {%- endfor -%}
+  {%- endfor -%}
+  {{ out }}
+# What each probe read, by key: a command's standard output, a URL's status code (or body), a
+# file's content. A probe that could not run reads as ''.
+contract_audit_texts: >-
+  {%- set out = {} -%}
+  {%- for r in (contract_audit_cmd.results | default([])) -%}
+    {%- set _ = out.update({r.item.key: (r.stdout | default(''))}) -%}
+  {%- endfor -%}
+  {%- for r in (contract_audit_url.results | default([])) -%}
+    {%- set _ = out.update({r.item.key: ((r.content | default('')) if (r.item.read | default('status')) == 'content'
+                                         else (r.status | default(-1) | string))}) -%}
+  {%- endfor -%}
+  {%- for r in (contract_audit_file.results | default([])) -%}
+    {%- set _ = out.update({r.item.key: (r.content | default('') | b64decode)}) -%}
+  {%- endfor -%}
+  {{ out }}
+# One row per check: SKIP when it does not apply to this host, PASS when every probe holds.
+contract_audit_scorecard_built: >-
+  {%- set card = [] -%}
+  {%- set texts = contract_audit_texts -%}
+  {%- for c in contract_audit_all_checks -%}
+    {%- if not ((c.groups is not defined) or ('all' in c.groups) or ((c.groups | intersect(contract_audit_groups)) | length > 0)) -%}
+      {%- set _ = card.append({'id': c.id, 'desc': c.desc, 'status': 'SKIP'}) -%}
+    {%- else -%}
+      {%- set ns = namespace(ok=true) -%}
+      {%- for p in c.probes -%}
+        {%- set text = (p.value | string) if p.value is defined else (texts[c.id ~ '#' ~ loop.index0] | default('')) -%}
+        {%- set must = p.expect | default([]) -%}
+        {%- for rx in ([must] if must is string else must) -%}
+          {%- if (text | regex_search(rx, ignorecase=true, multiline=true)) is none -%}{%- set ns.ok = false -%}{%- endif -%}
+        {%- endfor -%}
+        {%- set never = p.forbid | default([]) -%}
+        {%- for rx in ([never] if never is string else never) -%}
+          {%- if (text | regex_search(rx, ignorecase=true, multiline=true)) is not none -%}{%- set ns.ok = false -%}{%- endif -%}
+        {%- endfor -%}
+        {%- if p.capture is defined -%}
+          {%- set got = text | regex_findall(p.capture, ignorecase=true, multiline=true) -%}
+          {%- if (got | length == 0) or ((got | first | float) < (p.min | float)) -%}{%- set ns.ok = false -%}{%- endif -%}
+        {%- endif -%}
+        {%- if p.count is defined -%}
+          {%- if (text | regex_findall(p.count, ignorecase=true, multiline=true) | length) != (p.equals | int) -%}{%- set ns.ok = false -%}{%- endif -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {%- set _ = card.append({'id': c.id, 'desc': c.desc, 'status': ('PASS' if ns.ok else 'FAIL')}) -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {{ card }}
