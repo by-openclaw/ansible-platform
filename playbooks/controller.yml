@@ -10,5 +10,14 @@
   connection: local
   gather_facts: true
   become: false
+  # The inventory defines ansible_become_password for EVERY host (the fleet's automation account),
+  # localhost included, and that variable wins over -K: on this workstation sudo then receives
+  # the fleet's password and refuses it. Root here belongs to the person: their password is asked
+  # and given to the root-only tasks alone. Enter = what needs root is skipped.
+  vars_prompt:
+    - name: controller_become_password
+      prompt: "sudo password of this workstation (Enter to skip the root-only part)"
+      private: true
+      default: ""
   roles:
     - controller

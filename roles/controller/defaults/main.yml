@@ -59,6 +59,11 @@ controller_hashicorp_key_cached: "{{ controller_hashicorp_cache_dir }}/hashicorp
 # Terraform: the version installed on the controller, held so that `apt upgrade` does not move it.
 controller_terraform_version: "1.16.1-1"
 controller_terraform_hold: true
+# Root on the workstation: the password typed at the play's prompt (playbooks/controller.yml), or
+# a sudo that asks for none.
+controller_become_password: ""
+controller_hashicorp_root: >-
+  {{ (controller_hashicorp_sudo.rc | default(1)) == 0 or (controller_become_password | default('') | length > 0) }}
 # Derived from `gpg --show-keys --with-colons`: how many primary keys the file holds, and the
 # fingerprint of the first one.
 controller_hashicorp_key_pinned: "{{ controller_hashicorp_key_fingerprint | replace(' ', '') | upper }}"

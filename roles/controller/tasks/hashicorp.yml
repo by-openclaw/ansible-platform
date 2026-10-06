@@ -42,19 +42,21 @@
       controller_hashicorp_key_fingerprint after checking it against HashiCorp's security bulletin.
     success_msg: "the key HashiCorp serves is the pinned one ({{ controller_hashicorp_key_pinned }})"
 
-# The controller is a workstation: root belongs to the person. With -K (or sudo without a password)
-# the part below runs; without, it is skipped and the report says so.
-- name: "Controller | HashiCorp: can this play become root?"
-  ansible.builtin.command: "true"
-  become: true
-  register: controller_hashicorp_root
+# The controller is a workstation: root belongs to the person. The part below runs when the
+# person typed their sudo password at the play's prompt (or sudo asks for none); otherwise it is
+# skipped and the report says so. `sudo -n` never prompts: no failed attempt is logged.
+- name: "Controller | HashiCorp: does sudo ask for a password?"
+  ansible.builtin.command: "sudo -n true"
+  register: controller_hashicorp_sudo
   check_mode: false  # read-only probe
   changed_when: false
-  ignore_errors: true
+  failed_when: false
 
 - name: "Controller | HashiCorp: repository, key and Terraform (root)"
-  when: controller_hashicorp_root is not failed
+  when: controller_hashicorp_root | bool
   become: true
+  vars:
+    ansible_become_password: "{{ controller_become_password | default('') }}"   # this workstation's, not the fleet's
   block:
     - name: "Controller | HashiCorp: apt's keyring folder"
       ansible.builtin.file:
@@ -121,6 +123,6 @@
     msg: >-
       {{ 'HashiCorp repository managed: key ' ~ controller_hashicorp_key_pinned ~ ', source ' ~ controller_hashicorp_source_file
          ~ ', Terraform ' ~ controller_terraform_version ~ (' held' if controller_terraform_hold | bool else '')
-         if controller_hashicorp_root is not failed
+         if controller_hashicorp_root | bool
          else 'HashiCorp key verified, NOTHING INSTALLED — root is required on this workstation. Run:
-               ansible-playbook playbooks/controller.yml --tags hashicorp -K' }}
+               ansible-playbook playbooks/controller.yml --tags hashicorp   and type the sudo password of this workstation at the prompt' }}
