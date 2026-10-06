@@ -39,6 +39,8 @@
       containers: "{{ security_audit_containers | default([]) }}"
       container_high: "{{ security_audit_containers | default([]) | map(attribute='high') | map('int') | sum }}"
       container_critical: "{{ security_audit_containers | default([]) | map(attribute='critical') | map('int') | sum }}"
+      container_high_fixable: "{{ security_audit_containers | default([]) | map(attribute='high_fixable', default=0) | map('int') | sum }}"
+      container_critical_fixable: "{{ security_audit_containers | default([]) | map(attribute='critical_fixable', default=0) | map('int') | sum }}"
       container_not_scanned: "{{ security_audit_containers | default([]) | rejectattr('scanned') | list | length }}"
 
 - name: "SecAudit | Write the per-host report"
