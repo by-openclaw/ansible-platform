@@ -14,52 +14,38 @@
     _desired: "{{ (lookup('file', secret_file.path) | from_json).fields | default(lookup('file', secret_file.path) | from_json, true) }}"
   no_log: true
 
-- name: "Sync | Read current Vault value (rc!=0 = absent)"
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - "-e"
-      - "VAULT_TOKEN={{ vault_root_token }}"
-      - "{{ vault_container_name }}"
-      - vault
-      - kv
-      - get
-      - "-mount={{ vault_kv_path }}"
-      - "-format=json"
-      - "{{ _kv_path }}"
+# Vault's HTTP API on the node: 200 = the document, 404 = absent (or its last version deleted).
+- name: "Sync | Read current Vault value (404 = absent)"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/{{ vault_kv_path }}/data/{{ _kv_path }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 404]
   register: _cur
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  failed_when: false
   no_log: true
 
 - name: "Sync | Decide action"
   ansible.builtin.set_fact:
-    _absent: "{{ _cur.rc != 0 }}"
-    _drift: "{{ _cur.rc == 0 and ((_cur.stdout | from_json).data.data != _desired) }}"
+    _absent: "{{ _cur.status == 404 }}"
+    _drift: "{{ _cur.status == 200 and (_cur.json.data.data != _desired) }}"
   no_log: true
 
 - name: "Sync | Write to Vault (absent, or drifted + overwrite requested)"
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - "-i"
-      - "-e"
-      - "VAULT_TOKEN={{ vault_root_token }}"
-      - "{{ vault_container_name }}"
-      - vault
-      - kv
-      - put
-      - "-mount={{ vault_kv_path }}"
-      - "{{ _kv_path }}"
-      - "-"
-    stdin: "{{ _desired | to_json }}"
-    stdin_add_newline: false
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/{{ vault_kv_path }}/data/{{ _kv_path }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      data: "{{ _desired }}"
+    status_code: [200, 204]
   when: _absent | bool or (_drift | bool and (secrets_sync_overwrite | bool))
-  register: _put
-  changed_when: _put.rc == 0
+  changed_when: true
   no_log: true
 
 - name: "Sync | Record drift (present but differs, left as-is)"

@@ -17,6 +17,9 @@
   vars:
     approle_name: ansible-controller
     approle_secret_file: "{{ (vault_secret_dir | expanduser) }}/fabric/app-vault-ansible-controller.json"
+    approle_mount: "approle"
+    approle_token_ttl: "15m"
+    approle_token_max_ttl: "30m"
     approle_policy: |
       # read-only: svc SSH passphrases for the controller's ssh-agent
       path "secret/data/{{ platform_env }}/svc-ansible/ssh-passphrase" { capabilities = ["read"] }
@@ -35,51 +38,83 @@
         - name: "Vault login (ansible-deploy AppRole; root fallback)"
           ansible.builtin.include_role:
             name: vault_login
-        - name: "Use the deploy token"
-          ansible.builtin.set_fact:
-            vault_root_token: "{{ vault_deploy_token }}"
-          no_log: true
-
+        # Vault's HTTP API on the node: the token and the minted secret id travel in the module
+        # call and its answer, never on a command line.
         - name: "Approle | Write the read-only policy"
-          ansible.builtin.command:
-            argv: ["docker", "exec", "-i", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
-                   "vault", "policy", "write", "{{ approle_name }}", "-"]
-            stdin: "{{ approle_policy }}"
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/sys/policies/acl/{{ approle_name }}"
+            method: PUT
+            headers:
+              X-Vault-Token: "{{ vault_deploy_token }}"
+            timeout: "{{ vault_api_timeout }}"
+            body_format: json
+            body:
+              policy: "{{ approle_policy }}"
+            status_code: [200, 204]
           changed_when: true
           no_log: true
 
-        - name: "Approle | Enable the approle auth method (ok if already enabled)"
-          ansible.builtin.command:
-            argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
-                   "vault", "auth", "enable", "approle"]
-          register: approle_enable
-          changed_when: approle_enable.rc == 0
-          failed_when:
-            - approle_enable.rc != 0
-            - "'already in use' not in approle_enable.stderr"
+        - name: "Approle | Auth methods"
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/sys/auth"
+            headers:
+              X-Vault-Token: "{{ vault_deploy_token }}"
+            timeout: "{{ vault_api_timeout }}"
+          register: approle_auth
+          check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+          changed_when: false
+          no_log: true
+
+        - name: "Approle | Enable the approle auth method (when absent)"
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/sys/auth/{{ approle_mount }}"
+            method: POST
+            headers:
+              X-Vault-Token: "{{ vault_deploy_token }}"
+            timeout: "{{ vault_api_timeout }}"
+            body_format: json
+            body:
+              type: approle
+            status_code: [200, 204]
+          when: (approle_mount ~ '/') not in approle_auth.json.data
+          changed_when: true
           no_log: true
 
         - name: "Approle | Create the role (short-lived tokens, policy-scoped)"
-          ansible.builtin.command:
-            argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
-                   "vault", "write", "auth/approle/role/{{ approle_name }}",
-                   "token_policies={{ approle_name }}", "token_ttl=15m", "token_max_ttl=30m"]
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/auth/{{ approle_mount }}/role/{{ approle_name }}"
+            method: POST
+            headers:
+              X-Vault-Token: "{{ vault_deploy_token }}"
+            timeout: "{{ vault_api_timeout }}"
+            body_format: json
+            body:
+              token_policies: ["{{ approle_name }}"]
+              token_ttl: "{{ approle_token_ttl }}"
+              token_max_ttl: "{{ approle_token_max_ttl }}"
+            status_code: [200, 204]
           changed_when: true
           no_log: true
 
         - name: "Approle | Fetch role_id"
-          ansible.builtin.command:
-            argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
-                   "vault", "read", "-field=role_id", "auth/approle/role/{{ approle_name }}/role-id"]
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/auth/{{ approle_mount }}/role/{{ approle_name }}/role-id"
+            headers:
+              X-Vault-Token: "{{ vault_deploy_token }}"
+            timeout: "{{ vault_api_timeout }}"
           register: approle_role_id
           check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
           changed_when: false
           no_log: true
 
         - name: "Approle | Mint a secret_id"
-          ansible.builtin.command:
-            argv: ["docker", "exec", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
-                   "vault", "write", "-f", "-field=secret_id", "auth/approle/role/{{ approle_name }}/secret-id"]
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/auth/{{ approle_mount }}/role/{{ approle_name }}/secret-id"
+            method: POST
+            headers:
+              X-Vault-Token: "{{ vault_deploy_token }}"
+            timeout: "{{ vault_api_timeout }}"
+            status_code: [200]
           register: approle_secret_id
           changed_when: true
           no_log: true
@@ -88,8 +123,8 @@
           vars:
             approle_record:
               fields:
-                role_id: "{{ approle_role_id.stdout }}"
-                secret_id: "{{ approle_secret_id.stdout }}"  # pragma: allowlist secret
+                role_id: "{{ approle_role_id.json.data.role_id }}"
+                secret_id: "{{ approle_secret_id.json.data.secret_id }}"  # pragma: allowlist secret
           ansible.builtin.copy:
             dest: "{{ approle_secret_file }}"
             mode: "0600"
