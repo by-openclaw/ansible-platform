@@ -16,17 +16,37 @@ ansible-playbook -i inventories/prod/hosts.yml playbooks/contract-audit.yml -e c
 
 ## Add a check (data-driven)
 Append a row to `contract_audit_checks` (host-wide) or
-`contract_audit_service_checks` (per-group) in `defaults/main.yml`:
+`contract_audit_service_checks` (per-group) in `defaults/main.yml`. A check is a list of
+**probes**; each probe reads one thing on the host — no shell, no pipe — and states what
+that text must say. Every probe of a check must hold.
 
 ```yaml
 - id: SEC-25a                 # ADR check ID from the checklist
-  desc: "sshd listens on port 22222"
-  probe: "sshd -T 2>/dev/null | awk '/^port /{print}'"  # shell run on the host
-  expect: "port 22222"        # regex stdout MUST match (case-insensitive) to PASS
+  desc: "sshd listens on the baseline port"
   groups: ["cluster"]         # optional; omitted/['all'] = every host, else SKIP
-  absent: false               # optional; true = PASS when expect is NOT found
-  delegate_localhost: true    # optional; run the probe on the controller (no sudo)
+  probes:
+    - argv: [sshd, -T]        # a command (a list): its standard output is the text
+      expect: "^port {{ platform_ssh_port }}$"   # regex that must be found
 ```
+
+| What a probe reads | Key | The text is |
+| --- | --- | --- |
+| a command | `argv: [..]` | its standard output |
+| an HTTP GET from the host | `url:` (+ `read: content`, `validate_certs: false`, `timeout:`) | the status code, or the body with `read: content`; redirects are not followed |
+| a file | `file:` | its content (`''` when it does not exist) |
+| a value Ansible holds | `value:` | that value |
+
+| What the text must say | Key |
+| --- | --- |
+| a regex, or each regex of a list, is found | `expect:` |
+| a regex, or any regex of a list, is NOT found | `forbid:` |
+| the number captured is at least a minimum | `capture:` + `min:` |
+| a regex matches exactly N times | `count:` + `equals:` |
+
+Regexes are case-insensitive and `^` / `$` match at each line. A probe that cannot run (no
+such command, no such file, no answer) reads as `''`: the check fails on its own terms.
+`sensitive: true` on a probe whose text carries secrets (a container's `DATABASE_URL`, a
+configuration file): its result is never logged.
 
 ## Scope
 Covers the machine-checkable **runtime** requirements. Non-automatable ADR

@@ -52,7 +52,7 @@ These live in shared data files — the scaffold **asserts** them:
 - **Firewall** — add the port alias + the DMZ→SVC / edge rule to the OPNsense
   catalog in `inventories/prod/group_vars/opnsense.yml` (lib-first; never manual
   drift). Apply scoped: `-e '{"opn_fw_only": ["<name>"]}'`.
-- **Audit** — add a `contract_audit` row (id/desc/probe/expect/groups) in
+- **Audit** — add a `contract_audit` row (id/desc/groups/probes) in
   `roles/contract_audit/defaults/main.yml` so the service's key property is
   enforced fleet-wide.
 

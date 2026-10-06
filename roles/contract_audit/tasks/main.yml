@@ -1,6 +1,6 @@
 ---
 # Idempotent, read-only compliance audit. Every task is changed_when:false —
-# this role never mutates a host. It scores each check PASS/FAIL/SKIP and, when
+# this role never mutates a host and runs no shell. It scores each check PASS/FAIL/SKIP and, when
 # contract_audit_enforce is true, fails the play if any check FAILs.
 
 # NAM-17-nb needs the NetBird API principal's name, which lives in Vault. Read
@@ -22,39 +22,71 @@
   loop: "{{ ansible_play_hosts }}"
   run_once: true
 
-- name: "Contract-audit | Run each applicable probe (read-only)"
-  ansible.builtin.shell: "{{ item.probe }}"
-  args:
-    executable: /bin/bash
-  loop: "{{ contract_audit_checks + contract_audit_service_checks }}"
+# NAM-15 reads the local accounts (/etc/passwd only, as before: no directory lookups).
+- name: "Contract-audit | Local accounts"
+  ansible.builtin.getent:
+    database: passwd
+    service: files
+  check_mode: false  # read-only: must run under --check too (the scorecard reads it)
+
+# SEC-20 reads Lynis's report; a run in progress rewrites it.
+- name: "Contract-audit | Wait for a Lynis run in progress to end"
+  ansible.builtin.command:
+    argv: [pgrep, -x, lynis]
+  register: contract_audit_lynis_running
+  until: contract_audit_lynis_running.rc | default(1) != 0
+  retries: "{{ contract_audit_lynis_wait_retries }}"
+  delay: "{{ contract_audit_lynis_wait_delay }}"
+  check_mode: false  # read-only probe
+  changed_when: false
+  failed_when: false
+
+# One task per kind of probe; each probe reads one thing (no shell, no pipe). A probe that
+# cannot run (no such command, no such file, no answer) is not an error here: it reads as ''
+# and the check fails on its own terms.
+- name: "Contract-audit | Command probes (read-only)"
+  ansible.builtin.command:
+    argv: "{{ item.argv }}"
+  loop: "{{ contract_audit_probe_list | selectattr('argv', 'defined') | list }}"
   loop_control:
-    label: "{{ item.id }}"
-  register: contract_audit_runs
+    label: "{{ item.key }}"
+  register: contract_audit_cmd
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
-  when: >-
-    (item.groups is not defined)
-    or ('all' in item.groups)
-    or ((item.groups | intersect(group_names)) | length > 0)
-  delegate_to: "{{ 'localhost' if (item.delegate_localhost | default(false)) else inventory_hostname }}"
-  become: "{{ not (item.delegate_localhost | default(false)) }}"   # controller checks run without sudo
+  no_log: "{{ item.sensitive | default(false) }}"
+
+- name: "Contract-audit | URL probes (read-only)"
+  ansible.builtin.uri:
+    url: "{{ item.url }}"
+    return_content: "{{ (item.read | default('status')) == 'content' }}"
+    validate_certs: "{{ item.validate_certs | default(true) }}"
+    follow_redirects: none
+    timeout: "{{ item.timeout | default(contract_audit_url_timeout) }}"
+  loop: "{{ contract_audit_probe_list | selectattr('url', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: contract_audit_url
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  failed_when: false
+  no_log: "{{ item.sensitive | default(false) }}"
+
+- name: "Contract-audit | File probes (read-only)"
+  ansible.builtin.slurp:
+    src: "{{ item.file }}"
+  loop: "{{ contract_audit_probe_list | selectattr('file', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: contract_audit_file
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  failed_when: false
+  no_log: "{{ item.sensitive | default(false) }}"
 
 - name: "Contract-audit | Build the scorecard"
   ansible.builtin.set_fact:
-    contract_audit_scorecard: >-
-      {{ contract_audit_scorecard | default([]) + [{
-           'id': item.item.id,
-           'desc': item.item.desc,
-           'status': ('SKIP' if (item.skipped | default(false))
-             else ('PASS'
-               if (((item.stdout | default('') | regex_search(item.item.expect, ignorecase=True)) is not none)
-                    != (item.item.absent | default(false) | bool))
-               else 'FAIL'))
-         }] }}
-  loop: "{{ contract_audit_runs.results }}"
-  loop_control:
-    label: "{{ item.item.id }}"
+    contract_audit_scorecard: "{{ contract_audit_scorecard_built }}"
 
 - name: "Contract-audit | Per-host report"
   ansible.builtin.debug:
