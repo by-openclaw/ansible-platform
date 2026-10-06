@@ -24,7 +24,7 @@
       apiVersion: v1
       kind: Secret
       metadata:
-        name: gitlab-deployer-token
+        name: {{ k3s_ci_deployer_object }}
         namespace: {{ ns.name }}
         annotations: { kubernetes.io/service-account.name: gitlab-deployer }
       type: kubernetes.io/service-account-token
@@ -36,16 +36,15 @@
   register: k3s_ns_apply
   changed_when: "' created' in k3s_ns_apply.stdout or ' configured' in k3s_ns_apply.stdout"
 
+# The token controller fills the Secret a moment after it is created: ask again until the token
+# is there. The Secret comes back as JSON; its fields are read in the next task.
 - name: "k3s | Deployer token + CA (read-only): {{ ns.name }}"
-  ansible.builtin.shell: |
-    set -e
-    for i in $(seq 1 20); do
-      T=$(kubectl -n {{ ns.name }} get secret gitlab-deployer-token -o jsonpath='{.data.token}' 2>/dev/null || true)
-      [ -n "$T" ] && break; sleep 2
-    done
-    CA=$(kubectl -n {{ ns.name }} get secret gitlab-deployer-token -o jsonpath='{.data.ca\.crt}')
-    printf '%s %s' "$T" "$CA"
+  ansible.builtin.command:
+    argv: [kubectl, -n, "{{ ns.name }}", get, secret, "{{ k3s_ci_deployer_object }}", -o, json]
   register: k3s_ns_token
+  until: (k3s_ns_token.stdout | default('', true) | default('{}', true) | from_json).data.token | default('') | length > 0
+  retries: "{{ k3s_ci_deployer_wait_retries }}"
+  delay: "{{ k3s_ci_deployer_wait_delay }}"
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   no_log: true
@@ -55,10 +54,12 @@
     k3s_ns_kubeconfig_b64: >-
       {{ {'apiVersion': 'v1', 'kind': 'Config',
           'clusters': [{'name': 'k3s', 'cluster': {'server': 'https://' ~ k3s_node_ip ~ ':6443',
-                                                  'certificate-authority-data': (k3s_ns_token.stdout.split(' ')[1])}}],
-          'users': [{'name': 'gitlab-deployer', 'user': {'token': (k3s_ns_token.stdout.split(' ')[0] | b64decode)}}],
+                                                  'certificate-authority-data': k3s_ns_secret.data['ca.crt']}}],
+          'users': [{'name': 'gitlab-deployer', 'user': {'token': (k3s_ns_secret.data.token | b64decode)}}],
           'contexts': [{'name': ns.name, 'context': {'cluster': 'k3s', 'user': 'gitlab-deployer', 'namespace': ns.name}}],
           'current-context': ns.name} | to_nice_yaml | b64encode }}
+  vars:
+    k3s_ns_secret: "{{ k3s_ns_token.stdout | from_json }}"
   no_log: true
 
 - name: "k3s | Kubeconfig → Vault (get-or-create): {{ ns.name }}"
