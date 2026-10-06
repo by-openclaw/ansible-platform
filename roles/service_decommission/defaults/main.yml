@@ -4,8 +4,9 @@
 # Data-driven, archive-before-destroy, idempotent. Given a service from the
 # catalog it will (for the components that service declares):
 #   * db      — pg_dump the database (archived), then DROP DATABASE + DROP ROLE
-#   * secrets — archive each in Vault (-> secret/fabric/archive/) + move the
-#               controller fabric file to secrets/_stale/
+#   * secrets — archive each in Vault (a KV path -> secret/archive/<path>, a legacy fabric
+#               name -> secret/fabric/archive/<name>) + move the controller fabric file to
+#               secrets/_stale/
 # A component the service does not declare, or one already gone, is a no-op.
 #
 # NOT handled here (do separately, by design):
@@ -31,6 +32,47 @@ decommission_crowdsec_host: "{{ groups['crowdsec'] | first }}"
 decommission_seaweedfs_host: "{{ groups['seaweedfs'] | first }}"
 decommission_weed_bin: "{{ seaweedfs_weed }}"        # the server container, as roles/seaweedfs_bucket
 decommission_weed_master: "localhost:9333"
+
+# --- Database dump: on the leader, read back, fetched, then removed there ------------------------
+decommission_pg_dump_host_dir: "/var/lib/postgresql/decommission"   # root only
+decommission_pg_dump_file: "{{ decommission_pg_dump_host_dir }}/{{ _svc.db.database }}.dump"
+decommission_pg_dump_umask: "0077"
+# A transient systemd unit runs the command: its standard output (or input) is a file and its
+# exit status is the command's (--wait). How a container's output reaches a file without a shell.
+decommission_pg_unit: [systemd-run, --wait, --collect, --quiet, "--property=UMask={{ decommission_pg_dump_umask }}"]
+decommission_pg_dump_toc: "{{ decommission_pg_dump_list.content | default('') | b64decode }}"
+# pg_restore -l heads its listing with the archive's database (`;     dbname: <name>`).
+decommission_pg_dump_dbname: "{{ decommission_pg_dump_toc | regex_findall('dbname: (\\S+)') | first | default('') }}"
+decommission_pg_dump_entries: "{{ decommission_pg_dump_toc.splitlines() | reject('match', '^\\s*(;|$)') | list | length }}"
+
+# --- Vault: KV v2 through the HTTP API, from the Vault host ------------------------------------
+decommission_vault_host: "{{ platform_vault_host | default(groups['vault'] | first) }}"
+decommission_vault_kv_mount: "{{ vault_kv_path | default('secret') }}"
+decommission_vault_kv_url: "{{ platform_vault_addr }}/v1/{{ decommission_vault_kv_mount }}"
+decommission_vault_timeout: "{{ vault_api_timeout | default(15) }}"
+# <name> = the legacy fabric layout (fabric/<name> -> fabric/archive/<name>); a KV path (it has a
+# "/") goes to archive/<path>.
+decommission_secret_src: "{{ decommission_secret if '/' in decommission_secret else ('fabric/' ~ decommission_secret) }}"
+decommission_secret_dst: "{{ ('archive/' ~ decommission_secret) if '/' in decommission_secret else ('fabric/archive/' ~ decommission_secret) }}"
+decommission_secret_present: "{{ (decommission_secret_cur.status | default(404)) == 200 }}"
+decommission_vault_former_files: ["/tmp/.vt", "/tmp/vault_archive_secret.py"]   # staged by the former tasks
+
+# --- SeaweedFS: `weed shell` reads its commands on standard input -------------------------------
+# weed prints each identity as `"name":  "<id>"` (the spacing varies): the names it holds now.
+decommission_s3_identities: "{{ _s3now.stdout | default('') | regex_findall('\"name\":\\s*\"([^\"]+)\"') }}"
+decommission_weed_shell: "{{ (decommission_weed_bin | split) + ['shell', '-master', decommission_weed_master] }}"
+
+# --- Authentik: its REST API on its host --------------------------------------------------------
+decommission_authentik_port: 9000                                          # roles/authentik: authentik_host_port
+decommission_authentik_api: "http://{{ hostvars[decommission_authentik_host].ansible_host }}:{{ decommission_authentik_port }}/api/v3"
+decommission_authentik_vault_path: "{{ platform_env }}/authentik/admin"    # roles/authentik: authentik_vault_path
+decommission_authentik_token_field: "bootstrap_token"
+decommission_authentik_former_file: "/tmp/authentik_remove_app.py"         # staged by the former task
+# Applications still declared for the blueprints (group_vars/all/sso.yml): Authentik re-applies
+# its blueprints every hour, so an application removed while still declared comes back.
+decommission_authentik_declared: >-
+  {{ ((authentik_oidc_apps | default([])) + (authentik_proxy_apps | default([])))
+     | selectattr('slug', 'defined') | map(attribute='slug') | list }}
 
 # The catalog of decommissionable services + their FULL footprint. Every field is
 # OPTIONAL — declare only the components a service actually has; each is removed

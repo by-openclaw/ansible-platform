@@ -1,0 +1,69 @@
+---
+# Archive ONE Vault KV v2 secret: copy it under the archive prefix, read the copy back, and
+# only then remove the original (all its versions). A secret already absent is skipped.
+# Requests go from the Vault host to Vault's HTTP API; nothing is staged, nothing is printed.
+- name: "decommission | Read the secret (404 = already absent) — {{ decommission_secret }}"
+  ansible.builtin.uri:
+    url: "{{ decommission_vault_kv_url }}/data/{{ decommission_secret_src }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ decommission_vault_timeout }}"
+    status_code: [200, 404]
+  delegate_to: "{{ decommission_vault_host }}"
+  register: decommission_secret_cur
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  no_log: true
+
+- name: "decommission | Copy it under the archive prefix — {{ decommission_secret_dst }}"
+  ansible.builtin.uri:
+    url: "{{ decommission_vault_kv_url }}/data/{{ decommission_secret_dst }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ decommission_vault_timeout }}"
+    body_format: json
+    body:
+      data: "{{ decommission_secret_cur.json.data.data }}"
+    status_code: [200, 204]
+  delegate_to: "{{ decommission_vault_host }}"
+  changed_when: true
+  no_log: true
+  when: decommission_secret_present | bool
+
+- name: "decommission | Read the copy back — {{ decommission_secret_dst }}"
+  ansible.builtin.uri:
+    url: "{{ decommission_vault_kv_url }}/data/{{ decommission_secret_dst }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ decommission_vault_timeout }}"
+  delegate_to: "{{ decommission_vault_host }}"
+  register: decommission_secret_copy
+  changed_when: false
+  no_log: true
+  when:
+    - decommission_secret_present | bool
+    - not ansible_check_mode
+
+- name: "decommission | The copy equals the original — {{ decommission_secret }}"
+  ansible.builtin.assert:
+    that: decommission_secret_copy.json.data.data == decommission_secret_cur.json.data.data
+    fail_msg: "the archived copy of {{ decommission_secret }} differs from the original — the original is kept"
+    quiet: true
+  no_log: true
+  when:
+    - decommission_secret_present | bool
+    - not ansible_check_mode
+
+- name: "decommission | Remove the original (a verified copy is in the archive) — {{ decommission_secret }}"
+  ansible.builtin.uri:
+    url: "{{ decommission_vault_kv_url }}/metadata/{{ decommission_secret_src }}"
+    method: DELETE
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ decommission_vault_timeout }}"
+    status_code: [204]
+  delegate_to: "{{ decommission_vault_host }}"
+  changed_when: true
+  no_log: true
+  when: decommission_secret_present | bool
