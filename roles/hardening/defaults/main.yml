@@ -43,6 +43,34 @@ hardening_fail2ban_extra_jails: []
 # ------------------------------------------------------------------------------
 # Firewall (ufw) — nodes set hardening_ufw_enabled: false (the Proxmox firewall is theirs)
 hardening_ufw_enabled: true
+# The unit that must not run next to ufw, and the rule whose presence means "ufw's ruleset is
+# loaded" (iptables -C exits 0 when the rule exists).
+hardening_ufw_conflicting_unit: "nftables.service"
+hardening_ufw_conflicting_unit_present: >-
+  {{ (((ansible_facts.services | default({}))[hardening_ufw_conflicting_unit] | default({})).status | default('not-found'))
+     != 'not-found' }}
+hardening_ufw_loaded_check: [iptables, -C, INPUT, -j, ufw-before-input]
+hardening_ufw_conf: "/etc/ufw/ufw.conf"
+hardening_ufw_iptables_tools: [iptables, ip6tables]
+# Derived (tasks/firewall.yml): configured as enabled but not loaded; and, from `iptables -S`,
+# ufw's chains still in the kernel and the rules of the built-in chains that jump to them.
+hardening_ufw_broken: "{{ (hardening_ufw_loaded.rc | default(0)) != 0 and (hardening_ufw_conf_enabled.rc | default(1)) == 0 }}"
+hardening_ufw_leftover_chains: >-
+  {%- set out = [] -%}
+  {%- for r in (hardening_ufw_rulesets.results | default([])) if r.stdout is defined -%}
+    {%- for line in r.stdout_lines if line is match('-N ufw6?-') -%}
+      {%- set _ = out.append({'tool': r.item, 'chain': line.split()[1]}) -%}
+    {%- endfor -%}
+  {%- endfor -%}
+  {{ out }}
+hardening_ufw_leftover_jumps: >-
+  {%- set out = [] -%}
+  {%- for r in (hardening_ufw_rulesets.results | default([])) if r.stdout is defined -%}
+    {%- for line in r.stdout_lines if line is match('-A (INPUT|OUTPUT|FORWARD) .*-j ufw6?-') -%}
+      {%- set _ = out.append({'tool': r.item, 'rule': line.split()[1:]}) -%}
+    {%- endfor -%}
+  {%- endfor -%}
+  {{ out }}
 # order ufw after Docker where Docker runs (service facts)
 hardening_ufw_after_docker: "{{ (ansible_facts.services | default({}))['docker.service'] is defined }}"
 # ------------------------------------------------------------------------------

@@ -11,8 +11,20 @@
     state: present
 
 
-- name: "UFW | Service facts (Docker ordering for the unit drop-in)"
+- name: "UFW | Service facts (Docker ordering for the unit drop-in; is nftables.service there)"
   ansible.builtin.service_facts:
+
+# The distribution enables nftables.service, whose stock /etc/nftables.conf begins with
+# `flush ruleset`. ufw writes its rules into that same ruleset (iptables-nft): whenever that
+# unit runs after ufw — a race at every boot — the host firewall is emptied and stays empty.
+# ufw owns the ruleset here, so the unit is disabled and masked. It is NEVER stopped: its
+# ExecStop is `nft flush ruleset`.
+- name: "UFW | nftables.service does not run next to ufw (its configuration flushes the ruleset)"
+  ansible.builtin.systemd_service:
+    name: "{{ hardening_ufw_conflicting_unit }}"
+    enabled: false
+    masked: true
+  when: hardening_ufw_conflicting_unit_present | bool   # a host without the package lists it as not-found
 
 - name: "UFW | Drop-in directory"
   ansible.builtin.file:
@@ -33,6 +45,90 @@
   ansible.builtin.systemd_service:
     daemon_reload: true
   when: hardening_ufw_dropin is changed
+
+# "Enabled" in ufw's configuration is not "loaded in the kernel": after a flush the unit is
+# still active and the configuration still says yes. What counts is the jump from INPUT to
+# ufw's chains. A host that is configured as enabled but has no such jump is repaired HERE,
+# before any rule command (on a half-loaded ruleset ufw's own commands fail). A host where ufw
+# was never enabled is left alone: its rules are declared first and "Enable firewall" loads it.
+- name: "UFW | Is the ruleset loaded? (INPUT jumps to ufw's chains)"
+  ansible.builtin.command:
+    argv: "{{ hardening_ufw_loaded_check }}"
+  register: hardening_ufw_loaded
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  failed_when: false
+
+- name: "UFW | Is it enabled in its configuration?"
+  ansible.builtin.command:
+    argv: [grep, -qx, "ENABLED=yes", "{{ hardening_ufw_conf }}"]
+  register: hardening_ufw_conf_enabled
+  check_mode: false  # read-only probe
+  changed_when: false
+  failed_when: false
+
+# An interrupted load (the flush arriving while ufw was starting) leaves part of ufw's chains:
+# ufw then believes it is started, and its own stop and start both fail on the missing ones
+# ("iptables-restore: No chain/target/match by that name"; a unit restarting every 15 s for
+# three days on one guest). What is left is removed — only chains named ufw-* / ufw6-*, only
+# on a host whose firewall is not loaded — so that the load below starts from nothing.
+# The unit may be in its restart loop (a start every 15 s that changes the ruleset under the
+# tasks below): it is stopped first and started again once the rules are loaded.
+- name: "UFW | Stop the unit while the ruleset is repaired"
+  ansible.builtin.systemd_service:
+    name: ufw.service
+    state: stopped
+  failed_when: false   # its stop command fails on a half-loaded ruleset; the unit is stopped all the same
+  when: hardening_ufw_broken | bool
+
+- name: "UFW | What an interrupted load left in the kernel (IPv4, IPv6)"
+  ansible.builtin.command:
+    argv: ["{{ item }}", "-S"]
+  loop: "{{ hardening_ufw_iptables_tools }}"
+  register: hardening_ufw_rulesets
+  check_mode: false  # read-only probe
+  changed_when: false
+  failed_when: false
+  when: hardening_ufw_broken | bool
+
+- name: "UFW | Leftover: the jumps from the built-in chains"
+  ansible.builtin.command:
+    argv: "{{ [item.tool, '-D'] + item.rule }}"
+  loop: "{{ hardening_ufw_leftover_jumps }}"
+  loop_control:
+    label: "{{ item.tool }} {{ item.rule | join(' ') }}"
+  changed_when: true
+  when: hardening_ufw_broken | bool
+
+# Every chain is emptied before any is deleted: they refer to each other.
+- name: "UFW | Leftover: empty the chains"
+  ansible.builtin.command:
+    argv: ["{{ item.tool }}", "-F", "{{ item.chain }}"]
+  loop: "{{ hardening_ufw_leftover_chains }}"
+  loop_control:
+    label: "{{ item.tool }} {{ item.chain }}"
+  changed_when: true
+  when: hardening_ufw_broken | bool
+
+- name: "UFW | Leftover: delete the chains"
+  ansible.builtin.command:
+    argv: ["{{ item.tool }}", "-X", "{{ item.chain }}"]
+  loop: "{{ hardening_ufw_leftover_chains }}"
+  loop_control:
+    label: "{{ item.tool }} {{ item.chain }}"
+  changed_when: true
+  when: hardening_ufw_broken | bool
+
+- name: "UFW | Load the rules: the firewall is enabled but its ruleset was not in the kernel"
+  community.general.ufw:
+    state: enabled
+  when: hardening_ufw_broken | bool
+
+- name: "UFW | Start the unit again (it finds the rules loaded)"
+  ansible.builtin.systemd_service:
+    name: ufw.service
+    state: started
+  when: hardening_ufw_broken | bool
 
 - name: "UFW | Set default incoming policy to deny"
   community.general.ufw:
@@ -60,3 +156,19 @@
   community.general.ufw:
     state: enabled
   notify: Reload ufw
+
+# The role does not end on a host without its firewall.
+- name: "UFW | Is the ruleset loaded now?"
+  ansible.builtin.command:
+    argv: "{{ hardening_ufw_loaded_check }}"
+  register: hardening_ufw_loaded_after
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: "UFW | The host firewall is loaded"
+  ansible.builtin.assert:
+    that: hardening_ufw_loaded_after.rc == 0
+    fail_msg: "ufw is enabled on {{ inventory_hostname }} but INPUT does not jump to its chains: the host has no firewall"
+    quiet: true
+  when: not ansible_check_mode
