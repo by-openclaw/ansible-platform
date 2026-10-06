@@ -1,0 +1,55 @@
+---
+# update.sh needs a full clone on a branch (a shallow, tag-detached checkout fails with "No current
+# branch" AFTER it stopped the stack — 2026-10-02 incident, 9 min without mail). An install made
+# before this rule is converted in place: unshallow + local branch master at the current commit.
+# Every step is one git call; a step that fails stops the play here, before update.sh touches the stack.
+- name: "install | The standard refspec (a clone made at a tag only ever fetched that tag)"
+  ansible.builtin.command:
+    argv: [git, config, remote.origin.fetch, "+refs/heads/*:refs/remotes/origin/*"]
+    chdir: "{{ mailcow_install_dir }}"
+  changed_when: false
+
+- name: "install | Is the checkout shallow?"
+  ansible.builtin.stat:
+    path: "{{ mailcow_install_dir }}/.git/shallow"
+  register: mailcow_shallow
+
+- name: "install | Fetch the full history (a shallow checkout)"
+  ansible.builtin.command:
+    argv: [git, fetch, -q, --unshallow, origin]
+    chdir: "{{ mailcow_install_dir }}"
+  when: mailcow_shallow.stat.exists
+  changed_when: true
+
+- name: "install | Fetch the branches"
+  ansible.builtin.command:
+    argv: [git, fetch, -q, origin]
+    chdir: "{{ mailcow_install_dir }}"
+  changed_when: false
+
+- name: "install | Is there a local branch master?"
+  ansible.builtin.command:
+    argv: [git, rev-parse, --verify, -q, master]
+    chdir: "{{ mailcow_install_dir }}"
+  register: mailcow_master_branch
+  changed_when: false
+  failed_when: false
+
+- name: "install | Create the branch master at the current commit"
+  ansible.builtin.command:
+    argv: [git, checkout, -q, -b, master]
+    chdir: "{{ mailcow_install_dir }}"
+  when: mailcow_master_branch.rc != 0
+  changed_when: true
+
+- name: "install | master follows origin/master"
+  ansible.builtin.command:
+    argv: [git, branch, -q, --set-upstream-to=origin/master, master]
+    chdir: "{{ mailcow_install_dir }}"
+  changed_when: false
+
+- name: "install | Be on master"
+  ansible.builtin.command:
+    argv: [git, checkout, -q, master]
+    chdir: "{{ mailcow_install_dir }}"
+  changed_when: false
