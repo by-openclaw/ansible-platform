@@ -7,82 +7,89 @@
 #     one is minted by NetBox (v2, hashed) and its plaintext written back to Vault.
 #   * superusers: the login pipeline (extra.py) only touches the user who logs in; a flag set
 #     earlier stays. Superuser = active members of the admin group (people.yml) + the local admin.
-# Runs through NetBox's own shell (docker exec), never touches the database directly.
+# Through NetBox's own REST API on the host (no shell, no program fed to NetBox's shell, no
+# secret in a task environment): the token is validated with a request it authenticates, a new
+# one is provisioned with the local admin's password, superusers are set with PATCH requests.
 # ==============================================================================
-- name: "rbac | The reconcile script (NetBox shell)"
-  ansible.builtin.copy:
-    dest: "{{ netbox_scripts_dir }}/rbac.py"
-    owner: root
-    group: root
-    mode: "0640"
-    content: |
-      import json, os, traceback
-      out = {"changed": [], "token": "", "error": ""}
-      try:
-          from users.models import Token, User
-          admin = User.objects.get(username=os.environ["U"])
-          held = os.environ.get("T", "")
-          valid = any(t.validate(held) for t in admin.tokens.all()) if held else False
-          if not valid:
-              t = Token(user=admin, description="break-glass token (Vault netbox/admin, roles/netbox)", write_enabled=True)
-              t.save()
-              out["token"] = t.token
-              out["changed"].append("token")
-          allowed = set(filter(None, os.environ.get("ADMINS", "").split(","))) | {admin.username}
-          for u in User.objects.all():
-              want = u.username in allowed
-              if u.is_superuser != want:
-                  u.is_superuser = want
-                  u.save()
-                  out["changed"].append("superuser:" + u.username + "=" + str(want))
-      except Exception:
-          # a traceback never carries the token (environment values are not printed); keep the tail
-          out["error"] = traceback.format_exc()[-800:]
-      print("RBAC " + json.dumps(out))
+# The program this role used to stage for NetBox's shell is superseded by the tasks below.
+- name: "rbac | The staged reconcile script is gone"
+  ansible.builtin.file:
+    path: "{{ netbox_scripts_dir }}/rbac.py"
+    state: absent
 
-- name: "rbac | Validate the break-glass token and reconcile the superusers"
-  ansible.builtin.shell: |
-    set -o pipefail
-    docker exec -i -e T="$T" -e U="$U" -e ADMINS="$ADMINS" netbox \
-      /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py shell < {{ netbox_scripts_dir }}/rbac.py | grep -E '^RBAC '
-  args:
-    executable: /bin/bash
-  environment:
-    T: "{{ netbox_secrets.superuser_api_token | default('') }}"   # pragma: allowlist secret — a Vault reference, no value
-    U: "{{ netbox_superuser_name }}"
-    ADMINS: "{{ netbox_superusers | join(',') }}"
-  register: netbox_rbac_out
-  vars:
-    netbox_rbac_parsed: "{{ netbox_rbac_out.stdout | default('RBAC {}') | regex_replace('^RBAC ', '') | from_json }}"
-  changed_when: netbox_rbac_parsed.changed | default([]) | length > 0
-  failed_when: netbox_rbac_out.rc != 0 or (netbox_rbac_parsed.error | default('')) | length > 0
+- name: "rbac | Is the break-glass token valid? (a request it authenticates)"
+  ansible.builtin.uri:
+    url: "{{ netbox_api_url }}/api/status/"
+    headers:
+      Authorization: "{{ netbox_token_scheme_held }} {{ netbox_token_held }}"
+    status_code: [200, 401, 403]
+  register: netbox_token_check
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
   no_log: true
-  when: not ansible_check_mode
+  when: netbox_token_held | length > 0
 
-- name: "rbac | Show the script error when there is one (traceback tail, nothing sensitive)"
-  ansible.builtin.debug:
-    msg: "{{ (netbox_rbac_out.stdout | default('RBAC {}') | regex_replace('^RBAC ', '') | from_json).error | default('') }}"
+# NetBox mints the token itself (hashed at rest) and shows its plaintext once: it goes to Vault.
+- name: "rbac | Provision a break-glass token with the local admin's password (none is valid)"
+  ansible.builtin.uri:
+    url: "{{ netbox_api_url }}/api/users/tokens/provision/"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ netbox_superuser_name }}"
+      password: "{{ netbox_secrets.superuser_password }}"
+      description: "{{ netbox_token_description }}"
+      write_enabled: true
+    status_code: [201]
+  register: netbox_token_minted
+  changed_when: true
+  no_log: true
   when:
     - not ansible_check_mode
-    - (netbox_rbac_out.stdout | default('RBAC {}') | regex_replace('^RBAC ', '') | from_json).error | default('') | length > 0
-
-- name: "rbac | Keep the result"
-  ansible.builtin.set_fact:
-    netbox_rbac: "{{ netbox_rbac_out.stdout | regex_replace('^RBAC ', '') | from_json }}"
-  no_log: true
-  when: not ansible_check_mode
+    - not (netbox_token_valid | bool)
 
 - name: "rbac | A freshly minted token goes to Vault (overwrite the dead field)"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
     vault_secret_path: "{{ netbox_vault_path }}"
-    vault_secret_init: { superuser_api_token: "{{ netbox_rbac.token }}" }   # pragma: allowlist secret
-    vault_secret_force_fields: { superuser_api_token: "{{ netbox_rbac.token }}" }   # pragma: allowlist secret
+    vault_secret_init: { superuser_api_token: "{{ netbox_token_now }}" }   # pragma: allowlist secret
+    vault_secret_force_fields: { superuser_api_token: "{{ netbox_token_now }}" }   # pragma: allowlist secret
   when:
     - not ansible_check_mode
-    - netbox_rbac.token | default('') | length > 0
+    - netbox_token_minted is changed
+
+- name: "rbac | The users NetBox knows"
+  ansible.builtin.uri:
+    url: "{{ netbox_api_url }}/api/users/users/?limit=0"
+    headers:
+      Authorization: "{{ netbox_token_scheme_now }} {{ netbox_token_now }}"
+  register: netbox_users
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  no_log: true
+  when: netbox_token_now | length > 0
+
+# The login pipeline (extra.py) only touches the user who logs in; a flag set earlier stays.
+- name: "rbac | Superuser = active members of the admin group + the local admin"
+  ansible.builtin.uri:
+    url: "{{ netbox_api_url }}/api/users/users/{{ item.id }}/"
+    method: PATCH
+    headers:
+      Authorization: "{{ netbox_token_scheme_now }} {{ netbox_token_now }}"
+    body_format: json
+    body:
+      is_superuser: "{{ item.want | bool }}"
+    status_code: [200]
+  loop: "{{ netbox_superuser_changes }}"
+  loop_control:
+    label: "{{ item.username }} → {{ item.want }}"
+  changed_when: true
+  no_log: true
 
 - name: "rbac | Summary (no secrets)"
   ansible.builtin.debug:
-    msg: "superusers = {{ netbox_superusers + [netbox_superuser_name] }}; changes this run: {{ netbox_rbac.changed | default(['(dry-run)']) }}"
+    msg: >-
+      superusers = {{ netbox_superusers_wanted }};
+      token {{ 'provisioned and written to Vault' if netbox_token_minted is changed else ('valid' if netbox_token_valid | bool else 'not checked (dry run)') }};
+      changes this run: {{ netbox_superuser_changes | map(attribute='username') | list }}
