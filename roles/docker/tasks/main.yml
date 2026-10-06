@@ -117,3 +117,9 @@
 - name: "Docker | Published container ports on the host firewall (DOCKER-USER)"
   ansible.builtin.import_tasks: docker_user.yml
   tags: [docker, firewall]
+
+# Imported, not included: the tag reaches the tasks, so `--tags images` runs the cleanup alone.
+- name: "Docker | Images of versions no container uses any more"
+  ansible.builtin.import_tasks: superseded_images.yml
+  when: docker_superseded_images_remove | bool
+  tags: [docker, images]
