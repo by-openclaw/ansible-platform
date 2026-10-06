@@ -28,10 +28,9 @@
     ansible_python_interpreter: /usr/bin/python3
   tasks:
     - name: Tunnel | Kill any stale tunnel on port 8443
-      ansible.builtin.shell:
-        cmd: "fuser -k 8443/tcp 2>/dev/null || true"
-        executable: /bin/bash
-      failed_when: false
+      ansible.builtin.command:
+        argv: [fuser, -k, 8443/tcp]
+      failed_when: false   # nothing holds the port = fuser exits 1
       changed_when: false
       check_mode: false
       when: opnsense_use_tunnel | default(false) | bool
@@ -227,10 +226,9 @@
     ansible_python_interpreter: /usr/bin/python3
   tasks:
     - name: Tunnel | Close SSH port-forward
-      ansible.builtin.shell:
-        cmd: "fuser -k 8443/tcp 2>/dev/null || true"
-        executable: /bin/bash
-      failed_when: false
+      ansible.builtin.command:
+        argv: [fuser, -k, 8443/tcp]
+      failed_when: false   # nothing holds the port = fuser exits 1
       changed_when: false
       check_mode: false
       when: opnsense_use_tunnel | default(false) | bool

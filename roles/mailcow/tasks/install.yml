@@ -61,20 +61,7 @@
 # branch" AFTER it stopped the stack — 2026-10-02 incident, 9 min without mail). An install made
 # before this rule is converted in place: unshallow + local branch master at the current commit.
 - name: "install | A full clone on branch master (converts an older shallow checkout in place)"
-  ansible.builtin.shell: |
-    set -e
-    cd {{ mailcow_install_dir }}
-    # a clone made at a tag only ever fetched that tag: restore the standard refspec first
-    git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
-    [ -f .git/shallow ] && git fetch -q --unshallow origin || true
-    git fetch -q origin
-    git rev-parse --verify -q master >/dev/null || git checkout -q -b master
-    git branch -q --set-upstream-to=origin/master master
-    git checkout -q master
-  args:
-    executable: /bin/bash
-  register: mailcow_branch_fix
-  changed_when: "'shallow' in (mailcow_branch_fix.stderr | default(''))"
+  ansible.builtin.include_tasks: full_clone.yml
   when: mailcow_release_now_tag != mailcow_git_version
 
 - name: "install | Prefetch the images of the new release (shortens the restart)"
@@ -115,15 +102,17 @@
 # unbound lost its static .254 (internal DNS dead, web/dockerapi down) twice on 2026-10-02.
 # So: read the network keys, render, and if they differ stop the stack first; the compose
 # step then recreates every container with its static address.
+# The file carries passwords: it is read into memory (no_log) and only its network keys are kept.
+- name: "install | The live mailcow.conf (before render; absent on a first install)"
+  ansible.builtin.slurp:
+    src: "{{ mailcow_install_dir }}/mailcow.conf"
+  register: mailcow_conf_before
+  failed_when: false
+  no_log: true
+
 - name: "install | Network keys of the live mailcow.conf (before render)"
-  ansible.builtin.shell: |
-    set -o pipefail
-    grep -E '^(ENABLE_IPV6|IPV4_NETWORK|IPV6_NETWORK)=' {{ mailcow_install_dir }}/mailcow.conf 2>/dev/null | sort || true
-  args:
-    executable: /bin/bash
-  register: mailcow_net_before
-  changed_when: false
-  check_mode: false   # read-only probe
+  ansible.builtin.set_fact:
+    mailcow_net_before: "{{ mailcow_conf_before.content | default('') | b64decode | regex_findall(mailcow_network_keys_regex, multiline=true) | sort }}"
 
 - name: "install | Render mailcow.conf"
   ansible.builtin.template:
@@ -134,15 +123,17 @@
     mode: "0600"
   no_log: true # carries DB/Redis passwords
 
+- name: "install | The mailcow.conf after render"
+  ansible.builtin.slurp:
+    src: "{{ mailcow_install_dir }}/mailcow.conf"
+  register: mailcow_conf_after
+  failed_when: false   # under --check on a first install there is no file yet
+  no_log: true
+
+# Under --check the file is unchanged: before == after.
 - name: "install | Network keys after render"
-  ansible.builtin.shell: |
-    set -o pipefail
-    grep -E '^(ENABLE_IPV6|IPV4_NETWORK|IPV6_NETWORK)=' {{ mailcow_install_dir }}/mailcow.conf 2>/dev/null | sort || true
-  args:
-    executable: /bin/bash
-  register: mailcow_net_after
-  changed_when: false
-  check_mode: false   # read-only probe (under --check the file is unchanged: before == after)
+  ansible.builtin.set_fact:
+    mailcow_net_after: "{{ mailcow_conf_after.content | default('') | b64decode | regex_findall(mailcow_network_keys_regex, multiline=true) | sort }}"
 
 - name: "install | Network definition changed: stop the stack so the compose step recreates it with static addresses"
   ansible.builtin.include_role:
@@ -152,7 +143,7 @@
     compose_stack_env_files: ["{{ mailcow_install_dir }}/mailcow.conf"]   # COMPOSE_PROJECT_NAME lives there
     compose_stack_state: absent
   when:
-    - mailcow_net_before.stdout != mailcow_net_after.stdout
+    - mailcow_net_before != mailcow_net_after
     - not ansible_check_mode
 
 # generate_config.sh (which we skip — we template mailcow.conf) also creates the
