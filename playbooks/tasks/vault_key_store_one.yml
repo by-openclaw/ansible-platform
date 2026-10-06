@@ -1,6 +1,7 @@
 ---
 # Store ONE rotated key's passphrase (+created metadata for the 365-day rule)
 # and the private/public pair backup into Vault. loop_var: keyres.
+# Vault's HTTP API on the node: the token and the documents travel in the module call.
 - name: "Keystore | Slurp the pair — {{ keyres.item.name }}"
   ansible.builtin.slurp:
     src: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_{{ keyres.item.name }}{{ item }}"
@@ -25,12 +26,16 @@
       created: "{{ '%Y-%m-%d' | strftime }}"
       fingerprint: "{{ keystore_fp.stdout.split(' ')[1] }}"
       key_file: "id_ed25519_{{ keyres.item.name }}"
-  ansible.builtin.command:
-    argv: ["docker", "exec", "-i", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
-           "vault", "kv", "put", "-mount={{ vault_kv_path }}",
-           "{{ platform_env }}/{{ keyres.item.vault_svc }}/ssh-passphrase", "-"]
-    stdin: "{{ keystore_pass_doc | to_json }}"
-    stdin_add_newline: false
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/{{ vault_kv_path }}/data/{{ platform_env }}/{{ keyres.item.vault_svc }}/ssh-passphrase"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      data: "{{ keystore_pass_doc }}"
+    status_code: [200, 204]
   changed_when: true
   no_log: true
 
@@ -39,11 +44,15 @@
     keystore_key_doc:
       private_b64: "{{ keystore_pair.results[0].content }}"  # pragma: allowlist secret
       public: "{{ keystore_pair.results[1].content | b64decode }}"
-  ansible.builtin.command:
-    argv: ["docker", "exec", "-i", "-e", "VAULT_TOKEN={{ vault_root_token }}", "{{ vault_container_name }}",
-           "vault", "kv", "put", "-mount={{ vault_kv_path }}",
-           "{{ platform_env }}/{{ keyres.item.vault_svc }}/ssh-key", "-"]
-    stdin: "{{ keystore_key_doc | to_json }}"
-    stdin_add_newline: false
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/{{ vault_kv_path }}/data/{{ platform_env }}/{{ keyres.item.vault_svc }}/ssh-key"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      data: "{{ keystore_key_doc }}"
+    status_code: [200, 204]
   changed_when: true
   no_log: true

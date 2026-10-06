@@ -23,7 +23,10 @@ security_audit_helper_dir: "/usr/local/bin"
 security_audit_reboot_flag: "/var/run/reboot-required"
 security_audit_docker_socket: "/var/run/docker.sock"
 security_audit_image_format: "{% raw %}{{.Image}}{% endraw %}"
-security_audit_trivy_template: "{% raw %}{{ range . }}{{ range .Vulnerabilities }}{{ .Severity }}{{ \"\\n\" }}{{ end }}{{ end }}{% endraw %}"
+# One line per finding: its severity, and whether a fixed version is published ("fix") or not
+# ("nofix") — an upgrade of the image can only remove the first kind.
+security_audit_trivy_template: "{% raw %}{{ range . }}{{ range .Vulnerabilities }}{{ .Severity }} {{ if .FixedVersion }}fix{{ else }}nofix{{ end }}{{ \"\\n\" }}{{ end }}{{ end }}{% endraw %}"
+security_audit_fix_word: "fix"
 security_audit_cve_list_max: 50
 security_audit_docker_root_format: "{% raw %}{{.DockerRootDir}}{% endraw %}"
 security_audit_image_size_format: "{% raw %}{{.Size}}{% endraw %}"
@@ -65,5 +68,7 @@ security_audit_image_record:
   size_mb: "{{ security_audit_image_size_mb | int }}"
   scanned: "{{ security_audit_image_scanned | bool }}"
   reason: "{{ security_audit_image_reason }}"
-  critical: "{{ security_audit_image_severities | select('eq', 'CRITICAL') | list | length }}"
-  high: "{{ security_audit_image_severities | select('eq', 'HIGH') | list | length }}"
+  critical: "{{ security_audit_image_severities | select('match', '^CRITICAL( |$)') | list | length }}"
+  high: "{{ security_audit_image_severities | select('match', '^HIGH( |$)') | list | length }}"
+  critical_fixable: "{{ security_audit_image_severities | select('eq', 'CRITICAL ' ~ security_audit_fix_word) | list | length }}"
+  high_fixable: "{{ security_audit_image_severities | select('eq', 'HIGH ' ~ security_audit_fix_word) | list | length }}"
