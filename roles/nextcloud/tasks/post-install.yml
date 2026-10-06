@@ -168,21 +168,6 @@
   when: nextcloud_oidc is defined
 
 # --- Outbound email: the nextcloud@ service mailbox (Mailcow, STARTTLS 587). Stored in config.php
-# DB password rotation (SVC-28/SEC-09): config.php owns dbpassword after the first-run install —
-# the env var no longer applies (learned 2026-09-02: a rotation left config.php stale and
-# Nextcloud answered 500 until fixed). The current credential goes into a config fragment:
-# Nextcloud loads config/*.config.php after config.php and the later file wins, so a rotation needs
-# only this file — and no `occ`, which cannot start while the password it holds is wrong.
-- name: "post-install | The database credential Nextcloud reads (config fragment, wins over config.php)"
-  community.docker.docker_container_copy_into:
-    container: "{{ nextcloud_container }}"
-    container_path: "{{ nextcloud_config_dir }}/{{ nextcloud_db_fragment }}"
-    content: "{{ nextcloud_db_fragment_content }}"
-    owner_id: "{{ nextcloud_web_uid }}"
-    group_id: "{{ nextcloud_web_gid }}"
-    mode: "0640"
-  no_log: true
-
 # via occ (the official image exposes no mail_* env). All idempotent. Port 465 =>
 # implicit TLS (ssl), otherwise STARTTLS (tls).
 - name: "post-install | Configure SMTP mail (own mailbox via Mailcow)"
