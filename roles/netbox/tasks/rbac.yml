@@ -87,9 +87,35 @@
   changed_when: true
   no_log: true
 
+- name: "rbac | The API tokens NetBox holds"
+  ansible.builtin.uri:
+    url: "{{ netbox_api_url }}/api/users/tokens/?limit=0"
+    headers:
+      Authorization: "{{ netbox_token_scheme_now }} {{ netbox_token_now }}"
+  register: netbox_tokens
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  no_log: true
+  when: netbox_token_now | length > 0
+
+- name: "rbac | One break-glass token: the earlier ones are removed"
+  ansible.builtin.uri:
+    url: "{{ netbox_api_url }}/api/users/tokens/{{ item.id }}/"
+    method: DELETE
+    headers:
+      Authorization: "{{ netbox_token_scheme_now }} {{ netbox_token_now }}"
+    status_code: [204]
+  loop: "{{ netbox_tokens_stale }}"
+  loop_control:
+    label: "token {{ item.id }}"
+  changed_when: true
+  no_log: true
+  when: netbox_token_key_now | length > 0
+
 - name: "rbac | Summary (no secrets)"
   ansible.builtin.debug:
     msg: >-
       superusers = {{ netbox_superusers_wanted }};
       token {{ 'provisioned and written to Vault' if netbox_token_minted is changed else ('valid' if netbox_token_valid | bool else 'not checked (dry run)') }};
-      changes this run: {{ netbox_superuser_changes | map(attribute='username') | list }}
+      superuser changes this run: {{ netbox_superuser_changes | map(attribute='username') | list }};
+      earlier break-glass tokens removed: {{ netbox_tokens_stale | length }}

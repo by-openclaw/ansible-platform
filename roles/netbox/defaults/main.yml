@@ -80,7 +80,22 @@ netbox_token_v2_prefix: "nbt_"                 # a v2 token authenticates as Bea
 netbox_token_held: "{{ netbox_secrets.superuser_api_token | default('') }}"   # pragma: allowlist secret
 netbox_token_scheme_held: "{{ 'Bearer' if netbox_token_held.startswith(netbox_token_v2_prefix) else 'Token' }}"
 netbox_token_valid: "{{ (netbox_token_check.status | default(0)) == 200 }}"
-netbox_token_now: "{{ netbox_token_minted.json.token | default(netbox_token_minted.json.key | default(netbox_token_held if (netbox_token_valid | bool) else '')) }}"   # pragma: allowlist secret
+# What NetBox returns for a provisioned token: a v2 token is a key (public id) and a token (the
+# secret); the credential that authenticates is `nbt_<key>.<token>`, sent as Bearer. That whole
+# string is what Vault holds. (Until 2026-10-06 only the secret half was stored: it could not
+# authenticate by itself.) A v1 token is its key alone, sent as Token.
+netbox_token_minted_credential: >-
+  {{ (netbox_token_v2_prefix ~ netbox_token_minted.json.key ~ '.' ~ netbox_token_minted.json.token)
+     if (netbox_token_minted.json.version | default(1) | int) == 2
+     else (netbox_token_minted.json.key | default('')) }}
+netbox_token_now: >-
+  {{ netbox_token_minted_credential if (netbox_token_minted is changed)
+     else (netbox_token_held if (netbox_token_valid | bool) else '') }}
+netbox_token_key_now: "{{ netbox_token_now | regex_replace('^' ~ netbox_token_v2_prefix, '') | regex_replace('[.].*$', '') }}"
+# Earlier break-glass tokens (same description, another key): stray credentials, removed.
+netbox_tokens_stale: >-
+  {{ netbox_tokens.json.results | default([]) | selectattr('description', 'eq', netbox_token_description)
+     | rejectattr('key', 'eq', netbox_token_key_now) | list }}
 netbox_token_scheme_now: "{{ 'Bearer' if netbox_token_now.startswith(netbox_token_v2_prefix) else 'Token' }}"
 netbox_superusers_wanted: "{{ (netbox_superusers + [netbox_superuser_name]) | unique }}"
 netbox_superuser_changes: >-
