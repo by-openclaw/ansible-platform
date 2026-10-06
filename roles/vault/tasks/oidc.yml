@@ -87,6 +87,45 @@
     vault_oidc_accessor: "{{ vault_auth_list2.json.data[vault_oidc_mount ~ '/'].accessor }}"
   no_log: true
 
+# The three writes below are sent only on a difference. Vault never gives the client secret back, so
+# what was applied is remembered as a short hash in the metadata of the admin group: a rotated
+# client secret is seen as a difference like any other field.
+- name: "oidc | The OIDC configuration as Vault holds it"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/auth/{{ vault_oidc_mount }}/config"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 404]
+  register: vault_oidc_config_now
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  no_log: true
+
+- name: "oidc | The default role as Vault holds it"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/auth/{{ vault_oidc_mount }}/role/{{ vault_oidc_default_role }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 404]
+  register: vault_oidc_role_now
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  no_log: true
+
+- name: "oidc | The admin group as Vault holds it"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/identity/group/name/{{ vault_oidc_admin_group }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 404]
+  register: vault_oidc_group_now
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  no_log: true
+
 - name: "oidc | Configure auth/oidc (Authentik discovery + client)"
   ansible.builtin.uri:
     url: "{{ vault_api_addr }}/v1/auth/{{ vault_oidc_mount }}/config"
@@ -101,6 +140,7 @@
       oidc_client_secret: "{{ vault_oidc.client_secret }}"
       default_role: "{{ vault_oidc_default_role }}"
     status_code: [200, 204]
+  when: vault_oidc_config_drift | bool
   no_log: true
   changed_when: true
 
@@ -120,6 +160,7 @@
       oidc_scopes: "{{ vault_oidc_scopes }}"
       allowed_redirect_uris: "{{ vault_oidc.redirect_uris }}"
     status_code: [200, 204]
+  when: vault_oidc_role_drift | bool
   no_log: true
   changed_when: true
 
@@ -135,7 +176,10 @@
       name: "{{ vault_oidc_admin_group }}"
       type: external
       policies: ["{{ vault_admin_policy_name }}"]
+      metadata:
+        oidc_client_mark: "{{ vault_oidc_client_mark }}"   # a short hash of the client secret that was applied, never the value
     status_code: [200, 204]
+  when: vault_oidc_group_drift | bool
   no_log: true
   changed_when: true
 
