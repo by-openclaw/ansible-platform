@@ -30,15 +30,32 @@
   ansible.builtin.set_fact:
     opnsense_provision_vm_present: "{{ (opnsense_provision_vm_info.proxmox_vms | default([])) | length > 0 }}"
 
-# umask 022: the CT/VM backup helpers must read vzdump's temp dir; a hardened root session
-# (umask 027) makes every container backup fail with "pct.conf - Permission denied" (2026-09-22).
+# vzdump as a transient unit with its own umask: a hardened root session (umask 027) makes the
+# backup helpers fail on the temp directory ("pct.conf - Permission denied", 2026-09-22), and a
+# command module has no umask of its own. `systemd-run --wait` returns vzdump's exit code.
+# (community.proxmox.proxmox_backup would be the module for this; in the collection version pinned
+# here, 1.6.0, it fails with "get_storages() got an unexpected keyword argument 'type'".)
 - name: "Decommission | Archive the VM first (vzdump) → {{ opnsense_provision_archive_storage }}"
-  ansible.builtin.shell:
-    cmd: >-
-      umask 022 && vzdump {{ opnsense_provision_vmid }}
-      --storage {{ opnsense_provision_archive_storage }} --mode snapshot --compress zstd --quiet 1
-      --notes-template 'ARCHIVE before decommission {{ lookup("pipe", "date -u +%F") }}
-      — {{ "{{" }}guestname{{ "}}" }} (VMID {{ "{{" }}vmid{{ "}}" }})'
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - --wait
+      - --collect
+      - --quiet
+      - --pipe
+      - "--property=UMask={{ opnsense_provision_archive_umask }}"
+      - /usr/bin/vzdump
+      - "{{ opnsense_provision_vmid }}"
+      - --storage
+      - "{{ opnsense_provision_archive_storage }}"
+      - --mode
+      - snapshot
+      - --compress
+      - zstd
+      - --quiet
+      - "1"
+      - --notes-template
+      - "{{ opnsense_provision_archive_note }}"
   register: opnsense_provision_archive
   changed_when: true
   delegate_to: "{{ opnsense_provision_pve_node_host }}"
