@@ -8,6 +8,20 @@ seaweedfs_container: seaweedfs
 seaweedfs_backup_container: seaweedfs-backup
 seaweedfs_weed: "docker exec -i {{ seaweedfs_container }} weed"
 
+# External buckets mirrored INTO the platform S3 — roles/seaweedfs renders one roles/host_job timer
+# per entry (pinned rclone, credentials from Vault, logs → journald → Loki, failure → alert). A
+# second copy of data whose primary lives at a provider; the direction flips when that primary
+# moves on-prem. Changed/deleted objects land in `<bucket>-trash/<date>` and are purged after
+# keep_deleted_days.
+# (This block was deleted by mistake in c7296680 on 2026-10-05 and restored on 2026-10-06.)
+seaweedfs_mirrors:
+  - name: nextcloud-data                                   # audit nextcloud gap 1 (INF-41/42)
+    source: "{{ platform_external_s3.contabo }}"
+    source_bucket: "{{ platform_nextcloud_bucket }}"
+    bucket: nextcloud-data-mirror
+    schedule: "*-*-* 03:30:00"
+    keep_deleted_days: 30
+
 # Where objects are written WITH the S3 server-side-encryption header: they are bound to the
 # object store's key-encryption key, and its rotation (roles/seaweedfs rotate_sse.yml) refuses
 # to run while one exists, in any bucket. Today: the mailbox exports (roles/mailbox uploads
