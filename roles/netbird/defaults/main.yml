@@ -111,9 +111,14 @@ netbird_events_pg_database: "netbird_events"     # activity events store
 netbird_events_pg_user: "netbird_events"
 netbird_events_pg_vault_path: "{{ platform_env }}/netbird/db-pgsql-events"
 netbird_pg_sslrootcert: "/etc/ssl/certs/ca-certificates.crt"   # host trust store (platform CA), mounted read-only
-# One-time SQLite → PostgreSQL migration (tasks/store.yml), only while the live
-# management.json still says sqlite. The SQLite files are archived, never removed.
+# Where the one-time SQLite → PostgreSQL migration (archived: tasks/_archive/store_migration.yml)
+# kept the SQLite files; tasks/retired.yml still reads it. The files are archived, never removed.
 netbird_sqlite_archive_dir: "/var/backups/netbird"
+# Is the LIVE management.json still on SQLite? (tasks/store.yml refuses to go on if it is.)
+netbird_store_on_sqlite: >-
+  {{ netbird_store_engine == 'postgres'
+     and (netbird_live_mgmt_json.content is defined)
+     and ((netbird_live_mgmt_json.content | b64decode | from_json).StoreConfig.Engine | default('sqlite')) == 'sqlite' }}
 
 # --- TURN -----------------------------------------------------------------------
 netbird_turn_domain: "{{ netbird_fqdn }}"
