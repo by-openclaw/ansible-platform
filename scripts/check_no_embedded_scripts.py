@@ -38,7 +38,8 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "scripts" / "embedded_scripts_baseline.json"
 TREES = ("roles", "playbooks")
-EXCLUDED_PARTS = ("playbooks/archive/", "playbooks/_archive/")
+# An archive folder holds what is no longer run (playbooks/archive/, a role's tasks/_archive/).
+EXCLUDED_PARTS = ("/archive/", "/_archive/")
 STRUCTURE = ("tasks", "pre_tasks", "post_tasks", "handlers", "block", "rescue", "always")
 MODULES = {
     "shell_tasks": ("shell", "ansible.builtin.shell"),
@@ -74,7 +75,7 @@ _Loader.add_multi_constructor("!", _any_tag)
 
 def _in_scope(path: pathlib.Path) -> bool:
     rel = path.relative_to(ROOT).as_posix()
-    return not any(part in rel + "/" for part in EXCLUDED_PARTS)
+    return not any(part in "/" + rel + "/" for part in EXCLUDED_PARTS)
 
 
 def _yaml_files():
