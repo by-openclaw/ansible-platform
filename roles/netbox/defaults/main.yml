@@ -70,7 +70,55 @@ netbox_superusers: >-
 # NetBox config (Python) for the OIDC group->role pipeline — rendered by Ansible
 # and bind-mounted into /etc/netbox/config/extra.py (netbox-docker loads it).
 netbox_oidc_extra_host_path: "/etc/netbox/extra.py"
-netbox_scripts_dir: "/etc/netbox"              # host-side scripts fed to NetBox's shell (rbac.py)
+netbox_scripts_dir: "/etc/netbox"              # where the former reconcile script was staged (tasks/rbac.yml removes it)
+# --- Access rights through NetBox's REST API (tasks/rbac.yml) ---------------------------------
+netbox_api_url: "http://{{ netbox_listen_ip }}:{{ netbox_host_port }}"
+netbox_token_description: "break-glass token (Vault netbox/admin, roles/netbox)"
+netbox_token_v2_prefix: "nbt_"                 # a v2 token authenticates as Bearer, a v1 token as Token
+# Derived: the token Vault holds, whether NetBox accepts it, the token to work with (the one just
+# provisioned, else the held one) and who must be superuser.
+netbox_token_held: "{{ netbox_secrets.superuser_api_token | default('') }}"   # pragma: allowlist secret
+netbox_token_scheme_held: "{{ 'Bearer' if netbox_token_held.startswith(netbox_token_v2_prefix) else 'Token' }}"
+netbox_token_valid: "{{ (netbox_token_check.status | default(0)) == 200 }}"
+# What NetBox returns for a provisioned token: a v2 token is a key (public id) and a token (the
+# secret); the credential that authenticates is `nbt_<key>.<token>`, sent as Bearer. That whole
+# string is what Vault holds. (Until 2026-10-06 only the secret half was stored: it could not
+# authenticate by itself.) A v1 token is its key alone, sent as Token.
+netbox_token_minted_credential: >-
+  {{ (netbox_token_v2_prefix ~ netbox_token_minted.json.key ~ '.' ~ netbox_token_minted.json.token)
+     if (netbox_token_minted.json.version | default(1) | int) == 2
+     else (netbox_token_minted.json.key | default('')) }}
+netbox_token_now: >-
+  {{ netbox_token_minted_credential if (netbox_token_minted is changed)
+     else (netbox_token_held if (netbox_token_valid | bool) else '') }}
+netbox_token_key_now: "{{ netbox_token_now | regex_replace('^' ~ netbox_token_v2_prefix, '') | regex_replace('[.].*$', '') }}"
+# Earlier break-glass tokens (same description, another key): stray credentials, removed.
+netbox_tokens_stale: >-
+  {{ netbox_tokens.json.results | default([]) | selectattr('description', 'eq', netbox_token_description)
+     | rejectattr('key', 'eq', netbox_token_key_now) | list }}
+netbox_token_scheme_now: "{{ 'Bearer' if netbox_token_now.startswith(netbox_token_v2_prefix) else 'Token' }}"
+netbox_superusers_wanted: "{{ (netbox_superusers + [netbox_superuser_name]) | unique }}"
+# --- The superuser flag, in NetBox's database (tasks/rbac.yml) --------------------------------
+# psql as roles/postgres_db calls it on the leader, on NetBox's database; the usernames reach it
+# as a psql variable, which psql quotes itself (:'wanted'). A row of the read = `username=true|false`
+# (the value the flag must take).
+netbox_user_table: "users_user"                # NetBox >= 4.0
+netbox_superuser_psql: >-
+  {{ postgres_db_psql + ['-d', netbox_pg_name, '-q', '-v', 'wanted=' ~ (netbox_superusers_wanted | join(','))] }}
+netbox_superuser_sql_wanted: "(username = ANY (string_to_array(:'wanted', ',')))"
+netbox_superuser_sql_read: >-
+  SELECT username || '=' || {{ netbox_superuser_sql_wanted }}::text FROM {{ netbox_user_table }}
+  WHERE is_superuser IS DISTINCT FROM {{ netbox_superuser_sql_wanted }} ORDER BY username;
+netbox_superuser_sql_write: >-
+  UPDATE {{ netbox_user_table }} SET is_superuser = {{ netbox_superuser_sql_wanted }}
+  WHERE is_superuser IS DISTINCT FROM {{ netbox_superuser_sql_wanted }};
+netbox_superuser_drift: "{{ netbox_superuser_read.stdout_lines | default([]) | map('trim') | select | list }}"
+
+# The declared environment (vars/main.yml: netbox_env) is the WHOLE environment of the three
+# containers: a variable removed there leaves the container at the next run. The scaffold's
+# default only requires the declared variables to be present, so a removed one would stay.
+netbox_container_comparisons:
+  env: strict
 
 # Persistent volume (uploaded files / images).
 netbox_media_volume: "netbox-media"

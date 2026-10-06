@@ -32,12 +32,13 @@ netbox_env_base:
   SECRET_KEY: "{{ netbox_secrets.secret_key }}"
   ALLOWED_HOSTS: "{{ netbox_fqdn }} {{ netbox_listen_ip }}"   # space-separated; the address admits the Prometheus scrape
   METRICS_ENABLED: "{{ netbox_metrics_enabled | string | lower }}"
-  # Local break-glass superuser (SSO via Authentik wired later).
+  # Local break-glass superuser, created by the image at first start. No SUPERUSER_API_TOKEN:
+  # the image creates a token only when a key AND a token are given; tasks/rbac.yml provisions
+  # the break-glass token through NetBox's API and Vault holds it.
   SKIP_SUPERUSER: "false"
   SUPERUSER_NAME: "{{ netbox_superuser_name }}"
   SUPERUSER_EMAIL: "{{ netbox_superuser_email }}"
   SUPERUSER_PASSWORD: "{{ netbox_secrets.superuser_password }}"
-  SUPERUSER_API_TOKEN: "{{ netbox_secrets.superuser_api_token }}"
   API_TOKEN_PEPPER_1: "{{ netbox_secrets.api_token_pepper }}"   # v2 token hashing (NetBox 4.7+)   # pragma: allowlist secret
   # Internal-only: skip internet-dependent features (dashboard newsfeed/release).
   ISOLATED_DEPLOYMENT: "{{ netbox_isolated_deployment | string | lower }}"
