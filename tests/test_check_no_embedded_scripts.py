@@ -108,6 +108,17 @@ def test_archived_playbooks_are_not_read(tree):
     assert guard.scan()["shell_tasks"] == {}
 
 
+def test_archived_task_files_of_a_role_are_not_read(tree):
+    tree("roles/fw/tasks/_archive/old.yml", "- name: x\n  ansible.builtin.raw: a\n- name: y\n  ansible.builtin.shell: b\n")
+    found = guard.scan()
+    assert found["raw_module"] == {} and found["shell_tasks"] == {}
+
+
+def test_a_file_that_only_has_archive_in_its_name_is_still_read(tree):
+    tree("roles/svc/tasks/archive_data.yml", "- name: x\n  ansible.builtin.shell: a\n")
+    assert guard.scan()["shell_tasks"] == {"roles/svc/tasks/archive_data.yml": 1}
+
+
 def test_a_vault_tagged_value_does_not_stop_the_reading(tree):
     tree("roles/a/tasks/main.yml", "- name: x\n  ansible.builtin.debug:\n    msg: !vault |\n      abc\n- name: y\n  ansible.builtin.shell: a\n")
     assert guard.scan()["shell_tasks"] == {"roles/a/tasks/main.yml": 1}
