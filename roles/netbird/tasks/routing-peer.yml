@@ -238,13 +238,24 @@
             != (netbird_rp_external_ip_map | sort) }}
   no_log: true
 
-- name: "routing-peer | Re-apply WireGuard port + external IP map (down + up)"
-  ansible.builtin.shell: >-
-    netbird down &&
-    netbird up
-    --management-url {{ netbird_http_protocol }}://{{ netbird_fqdn }}
-    --wireguard-port {{ netbird_host_peer_wg_port }}
-    --external-ip-map '{{ netbird_rp_external_ip_map | join(',') }}'
+# Two plain commands, in this order; the second only runs when the first succeeded.
+- name: "routing-peer | Client down (to re-apply the WireGuard port + external IP map)"
+  ansible.builtin.command:
+    argv: [netbird, down]
+  changed_when: true
+  when: netbird_rp_cfg_drift | bool
+
+- name: "routing-peer | Client up with the WireGuard port + external IP map"
+  ansible.builtin.command:
+    argv:
+      - netbird
+      - up
+      - --management-url
+      - "{{ netbird_http_protocol }}://{{ netbird_fqdn }}"
+      - --wireguard-port
+      - "{{ netbird_host_peer_wg_port }}"
+      - --external-ip-map
+      - "{{ netbird_rp_external_ip_map | join(',') }}"
   changed_when: true
   when: netbird_rp_cfg_drift | bool
 

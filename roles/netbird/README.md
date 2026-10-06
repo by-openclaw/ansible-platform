@@ -19,8 +19,9 @@ targets). The `.sh` never runs. Catalog row `name: netbird` in
   `nobody`). Each server also serves Prometheus `/metrics`, published on
   `netbird_*_metrics_port` for the monitoring host (catalog `metrics_ports`).
 - **Stores on the shared PostgreSQL** (`roles/postgres_db`: `netbird` + `netbird_events`,
-  own users, `sslmode=verify-full` against the platform CA). `tasks/store.yml` keeps a
-  one-time SQLite → PostgreSQL migration for a checkout that still runs SQLite.
+  own users, `sslmode=verify-full` against the platform CA). The one-time SQLite →
+  PostgreSQL migration (2026-09) is archived in `tasks/_archive/store_migration.yml`;
+  `tasks/store.yml` refuses a store that is still on SQLite and points there.
 - **`management.json`** is rendered from the official template; the OIDC endpoints come
   from Authentik's live `.well-known/openid-configuration` (`tasks/oidc-discovery.yml`),
   never hardcoded. Authentik is pinned to Traefik in `/etc/hosts` (internal resolve).

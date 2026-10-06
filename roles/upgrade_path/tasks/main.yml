@@ -9,17 +9,12 @@
     msg: "upgrade_path_steps is empty — nothing to upgrade for {{ upgrade_path_service }}."
   when: upgrade_path_steps | length == 0
 
-# shell, not command: version probes pipe through sed/awk by design.
-- name: "Upgrade_path | Detect the running version of {{ upgrade_path_service }}" # noqa command-instead-of-shell
-  ansible.builtin.shell:
-    cmd: "{{ upgrade_path_current_cmd }}"
-  register: upgrade_path_current_raw
-  changed_when: false
-  check_mode: false
+- name: "Upgrade_path | The running version"
+  ansible.builtin.include_tasks: current.yml
 
 - name: "Upgrade_path | Record the starting point"
   ansible.builtin.set_fact:
-    upgrade_path_current: "{{ upgrade_path_current_raw.stdout | trim }}"
+    upgrade_path_current_start: "{{ upgrade_path_version_now }}"
 
 # version_compare on the loop var keeps already-applied rungs out of the climb,
 # so a re-run is a no-op rather than a downgrade.
@@ -27,17 +22,27 @@
   ansible.builtin.set_fact:
     upgrade_path_remaining: >-
       {{ upgrade_path_steps
-         | rejectattr('version', 'version', upgrade_path_current, '<=')
+         | rejectattr('version', 'version', upgrade_path_current_start, '<=')
          | list }}
 
 - name: "Upgrade_path | Show the ladder"
   ansible.builtin.debug:
     msg: >-
-      {{ upgrade_path_service }} at {{ upgrade_path_current }} →
+      {{ upgrade_path_service }} at {{ upgrade_path_current_start }} →
       {{ (upgrade_path_remaining | map(attribute='version') | list | join(' → '))
          if upgrade_path_remaining | length > 0 else 'already at target' }}
       ({{ upgrade_path_remaining | length }} step(s),
       {{ 'APPLY' if upgrade_path_apply | bool else 'dry run — set upgrade_path_apply=true' }})
+
+# A dry run also runs the read-only checks of the migration hook and of the health gate: a check that
+# cannot work (a wrong path, a changed output) is found now, not in the middle of an upgrade.
+- name: "Upgrade_path | The read-only checks, now (dry run)"
+  ansible.builtin.include_tasks: check.yml
+  loop: "{{ (upgrade_path_migrate + upgrade_path_verify) | rejectattr('changes', 'defined') | list }}"
+  loop_control:
+    loop_var: check
+    label: "{{ check.name }}"
+  when: not (upgrade_path_apply | bool)
 
 - name: "Upgrade_path | Climb one rung at a time"
   ansible.builtin.include_tasks: step.yml
