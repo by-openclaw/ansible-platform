@@ -1,6 +1,10 @@
 ---
 # Container layer: Trivy scans every RUNNING image (the real service CVE surface;
-# host apt cannot see inside containers). Trivy DB cached in a named volume.
+# host apt cannot see inside containers). Trivy's databases are cached in a named volume.
+# Trivy reads an image by exporting it from Docker into a temporary file as large as the image,
+# so each image is checked for room first (scan_image.yml). An image that does not fit, runs out
+# of time or fails is recorded as NOT SCANNED with the reason, never as zero findings.
+# (2026-10-05: the first fleet scan exported a 2.8 GB image on a 12 GB guest and filled its disk.)
 # The helper this role used to stage here is superseded by the tasks below (git holds its history).
 - name: "SecAudit | The staged Trivy summariser is gone"
   ansible.builtin.file:
@@ -15,44 +19,49 @@
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
-# Trivy prints one line per finding: its severity. A scan that fails prints none (counted as zero).
-- name: "SecAudit | Trivy scan each running image (HIGH/CRITICAL counts)"
+- name: "SecAudit | Where Docker keeps its data"
   ansible.builtin.command:
-    argv:
-      - docker
-      - run
-      - --rm
-      - -v
-      - "{{ security_audit_trivy_cache_volume }}:/root/.cache/"
-      - -v
-      - "{{ security_audit_docker_socket }}:{{ security_audit_docker_socket }}"
-      - "{{ security_audit_trivy_image }}"
-      - image
-      - --quiet
-      - --scanners
-      - vuln
-      - --severity
-      - "{{ security_audit_trivy_severity }}"
-      - --format
-      - template
-      - --template
-      - "{{ security_audit_trivy_template }}"
-      - "{{ item }}"
-  loop: "{{ security_audit_images.stdout_lines | unique | sort }}"
-  loop_control: { label: "{{ item }}" }
-  register: security_audit_trivy
+    argv: [docker, info, --format, "{{ security_audit_docker_root_format }}"]
+  register: security_audit_docker_root
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  failed_when: false
 
-- name: "SecAudit | Aggregate container findings"
+- name: "SecAudit | Size of each running image"
+  ansible.builtin.command:
+    argv: "{{ ['docker', 'image', 'inspect', '--format', security_audit_image_size_format] + security_audit_image_names }}"
+  register: security_audit_image_sizes
+  when: security_audit_image_names | length > 0
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+
+- name: "SecAudit | One size per image"
+  ansible.builtin.assert:
+    that: security_audit_image_sizes.stdout_lines | default([]) | length == security_audit_image_names | length
+    fail_msg: >-
+      docker image inspect returned {{ security_audit_image_sizes.stdout_lines | default([]) | length }} size(s)
+      for {{ security_audit_image_names | length }} running image(s).
+    quiet: true
+
+# A scanner that did not stop in an interrupted run would hold the name the next scan needs.
+- name: "SecAudit | No scanner is left from an interrupted run"
+  community.docker.docker_container:
+    name: "{{ security_audit_trivy_container_name }}"
+    state: absent
+    force_kill: true
+
+- name: "SecAudit | Start from an empty result list"
   ansible.builtin.set_fact:
-    security_audit_containers: >-
-      {%- set out = [] -%}
-      {%- for r in security_audit_trivy.results -%}
-        {%- set severities = r.stdout_lines | default([]) | map('trim') | list -%}
-        {%- set _ = out.append({'image': r.item,
-                                'critical': severities | select('eq', 'CRITICAL') | list | length,
-                                'high': severities | select('eq', 'HIGH') | list | length}) -%}
-      {%- endfor -%}
-      {{ out }}
+    security_audit_containers: []
+
+- name: "SecAudit | Scan each running image that fits (HIGH/CRITICAL counts)"
+  ansible.builtin.include_tasks: scan_image.yml
+  loop: "{{ security_audit_image_names | zip(security_audit_image_sizes.stdout_lines | default([])) | list }}"
+  loop_control:
+    loop_var: security_audit_image
+    label: "{{ security_audit_image[0] }}"
+
+- name: "SecAudit | No scanner is left behind"
+  community.docker.docker_container:
+    name: "{{ security_audit_trivy_container_name }}"
+    state: absent
+    force_kill: true

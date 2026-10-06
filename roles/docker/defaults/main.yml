@@ -67,3 +67,34 @@ docker_user_log_prefix: "du-{{ docker_user_firewall }} {{ inventory_hostname | t
 # platform_docker_firewall (group_vars/all/docker_firewall.yml), resolved per host in
 # tasks/docker_user.yml. Nothing is declared here.
 docker_user_uplink: "{{ ansible_default_ipv4.interface }}"   # from facts: the interface published ports arrive on
+
+# --- Images of superseded versions (tasks/superseded_images.yml) -----------------
+# Removed at each converge: an image no container uses, when another image of the same repository
+# is in use by a container on the host. docker_superseded_images_keep = regular expressions of
+# image names (repository:tag) that are never removed.
+docker_superseded_images_remove: true
+docker_superseded_images_keep: []
+docker_image_tag_suffix: ':[^:/]+$'            # what follows the repository in repository:tag
+docker_image_untagged_marker: "<none>"         # how Docker names an image without a tag
+# Derived from what the task reads on the host: the images containers use (running or stopped),
+# their repositories, the images to remove, and those Docker refused to remove.
+docker_images_used_ids: "{{ docker_host_inventory.containers | default([]) | map(attribute='ImageID') | unique | list }}"
+docker_image_repos_in_use: >-
+  {{ docker_host_inventory.images | default([]) | selectattr('Id', 'in', docker_images_used_ids)
+     | map(attribute='RepoTags') | map('default', [], true) | flatten
+     | map('regex_replace', docker_image_tag_suffix, '') | unique | list }}
+docker_superseded_images: >-
+  {%- set out = [] -%}
+  {%- for image in docker_host_inventory.images | default([]) if image.Id not in docker_images_used_ids -%}
+    {%- for name in image.RepoTags | default([], true)
+        if not name.startswith(docker_image_untagged_marker)
+           and (name | regex_replace(docker_image_tag_suffix, '')) in docker_image_repos_in_use
+           and (docker_superseded_images_keep | length == 0
+                or name is not search(docker_superseded_images_keep | join('|'))) -%}
+      {%- set _ = out.append(name) -%}
+    {%- endfor -%}
+  {%- endfor -%}
+  {{ out | unique | sort }}
+docker_superseded_refused: >-
+  {{ docker_superseded_removed.results | default([]) | selectattr('msg', 'defined')
+     | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='item') | list }}

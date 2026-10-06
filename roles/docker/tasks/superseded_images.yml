@@ -1,0 +1,34 @@
+---
+# Images of versions no container uses any more. After an upgrade the previous version's image
+# stays on disk (2026-10-05: 4.7 GB of them on a 12 GB guest). An image is removed when no
+# container uses it AND another image of the same repository is in use by a container here — and
+# only then. An image no running service relates to is left alone: the image a scheduled job
+# pulls once and runs from a timer must not depend on the registry at run time.
+- name: "Docker | Images and containers on this host"
+  community.docker.docker_host_info:
+    images: true
+    containers: true
+    containers_all: true
+    verbose_output: true
+  register: docker_host_inventory
+
+# Not fatal: an image Docker refuses to remove (a container was created from it meanwhile, another
+# image is built on it) stays, and the next task says so.
+- name: "Docker | Remove the images of superseded versions"
+  community.docker.docker_image:
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ docker_superseded_images }}"
+  register: docker_superseded_removed
+  failed_when: false
+
+- name: "Docker | Images Docker refused to remove"
+  ansible.builtin.debug:
+    msg: "{{ docker_superseded_refused }}"
+  when: docker_superseded_refused | length > 0
+
+- name: "Docker | Prune untagged image leftovers"
+  community.docker.docker_prune:
+    images: true
+    images_filters:
+      dangling: true
