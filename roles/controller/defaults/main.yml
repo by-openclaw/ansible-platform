@@ -39,3 +39,28 @@ controller_jobs:
     description: "Refresh the wildcard certificate copies on every consumer"
     on_calendar: "Mon *-*-* 04:17:00 UTC"
     playbook: "playbooks/certs-sync.yml"
+
+# --- HashiCorp's package repository and Terraform (tasks/hashicorp.yml) --------------------------
+controller_manage_hashicorp: true
+controller_hashicorp_repo_url: "https://apt.releases.hashicorp.com"
+controller_hashicorp_key_url: "{{ controller_hashicorp_repo_url }}/gpg"
+# The ONLY key trusted for that repository. Source: HashiCorp bulletin HCSEC-2026-33 (2026-09-10),
+# checked on 2026-10-06 against the key the repository serves and the key that signs its index.
+controller_hashicorp_key_fingerprint: "D55C 0D1A C78A 8D81 26CB 631C FC9C A96A CA02 6560"   # pragma: allowlist secret
+controller_hashicorp_keyring: "/etc/apt/keyrings/hashicorp.asc"
+controller_hashicorp_source_file: "/etc/apt/sources.list.d/hashicorp.sources"
+controller_hashicorp_suite: "{{ ansible_distribution_release }}"
+# What the hand-made setup left: its source line and the former key (replaced by HashiCorp).
+controller_hashicorp_superseded_files:
+  - "/etc/apt/sources.list.d/hashicorp.list"
+  - "/usr/share/keyrings/hashicorp-archive-keyring.gpg"
+controller_hashicorp_cache_dir: "{{ ansible_env.HOME }}/.cache/platform-controller/hashicorp"
+controller_hashicorp_key_cached: "{{ controller_hashicorp_cache_dir }}/hashicorp.asc"
+# Terraform: the version installed on the controller, held so that `apt upgrade` does not move it.
+controller_terraform_version: "1.16.1-1"
+controller_terraform_hold: true
+# Derived from `gpg --show-keys --with-colons`: how many primary keys the file holds, and the
+# fingerprint of the first one.
+controller_hashicorp_key_pinned: "{{ controller_hashicorp_key_fingerprint | replace(' ', '') | upper }}"
+controller_hashicorp_key_primaries: "{{ controller_hashicorp_key_listing.stdout | default('') | regex_findall('(?m)^pub:') | length }}"
+controller_hashicorp_key_found: "{{ controller_hashicorp_key_listing.stdout | default('') | regex_findall('(?m)^fpr:+([0-9A-F]{40}):') | first | default('') }}"

@@ -1,0 +1,126 @@
+---
+# HashiCorp's package repository on the controller (Terraform comes from it). The repository was
+# added by hand; this file owns it. Its signing key is PINNED by fingerprint: the key is downloaded
+# as the user, its fingerprint compared, and only then installed where apt reads it. HashiCorp
+# replaced that key on 2026-09-10 (bulletin HCSEC-2026-33) and the former key does not certify
+# the new one — so a new key is trusted by a reviewed change of controller_hashicorp_key_fingerprint,
+# never because the repository starts serving it.
+- name: "Controller | HashiCorp: folders for the downloaded key"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - "{{ controller_hashicorp_cache_dir }}"
+    - "{{ controller_hashicorp_cache_dir }}/gnupg"
+  check_mode: false  # a dry run verifies the key too (user cache only)
+
+- name: "Controller | HashiCorp: download the key the repository serves (as the user; not trusted yet)"
+  ansible.builtin.get_url:
+    url: "{{ controller_hashicorp_key_url }}"
+    dest: "{{ controller_hashicorp_key_cached }}"
+    mode: "0644"
+    force: true
+  check_mode: false  # a dry run verifies the key too (user cache only)
+
+- name: "Controller | HashiCorp: what that file holds"
+  ansible.builtin.command:
+    argv: [gpg, --homedir, "{{ controller_hashicorp_cache_dir }}/gnupg", --show-keys, --with-colons, "{{ controller_hashicorp_key_cached }}"]
+  register: controller_hashicorp_key_listing
+  check_mode: false  # read-only
+  changed_when: false
+
+- name: "Controller | HashiCorp: it is the pinned key (one key, that fingerprint)"
+  ansible.builtin.assert:
+    that:
+      - controller_hashicorp_key_primaries | int == 1
+      - controller_hashicorp_key_found == controller_hashicorp_key_pinned
+    fail_msg: >-
+      The file served at {{ controller_hashicorp_key_url }} holds {{ controller_hashicorp_key_primaries }} key(s),
+      the first with the fingerprint '{{ controller_hashicorp_key_found }}'; the pinned one is
+      {{ controller_hashicorp_key_pinned }}. Nothing was installed. A new key is trusted by changing
+      controller_hashicorp_key_fingerprint after checking it against HashiCorp's security bulletin.
+    success_msg: "the key HashiCorp serves is the pinned one ({{ controller_hashicorp_key_pinned }})"
+
+# The controller is a workstation: root belongs to the person. With -K (or sudo without a password)
+# the part below runs; without, it is skipped and the report says so.
+- name: "Controller | HashiCorp: can this play become root?"
+  ansible.builtin.command: "true"
+  become: true
+  register: controller_hashicorp_root
+  check_mode: false  # read-only probe
+  changed_when: false
+  ignore_errors: true
+
+- name: "Controller | HashiCorp: repository, key and Terraform (root)"
+  when: controller_hashicorp_root is not failed
+  become: true
+  block:
+    - name: "Controller | HashiCorp: apt's keyring folder"
+      ansible.builtin.file:
+        path: "{{ controller_hashicorp_keyring | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "Controller | HashiCorp: the verified key, where apt reads it"
+      ansible.builtin.copy:
+        src: "{{ controller_hashicorp_key_cached }}"
+        dest: "{{ controller_hashicorp_keyring }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      register: controller_hashicorp_key_installed
+
+    # Before the new source is written: two sources for one repository with different keys make
+    # apt refuse both. The former key goes too (HashiCorp: replace any copy of the prior key).
+    - name: "Controller | HashiCorp: the hand-made source and the former key are gone"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ controller_hashicorp_superseded_files }}"
+      register: controller_hashicorp_superseded
+
+    - name: "Controller | HashiCorp: package source"
+      ansible.builtin.copy:
+        dest: "{{ controller_hashicorp_source_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible (controller role) — the key is pinned by fingerprint in the role.
+          Types: deb
+          URIs: {{ controller_hashicorp_repo_url }}
+          Suites: {{ controller_hashicorp_suite }}
+          Components: main
+          Signed-By: {{ controller_hashicorp_keyring }}
+      register: controller_hashicorp_source
+
+    - name: "Controller | HashiCorp: apt reads the repository again (it fails here when the signature does not verify)"
+      ansible.builtin.apt:
+        update_cache: true
+      when: controller_hashicorp_key_installed is changed or controller_hashicorp_superseded is changed or controller_hashicorp_source is changed
+
+    # A trusted repository again means `apt upgrade` would move Terraform by itself: the version
+    # is chosen here and held, an upgrade is a change of controller_terraform_version.
+    - name: "Controller | Terraform at the chosen version"
+      ansible.builtin.apt:
+        name: "terraform={{ controller_terraform_version }}"
+        state: present
+        allow_change_held_packages: true
+
+    - name: "Controller | Terraform is held (no upgrade by `apt upgrade`)"
+      ansible.builtin.dpkg_selections:
+        name: terraform
+        selection: "{{ 'hold' if controller_terraform_hold | bool else 'install' }}"
+
+- name: "Controller | HashiCorp: report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'HashiCorp repository managed: key ' ~ controller_hashicorp_key_pinned ~ ', source ' ~ controller_hashicorp_source_file
+         ~ ', Terraform ' ~ controller_terraform_version ~ (' held' if controller_terraform_hold | bool else '')
+         if controller_hashicorp_root is not failed
+         else 'HashiCorp key verified, NOTHING INSTALLED — root is required on this workstation. Run:
+               ansible-playbook playbooks/controller.yml --tags hashicorp -K' }}
