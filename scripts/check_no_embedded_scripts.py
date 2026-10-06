@@ -12,8 +12,15 @@ Counted, in roles/ and playbooks/ (archives excluded):
                        python -c, php -r, perl -e, ruby -e (in a task or in a unit's command),
                        or a task whose argument list does the same ([..., python3, -c, ...])
   script_files         a program under a role's files/ or templates/ (.sh .py .pl .rb .go .jq
-                       .php, also as .j2). APP_CONFIG names the files that are an application's
-                       own configuration in that application's language, with the reason.
+                       .php, also as .j2), or one a task writes itself (copy `content:` to a
+                       destination with such a suffix). APP_CONFIG names the files that are an
+                       application's own configuration in that application's language, with the reason.
+  console_programs     a program handed to an application's own console: GitLab's Rails runner
+                       (gitlab-rails runner), Django's shell (manage.py shell / nbshell),
+                       Authentik's `ak shell` — `python -c` one layer further in. A task's name
+                       and comments are not read: they say what a task does, they do not run.
+  pipe_lookups         lookup('pipe', ...): a shell command run on the controller while a
+                       template is rendered.
 
 The user module's `shell:` (a login shell) is an argument of that module, not a task: only
 task-level keys are read.
@@ -22,7 +29,8 @@ Usage: scripts/check_no_embedded_scripts.py [--ratchet | --update | --list CATEG
   (no flag)  print the counts.
   --ratchet  (pre-commit, CI) exit 1 when a file's count is above scripts/embedded_scripts_baseline.json;
              when counts went down, rewrite the baseline and exit 1 once so that it is committed.
-  --update   rewrite the baseline to what is found (only ever used to lower it).
+  --update   rewrite the baseline to what is found (to lower it; it rises only in the change
+             that teaches this guard to count something it did not see before).
   --list     print every occurrence of one category.
 """
 
@@ -50,12 +58,23 @@ INLINE = re.compile(r"(?<![\w-])(?:(?:ba)?sh -c|python3? -c|php -r|perl -e|ruby 
 # The same thing written as an argument list: an interpreter followed by its "program follows" flag.
 ARGV_INTERPRETERS = {"sh": "-c", "bash": "-c", "python": "-c", "python3": "-c", "php": "-r", "perl": "-e", "ruby": "-e"}
 SCRIPT_SUFFIXES = (".sh", ".py", ".pl", ".rb", ".go", ".jq", ".php")
+# What may stand between two words of a command, written as a line or as an argument list
+# (one word per line included): spaces, quotes, commas, list dashes and brackets.
+_GAP = r"""[\s'",\-\[\]]{1,40}"""
+CONSOLE = re.compile(
+    rf"(?:gitlab-rails|(?<![\w/-])rails){_GAP}runner\b"
+    rf"|manage\.py{_GAP}(?:nb)?shell\b"
+    rf"|(?<![\w/-])ak{_GAP}shell\b"
+)
+PIPE_LOOKUP = re.compile(r"""(?:lookup|query)\(\s*\\?['"]pipe\\?['"]""")   # quotes may be escaped in a YAML string
+NAME_LINE = re.compile(r"^\s*(?:-\s+)?name:\s")
+COPY_MODULES = ("copy", "ansible.builtin.copy")
 # An application's own configuration, written in the language that application reads.
 APP_CONFIG = {
     "roles/gitlab/templates/gitlab.rb.j2": "GitLab's configuration file is Ruby (gitlab.rb)",
     "roles/netbox/templates/extra.py.j2": "NetBox's configuration file is Python (extra.py)",
 }
-CATEGORIES = (*MODULES, "inline_interpreters", "script_files")
+CATEGORIES = (*MODULES, "inline_interpreters", "script_files", "console_programs", "pipe_lookups")
 
 
 class _Loader(yaml.SafeLoader):
@@ -124,6 +143,10 @@ def scan() -> dict[str, dict[str, int]]:
                 argv = value.get("argv") if isinstance(value, dict) else None
                 if isinstance(argv, list) and _argv_runs_a_program(argv):
                     add("inline_interpreters", path)
+            for key in COPY_MODULES:
+                module = task.get(key)
+                if isinstance(module, dict) and "content" in module and str(module.get("dest", "")).endswith(SCRIPT_SUFFIXES):
+                    add("script_files", path)
     for tree in TREES:
         for path in sorted((ROOT / tree).rglob("*")):
             if not path.is_file() or not _in_scope(path):
@@ -138,6 +161,12 @@ def scan() -> dict[str, dict[str, int]]:
                 hits = sum(1 for line in lines if not line.lstrip().startswith("#") and INLINE.search(line))
                 if hits:
                     add("inline_interpreters", path, hits)
+                # what runs: neither a comment line nor a task's name
+                code = "\n".join(line for line in lines if not line.lstrip().startswith("#") and not NAME_LINE.match(line))
+                for category, pattern in (("console_programs", CONSOLE), ("pipe_lookups", PIPE_LOOKUP)):
+                    hits = len(pattern.findall(code))
+                    if hits:
+                        add(category, path, hits)
     return found
 
 

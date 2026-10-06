@@ -40,7 +40,7 @@
   tasks:
     - name: "Build | Record when the build started"
       ansible.builtin.set_fact:
-        opnsense_build_started: "{{ lookup('pipe', 'date +%s') | int }}"
+        opnsense_build_started: "{{ now(utc=true).timestamp() | int }}"
       check_mode: false
       tags: always
 
@@ -166,7 +166,7 @@
       ansible.builtin.debug:
         msg: >-
           {{ opnsense_provision_fw }} built in
-          {{ (((lookup('pipe', 'date +%s') | int) - (opnsense_build_started | int)) / 60) | round(1) }}
+          {{ (((now(utc=true).timestamp() | int) - (opnsense_build_started | int)) / 60) | round(1) }}
           minutes — VM, seed, firmware, catalog, token, Vault-backed families, CrowdSec, export,
           uplink proof. Next: playbooks/opnsense.yml --check -e opn_fw_confirm_full=true (parity).
       check_mode: false
