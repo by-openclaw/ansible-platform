@@ -3,8 +3,12 @@
 #  * if the chains did not load (boot race: "No chain/target/match by that name"), do NOT stay
 #    on "policy DROP without rules" — that locks the guest out of everything incl. its own
 #    loopback (2026-09-21, two LXCs after a hypervisor reboot); fail open and let systemd retry
+#  * start after nftables.service: its stock configuration begins with `flush ruleset`, and
+#    ufw's rules live in that ruleset. Where it finished after ufw at boot, the host firewall
+#    was empty from then on (2026-10-03, five guests). The role also masks that unit; the
+#    ordering stays for a host where something unmasks it.
 [Unit]
-After=network-online.target{% if hardening_ufw_after_docker | bool %} docker.service{% endif %}
+After=network-online.target nftables.service{{ ' docker.service' if hardening_ufw_after_docker | bool else '' }}
 Wants=network-online.target
 StartLimitIntervalSec=0
 
