@@ -29,7 +29,7 @@ Convergence rule: the **people file and the team bindings drive both worlds**. A
 5. Teams application access policy for online meetings.
 6. SharePoint admin URL.
 7. License SKU ids from `subscribedSkus`.
-8. Mirror the file to Vault (`vault-kv-sync.yml`, `vault_kv_map.yml`), roles read only from Vault.
+8. Mirror the file to Vault (`secrets-to-vault.yml`, `vars/vault_kv_map.yml`), roles read only from Vault.
 9. Read-only acceptance probe before any write capability is enabled.
 
 ## Acceptance (read-only probe, first thing to build)
