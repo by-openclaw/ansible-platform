@@ -240,6 +240,17 @@ opnsense_proximus_monitor_v6: "2001:4860:4860::8888"
 # Target OPNsense version is PER ENV (catalog: inventories/<env>/group_vars/opnsense.yml —
 # prod 26.1.9, test 26.7). Empty here = no version-gated reboot wait.
 opnsense_firmware_target: ""
+# The hypervisor snapshot taken before a firmware update (tasks/fw_snapshot.yml): its name, and
+# what is read from `qm list` (the VM's id: second column = name) and `qm listsnapshot` (second
+# column = snapshot name).
+opnsense_fw_snapshot_prefix: "pre_fw_"
+opnsense_fw_snapshot_name: "{{ opnsense_fw_snapshot_prefix }}{{ (opnsense_firmware_target | default('update', true)) | regex_replace('[^0-9A-Za-z]', '_') }}"
+opnsense_fw_vmid: >-
+  {{ opnsense_fw_qm_list.stdout_lines | default([]) | map('split') | selectattr(1, 'defined')
+     | selectattr(1, 'eq', opn_pve_vm_name) | map('first') | first | default('') }}
+opnsense_fw_snapshots: >-
+  {{ opnsense_fw_qm_snaps.stdout_lines | default([]) | map('split') | selectattr(1, 'defined')
+     | map(attribute=1) | list }}
 # Applying pending updates/upgrades (reboots the FW) is a DELIBERATE per-env decision
 # (catalog); never on by default. 26.7.0 -> 26.7.x on the ZFS lab VM lost its console after
 # the reboot (2026-09-07) — understand that before enabling anywhere.

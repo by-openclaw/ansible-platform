@@ -30,21 +30,28 @@
   ansible.builtin.set_fact:
     opnsense_provision_vm_present: "{{ (opnsense_provision_vm_info.proxmox_vms | default([])) | length > 0 }}"
 
-# umask 022: the CT/VM backup helpers must read vzdump's temp dir; a hardened root session
-# (umask 027) makes every container backup fail with "pct.conf - Permission denied" (2026-09-22).
+# Through the hypervisor's API: the backup runs under the node's own daemon, so no session umask is
+# involved (a hardened root shell with umask 027 made container backups fail on 2026-09-22).
 - name: "Decommission | Archive the VM first (vzdump) → {{ opnsense_provision_archive_storage }}"
-  ansible.builtin.shell:
-    cmd: >-
-      umask 022 && vzdump {{ opnsense_provision_vmid }}
-      --storage {{ opnsense_provision_archive_storage }} --mode snapshot --compress zstd --quiet 1
-      --notes-template 'ARCHIVE before decommission {{ lookup("pipe", "date -u +%F") }}
-      — {{ "{{" }}guestname{{ "}}" }} (VMID {{ "{{" }}vmid{{ "}}" }})'
+  community.proxmox.proxmox_backup:
+    api_host: "{{ opnsense_provision_pve.host }}"
+    api_user: "{{ opnsense_provision_pve.admin_token_id | regex_replace('!.*$', '') }}"
+    api_token_id: "{{ opnsense_provision_pve.admin_token_id | regex_replace('^.*!', '') }}"
+    api_token_secret: "{{ opnsense_provision_pve.admin_token_secret }}"
+    validate_certs: "{{ opnsense_provision_validate_certs }}"
+    node: "{{ opnsense_provision_node }}"
+    mode: include
+    vmids: ["{{ opnsense_provision_vmid | int }}"]
+    storage: "{{ opnsense_provision_archive_storage }}"
+    backup_mode: snapshot
+    compress: zstd
+    description: "{{ opnsense_provision_archive_note }}"
+    wait: true
+    wait_timeout: "{{ opnsense_provision_archive_timeout }}"
   register: opnsense_provision_archive
-  changed_when: true
-  delegate_to: "{{ opnsense_provision_pve_node_host }}"
-  become: true
-  vars:
-    ansible_become_password: "{{ hostvars[opnsense_provision_pve_node_host].ansible_become_password | default(omit) }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
   when: opnsense_provision_vm_present | bool
 
 - name: "Decommission | The archive that was written"
