@@ -1,15 +1,19 @@
 ---
 # ==============================================================================
 # netbox | rbac — two invariants NetBox cannot keep by itself:
-#   * the break-glass API token: the image applies SUPERUSER_API_TOKEN only when it creates
-#     the superuser (first start), so the Vault field was dead on this instance. The token
-#     held in Vault is validated against the local admin's tokens; when none validates, a new
-#     one is minted by NetBox (v2, hashed) and its plaintext written back to Vault.
+#   * the break-glass API token: the image creates none (it would need a key and a token at
+#     first start; this role gives it neither). The credential held in Vault is validated;
+#     when it is not valid a new token is provisioned by NetBox (v2, hashed at rest) and the
+#     whole credential it returns is written back to Vault.
 #   * superusers: the login pipeline (extra.py) only touches the user who logs in; a flag set
 #     earlier stays. Superuser = active members of the admin group (people.yml) + the local admin.
-# Through NetBox's own REST API on the host (no shell, no program fed to NetBox's shell, no
-# secret in a task environment): the token is validated with a request it authenticates, a new
-# one is provisioned with the local admin's password, superusers are set with PATCH requests.
+# No shell, no program fed to NetBox's shell, no secret in a task environment:
+#   * the token through NetBox's REST API on the host: validated with a request it
+#     authenticates, a new one provisioned with the local admin's password;
+#   * the superuser flag with SQL in NetBox's database, on the cluster's leader: NetBox's API
+#     neither returns nor accepts that flag (4.7: not a field of /api/users/users/; a PATCH that
+#     names it answers 200 and changes nothing). One read, one UPDATE when the read differs,
+#     one read again. The only column this role writes in NetBox's database.
 # ==============================================================================
 # The program this role used to stage for NetBox's shell is superseded by the tasks below.
 - name: "rbac | The staged reconcile script is gone"
@@ -59,33 +63,44 @@
     - not ansible_check_mode
     - netbox_token_minted is changed
 
-- name: "rbac | The users NetBox knows"
-  ansible.builtin.uri:
-    url: "{{ netbox_api_url }}/api/users/users/?limit=0"
-    headers:
-      Authorization: "{{ netbox_token_scheme_now }} {{ netbox_token_now }}"
-  register: netbox_users
+# The login pipeline (extra.py) only touches the user who logs in; a flag set earlier stays —
+# with it an open session and the user's API tokens keep superuser rights.
+- name: "rbac | Which member leads the PostgreSQL cluster"
+  ansible.builtin.import_role:
+    name: postgres_db
+    tasks_from: leader
+
+- name: "rbac | Users whose superuser flag differs from people.yml"
+  community.docker.docker_container_exec:
+    container: "{{ postgres_db_container }}"
+    argv: "{{ netbox_superuser_psql }}"
+    stdin: "{{ netbox_superuser_sql_read }}"
+  delegate_to: "{{ postgres_db_host }}"
+  register: netbox_superuser_read
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
-  no_log: true
-  when: netbox_token_now | length > 0
 
-# The login pipeline (extra.py) only touches the user who logs in; a flag set earlier stays.
 - name: "rbac | Superuser = active members of the admin group + the local admin"
-  ansible.builtin.uri:
-    url: "{{ netbox_api_url }}/api/users/users/{{ item.id }}/"
-    method: PATCH
-    headers:
-      Authorization: "{{ netbox_token_scheme_now }} {{ netbox_token_now }}"
-    body_format: json
-    body:
-      is_superuser: "{{ item.want | bool }}"
-    status_code: [200]
-  loop: "{{ netbox_superuser_changes }}"
-  loop_control:
-    label: "{{ item.username }} → {{ item.want }}"
+  community.docker.docker_container_exec:
+    container: "{{ postgres_db_container }}"
+    argv: "{{ netbox_superuser_psql }}"
+    stdin: "{{ netbox_superuser_sql_write }}"
+  delegate_to: "{{ postgres_db_host }}"
   changed_when: true
-  no_log: true
+  when: netbox_superuser_drift | length > 0
+
+- name: "rbac | The flags now match people.yml (read again)"
+  community.docker.docker_container_exec:
+    container: "{{ postgres_db_container }}"
+    argv: "{{ netbox_superuser_psql }}"
+    stdin: "{{ netbox_superuser_sql_read }}"
+  delegate_to: "{{ postgres_db_host }}"
+  register: netbox_superuser_after
+  changed_when: false
+  failed_when: netbox_superuser_after.rc != 0 or (netbox_superuser_after.stdout | trim | length > 0)
+  when:
+    - not ansible_check_mode
+    - netbox_superuser_drift | length > 0
 
 - name: "rbac | The API tokens NetBox holds"
   ansible.builtin.uri:
@@ -117,5 +132,5 @@
     msg: >-
       superusers = {{ netbox_superusers_wanted }};
       token {{ 'provisioned and written to Vault' if netbox_token_minted is changed else ('valid' if netbox_token_valid | bool else 'not checked (dry run)') }};
-      superuser changes this run: {{ netbox_superuser_changes | map(attribute='username') | list }};
+      superuser flags {{ 'to set' if ansible_check_mode else 'set' }} this run: {{ netbox_superuser_drift }};
       earlier break-glass tokens removed: {{ netbox_tokens_stale | length }}

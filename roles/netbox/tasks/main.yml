@@ -29,11 +29,13 @@
           published: ["{{ netbox_listen_ip }}:{{ netbox_host_port }}:{{ netbox_container_port }}"]
           volumes: "{{ [netbox_media_volume ~ ':/opt/netbox/netbox/media', '/etc/ssl/certs:/etc/ssl/certs:ro'] + netbox_extra_mounts }}"
           env: "{{ netbox_env }}"
+          comparisons: "{{ netbox_container_comparisons }}"
         - name: netbox-worker
           image: "{{ netbox_image }}"
           command: /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py rqworker high default low
           volumes: "{{ ['/etc/ssl/certs:/etc/ssl/certs:ro'] + netbox_extra_mounts }}"
           env: "{{ netbox_env }}"
+          comparisons: "{{ netbox_container_comparisons }}"
         - name: netbox-housekeeping
           image: "{{ netbox_image }}"
           # v4.6 ships no housekeeping.sh wrapper: the management command on a daily loop.
@@ -43,6 +45,7 @@
             - "while true; do /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py housekeeping; sleep 86400; done"
           volumes: "{{ ['/etc/ssl/certs:/etc/ssl/certs:ro'] + netbox_extra_mounts }}"
           env: "{{ netbox_env }}"
+          comparisons: "{{ netbox_container_comparisons }}"
   tags: [netbox, database, container, route]
 
 - name: "NetBox answers, and all three containers are Up"

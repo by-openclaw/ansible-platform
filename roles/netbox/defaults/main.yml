@@ -76,7 +76,7 @@ netbox_api_url: "http://{{ netbox_listen_ip }}:{{ netbox_host_port }}"
 netbox_token_description: "break-glass token (Vault netbox/admin, roles/netbox)"
 netbox_token_v2_prefix: "nbt_"                 # a v2 token authenticates as Bearer, a v1 token as Token
 # Derived: the token Vault holds, whether NetBox accepts it, the token to work with (the one just
-# provisioned, else the held one), who must be superuser, and which users differ.
+# provisioned, else the held one) and who must be superuser.
 netbox_token_held: "{{ netbox_secrets.superuser_api_token | default('') }}"   # pragma: allowlist secret
 netbox_token_scheme_held: "{{ 'Bearer' if netbox_token_held.startswith(netbox_token_v2_prefix) else 'Token' }}"
 netbox_token_valid: "{{ (netbox_token_check.status | default(0)) == 200 }}"
@@ -98,13 +98,27 @@ netbox_tokens_stale: >-
      | rejectattr('key', 'eq', netbox_token_key_now) | list }}
 netbox_token_scheme_now: "{{ 'Bearer' if netbox_token_now.startswith(netbox_token_v2_prefix) else 'Token' }}"
 netbox_superusers_wanted: "{{ (netbox_superusers + [netbox_superuser_name]) | unique }}"
-netbox_superuser_changes: >-
-  {%- set out = [] -%}
-  {%- for u in netbox_users.json.results | default([])
-      if (u.username in netbox_superusers_wanted) != (u.is_superuser | default(false) | bool) -%}
-    {%- set _ = out.append({'id': u.id, 'username': u.username, 'want': u.username in netbox_superusers_wanted}) -%}
-  {%- endfor -%}
-  {{ out }}
+# --- The superuser flag, in NetBox's database (tasks/rbac.yml) --------------------------------
+# psql as roles/postgres_db calls it on the leader, on NetBox's database; the usernames reach it
+# as a psql variable, which psql quotes itself (:'wanted'). A row of the read = `username=true|false`
+# (the value the flag must take).
+netbox_user_table: "users_user"                # NetBox >= 4.0
+netbox_superuser_psql: >-
+  {{ postgres_db_psql + ['-d', netbox_pg_name, '-q', '-v', 'wanted=' ~ (netbox_superusers_wanted | join(','))] }}
+netbox_superuser_sql_wanted: "(username = ANY (string_to_array(:'wanted', ',')))"
+netbox_superuser_sql_read: >-
+  SELECT username || '=' || {{ netbox_superuser_sql_wanted }}::text FROM {{ netbox_user_table }}
+  WHERE is_superuser IS DISTINCT FROM {{ netbox_superuser_sql_wanted }} ORDER BY username;
+netbox_superuser_sql_write: >-
+  UPDATE {{ netbox_user_table }} SET is_superuser = {{ netbox_superuser_sql_wanted }}
+  WHERE is_superuser IS DISTINCT FROM {{ netbox_superuser_sql_wanted }};
+netbox_superuser_drift: "{{ netbox_superuser_read.stdout_lines | default([]) | map('trim') | select | list }}"
+
+# The declared environment (vars/main.yml: netbox_env) is the WHOLE environment of the three
+# containers: a variable removed there leaves the container at the next run. The scaffold's
+# default only requires the declared variables to be present, so a removed one would stay.
+netbox_container_comparisons:
+  env: strict
 
 # Persistent volume (uploaded files / images).
 netbox_media_volume: "netbox-media"
