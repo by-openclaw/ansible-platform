@@ -19,8 +19,14 @@ upgrade_path_steps: []
 # Human name, used in messages only.
 upgrade_path_service: "service"
 
-# Shell command returning the CURRENTLY running version, run on the target host.
-upgrade_path_current_cmd: ""
+# The CURRENTLY running version, read on the target host: one command (its output) or one file (its
+# content), then an optional regular expression whose first group is the version, and an optional
+# suffix (GitLab's rungs are image tags: X.Y.Z-ce.0).
+#   upgrade_path_current:
+#     argv: [docker, exec, -u, www-data, nextcloud, php, occ, status, --output=json]
+#     regex: '"versionstring":"([^"]+)"'
+#   upgrade_path_current: { file: /opt/harbor/.installed-version, regex: '^v?([0-9.]+)' }
+upgrade_path_current: {}
 
 # Preferred apply mechanism: the service's own role, re-run per rung with the
 # step's image. Keeps the upgrade on the normal deploy path.
@@ -29,21 +35,70 @@ upgrade_path_role: ""
 # "nextcloud_image". Set by name per rung so this role stays service-agnostic.
 upgrade_path_image_var: ""
 
-# Fallback for services whose upgrade is not a container swap.
-# Shell command applying one step. Receives the step's image/version via the
-# `upgrade_path_step` fact. Typically recreates the container on the new tag.
-upgrade_path_apply_cmd: ""
+# Fallback for a service whose upgrade is not a container swap: one command (an argument list)
+# applying one step. It can read the step through the `upgrade_path_step` fact.
+upgrade_path_apply_argv: []
 
+# Checks. A list, run in order; each entry is ONE command or ONE HTTP request and says what its
+# answer must look like. The first check that fails stops the whole path.
+#   - name: "no database upgrade pending"
+#     argv: [docker, exec, -u, www-data, nextcloud, php, occ, status, --output=json]
+#     stdout_regex: ['"needsDbUpgrade":false']     # every expression must be found
+#     stdout_not_regex: []                          # none of these may be found
+#     chdir: /some/dir                              # optional
+#     tolerate_failure: true                        # optional: a non-zero exit is not a failure
+#     changes: true                                 # optional: it changes something (never run in a dry run)
+#   - name: "the application is ready"
+#     url: "http://127.0.0.1:8080/-/readiness"
+#     status: 200                                   # optional (default 200)
+#     content_regex: ['"status":"healthy"']         # optional
+#
 # Post-step hook: schema/data migrations that MUST finish before the next hop
 # (Nextcloud `occ upgrade`, GitLab background migrations). Empty = none.
-upgrade_path_migrate_cmd: ""
+upgrade_path_migrate: []
 
-# Health gate between steps. Non-zero exit stops the whole path — a half-migrated
-# service must never receive the next major.
-upgrade_path_verify_cmd: ""
+# Health gate between steps. A failed check stops the whole path — a half-migrated
+# service must never receive the next major. A dry run runs its read-only checks too, so a gate
+# that cannot work is found before an upgrade is attempted.
+upgrade_path_verify: []
 
 # Seconds to wait for the service to come back before verifying each step.
 upgrade_path_settle_seconds: 20
 
 # Refuse to run unless explicitly enabled, exactly like the updates role.
 upgrade_path_apply: false
+
+# Derived — the version read by tasks/current.yml, and the verdict of the check tasks/check.yml
+# has just run (`check` is the entry).
+upgrade_path_current_text: >-
+  {{ (upgrade_path_current_out.stdout | default(''))
+     if upgrade_path_current.argv is defined
+     else (upgrade_path_current_file.content | default('') | b64decode) }}
+upgrade_path_current_version: >-
+  {{ ((upgrade_path_current_text | regex_findall(upgrade_path_current.regex) | first | default(''))
+      if upgrade_path_current.regex is defined else (upgrade_path_current_text | trim))
+     ~ (upgrade_path_current.suffix | default('') if (upgrade_path_current_text | trim | length > 0) else '') }}
+upgrade_path_check_text: >-
+  {{ (upgrade_path_check_cmd.stdout | default('')) if check.argv is defined
+     else (upgrade_path_check_http.content | default('')) }}
+upgrade_path_check_answered: >-
+  {{ ((upgrade_path_check_cmd.rc | default(1)) == 0 or (check.tolerate_failure | default(false) | bool))
+     if check.argv is defined
+     else ((upgrade_path_check_http.status | default(0)) == (check.status | default(200) | int)) }}
+upgrade_path_check_missing: >-
+  {{ (check.stdout_regex | default(check.content_regex | default([]))) | reject('in', upgrade_path_check_found) | list }}
+upgrade_path_check_found: >-
+  {%- set out = [] -%}
+  {%- for expr in (check.stdout_regex | default(check.content_regex | default([]))) if upgrade_path_check_text is search(expr) -%}
+    {%- set _ = out.append(expr) -%}
+  {%- endfor -%}
+  {{ out }}
+upgrade_path_check_forbidden: >-
+  {%- set out = [] -%}
+  {%- for expr in (check.stdout_not_regex | default([])) if upgrade_path_check_text is search(expr) -%}
+    {%- set _ = out.append(expr) -%}
+  {%- endfor -%}
+  {{ out }}
+upgrade_path_check_ok: >-
+  {{ (upgrade_path_check_answered | bool) and (upgrade_path_check_missing | length == 0)
+     and (upgrade_path_check_forbidden | length == 0) }}

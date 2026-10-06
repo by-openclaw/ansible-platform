@@ -41,23 +41,28 @@
             image: "nextcloud:34.0.4-apache"
             note: "latest 34.x — 35.0.0 waits for stable spreed/mail/calendar/contacts/whiteboard releases (store checked 2026-09-19)"
 
-        upgrade_path_current_cmd: >-
-          docker exec -u www-data nextcloud php occ status --output=json
-          | sed -E 's/.*"versionstring":"([^"]+)".*/\1/'
+        upgrade_path_current:
+          argv: [docker, exec, -u, www-data, nextcloud, php, occ, status, --output=json]
+          regex: '"versionstring":"([^"]+)"'
 
         # Re-run the nextcloud role with this rung's image so the upgrade takes
         # the normal deploy path instead of a hand-rolled docker command.
         upgrade_path_role: nextcloud
         upgrade_path_image_var: nextcloud_image
 
-        # occ upgrade MUST complete before the next major is applied.
-        upgrade_path_migrate_cmd: >-
-          docker exec -u www-data nextcloud php occ upgrade --no-interaction
-          || docker exec -u www-data nextcloud php occ status --output=json | grep -q '"needsDbUpgrade":false'
+        # occ upgrade MUST complete before the next major is applied: it is run, then no database
+        # upgrade may be pending (a rung with nothing to migrate makes occ upgrade exit non-zero).
+        upgrade_path_migrate:
+          - name: "occ upgrade"
+            argv: [docker, exec, -u, www-data, nextcloud, php, occ, upgrade, --no-interaction]
+            tolerate_failure: true
+            changes: true
+          - name: "no database upgrade pending"
+            argv: [docker, exec, -u, www-data, nextcloud, php, occ, status, --output=json]
+            stdout_regex: ['"needsDbUpgrade":false']
 
         # Health gate: installed, not in maintenance, no pending DB upgrade.
-        upgrade_path_verify_cmd: >-
-          docker exec -u www-data nextcloud php occ status --output=json
-          | grep -q '"maintenance":false' &&
-          docker exec -u www-data nextcloud php occ status --output=json
-          | grep -q '"needsDbUpgrade":false'
+        upgrade_path_verify:
+          - name: "installed, not in maintenance, no database upgrade pending"
+            argv: [docker, exec, -u, www-data, nextcloud, php, occ, status, --output=json]
+            stdout_regex: ['"installed":true', '"maintenance":false', '"needsDbUpgrade":false']
