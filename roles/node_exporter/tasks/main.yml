@@ -7,7 +7,7 @@
     update_cache: true
     cache_valid_time: 3600
 
-- name: "Node-exporter | Bind address + port (systemd drop-in)"
+- name: "Node-exporter | Bind address, port and extra arguments (the package's defaults file)"
   ansible.builtin.copy:
     dest: /etc/default/prometheus-node-exporter
     owner: root
@@ -15,7 +15,7 @@
     mode: "0644"
     content: |
       # Managed by Ansible (role: node_exporter)
-      ARGS="--web.listen-address={{ node_exporter_listen }}:{{ node_exporter_port }}"
+      ARGS="{{ (['--web.listen-address=' ~ node_exporter_listen ~ ':' ~ node_exporter_port] + node_exporter_extra_args) | join(' ') }}"
   notify: Restart node-exporter
 
 # The Debian package pulls in the collectors, ipmitool and openipmi (Recommends).

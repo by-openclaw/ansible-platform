@@ -55,7 +55,23 @@ security_audit_image_reason_no_room: >-
   no room: {{ security_audit_image_need_mb }} MB needed (the image, Trivy's databases and
   {{ security_audit_trivy_min_free_mb }} MB kept free), {{ security_audit_image_free_mb }} MB free
 security_audit_image_reason_timeout: "stopped after {{ security_audit_trivy_scan_timeout_s }} s"
-security_audit_image_reason_failed: "the scanner failed (rc {{ security_audit_image_rc }})"
+# Trivy's own limit: the role's, minus a margin (the outer `timeout` stays the hard stop). Left
+# unsaid it is 5 minutes — the 3.6 GB GitLab image needs more ("context deadline exceeded",
+# fleet audit of 2026-10-06).
+security_audit_trivy_own_timeout_margin_s: 30
+security_audit_trivy_own_timeout: "{{ (security_audit_trivy_scan_timeout_s | int) - (security_audit_trivy_own_timeout_margin_s | int) }}s"
+# A failed scan keeps what the scanner said: the end of its last line on standard error, where
+# Trivy names the cause ("…: no space left on device"). Without it a failure was only an exit code.
+security_audit_reason_error_chars: 300
+security_audit_image_error_full: >-
+  {{ (security_audit_trivy.stderr_lines | default([]) | map('trim') | select | list | last | default(''))
+     | regex_replace('[\t ]+', ' ') }}
+security_audit_image_error_line: >-
+  {{ ('… ' if (security_audit_image_error_full | length) > (security_audit_reason_error_chars | int) else '')
+     ~ security_audit_image_error_full[-(security_audit_reason_error_chars | int):] }}
+security_audit_image_reason_failed: >-
+  the scanner failed (rc {{ security_audit_image_rc }}){{ (': ' ~ security_audit_image_error_line)
+  if security_audit_image_error_line | length > 0 else '' }}
 # An expression, not an if-block: a block that prints nothing yields null, and the reason of a
 # scanned image is the empty string.
 security_audit_image_reason: >-

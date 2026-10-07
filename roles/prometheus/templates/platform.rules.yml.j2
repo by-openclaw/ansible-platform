@@ -56,6 +56,18 @@ groups:
           summary: "{{ '{{' }} $labels.name {{ '}}' }} is failed on {{ '{{' }} $labels.instance {{ '}}' }}"
           description: "The unit {{ '{{' }} $labels.name {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} has been in the failed state for {{ prometheus_alert_unit_failed_for }}. For a scheduled job this means its last run failed and what it produces (a backup, a snapshot, a copy) is missing since then."
           runbook: "On the host: systemctl status and the journal of the unit name the step that failed. Fix the cause through the unit's role, then start the unit: the alert clears when a run succeeds."
+      # A unit that systemd keeps restarting is "activating" or "active" at any given moment and
+      # never "failed" for long: UnitFailed does not see it (and only the failed state is kept
+      # at scrape time). The restart counter is the one place a loop shows: on 2026-10-06 a guest's
+      # firewall unit had restarted 16 944 times over three days, unnoticed.
+      - alert: UnitRestartLoop
+        expr: increase(node_systemd_service_restart_total[{{ prometheus_alert_unit_restarts_window }}]) > {{ prometheus_alert_unit_restarts_max }}
+        for: {{ prometheus_alert_unit_restarts_for }}
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ '{{' }} $labels.name {{ '}}' }} keeps restarting on {{ '{{' }} $labels.instance {{ '}}' }}"
+          description: "systemd restarted {{ '{{' }} $labels.name {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} more than {{ prometheus_alert_unit_restarts_max }} times in {{ prometheus_alert_unit_restarts_window }}: the service does not stay up."
+          runbook: "On the host: journalctl -u <unit> shows why each start ends. Fix the cause through the unit's role; the alert clears when the restarts stop."
       - alert: HostDiskAlmostFull
         expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes) < {{ prometheus_alert_disk_free_ratio }}
         for: 15m

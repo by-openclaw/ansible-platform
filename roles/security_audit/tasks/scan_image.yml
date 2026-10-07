@@ -11,6 +11,8 @@
 
 # Trivy prints one line per finding: its severity. `timeout` stops the scanner after the allowed
 # time (Docker passes the signal on to the container, which --rm then removes).
+# Trivy has a limit of its own (5 minutes when nothing is said): it is given the role's, a little
+# shorter, so that a slow scan ends with Trivy's own message rather than at the outer stop.
 - name: "SecAudit | Trivy scan"
   ansible.builtin.command:
     argv:
@@ -30,6 +32,8 @@
       - "{{ security_audit_trivy_image }}"
       - image
       - --quiet
+      - --timeout
+      - "{{ security_audit_trivy_own_timeout }}"
       - --scanners
       - vuln
       - --severity

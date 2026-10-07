@@ -71,6 +71,12 @@ hardening_ufw_leftover_jumps: >-
     {%- endfor -%}
   {%- endfor -%}
   {{ out }}
+# The periodic check (a oneshot unit + timer, roles/host_job): the same rule, read every interval.
+hardening_ufw_check_job: "ufw-loaded-check"
+hardening_ufw_check_exec: "/usr/sbin/{{ hardening_ufw_loaded_check | join(' ') }}"
+hardening_ufw_check_after_boot: "3min"
+hardening_ufw_check_interval: "5min"
+hardening_ufw_check_timeout: "1min"
 # order ufw after Docker where Docker runs (service facts)
 hardening_ufw_after_docker: "{{ (ansible_facts.services | default({}))['docker.service'] is defined }}"
 # ------------------------------------------------------------------------------
@@ -173,3 +179,11 @@ hardening_retired_retention: 7d
 # Failed units in one of these load states are reset (their unit file is gone, or they are
 # switched off for good); a failed unit that can still run stays visible.
 hardening_reset_failed_load_states: ["not-found", "masked"]
+
+# ------------------------------------------------------------------------------
+# Serial console (VMs): the login on the first serial port exists only where the port does.
+# /proc/tty/driver/serial says `0: uart:unknown …` when the hypervisor gives the VM none.
+hardening_serial_ports_file: "/proc/tty/driver/serial"
+hardening_serial_getty_unit: "serial-getty@ttyS0.service"
+hardening_serial_port_absent: "{{ (hardening_serial_ports.stdout | default('')) is search('(?m)^0: uart:unknown') }}"
+hardening_serial_port_present: "{{ (hardening_serial_ports.stdout | default('')) is search('(?m)^0: uart:(?!unknown)') }}"
