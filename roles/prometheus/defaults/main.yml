@@ -62,6 +62,7 @@ prometheus_keep:
     - "node_network_up"
     - "node_disk_(read_bytes|written_bytes|io_time_seconds)_total"
     - "node_systemd_unit_state"            # failed units only — see prometheus_drop
+    - "node_systemd_service_restart_total" # the UnitRestartLoop rule (one series per service and host)
     - "node_zfs_zpool_state"               # the ZfsPoolNotOnline rule
     - "node_pressure_.*"
     - "node_vmstat_oom_kill"
@@ -203,6 +204,9 @@ prometheus_alert_cert_warn_days: 14
 prometheus_alert_cert_crit_days: 5
 prometheus_alert_disk_free_ratio: 0.10
 prometheus_alert_unit_failed_for: "15m"     # how long a unit may stay failed before UnitFailed fires
+prometheus_alert_unit_restarts_window: "30m"  # UnitRestartLoop: restarts by systemd counted over this window…
+prometheus_alert_unit_restarts_max: 5         # …more than this many = the service does not stay up
+prometheus_alert_unit_restarts_for: "5m"
 # SeaweedFS writes fail (HTTP 500) once no volume slot is free — 2026-09-28 cost 9
 # guests' PBS backups while the disk still had 76 GB free.
 prometheus_alert_seaweedfs_free_slots: 30
