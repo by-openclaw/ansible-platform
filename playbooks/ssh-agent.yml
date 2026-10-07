@@ -34,6 +34,8 @@
         agent_bootstrap_passphrase: "{{ (lookup('file', agent_print_kit ~ '/04-ssh-passphrase-' ~ platform_org ~ '.json') | from_json).passphrase }}"
         # The kit item is the document Vault holds, exported flat by playbooks/breakglass-kit.yml
         # ({username, password}); a kit written before 2026-10-06 wrapped it in `fields`.
+        # The fields read here are declared as `needs` in playbooks/breakglass-kit.yml, which
+        # refuses to write a kit file without them.
         agent_bootstrap_os_password: "{{ (agent_kit_os.fields | default(agent_kit_os)).password }}"
       vars:
         agent_kit_os: "{{ lookup('file', agent_print_kit ~ '/02-os-password-' ~ platform_org ~ '.json') | from_json }}"
