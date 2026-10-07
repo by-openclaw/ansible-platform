@@ -67,11 +67,9 @@
     name: "{{ scaffold_ctr.name }}"
     image: "{{ scaffold_ctr.image }}"
     state: "{{ scaffold_ctr.state | default('started') }}"   # absent: e.g. a host opted out
-    # `always`, not `unless-stopped`: at a guest shutdown a process that exits before the Docker
-    # daemon stops is recorded as stopped, and `unless-stopped` then leaves it down at the next
-    # boot (a PostgreSQL member did not come back after its guest restarted, 2026-10-04).
-    # Nothing here is stopped by hand: a play that wants a container down removes it.
-    restart_policy: "{{ scaffold_ctr.restart_policy | default('always') }}"
+    # The platform's policy (inventory: platform_container_restart_policy, with its reason)
+    # unless the container declares its own.
+    restart_policy: "{{ scaffold_ctr.restart_policy | default(service_scaffold_restart_policy) }}"
     networks: >-
       {{ [{'name': service_scaffold_def.network} | combine({'aliases': scaffold_ctr.aliases} if scaffold_ctr.aliases is defined else {})]
          if (service_scaffold_def.network | default('')) | length > 0 else omit }}

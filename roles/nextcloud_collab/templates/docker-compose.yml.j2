@@ -5,7 +5,7 @@ services:
     # eturnal advertises the container address as relay, Janus (same container) is the
     # only relay peer, so the relay range never leaves the container (AIO pattern).
     image: {{ nextcloud_collab_talk_image }}
-    restart: unless-stopped
+    restart: {{ nextcloud_collab_restart_policy }}
     logging: {driver: journald}   # explicit: a container keeps the driver it was created with, the daemon default is not enough
     ports:
       - "{{ nextcloud_collab_turn_port }}:{{ nextcloud_collab_turn_port }}/tcp"
@@ -15,7 +15,7 @@ services:
     shm_size: "2gb"
   talk-recording:
     image: {{ nextcloud_collab_recording_image }}
-    restart: unless-stopped
+    restart: {{ nextcloud_collab_restart_policy }}
     logging: {driver: journald}   # explicit: a container keeps the driver it was created with, the daemon default is not enough
     ports:
       - "{{ nextcloud_collab_bind_ip }}:{{ nextcloud_collab_recording_port }}:1234"
@@ -26,7 +26,7 @@ services:
     depends_on: [talk]
   whiteboard:
     image: {{ nextcloud_collab_whiteboard_image }}
-    restart: unless-stopped
+    restart: {{ nextcloud_collab_restart_policy }}
     logging: {driver: journald}   # explicit: a container keeps the driver it was created with, the daemon default is not enough
     ports:
       - "{{ nextcloud_collab_bind_ip }}:{{ nextcloud_collab_whiteboard_port }}:3002"
