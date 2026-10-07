@@ -8,6 +8,13 @@
   when: hardening_ufw_enabled | bool
   tags: [hardening, firewall, ufw]
 
+- name: Serial-console login only where the VM has a serial port
+  ansible.builtin.import_tasks: serial_console.yml
+  when:
+    - ansible_virtualization_role | default('') == 'guest'
+    - ansible_virtualization_type | default('') == 'kvm'
+  tags: [hardening, serial]
+
 - name: Apply email relay (postfix)
   ansible.builtin.import_tasks: email-relay.yml
   when: hardening_email_relay_enabled | bool

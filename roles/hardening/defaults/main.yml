@@ -179,3 +179,11 @@ hardening_retired_retention: 7d
 # Failed units in one of these load states are reset (their unit file is gone, or they are
 # switched off for good); a failed unit that can still run stays visible.
 hardening_reset_failed_load_states: ["not-found", "masked"]
+
+# ------------------------------------------------------------------------------
+# Serial console (VMs): the login on the first serial port exists only where the port does.
+# /proc/tty/driver/serial says `0: uart:unknown …` when the hypervisor gives the VM none.
+hardening_serial_ports_file: "/proc/tty/driver/serial"
+hardening_serial_getty_unit: "serial-getty@ttyS0.service"
+hardening_serial_port_absent: "{{ (hardening_serial_ports.stdout | default('')) is search('(?m)^0: uart:unknown') }}"
+hardening_serial_port_present: "{{ (hardening_serial_ports.stdout | default('')) is search('(?m)^0: uart:(?!unknown)') }}"

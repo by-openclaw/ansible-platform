@@ -1,0 +1,46 @@
+---
+# The cloud images ask for a login on the first serial port (`console=ttyS0` on the kernel command
+# line, so systemd starts serial-getty@ttyS0). A VM without a serial port in the hypervisor has no
+# such device: the login program fails at once and systemd restarts it for ever — 34 000 restarts
+# in four days on each of five VMs, found by the UnitRestartLoop alert on 2026-10-07. Where the
+# port does not exist the login unit is stopped and masked; a VM that is given a serial port gets
+# its login back at the next run.
+- name: "Serial console | Serial ports the kernel sees"
+  ansible.builtin.command:
+    argv: [cat, "{{ hardening_serial_ports_file }}"]
+  register: hardening_serial_ports
+  check_mode: false  # read-only probe: must run under --check too (the tasks below read its result)
+  changed_when: false
+  failed_when: false
+
+- name: "Serial console | No login unit where the first serial port does not exist"
+  ansible.builtin.systemd_service:
+    name: "{{ hardening_serial_getty_unit }}"
+    state: stopped
+    masked: true
+  when: hardening_serial_port_absent | bool
+
+# A unit stopped in the middle of its restart loop is left "failed": masked, it would then sit
+# in the failed-unit alert for ever. Its failed state is cleared.
+- name: "Serial console | Is the masked login unit left in the failed state?"
+  ansible.builtin.command:
+    argv: [systemctl, is-failed, "{{ hardening_serial_getty_unit }}"]
+  register: hardening_serial_getty_failed
+  check_mode: false  # read-only probe
+  changed_when: false
+  failed_when: false
+  when: hardening_serial_port_absent | bool
+
+- name: "Serial console | Clear that failed state"
+  ansible.builtin.command:
+    argv: [systemctl, reset-failed, "{{ hardening_serial_getty_unit }}"]
+  changed_when: true
+  when:
+    - hardening_serial_port_absent | bool
+    - (hardening_serial_getty_failed.rc | default(1)) == 0
+
+- name: "Serial console | The login unit is available where the port exists"
+  ansible.builtin.systemd_service:
+    name: "{{ hardening_serial_getty_unit }}"
+    masked: false
+  when: hardening_serial_port_present | bool
