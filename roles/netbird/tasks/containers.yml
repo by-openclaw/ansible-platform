@@ -34,9 +34,22 @@
   no_log: true
   notify: "Restart netbird management"
 
-- name: "containers | Validate the rendered management.json is valid JSON"
-  ansible.builtin.command: "python3 -c \"import json,sys; json.load(open('{{ netbird_build_dir }}/management.json'))\""
-  changed_when: false
+# A file that is not JSON would stop the management container at its next start: read it back
+# and parse it (from_json fails the task on anything that is not JSON).
+- name: "containers | Read back the rendered management.json"
+  ansible.builtin.slurp:
+    src: "{{ netbird_build_dir }}/management.json"
+  register: netbird_management_rendered
+  no_log: true
+  when: not ansible_check_mode   # a dry run renders nothing
+
+- name: "containers | The rendered management.json is valid JSON"
+  ansible.builtin.assert:
+    that: (netbird_management_rendered.content | b64decode | from_json) is mapping
+    fail_msg: "{{ netbird_build_dir }}/management.json is not a JSON object"
+    quiet: true
+  no_log: true
+  when: not ansible_check_mode
 
 - name: "containers | Render turnserver.conf"
   ansible.builtin.template:
