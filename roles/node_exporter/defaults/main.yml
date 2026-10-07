@@ -5,6 +5,11 @@
 node_exporter_port: 9100
 node_exporter_listen: "0.0.0.0"   # reachable by Prometheus on the SVC/DMZ nets
 # Collectors are the package defaults (cpu, meminfo, filesystem, netdev, systemd, ...).
+# Extra arguments. The restart counter of each service (node_systemd_service_restart_total) is
+# off by default; a unit caught in a restart loop is never "failed" for long, so that counter is
+# the only place it shows (roles/prometheus: UnitRestartLoop).
+node_exporter_extra_args:
+  - "--collector.systemd.enable-restarts-metrics"
 
 # Hosts allowed to scrape :9100 when a host firewall (ufw) is active — the monitoring
 # group's addresses. Hosts without ufw are unaffected (SVC → SVC is open on the FW).
