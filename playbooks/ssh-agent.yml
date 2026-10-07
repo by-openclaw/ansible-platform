@@ -32,7 +32,11 @@
       ansible.builtin.set_fact:
         agent_bootstrap_key: "{{ (lookup('file', agent_print_kit ~ '/04-ssh-passphrase-' ~ platform_org ~ '.json') | from_json).key_file }}"
         agent_bootstrap_passphrase: "{{ (lookup('file', agent_print_kit ~ '/04-ssh-passphrase-' ~ platform_org ~ '.json') | from_json).passphrase }}"
-        agent_bootstrap_os_password: "{{ (lookup('file', agent_print_kit ~ '/02-os-password-' ~ platform_org ~ '.json') | from_json).fields.password }}"
+        # The kit item is the document Vault holds, exported flat by playbooks/breakglass-kit.yml
+        # ({username, password}); a kit written before 2026-10-06 wrapped it in `fields`.
+        agent_bootstrap_os_password: "{{ (agent_kit_os.fields | default(agent_kit_os)).password }}"
+      vars:
+        agent_kit_os: "{{ lookup('file', agent_print_kit ~ '/02-os-password-' ~ platform_org ~ '.json') | from_json }}"
       no_log: true
 
     - name: "Bootstrap | Is an agent alive behind the fixed socket?"
