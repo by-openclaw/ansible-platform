@@ -10,7 +10,6 @@
     name: ufw
     state: present
 
-
 - name: "UFW | Service facts (Docker ordering for the unit drop-in; is nftables.service there)"
   ansible.builtin.service_facts:
 
@@ -172,3 +171,23 @@
     fail_msg: "ufw is enabled on {{ inventory_hostname }} but INPUT does not jump to its chains: the host has no firewall"
     quiet: true
   when: not ansible_check_mode
+
+# Between two runs of this role nothing watched the ruleset: five guests ran three days without
+# it (2026-10-03 to 2026-10-06). A job repeats the check; when the jump is missing its unit
+# fails, and the failed-unit alert (roles/prometheus: UnitFailed) fires. No mail per run — a
+# host without its firewall would send one every interval; the alert is the signal.
+- name: "UFW | Periodic check that the ruleset is loaded (roles/host_job)"
+  ansible.builtin.include_role:
+    name: host_job
+    apply:
+      tags: [hardening, firewall, ufw]
+  vars:
+    host_job_name: "{{ hardening_ufw_check_job }}"
+    host_job_description: "The host firewall's ruleset is loaded (INPUT jumps to ufw's chains)"
+    host_job_exec: ["{{ hardening_ufw_check_exec }}"]
+    host_job_on_calendar: ""
+    host_job_on_boot_sec: "{{ hardening_ufw_check_after_boot }}"
+    host_job_on_unit_active_sec: "{{ hardening_ufw_check_interval }}"
+    host_job_persistent: false
+    host_job_timeout: "{{ hardening_ufw_check_timeout }}"
+    host_job_on_failure: false
