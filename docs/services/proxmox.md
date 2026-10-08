@@ -49,6 +49,9 @@ ssacli ctrl slot=0 ld <n> show detail        # which array / drive a volume uses
   3. pull the old drive when the play says it is used by nothing any more.
 
   A volume that already exists and that nothing uses can take over instead of a new drive: `-e pve_storage_replace_with_ld=<n>`. The play refuses, before changing anything, a member whose mirror partner is not ONLINE and a replacement that is in use (imported pool, mount, LVM).
+
+  Count about an hour: on 2026-10-08 the copy of one mirror side took 23 minutes (the controller's cache module is disabled) and the scrub 13.
+- **Bays, as of 2026-10-08:** the volume of bay 14 failed three times in five days (2026-10-03, 2026-10-07, 2026-10-08) while its drive tested clean; its pool member was moved to a new drive fitted in bay 18 and the volume was deleted. Bay 14 is not to be reused before the bay or that drive is cleared. The volume of bay 15 belongs to no pool (it carried a dead pool's labels, cleared): it is the spare volume already in the chassis (`-e pve_storage_replace_with_ld=<its number>`).
 - **Do not reboot the node with a failed logical volume:** the controller can stop at its boot prompt, and the firewall VM lives on this node.
 - Alert: `ZfsPoolNotOnline` (Prometheus) fires when the pool is not ONLINE.
 - Known state: the controller's cache module is "permanently disabled (backup to flash failed)"; drive write cache is off. Several drives carry grown defects (see the 2026-10-03 addendum of the audit record) — a spare 300 GB SAS drive on site is advised.
