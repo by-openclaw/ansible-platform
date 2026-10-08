@@ -14,6 +14,15 @@ mailcow_git_repo: "https://github.com/mailcow/mailcow-dockerized.git"
 mailcow_git_version: "2026-09"  # the release the platform must run (= newest stable when bumped; mailcow's update.sh updates to the newest and the role asserts it equals the pin). 2026-07a was a security release.
 mailcow_install_dir: "/opt/mailcow-dockerized"
 mailcow_mysql_container: "mailcowdockerized-mysql-mailcow-1"
+# SQL the REST API does not cover: the database's client runs in the database's own container
+# through the Docker API (community.docker.docker_container_exec) — the statement on stdin, the
+# password in the client's environment. Neither is on a command line: `docker exec -e MYSQL_PWD=…
+# mysql -e "<statement>"` showed the root password, and with it the API key, the admin hash and
+# the OIDC client secret carried by the statements, in the host's process list while it ran.
+mailcow_mysql_database: mailcow
+mailcow_mysql_client: [mysql, -uroot, "{{ mailcow_mysql_database }}"]
+mailcow_mysql_env:
+  MYSQL_PWD: "{{ mailcow_dbroot }}"   # read from mailcow.conf by tasks/config.yml
 
 # --- Identity / hostnames ------------------------------------------------------
 # The mail SERVER hostname. Clients of EVERY hosted domain connect here, so this

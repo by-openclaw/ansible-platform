@@ -43,56 +43,35 @@
 # `admin` UI account stay local as break-glass.
 
 - name: "oidc | Remove the legacy lowercase 'default' template (case-sensitive)"
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "MYSQL_PWD={{ mailcow_dbroot }}"
-      - "{{ mailcow_mysql_container }}"
-      - mysql
-      - -uroot
-      - mailcow
-      - -e
-      # BINARY keeps this case-sensitive so mailcow's built-in "Default" is untouched.
-      - "DELETE FROM templates WHERE BINARY template = 'default' AND type = 'mailbox';"
+  community.docker.docker_container_exec:
+    container: "{{ mailcow_mysql_container }}"
+    argv: "{{ mailcow_mysql_client }}"
+    env: "{{ mailcow_mysql_env }}"
+    # BINARY keeps this case-sensitive so mailcow's built-in "Default" is untouched.
+    stdin: "DELETE FROM templates WHERE BINARY template = 'default' AND type = 'mailbox';"
   changed_when: false
   no_log: true
 
 - name: "oidc | Create the 5 GB auto-provisioning mailbox template"
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "MYSQL_PWD={{ mailcow_dbroot }}"
-      - "{{ mailcow_mysql_container }}"
-      - mysql
-      - -uroot
-      - mailcow
-      - -e
-      - >-
-        INSERT INTO templates (template, type, attributes)
-        VALUES ('{{ mailcow_oidc_default_template }}', 'mailbox', '{{ mailcow_oidc_template_attributes | to_json }}')
-        ON DUPLICATE KEY UPDATE attributes = VALUES(attributes);
+  community.docker.docker_container_exec:
+    container: "{{ mailcow_mysql_container }}"
+    argv: "{{ mailcow_mysql_client }}"
+    env: "{{ mailcow_mysql_env }}"
+    stdin: >-
+      INSERT INTO templates (template, type, attributes)
+      VALUES ('{{ mailcow_oidc_default_template }}', 'mailbox', '{{ mailcow_oidc_template_attributes | to_json }}')
+      ON DUPLICATE KEY UPDATE attributes = VALUES(attributes);
   changed_when: false
   no_log: true
 
 - name: "oidc | Apply the identity_provider settings (key/value)"
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "MYSQL_PWD={{ mailcow_dbroot }}"
-      - "{{ mailcow_mysql_container }}"
-      - mysql
-      - -uroot
-      - mailcow
-      - -e
-      - >-
-        INSERT INTO identity_provider (`key`, `value`) VALUES ('{{ item.key }}', '{{ item.value }}')
-        ON DUPLICATE KEY UPDATE value = VALUES(value);
+  community.docker.docker_container_exec:
+    container: "{{ mailcow_mysql_container }}"
+    argv: "{{ mailcow_mysql_client }}"
+    env: "{{ mailcow_mysql_env }}"
+    stdin: >-
+      INSERT INTO identity_provider (`key`, `value`) VALUES ('{{ item.key }}', '{{ item.value }}')
+      ON DUPLICATE KEY UPDATE value = VALUES(value);
   loop: "{{ mailcow_oidc_kv | dict2items }}"
   loop_control: { label: "{{ item.key }}" }
   changed_when: false

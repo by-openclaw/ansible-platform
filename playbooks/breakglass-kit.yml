@@ -24,10 +24,18 @@
   vars:
     # The paper kit must work with Vault sealed, so Vault-held items are exported
     # into it here (the kit folder is the one place they sit outside Vault).
+    # `needs` = the fields the item's reader takes from the file, at its top level: the agent
+    # bootstrap of playbooks/ssh-agent.yml for 02 and 04, a person at the console for 05.
     kit_from_vault:
-      - { path: "{{ platform_env }}/break-glass/os", name: "02-os-password-by-research.json" }
-      - { path: "{{ platform_env }}/break-glass/ssh-passphrase", name: "04-ssh-passphrase-by-research.json" }
-      - { path: "{{ platform_env }}/break-glass/opnsense", name: "05-opnsense-password-by-research.json" }
+      - path: "{{ platform_env }}/break-glass/os"
+        name: "02-os-password-{{ platform_org }}.json"
+        needs: [username, password]
+      - path: "{{ platform_env }}/break-glass/ssh-passphrase"
+        name: "04-ssh-passphrase-{{ platform_org }}.json"
+        needs: [key_file, passphrase]
+      - path: "{{ platform_env }}/break-glass/opnsense"
+        name: "05-opnsense-password-{{ platform_org }}.json"
+        needs: [username, password]
   tasks:
     - name: "Kit | Vault login (ansible-deploy AppRole; root fallback)"
       ansible.builtin.include_role:
@@ -47,6 +55,26 @@
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
       no_log: true
+
+    # A kit file is read when nothing else works. A document that lacks a field its reader
+    # needs (or holds it empty) is refused here, before it replaces a file that works: on
+    # 2026-10-06 an export changed a file's shape and the agent bootstrap could no longer read
+    # it, which showed at the next workstation restart. Field NAMES only leave the first task.
+    - name: "Kit | What each document lacks for its reader (field names only)"
+      ansible.builtin.set_fact:
+        kit_missing: "{{ kit_missing | default({}) | combine({item.item.name: item.item.needs | difference(kit_present) | list}) }}"
+      vars:
+        kit_present: "{{ item.json.data.data | dict2items | selectattr('value') | map(attribute='key') | list }}"
+      loop: "{{ kit_vault_reads.results }}"
+      loop_control: { label: "{{ item.item.name }}" }
+      when: item.status == 200
+      no_log: true
+
+    - name: "Kit | Each document holds what its reader needs"
+      ansible.builtin.assert:
+        that: kit_missing | default({}) | dict2items | selectattr('value') | list | length == 0
+        fail_msg: "nothing written — missing or empty: {{ kit_missing | default({}) | dict2items | selectattr('value') | items2dict }}"
+        success_msg: "checked: {{ kit_missing | default({}) | list }}"
 
     - name: "Kit | Write them into the print kit (controller, 0600)"
       ansible.builtin.copy:
@@ -71,22 +99,22 @@
       - src: "{{ secret_root }}/vault-init.json"
         name: "01-vault-unseal-shares.json"
         what: "Vault unseal shares (5, threshold 3) + root token"
-      - src: "{{ kit_dir }}/02-os-password-by-research.json"   # exported from Vault above
-        name: "02-os-password-by-research.json"
+      - src: "{{ kit_dir }}/02-os-password-{{ platform_org }}.json"   # exported from Vault above
+        name: "02-os-password-{{ platform_org }}.json"
         what: "break-glass password ({org}) — OS SSH AND the PVE WebUI pam realm"
       - src: "{{ ansible_env.HOME }}/.ssh/id_ed25519_{{ platform_org }}"
         name: "03-ssh-key-{{ platform_org }}"
         what: "break-glass SSH private key (passphrase in Vault + kit)"
       - src: "{{ ansible_env.HOME }}/.ssh/id_ed25519_{{ platform_org }}.pub"
-        name: "03-ssh-key-by-research.pub"
+        name: "03-ssh-key-{{ platform_org }}.pub"
         what: "break-glass SSH public key"
       # Passphrase of the break-glass key — printed so the kit works with Vault sealed:
-      - src: "{{ secret_root }}/print-kit/04-ssh-passphrase-by-research.json"
-        name: "04-ssh-passphrase-by-research.json"
+      - src: "{{ secret_root }}/print-kit/04-ssh-passphrase-{{ platform_org }}.json"
+        name: "04-ssh-passphrase-{{ platform_org }}.json"
         what: "break-glass SSH key passphrase (exported from Vault by its pass)"
       # Added by the PVE / OPNsense identity passes when those local admins are created:
-      - src: "{{ kit_dir }}/05-opnsense-password-by-research.json"   # exported from Vault above
-        name: "05-opnsense-password-by-research.json"
+      - src: "{{ kit_dir }}/05-opnsense-password-{{ platform_org }}.json"   # exported from Vault above
+        name: "05-opnsense-password-{{ platform_org }}.json"
         what: "OPNsense local {{ platform_org }} WebUI password"
   tasks:
     - name: "Kit | Ensure the folder (0700)"

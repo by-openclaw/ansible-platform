@@ -147,8 +147,7 @@
     msg: >-
       {{ 'route ' ~ (controller_route_networks | join(', ')) ~ ' via ' ~ controller_route_gateway ~ ' managed'
          if controller_sudo.rc == 0
-         else 'ROUTE NOT APPLIED — root is required on this workstation. Run once:
-               ansible-playbook -i inventories/prod/hosts.yml playbooks/controller.yml -K' }};
+         else 'ROUTE NOT APPLIED — this part only runs where sudo asks for no password (-K does not help: the inventory gives every host a become password, localhost included, and it wins). Vault stays reachable through the SSH hop' }};
       Vault API {{ controller_vault_addr }} ->
       {{ controller_vault_health.status | default('unreachable (still via the SSH hop)') }};
       agent unit installed + enabled on {{ controller_agent_socket }}
