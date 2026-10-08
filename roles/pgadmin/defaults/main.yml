@@ -61,6 +61,9 @@ pgadmin_servers_host_path: "/etc/pgadmin/servers.json"
 # tracked platform-wide for ALL db-pgsql-*.json, not just pgAdmin).
 # ({env}/postgres/superuser is no longer read by this role — SVC-31: the superuser is break-glass only)
 pgadmin_pg_passfile_container: "/var/lib/pgadmin/.pgpass-pg"   # in the persistent volume
+pgadmin_pg_passfile_mode: "0600"
+pgadmin_container_uid: 5050   # the image's `pgadmin` user, who runs the passexec command …
+pgadmin_container_gid: 0      # … and its group (root), as the image creates its files
 pgadmin_pg_passexec_cmd: "/bin/cat {{ pgadmin_pg_passfile_container }}"
 # libpq (used by pgAdmin to reach Postgres) looks for the verify-full CA at
 # ~/.postgresql/root.crt by default. The container HOME is /home/pgadmin; point

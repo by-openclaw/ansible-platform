@@ -52,50 +52,24 @@
   changed_when: "'CHANGED=0' not in pgadmin_provision.stdout"
 
 # --- Passexec connect flow: no password prompt, survives container recreate ------
-# pgAdmin runs PasswordExecCommand (cat the passfile) at connect. Populate that
-# passfile from the DBA login's secret INTO the persistent data volume, then point
-# the server row at the passexec command. This is what makes the fix durable: an
-# old live-only edit was lost whenever the container was recreated; here every
-# deploy re-asserts both. Idempotent — the passfile is rewritten only when its
-# content drifts (sha256 compare, no secret printed) and the row update only fires
-# on an actual change.
-- name: "servers | Hash the desired DBA password (idempotency probe)"
-  ansible.builtin.set_fact:
-    _pgadmin_pw_sha: "{{ pgadmin_pg_dba_password | hash('sha256') }}"
+# pgAdmin runs PasswordExecCommand (cat the passfile) at connect. The passfile is put INTO the
+# persistent data volume from the DBA login's secret, and the server row points at the passexec
+# command. That makes it durable: an old live-only edit was lost whenever the container was
+# recreated; here every deploy re-asserts it. One module task: it compares content, owner and
+# mode with what the container holds and writes only on a difference — through the Docker API,
+# so the password is on no command line, and byte for byte (no trailing newline: `cat` must
+# return the exact password).
+- name: "servers | The DBA passfile in the container (content, owner, mode)"
+  community.docker.docker_container_copy_into:
+    container: pgadmin
+    container_path: "{{ pgadmin_pg_passfile_container }}"
+    content: "{{ pgadmin_pg_dba_password }}"
+    owner_id: "{{ pgadmin_container_uid }}"
+    group_id: "{{ pgadmin_container_gid }}"
+    mode: "{{ pgadmin_pg_passfile_mode }}"
+    mode_parse: octal_string_only
+  diff: false   # the content is a password
   no_log: true
   when: pgadmin_pg_dba_password is defined
-
-- name: "servers | Read the current passfile hash inside the container"
-  community.docker.docker_container_exec:
-    container: pgadmin
-    user: root        # the volume dir + passfile are pgadmin-owned 0600; read as root
-    command: >-
-      /venv/bin/python3 -c "import hashlib,os,sys; p='{{ pgadmin_pg_passfile_container }}';
-      sys.stdout.write(hashlib.sha256(open(p,'rb').read()).hexdigest() if os.path.exists(p) else 'absent')"
-  register: pgadmin_passfile_now
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-  changed_when: false
-  when: pgadmin_pg_dba_password is defined
-
-# Write via the exec module's stdin (password never appears in argv / ps / logs)
-# AND as root — the image's default exec user is the unprivileged `pgadmin`, which
-# cannot create files in the volume dir or chown; root can, then hands ownership
-# back to pgadmin. stdin_add_newline:false keeps the file byte-identical to the
-# secret so the hash probe above stays idempotent and `cat` returns the exact pw.
-- name: "servers | Write the passfile into the container (root, stdin, no newline)"
-  community.docker.docker_container_exec:
-    container: pgadmin
-    user: root
-    command: >-
-      sh -c "cat > {{ pgadmin_pg_passfile_container }}
-      && chown pgadmin {{ pgadmin_pg_passfile_container }}
-      && chmod 600 {{ pgadmin_pg_passfile_container }}"
-    stdin: "{{ pgadmin_pg_dba_password }}"
-    stdin_add_newline: false
-  no_log: true
-  changed_when: true
-  when:
-    - pgadmin_pg_dba_password is defined
-    - (pgadmin_passfile_now.stdout | default('absent')) != _pgadmin_pw_sha
 
 # (passexec_cmd is set per-user by pg_provision.py above — no separate task needed.)
