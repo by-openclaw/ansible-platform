@@ -48,39 +48,35 @@
 
 # --- mailcow REST API key (seed so the uri tasks below can authenticate) -------
 - name: "config | Seed the mailcow REST API key (rw)"
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "MYSQL_PWD={{ mailcow_dbroot }}"
-      - "{{ mailcow_mysql_container }}"
-      - mysql
-      - -uroot
-      - mailcow
-      - -e
-      - >-
-        INSERT INTO api (api_key, allow_from, skip_ip_check, access, active, created, modified)
-        VALUES ('{{ mailcow_sec.api_key }}', '0.0.0.0/0', 1, 'rw', 1, NOW(), NOW())
-        ON DUPLICATE KEY UPDATE active = 1, skip_ip_check = 1;
+  community.docker.docker_container_exec:
+    container: "{{ mailcow_mysql_container }}"
+    argv: "{{ mailcow_mysql_client }}"
+    env: "{{ mailcow_mysql_env }}"
+    stdin: >-
+      INSERT INTO api (api_key, allow_from, skip_ip_check, access, active, created, modified)
+      VALUES ('{{ mailcow_sec.api_key }}', '0.0.0.0/0', 1, 'rw', 1, NOW(), NOW())
+      ON DUPLICATE KEY UPDATE active = 1, skip_ip_check = 1;
   changed_when: false
   no_log: true
 
 # --- admin password (idempotent: only update if the stored hash differs) -------
 - name: "config | Current admin password hash"
-  ansible.builtin.command:
-    argv: [docker, exec, -e, "MYSQL_PWD={{ mailcow_dbroot }}", "{{ mailcow_mysql_container }}",
-           mysql, -uroot, mailcow, -N, -e, "SELECT password FROM admin WHERE username='admin';"]
+  community.docker.docker_container_exec:
+    container: "{{ mailcow_mysql_container }}"
+    argv: "{{ mailcow_mysql_client + ['-N'] }}"   # -N: the value only, no column name
+    env: "{{ mailcow_mysql_env }}"
+    stdin: "SELECT password FROM admin WHERE username='admin';"
   register: mailcow_admin_hash
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   no_log: true
 
 - name: "config | Set the mailcow admin password"
-  ansible.builtin.command:
-    argv: [docker, exec, -e, "MYSQL_PWD={{ mailcow_dbroot }}", "{{ mailcow_mysql_container }}",
-           mysql, -uroot, mailcow, -e,
-           "UPDATE admin SET password='{{ mailcow_sec.admin_password_hash }}', active=1 WHERE username='admin';"]
+  community.docker.docker_container_exec:
+    container: "{{ mailcow_mysql_container }}"
+    argv: "{{ mailcow_mysql_client }}"
+    env: "{{ mailcow_mysql_env }}"
+    stdin: "UPDATE admin SET password='{{ mailcow_sec.admin_password_hash }}', active=1 WHERE username='admin';"
   when: mailcow_admin_hash.stdout | trim != mailcow_sec.admin_password_hash
   changed_when: true
   no_log: true
