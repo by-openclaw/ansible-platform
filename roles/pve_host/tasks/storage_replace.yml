@@ -1,0 +1,336 @@
+---
+# Replace a pool member by another volume of the controller, then retire the volume it leaves.
+# Included by storage_health.yml when pve_storage_replace_ld is set. The replacement is either a
+# drive just fitted in a free bay (pve_storage_replace_with_drive: its volume is created here) or
+# a volume that exists and nothing uses (pve_storage_replace_with_ld). Everything is read and
+# proven first; --check runs every read and every refusal and none of the changing commands.
+- name: "Storage replace | Exactly one replacement is named"
+  ansible.builtin.assert:
+    that:
+      - not (pve_storage_reenable | bool)
+      - pve_storage_replace_ld | string | length > 0
+      - (pve_storage_replace_with_drive | string | length > 0) != (pve_storage_replace_with_ld | string | length > 0)
+    fail_msg: "name the volume to replace (pve_storage_replace_ld) and ONE replacement: pve_storage_replace_with_drive=<port:box:bay> or pve_storage_replace_with_ld=<n>; not together with pve_storage_reenable"
+    quiet: true
+
+- name: "Storage replace | Layout of the controller"
+  ansible.builtin.command:
+    argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", show, config]
+  register: pve_replace_config
+  changed_when: false
+  check_mode: false   # read-only probe
+
+# Per volume: the drives it sits on. Per drive without a volume: the controller's line about it.
+- name: "Storage replace | Volumes, their drives, and the drives without a volume"
+  ansible.builtin.set_fact:
+    pve_replace_drives: "{{ pve_replace_layout.drives }}"
+    pve_replace_unassigned: "{{ pve_replace_layout.unassigned }}"
+  vars:
+    pve_replace_layout: >-
+      {%- set drives = {} -%}
+      {%- set unassigned = {} -%}
+      {%- set ns = namespace(ld='', free=false) -%}
+      {%- for line in pve_replace_config.stdout_lines -%}
+        {%- set t = line.split() -%}
+        {%- if t | length >= 2 and t[0] == 'logicaldrive' -%}
+          {%- set ns.ld = t[1] -%}
+          {%- set ns.free = false -%}
+        {%- elif t | length >= 1 and t[0] | lower == 'array' -%}
+          {%- set ns.ld = '' -%}
+          {%- set ns.free = false -%}
+        {%- elif t | length >= 1 and t[0] | lower == 'unassigned' -%}
+          {%- set ns.ld = '' -%}
+          {%- set ns.free = true -%}
+        {%- elif t | length >= 2 and t[0] == 'physicaldrive' and ns.ld -%}
+          {%- set _ = drives.update({ns.ld: drives.get(ns.ld, []) + [t[1]]}) -%}
+        {%- elif t | length >= 2 and t[0] == 'physicaldrive' and ns.free -%}
+          {%- set _ = unassigned.update({t[1]: line | trim}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ {'drives': drives, 'unassigned': unassigned} }}
+
+- name: "Storage replace | The volume to replace (controller)"
+  ansible.builtin.command:
+    argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", ld, "{{ pve_storage_replace_ld }}", show, detail]
+  register: pve_replace_old_detail
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "Storage replace | Members of every imported pool"
+  ansible.builtin.command:
+    argv: [zpool, status, -P]
+  register: pve_replace_pools
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "Storage replace | Members of the pool"
+  ansible.builtin.command:
+    argv: [zpool, status, -P, "{{ pve_host_zfs_pool }}"]
+  register: pve_replace_pool
+  changed_when: false
+  check_mode: false   # read-only probe
+
+# The controller's identifier of a volume is the WWN the kernel and ZFS name the disk by.
+# Every leaf of the pool: the group it belongs to (mirror-N, …) and its state.
+- name: "Storage replace | The volume to replace and the layout of the pool"
+  ansible.builtin.set_fact:
+    pve_replace_old:
+      ld: "{{ pve_storage_replace_ld | string }}"
+      id: "{{ pve_replace_old_detail.stdout | regex_findall('Unique Identifier: *([0-9A-Fa-f]+)') | first | default('') | lower }}"
+      status: "{{ pve_replace_old_detail.stdout | regex_findall('Status: *([A-Za-z]+)') | first | default('') }}"
+      fault_tolerance: "{{ pve_replace_old_detail.stdout | regex_findall('Fault Tolerance: *([0-9A-Za-z+]+)') | first | default('') }}"
+      size: "{{ pve_replace_old_detail.stdout | regex_findall('Size: *([0-9.]+ [A-Z]+)') | first | default('') }}"
+    pve_replace_leaves: >-
+      {%- set out = [] -%}
+      {%- set ns = namespace(group='') -%}
+      {%- for line in pve_replace_pool.stdout_lines -%}
+        {%- set t = line.split() -%}
+        {%- if t | length >= 2 and t[0] is match('(mirror|raidz|draid|replacing|spare)') -%}
+          {%- set ns.group = t[0] -%}
+        {%- elif t | length >= 1 and t[0] in ['logs', 'cache', 'spares', 'special', 'dedup'] -%}
+          {%- set ns.group = t[0] -%}
+        {%- elif t | length >= 2 and t[0] is match('/') -%}
+          {%- set _ = out.append({'group': ns.group, 'path': t[0], 'state': t[1]}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: "Storage replace | The member to replace and its partners"
+  ansible.builtin.set_fact:
+    pve_replace_member: "{{ pve_replace_matches | first | default({'group': '', 'path': '', 'state': ''}) }}"
+    pve_replace_member_count: "{{ pve_replace_matches | length }}"
+    pve_replace_partners: >-
+      {{ pve_replace_leaves | selectattr('group', 'eq', (pve_replace_matches | first | default({'group': '-'})).group)
+         | rejectattr('path', 'search', pve_replace_old.id | default('-', true)) | list }}
+  vars:
+    pve_replace_matches: "{{ pve_replace_leaves | selectattr('path', 'search', pve_replace_old.id | default('-', true)) | list }}"
+
+- name: "Storage replace | The member is one leaf of a mirror whose other side is whole"
+  ansible.builtin.assert:
+    that:
+      - pve_replace_old.id | length > 0
+      - pve_replace_old.fault_tolerance == '0'
+      - pve_replace_member_count | int == 1
+      - pve_replace_member.group is match('mirror')
+      - pve_replace_partners | length >= 1
+      - pve_replace_partners | rejectattr('state', 'eq', 'ONLINE') | list | length == 0
+      - pve_replace_leaves | selectattr('group', 'match', '(replacing|spare)') | list | length == 0
+    fail_msg: >-
+      refused, nothing changed on the pool — volume {{ pve_replace_old }}:
+      member {{ pve_replace_member }} (found {{ pve_replace_member_count }}), its partners {{ pve_replace_partners }}
+    quiet: true
+
+- name: "Storage replace | A new drive: it is fitted, healthy, and belongs to no volume"
+  ansible.builtin.assert:
+    that:
+      - pve_storage_replace_with_drive in pve_replace_unassigned
+      - pve_replace_unassigned[pve_storage_replace_with_drive] is search(', OK[)]$')
+    fail_msg: >-
+      refused, nothing changed — drive {{ pve_storage_replace_with_drive }} is not a healthy drive without a volume.
+      Drives without a volume: {{ pve_replace_unassigned.values() | list }}
+    quiet: true
+  when: pve_storage_replace_with_drive | string | length > 0
+
+- name: "Storage replace | Create the volume of the new drive (controller)"
+  ansible.builtin.command:
+    argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", create, type=ld, "drives={{ pve_storage_replace_with_drive }}", raid=0]
+  changed_when: true
+  register: pve_replace_created
+  when:
+    - pve_storage_replace_with_drive | string | length > 0
+    - not ansible_check_mode
+
+- name: "Storage replace | Layout of the controller, with the new volume"
+  ansible.builtin.command:
+    argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", show, config]
+  register: pve_replace_config_after
+  changed_when: false
+  check_mode: false   # read-only probe
+
+# The number of the replacement volume: the one named, or the one that now sits on the new drive.
+- name: "Storage replace | Number of the replacement volume"
+  ansible.builtin.set_fact:
+    pve_replace_with_ld: >-
+      {%- set ns = namespace(ld='', found='') -%}
+      {%- for line in pve_replace_config_after.stdout_lines -%}
+        {%- set t = line.split() -%}
+        {%- if t | length >= 2 and t[0] == 'logicaldrive' -%}
+          {%- set ns.ld = t[1] -%}
+        {%- elif t | length >= 1 and t[0] | lower in ['array', 'unassigned'] -%}
+          {%- set ns.ld = '' -%}
+        {%- elif t | length >= 2 and t[0] == 'physicaldrive' and ns.ld and t[1] == (pve_storage_replace_with_drive | string) -%}
+          {%- set ns.found = ns.ld -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ (pve_storage_replace_with_ld | string) if (pve_storage_replace_with_ld | string | length > 0) else ns.found }}
+    # A volume created in this run sits on a drive the operator named and the controller listed
+    # as unused: what it still carries from an earlier life (a file system, another pool's
+    # labels) may be overwritten. A volume that already existed must be empty, unless forced.
+    pve_replace_overwrite: "{{ (pve_replace_created is changed) or (pve_storage_replace_force | bool) }}"
+
+- name: "Storage replace | The replacement volume: read, prove, use"
+  when: pve_replace_with_ld | string | length > 0
+  block:
+    - name: "Storage replace | The replacement volume (controller)"
+      ansible.builtin.command:
+        argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", ld, "{{ pve_replace_with_ld }}", show, detail]
+      register: pve_replace_new_detail
+      changed_when: false
+      check_mode: false   # read-only probe
+
+    - name: "Storage replace | Facts of the replacement volume"
+      ansible.builtin.set_fact:
+        pve_replace_new:
+          ld: "{{ pve_replace_with_ld | string }}"
+          id: "{{ pve_replace_new_detail.stdout | regex_findall('Unique Identifier: *([0-9A-Fa-f]+)') | first | default('') | lower }}"
+          status: "{{ pve_replace_new_detail.stdout | regex_findall('Status: *([A-Za-z]+)') | first | default('') }}"
+          fault_tolerance: "{{ pve_replace_new_detail.stdout | regex_findall('Fault Tolerance: *([0-9A-Za-z+]+)') | first | default('') }}"
+          size: "{{ pve_replace_new_detail.stdout | regex_findall('Size: *([0-9.]+ [A-Z]+)') | first | default('') }}"
+
+    - name: "Storage replace | Its device name"
+      ansible.builtin.set_fact:
+        pve_replace_new_device: "{{ pve_host_disk_by_id_dir }}/wwn-0x{{ pve_replace_new.id }}"
+
+    - name: "Storage replace | Wait for the node to see it"
+      ansible.builtin.wait_for:
+        path: "{{ pve_replace_new_device }}"
+        timeout: "{{ pve_storage_replace_device_timeout }}"
+
+    - name: "Storage replace | The replacement volume as the node sees it"
+      ansible.builtin.stat:
+        path: "{{ pve_replace_new_device }}"
+      register: pve_replace_new_stat
+
+    - name: "Storage replace | What it carries (mount points, then file systems)"
+      ansible.builtin.command:
+        argv: [lsblk, -n, -r, -o, "{{ item }}", "{{ pve_replace_new_device }}"]
+      loop: [MOUNTPOINT, FSTYPE]
+      register: pve_replace_new_lsblk
+      changed_when: false
+      check_mode: false   # read-only probe
+
+    - name: "Storage replace | Physical volumes of LVM"
+      ansible.builtin.command:
+        argv: [pvs, --noheadings, -o, pv_name]
+      register: pve_replace_pvs
+      changed_when: false
+      check_mode: false   # read-only probe
+
+    - name: "Storage replace | Pool labels on it (zdb -l; none = it fails)"
+      ansible.builtin.command:
+        argv: [zdb, -l, "{{ item }}"]
+      loop: ["{{ pve_replace_new_device }}", "{{ pve_replace_new_device }}-part1"]
+      register: pve_replace_new_labels
+      changed_when: false
+      failed_when: false
+      check_mode: false   # read-only probe
+
+    - name: "Storage replace | What the replacement volume carries"
+      ansible.builtin.set_fact:
+        pve_replace_new_mounts: "{{ (pve_replace_new_lsblk.results | selectattr('item', 'eq', 'MOUNTPOINT') | first).stdout_lines | map('trim') | select | list }}"
+        pve_replace_new_fs: "{{ (pve_replace_new_lsblk.results | selectattr('item', 'eq', 'FSTYPE') | first).stdout_lines | map('trim') | select | list }}"
+        pve_replace_new_labelled: "{{ pve_replace_new_labels.results | selectattr('rc', 'eq', 0) | map(attribute='item') | list }}"
+        pve_replace_new_pv: "{{ pve_replace_pvs.stdout_lines | map('trim') | select('match', pve_replace_new_stat.stat.lnk_source | default('/nonexistent')) | list }}"
+
+    - name: "Storage replace | The replacement is a healthy single-drive volume that nothing uses"
+      ansible.builtin.assert:
+        that:
+          - pve_replace_new.ld != pve_replace_old.ld
+          - pve_replace_new.id | length > 0
+          - pve_replace_new.id != pve_replace_old.id
+          - pve_replace_new.status == 'OK'
+          - pve_replace_new.fault_tolerance == '0'
+          - pve_replace_new.size.split() | length == 2
+          - pve_replace_new.size.split()[1] == pve_replace_old.size.split()[1]
+          - pve_replace_new.size.split()[0] | float >= pve_replace_old.size.split()[0] | float
+          - pve_replace_new_stat.stat.exists
+          # never, forced or not: a member of an imported pool, something mounted, an LVM volume
+          - pve_replace_new.id not in (pve_replace_pools.stdout | lower)
+          - pve_replace_new_mounts | length == 0
+          - pve_replace_new_pv | length == 0
+          # unless it may be overwritten: an old file system, another pool's labels
+          - pve_replace_overwrite | bool or pve_replace_new_fs | length == 0
+          - pve_replace_overwrite | bool or pve_replace_new_labelled | length == 0
+        fail_msg: >-
+          refused, nothing changed on the pool — replacement volume {{ pve_replace_new }}:
+          device present={{ pve_replace_new_stat.stat.exists | default(false) }},
+          member of an imported pool={{ pve_replace_new.id in (pve_replace_pools.stdout | lower) }},
+          mounted={{ pve_replace_new_mounts }}, LVM={{ pve_replace_new_pv }},
+          file systems={{ pve_replace_new_fs }}, pool labels={{ pve_replace_new_labelled }}
+          (the last two are accepted with pve_storage_replace_force=true)
+        quiet: true
+
+    - name: "Storage replace | Plan"
+      ansible.builtin.debug:
+        msg:
+          - "pool {{ pve_host_zfs_pool }}, {{ pve_replace_member.group }}: member {{ pve_replace_member.path }} ({{ pve_replace_member.state }}) — volume {{ pve_replace_old.ld }} ({{ pve_replace_old.status }}), drive {{ pve_replace_drives[pve_replace_old.ld] | default(['?']) | join(', ') }}"
+          - "is replaced by {{ pve_replace_new_device }} — volume {{ pve_replace_new.ld }} ({{ pve_replace_new.status }}, {{ pve_replace_new.size }}){{ ', overwriting what it carries' if pve_replace_overwrite | bool else '' }}"
+          - "partner(s) that stay: {{ pve_replace_partners | map(attribute='path') | list }}"
+          - "then volume {{ pve_replace_old.ld }} is {{ 'deleted on the controller' if pve_storage_retire_replaced | bool else 'left on the controller' }}"
+
+    - name: "Storage replace | Replace the member"
+      ansible.builtin.command:
+        argv: "{{ ['zpool', 'replace'] + (['-f'] if pve_replace_overwrite | bool else []) + [pve_host_zfs_pool, pve_replace_member.path, pve_replace_new_device] }}"
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: "Storage replace | Wait for the copy onto the new member"
+      ansible.builtin.command:
+        argv: [zpool, wait, -t, "replace,resilver", "{{ pve_host_zfs_pool }}"]
+      changed_when: false
+      async: "{{ pve_storage_replace_timeout }}"
+      poll: 30
+      when: not ansible_check_mode
+
+    - name: "Storage replace | Members of every imported pool, afterwards"
+      ansible.builtin.command:
+        argv: [zpool, status, -P]
+      register: pve_replace_pools_after
+      changed_when: false
+      check_mode: false   # read-only probe
+
+    - name: "Storage replace | The old member is out, the new one is ONLINE"
+      ansible.builtin.assert:
+        that:
+          - pve_replace_old.id not in (pve_replace_pools_after.stdout | lower)
+          - pve_replace_pools_after.stdout_lines | select('search', pve_replace_new.id) | map('split') | map(attribute=1) | list == ['ONLINE']
+        fail_msg: "{{ pve_replace_pools_after.stdout_lines | select('search', pve_replace_old.id ~ '|' ~ pve_replace_new.id ~ '|state:|scan:|replacing') | map('trim') | list }}"
+        quiet: true
+      when: not ansible_check_mode
+
+    # Deleting a volume cannot be undone, so the proof is repeated on the spot: this identifier
+    # is in no imported pool. Without `override` the controller itself refuses a volume the
+    # system has mounted.
+    - name: "Storage replace | Retire the replaced volume (controller)"
+      ansible.builtin.command:
+        argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", ld, "{{ pve_replace_old.ld }}", delete, forced]
+      changed_when: true
+      when:
+        - pve_storage_retire_replaced | bool
+        - not ansible_check_mode
+        - pve_replace_old.id not in (pve_replace_pools_after.stdout | lower)
+
+    - name: "Storage replace | Done"
+      ansible.builtin.set_fact:
+        pve_storage_replaced: true
+      when: not ansible_check_mode
+
+- name: "Storage replace | Logical volumes afterwards (controller)"
+  ansible.builtin.command:
+    argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", ld, all, show, status]
+  register: pve_replace_lds_after
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "Storage replace | Result"
+  ansible.builtin.debug:
+    msg:
+      - >-
+        {{ 'member replaced' if pve_storage_replaced | default(false) | bool
+           else ('DRY RUN — every check that can run before the volume exists passed; nothing was changed'
+                 if pve_replace_with_ld | string | length == 0
+                 else 'DRY RUN — every check passed; nothing was changed') }}
+      - "logical volumes not OK: {{ pve_replace_lds_after.stdout_lines | select('search', 'logicaldrive') | reject('search', ' OK *$') | map('trim') | list }}"
+      - >-
+        {{ 'the drive in ' ~ (pve_replace_drives[pve_replace_old.ld] | default(['?']) | join(', ')) ~ ' is used by nothing any more: it can be pulled'
+           if (pve_storage_replaced | default(false) | bool and pve_storage_retire_replaced | bool) else 'no drive to pull yet' }}

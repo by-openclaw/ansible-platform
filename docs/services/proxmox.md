@@ -43,7 +43,15 @@ ssacli ctrl slot=0 ld <n> show detail        # which array / drive a volume uses
 
 - **Read the storage:** `ansible-playbook playbooks/pve-storage-health.yml` — pool state, logical volumes, drives, wear per bay (grown defects, uncorrected errors).
 - **A logical volume shows `Failed` while its physical drive is `OK`** (2026-10-03, bay 14, under heavy writes): `playbooks/pve-storage-health.yml -e pve_storage_reenable=true` re-enables the volume, waits for ZFS to resilver from the mirror partner, scrubs the pool and asserts it ONLINE with 0 errors. On 2026-10-03: resilver 35 s, scrub 393 G with 0 errors.
-- **A physical drive is failed:** replace it in its bay (hot-swap), create its logical volume (`ssacli ctrl slot=0 create type=ld drives=<port:box:bay> raid=0`), then `zpool replace tank <old> <new device>`; wait for the resilver.
+- **A drive (or its bay) is to be taken out of the pool** — failed, or its volume fails again and again (bay 14: 2026-10-03 and 2026-10-07):
+  1. fit the new drive in a **free** bay (hot-plug) and leave the old one where it is;
+  2. `ansible-playbook playbooks/pve-storage-health.yml -e pve_storage_replace_ld=<volume of the old drive> -e pve_storage_replace_with_drive=<port:box:bay of the new drive>` — first with `--check`. The play creates the new drive's volume, replaces the member, waits for the copy, deletes the old volume on the controller, scrubs, and asserts the pool ONLINE with 0 errors;
+  3. pull the old drive when the play says it is used by nothing any more.
+
+  A volume that already exists and that nothing uses can take over instead of a new drive: `-e pve_storage_replace_with_ld=<n>`. The play refuses, before changing anything, a member whose mirror partner is not ONLINE and a replacement that is in use (imported pool, mount, LVM).
+
+  Count about an hour: on 2026-10-08 the copy of one mirror side took 23 minutes (the controller's cache module is disabled) and the scrub 13.
+- **Bays, as of 2026-10-08:** the volume of bay 14 failed three times in five days (2026-10-03, 2026-10-07, 2026-10-08) while its drive tested clean; its pool member was moved to a new drive fitted in bay 18 and the volume was deleted. Bay 14 is not to be reused before the bay or that drive is cleared. The volume of bay 15 belongs to no pool (it carried a dead pool's labels, cleared): it is the spare volume already in the chassis (`-e pve_storage_replace_with_ld=<its number>`).
 - **Do not reboot the node with a failed logical volume:** the controller can stop at its boot prompt, and the firewall VM lives on this node.
 - Alert: `ZfsPoolNotOnline` (Prometheus) fires when the pool is not ONLINE.
 - Known state: the controller's cache module is "permanently disabled (backup to flash failed)"; drive write cache is off. Several drives carry grown defects (see the 2026-10-03 addendum of the audit record) — a spare 300 GB SAS drive on site is advised.
