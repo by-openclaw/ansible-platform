@@ -65,6 +65,9 @@ mailbox_https_port: "{{ mailcow_https_port | default(8443) }}"
 # that can create and read every mailbox on the platform.
 mailbox_api_vault_path: "{{ mailbox_env }}/mailcow/admin"      # api_key
 mailbox_mysql_container: "mailcowdockerized-mysql-mailcow-1"
+mailbox_mysql_database: mailcow
+mailbox_mysql_client: [mysql, -uroot, "{{ mailbox_mysql_database }}", -N]   # -N: values only, no column names
+mailbox_mysql_password_key: db_root_password   # a field NAME in the document of mailbox_api_vault_path  # pragma: allowlist secret
 
 # The delegate list is the WHOLE set: grants for anyone not listed are revoked.
 # A caller that only ADDS grants (a person's mailbox — people.yml does not model
