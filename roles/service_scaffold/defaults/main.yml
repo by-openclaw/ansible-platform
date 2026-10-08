@@ -47,7 +47,7 @@
 #   containers      list, in start order. Each: {name, image, published (list),
 #                   env (dict), volumes (list), entrypoint (list), command (list),
 #                   user, health (url polled until it answers), health_status
-#                   (default [200]), restart_policy (default always),
+#                   (default [200]), restart_policy (default: the platform's),
 #                   log_driver, healthcheck (the container's own, a dict as for
 #                   docker_container), restart (true = restart now, e.g. a config
 #                   the app does not hot-reload changed), recreate, security_opts,
@@ -64,6 +64,8 @@ service_scaffold_def: {}
 # Resolved from the contract with defaults (do not set directly).
 service_scaffold_domain: "{{ platform_domain }}"
 service_scaffold_env: "{{ platform_env }}"
+# Restart policy of a container that declares none: the platform's (inventory, with its reason).
+service_scaffold_restart_policy: "{{ platform_container_restart_policy | default('always') }}"
 
 # Toggle the central-registration assertions off ONLY for a first bring-up where
 # the SSO app / catalog / audit row are landing in the same change set.

@@ -2,7 +2,7 @@
 services:
   web:
     image: jitsi/web:{{ jitsi_image_tag }}
-    restart: unless-stopped
+    restart: {{ jitsi_restart_policy }}
     logging: {driver: journald}   # explicit: a container keeps the driver it was created with
     ports:
       - "{{ jitsi_http_ip }}:{{ jitsi_http_port }}:80"
@@ -17,7 +17,7 @@ services:
     networks: {meet.jitsi: {}}
   prosody:
     image: jitsi/prosody:{{ jitsi_image_tag }}
-    restart: unless-stopped
+    restart: {{ jitsi_restart_policy }}
     logging: {driver: journald}   # explicit: a container keeps the driver it was created with
     expose: ["5222", "5347", "5280"]
     volumes:
@@ -27,7 +27,7 @@ services:
     networks: {meet.jitsi: {aliases: [xmpp.meet.jitsi]}}
   jicofo:
     image: jitsi/jicofo:{{ jitsi_image_tag }}
-    restart: unless-stopped
+    restart: {{ jitsi_restart_policy }}
     logging: {driver: journald}   # explicit: a container keeps the driver it was created with
     volumes: ["{{ jitsi_config_dir }}/jicofo:/config:Z"]
     env_file: [.env]
@@ -35,7 +35,7 @@ services:
     networks: {meet.jitsi: {}}
   jvb:
     image: jitsi/jvb:{{ jitsi_image_tag }}
-    restart: unless-stopped
+    restart: {{ jitsi_restart_policy }}
     logging: {driver: journald}   # explicit: a container keeps the driver it was created with
     ports:
       - "{{ jitsi_jvb_port }}:{{ jitsi_jvb_port }}/udp"
