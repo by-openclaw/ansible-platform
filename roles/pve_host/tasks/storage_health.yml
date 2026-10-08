@@ -71,19 +71,43 @@
   changed_when: true
   register: pve_storage_reenabled
 
+# The kernel re-attaches the disk and ZFS takes it back a few seconds after the controller's
+# answer: waiting for "the resilver" before it has begun returns at once.
+- name: "Storage | Wait until ZFS has taken the volume back"
+  ansible.builtin.command:
+    argv: [zpool, list, -H, -o, health, "{{ pve_host_zfs_pool }}"]
+  register: pve_storage_pool_back
+  until: pve_storage_pool_back.stdout | trim == 'ONLINE'
+  retries: "{{ pve_storage_reattach_retries }}"
+  delay: "{{ pve_storage_reattach_delay }}"
+  when: pve_storage_reenabled is changed
+  changed_when: false
+
 - name: "Storage | Wait for the resilver"
   ansible.builtin.command:
     argv: [zpool, wait, -t, resilver, "{{ pve_host_zfs_pool }}"]
   when: pve_storage_reenabled is changed
   changed_when: false
 
+# Replace: a member moves to another volume of the controller (a new drive, or a volume nothing
+# uses) and the volume it leaves is retired — tasks/storage_replace.yml.
+- name: "Storage | Replace a member by another volume"
+  ansible.builtin.include_tasks: storage_replace.yml
+  when: pve_storage_replace_ld | string | length > 0
+
 - name: "Storage | Scrub the pool and wait (every block read and verified)"
   ansible.builtin.command:
     argv: [zpool, scrub, -w, "{{ pve_host_zfs_pool }}"]
-  when: pve_storage_reenabled is changed or pve_storage_scrub | bool
+  when: pve_storage_reenabled is changed or pve_storage_replaced | default(false) | bool or pve_storage_scrub | bool
   changed_when: true
   async: 7200
   poll: 30
+  # ZFS refuses a scrub while a resilver runs (2026-10-08: the resilver began after the wait
+  # above had returned, and the play stopped here with the pool repaired but not verified).
+  register: pve_storage_scrub_run
+  until: pve_storage_scrub_run is not failed or 'currently resilvering' not in (pve_storage_scrub_run.stderr | default(''))
+  retries: "{{ pve_storage_scrub_retries }}"
+  delay: "{{ pve_storage_scrub_retry_delay }}"
 
 - name: "Storage | Pool after the run"
   ansible.builtin.command:

@@ -263,5 +263,26 @@ pve_host_guest_config_dirs:
 pve_host_zfs_pool: tank
 pve_host_smartarray_slot: 0
 pve_host_smartarray_device: /dev/sda   # any block device of the controller: smartctl addresses the drives through it
+pve_host_disk_by_id_dir: /dev/disk/by-id   # where the node names a disk by its WWN (the controller's identifier of the volume)
 pve_storage_reenable: false
 pve_storage_scrub: false            # a scrub after the report (always done after a repair)
+pve_storage_reattach_retries: 30    # after a re-enable: how long ZFS may take to have the volume back …
+pve_storage_reattach_delay: 10      # … (retries x seconds)
+pve_storage_scrub_retries: 40       # a scrub refused because a resilver still runs is tried again …
+pve_storage_scrub_retry_delay: 30   # … (retries x seconds)
+# Replace (pve_storage_replace_ld=<n> and ONE replacement): the pool member that sits on logical
+# volume <n> moves to another volume, the mirror is copied onto it, volume <n> is deleted on the
+# controller (its drive can then be pulled), the pool is scrubbed and must end ONLINE.
+#   pve_storage_replace_with_drive=<port:box:bay>   a drive just fitted in a free bay: its volume
+#                                                   is created here (what the drive carried is overwritten)
+#   pve_storage_replace_with_ld=<n>                 a volume that exists and nothing uses
+# Refused before anything changes: a member that is not one leaf of a mirror whose other side is
+# ONLINE; a replacement that is not a healthy single-drive volume, is smaller, is a member of an
+# imported pool, is mounted or belongs to LVM. --check runs every read and every refusal.
+pve_storage_replace_ld: ""
+pve_storage_replace_with_drive: ""
+pve_storage_replace_with_ld: ""
+pve_storage_replace_force: false          # an EXISTING volume that still carries a file system or another pool's labels
+pve_storage_retire_replaced: true         # delete the replaced volume on the controller afterwards
+pve_storage_replace_timeout: 14400        # seconds the copy onto the new member may take
+pve_storage_replace_device_timeout: 60    # seconds until the node shows a volume that was just created
