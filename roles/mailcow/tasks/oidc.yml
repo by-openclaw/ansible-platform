@@ -52,16 +52,38 @@
   changed_when: false
   no_log: true
 
-- name: "oidc | Create the 5 GB auto-provisioning mailbox template"
+# mailcow's `templates` table has no key but its id, so an "insert … on duplicate key update"
+# never finds a duplicate: it added one more identical row at every run (25 of them by
+# 2026-10-08). Read first — how many rows carry the name, how many of them carry these
+# attributes — and write only when the answer is not "one, and it is right". The write replaces
+# every row of that name by one, in a transaction: a login that provisions a mailbox meanwhile
+# always finds a template. Nothing refers to a template by its id (the identity provider names it).
+- name: "oidc | The auto-provisioning mailbox template as stored (rows of that name, rows that are right)"
+  community.docker.docker_container_exec:
+    container: "{{ mailcow_mysql_container }}"
+    argv: "{{ mailcow_mysql_client + ['-N'] }}"   # -N: the values only
+    env: "{{ mailcow_mysql_env }}"
+    stdin: >-
+      SELECT CONCAT(COUNT(*), ' ', IFNULL(SUM(attributes = '{{ mailcow_oidc_template_attributes | to_json }}'), 0))
+      FROM templates WHERE BINARY template = '{{ mailcow_oidc_default_template }}' AND type = 'mailbox';
+  register: mailcow_oidc_template_rows
+  check_mode: false  # read-only probe: must run under --check too (the next task reads its result)
+  changed_when: false
+  no_log: true
+
+- name: "oidc | Write the 5 GB auto-provisioning mailbox template (one row)"
   community.docker.docker_container_exec:
     container: "{{ mailcow_mysql_container }}"
     argv: "{{ mailcow_mysql_client }}"
     env: "{{ mailcow_mysql_env }}"
     stdin: >-
+      START TRANSACTION;
+      DELETE FROM templates WHERE BINARY template = '{{ mailcow_oidc_default_template }}' AND type = 'mailbox';
       INSERT INTO templates (template, type, attributes)
-      VALUES ('{{ mailcow_oidc_default_template }}', 'mailbox', '{{ mailcow_oidc_template_attributes | to_json }}')
-      ON DUPLICATE KEY UPDATE attributes = VALUES(attributes);
-  changed_when: false
+      VALUES ('{{ mailcow_oidc_default_template }}', 'mailbox', '{{ mailcow_oidc_template_attributes | to_json }}');
+      COMMIT;
+  when: (mailcow_oidc_template_rows.stdout | default('') | trim) != '1 1'
+  changed_when: true
   no_log: true
 
 - name: "oidc | Apply the identity_provider settings (key/value)"
