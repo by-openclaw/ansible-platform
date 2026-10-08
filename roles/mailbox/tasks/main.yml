@@ -41,6 +41,11 @@
     mailbox_api_hdr:
       X-API-Key: "{{ vault_secret_result.api_key }}"
       Content-Type: "application/json"
+    # What the API does not cover goes to mailcow's database: its client runs in the database's
+    # own container through the Docker API (no shell), the statement on stdin and the password
+    # in the client's environment — neither is ever on a command line.
+    mailbox_mysql_env:
+      MYSQL_PWD: "{{ vault_secret_result[mailbox_mysql_password_key] }}"
   no_log: true
   when: mailbox_api_hdr is not defined
 
