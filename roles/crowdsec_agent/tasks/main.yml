@@ -130,90 +130,78 @@
   notify: Restart crowdsec agent
 
 # ------------------------------------------------------------------------------
-# Retire this host's own LAPI. Per the CrowdSec multi-server guide the whole
-# api.server section is removed; the helper deletes exactly that block and
-# leaves every other line, comments included, untouched.
+# No Local API on a log processor. If it runs its own, `cscli lapi register` is never reached
+# and the agent quietly stays bound to itself: it builds a private decision set that no bouncer
+# ever reads. CrowdSec merges `config.yaml.local` over the vendor's `config.yaml`: the override
+# switches the Local API off and the vendor file is left as the package wrote it. (Until
+# 2026-10-09 a helper program deleted the `api.server` block from the vendor file instead; where
+# it already did, the override says the same thing again.)
 # ------------------------------------------------------------------------------
-- name: "Crowdsec_agent | Install the local-LAPI removal helper"
-  ansible.builtin.copy:
-    src: crowdsec-disable-local-lapi.py
-    dest: /usr/local/sbin/crowdsec-disable-local-lapi
-    owner: root
-    group: root
-    mode: "0755"
-  when: crowdsec_agent_disable_local_lapi | bool
+- name: "Crowdsec_agent | The helper this role used to install (superseded by the override)"
+  ansible.builtin.file:
+    path: "{{ crowdsec_agent_retired_helper }}"
+    state: absent
 
-# There is nothing to back up until CrowdSec is installed. Under --check the
-# install above does not really happen, so on a host that does not have CrowdSec
-# yet this copy had no source and ABORTED the whole fleet dry-run:
-#   fatal: [lxc-grc-01]: Source /etc/crowdsec/config.yaml not found
-# which meant the play could not be dry-run to discover the hosts missing the
-# agent — the one question a dry-run of this play should answer (#582).
-#
-# A stat rather than `not ansible_check_mode`: it is also true on a real run where
-# the install failed, and "back it up if there is something to back up" is what
-# this task actually means.
-- name: "Crowdsec_agent | Is there a config.yaml to back up yet?"
+# Under --check on a host that does not have CrowdSec yet there is no configuration folder to
+# write into: the dry-run of this play must still be able to list such hosts (#582).
+- name: "Crowdsec_agent | Is CrowdSec's configuration there yet?"
   ansible.builtin.stat:
-    path: /etc/crowdsec/config.yaml
+    path: "{{ crowdsec_agent_config }}"
   register: crowdsec_agent_config_stat
   when: crowdsec_agent_disable_local_lapi | bool
 
-- name: "Crowdsec_agent | Back up config.yaml before removing api.server"
+- name: "Crowdsec_agent | Local API off (config.yaml.local)"
   ansible.builtin.copy:
-    src: /etc/crowdsec/config.yaml
-    dest: /etc/crowdsec/config.yaml.before-agent-role
-    remote_src: true
+    dest: "{{ crowdsec_agent_config }}.local"
     owner: root
     group: root
     mode: "0600"
-    force: false
+    content: |
+      # Managed by Ansible (roles/crowdsec_agent) — merged by CrowdSec over config.yaml.
+      # A log processor does not run a Local API: it reports to the platform's.
+      api:
+        server:
+          enable: false
+  register: crowdsec_agent_local_api_off
   when:
     - crowdsec_agent_disable_local_lapi | bool
     - crowdsec_agent_config_stat.stat.exists | default(false)
-
-- name: "Crowdsec_agent | Remove the api.server block (processor, not a LAPI)"
-  ansible.builtin.command:
-    cmd: /usr/local/sbin/crowdsec-disable-local-lapi /etc/crowdsec/config.yaml
-  register: crowdsec_agent_lapi_removed
-  changed_when: "(crowdsec_agent_lapi_removed.stdout | trim) == 'CHANGED'"
-  when:
-    - crowdsec_agent_disable_local_lapi | bool
-    - not ansible_check_mode
   notify: Restart crowdsec agent
 
-# Never restart onto a config that will not parse — that is how a LAPI ends up
-# dead with "yaml: unmarshal errors". Validate first; restore the backup if the
-# edit produced something crowdsec refuses to load.
-- name: "Crowdsec_agent | Validate the edited config before restarting"
+# Never restart onto a configuration that will not load. Validate first; take the override
+# back if crowdsec refuses the result.
+- name: "Crowdsec_agent | Validate the configuration before restarting"
   ansible.builtin.command:
-    cmd: crowdsec -t -c /etc/crowdsec/config.yaml
+    argv: [crowdsec, -t, -c, "{{ crowdsec_agent_config }}"]
   register: crowdsec_agent_cfg_test
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
   failed_when: false
   when: not ansible_check_mode
 
-- name: "Crowdsec_agent | Restore the backup if the edited config is invalid"
+- name: "Crowdsec_agent | Take the override back if the configuration is refused"
   when:
     - not ansible_check_mode
     - crowdsec_agent_cfg_test.rc != 0
+    - crowdsec_agent_local_api_off is changed
   block:
-    - name: "Crowdsec_agent | Put the pre-edit config back"
-      ansible.builtin.copy:
-        src: /etc/crowdsec/config.yaml.before-agent-role
-        dest: /etc/crowdsec/config.yaml
-        remote_src: true
-        owner: root
-        group: root
-        mode: "0600"
+    - name: "Crowdsec_agent | Remove the override"
+      ansible.builtin.file:
+        path: "{{ crowdsec_agent_config }}.local"
+        state: absent
 
-    - name: "Crowdsec_agent | Fail loudly — config edit rejected"
+    - name: "Crowdsec_agent | Fail loudly — configuration refused"
       ansible.builtin.fail:
         msg: >-
-          crowdsec refused the edited config on {{ inventory_hostname }};
-          the pre-edit config has been restored. stderr:
+          crowdsec refused its configuration with the override on {{ inventory_hostname }};
+          the override has been removed. stderr:
           {{ crowdsec_agent_cfg_test.stderr | default('') | trim }}
+
+- name: "Crowdsec_agent | The configuration loads"
+  ansible.builtin.assert:
+    that: crowdsec_agent_cfg_test.rc == 0
+    fail_msg: "crowdsec refuses its configuration on {{ inventory_hostname }}: {{ crowdsec_agent_cfg_test.stderr | default('') | trim }}"
+    quiet: true
+  when: not ansible_check_mode
 
 # A collection with no matching log source is installed and inert — the exact
 # state mailcow was in: crowdsecurity/postfix present, zero mail lines read,
