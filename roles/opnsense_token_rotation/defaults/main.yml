@@ -2,7 +2,8 @@
 # Role: opnsense_token_rotation — SEC-09 schedule for the firewalls' Ansible API token.
 # Runs ON THE CONTROLLER (hosts: localhost) as the user that runs the playbooks: one systemd USER
 # timer per environment fires `opnsense-api-bootstrap.yml -e opnsense_api_bootstrap_force_rotate=true`
-# and gates on `opnsense.yml --tags dns --check` being changed=0 with the new token. The controller
+# (the previous token is revoked), re-renders the jobs that keep a copy of the token, and gates on
+# `opnsense.yml --tags dns --check` being changed=0 with the new token. The controller
 # user must linger (`loginctl enable-linger`) so the timer runs without a login session.
 opnsense_token_rotation_repo: "{{ playbook_dir | dirname }}"
 opnsense_token_rotation_bin_dir: "{{ lookup('env', 'HOME') }}/.local/bin"
@@ -20,7 +21,12 @@ opnsense_token_rotation_randomized_delay: "1h"
 opnsense_token_rotation_agent_socket: "{{ lookup('env', 'HOME') }}/.ssh/rune-agent.sock"
 opnsense_token_rotation_check_tags: dns
 opnsense_token_rotation_result_format: ansible.posix.json
-# One timer instance per environment; prod stays installed-but-disabled until its window (USER go).
+# One timer instance per environment. `test` stays listed, disabled: its firewall is gone
+# (2026-10) and the entry is what stops and disables its timer on the controller.
 opnsense_token_rotation_envs:
-  - {env: test, enabled: true}
-  - {env: prod, enabled: false}
+  - {env: test, enabled: false}
+  - {env: prod, enabled: true}
+# A rotation revokes the previous token, so a job that keeps a COPY of it must get the new one
+# before the check: these plays are run, in order, between the rotation and the check.
+opnsense_token_rotation_consumer_playbooks:
+  - playbooks/opnsense-config-backup.yml      # the firewall config backup job's credential (on the hypervisor)

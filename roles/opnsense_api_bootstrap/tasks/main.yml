@@ -26,12 +26,45 @@
     - opnsense_api_bootstrap_gen_key is not defined
     - opnsense_api_bootstrap_genesis_key | length > 0
 
+# Vault is the store (security/0001): where no file and no variables give the break-glass
+# credential, it is read from the document the seed build wrote. An absent document yields
+# nothing and the requirement below says so.
+- name: "OPNsense bootstrap | Genesis creds from Vault (no file, no vars)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ opnsense_api_bootstrap_genesis_vault_path }}"
+    vault_secret_optional: true
+    vault_secret_mount: "{{ opnsense_api_bootstrap_vault_mount }}"
+    vault_secret_host: "{{ opnsense_api_bootstrap_vault_host }}"
+    vault_secret_container: "{{ opnsense_api_bootstrap_vault_container }}"
+  when:
+    - opnsense_api_bootstrap_gen_key is not defined
+    - opnsense_api_bootstrap_genesis_vault_path | length > 0
+
+# The break-glass credential must be another user's than the one whose keys are revoked and
+# minted: otherwise a rotation would cut the branch it sits on.
+- name: "OPNsense bootstrap | Use the Vault genesis creds (another user's than the service user)"
+  ansible.builtin.set_fact:
+    opnsense_api_bootstrap_gen_key: "{{ vault_secret_result.key }}"
+    opnsense_api_bootstrap_gen_secret: "{{ vault_secret_result.secret }}"
+  no_log: true
+  when:
+    - opnsense_api_bootstrap_gen_key is not defined
+    - opnsense_api_bootstrap_genesis_vault_path | length > 0
+    - (vault_secret_result | default({})).key | default('') | length > 0
+    - (vault_secret_result | default({})).secret | default('') | length > 0
+    - (vault_secret_result | default({})).username | default('') | length > 0
+    - (vault_secret_result | default({})).username != opnsense_api_bootstrap_user
+
 - name: "OPNsense bootstrap | Require genesis creds"
   ansible.builtin.assert:
     that: opnsense_api_bootstrap_gen_key is defined and opnsense_api_bootstrap_gen_secret is defined
     fail_msg: >-
-      No genesis admin credentials. Set opnsense_api_bootstrap_genesis_file (a
-      secret file with .fields.key/.secret) or _genesis_key/_genesis_secret.
+      No genesis admin credentials: neither opnsense_api_bootstrap_genesis_file (a secret file
+      with .fields.key/.secret), nor _genesis_key/_genesis_secret, nor a Vault document at
+      opnsense_api_bootstrap_genesis_vault_path with key, secret and a username other than
+      the service user's.
 
 - name: "OPNsense bootstrap | Connection facts"
   ansible.builtin.set_fact:
@@ -207,6 +240,28 @@
       become: false
       register: opnsense_api_bootstrap_user_ensure
       no_log: true
+
+    # ---- revoke what the service user had (lib AuthApiKeyManager.delete_all_keys) ------
+    # A rotation that leaves the previous key valid rotates nothing. Before the new key is
+    # minted, every key of the service user is revoked — with the break-glass credential,
+    # which is another user's and is not touched. From here until the new key is in Vault
+    # (a few seconds) the service user has no key: a play that talks to the firewall in
+    # that moment fails and is simply run again. If this run stops in between, the next
+    # one finds the Vault token refused, calls it stale and mints.
+    - name: "OPNsense bootstrap | Revoke the service user's previous API keys"
+      by_systems.opnsense.opnsense_auth_api_key:
+        host: "{{ opnsense_api_bootstrap_host }}"
+        port: "{{ opnsense_api_bootstrap_port }}"
+        key: "{{ opnsense_api_bootstrap_gen_key }}"
+        secret: "{{ opnsense_api_bootstrap_gen_secret }}"
+        verify_ssl: "{{ opnsense_api_bootstrap_validate_certs }}"
+        username: "{{ opnsense_api_bootstrap_user }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      register: opnsense_api_bootstrap_revoke
+      no_log: true
+      when: opnsense_api_bootstrap_revoke_previous | bool
 
     # ---- mint the API token via MVC (lib AuthApiKeyManager) ------------------
     - name: "OPNsense bootstrap | Mint API token (auth/user/add_api_key via by_systems.opnsense)"
