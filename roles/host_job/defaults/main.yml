@@ -40,6 +40,19 @@ host_job_stamp: false
 host_job_stamp_format: "HOST_JOB_DATE=%F%nHOST_JOB_DAY=%d"   # `date` format; %n = a new line
 host_job_stamp_file: "/run/{{ host_job_name }}.stamp"
 host_job_stdout: ""                  # e.g. "truncate:/var/backups/x/dump.sql" — the commands' output, instead of the journal
+# A job in two steps, where a shell would have used a pipe: the step whose output is a file is
+# one job (host_job_stdout; a unit that captures its output can only have ONE command — the file
+# is opened anew, and emptied, for each), and what follows is another job that the first starts
+# when it ends well. The second has no timer of its own.
+# Three facts of systemd this is built for (measured on 2026-10-09): a first job that is SKIPPED
+# by its host_job_exec_condition still starts its OnSuccess unit; its output file is still
+# created, empty; and a command's ERROR output follows its output unless told otherwise — so the
+# role sends error output to the journal whenever host_job_stdout is set (a message of the
+# condition, or a warning of the command, must never end up in the file), and the second job
+# states what it needs: a file that is not empty.
+host_job_on_success: ""              # OnSuccess=: the unit to start when this run ends, e.g. "x-pack.service"
+host_job_timer: true                 # false = started by another unit only: no timer, no schedule needed
+host_job_condition_file_not_empty: ""   # ConditionFileNotEmpty=: the run is skipped, quietly, unless that file holds something
 host_job_umask: ""                   # e.g. "0077" for a job whose files are private
 host_job_requires_mounts_for: ""     # e.g. an NFS backup target
 # systemd-tmpfiles age rules: [{path: /var/backups/x, age: 7d}] → files older are removed

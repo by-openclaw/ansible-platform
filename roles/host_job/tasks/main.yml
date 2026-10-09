@@ -4,8 +4,13 @@
     that:
       - host_job_name | length > 0
       - host_job_exec | length > 0
-      - (host_job_on_calendar | length > 0) or (host_job_on_boot_sec | length > 0) or (host_job_on_unit_active_sec | length > 0)
-    fail_msg: "host_job needs host_job_name, host_job_exec and a schedule (OnCalendar or a monotonic one)"
+      - >-
+        not (host_job_timer | bool)
+        or (host_job_on_calendar | length > 0) or (host_job_on_boot_sec | length > 0) or (host_job_on_unit_active_sec | length > 0)
+      - not (host_job_stdout | length > 0 and host_job_exec | length > 1)
+    fail_msg: >-
+      host_job needs host_job_name, host_job_exec and — unless host_job_timer is false — a schedule
+      (OnCalendar or a monotonic one); with host_job_stdout it takes exactly one command
     quiet: true
 
 - name: "host_job | The failure notifier (OnFailure= target)"
@@ -27,8 +32,15 @@
     owner: root
     group: root
     mode: "0644"
-  loop: [service, timer]
+  loop: "{{ ['service', 'timer'] if host_job_timer | bool else ['service'] }}"
   register: host_job_units
+
+- name: "host_job | No timer for a unit another one starts — {{ host_job_name }}"
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ host_job_name }}.timer"
+    state: absent
+  register: host_job_timer_gone
+  when: not (host_job_timer | bool)
 
 # The companion unit that tells the job the day of its run (host_job_stamp); gone where a job
 # does not ask for it.
@@ -64,6 +76,7 @@
   when: >-
     (host_job_units is changed) or (host_job_old_dropin is changed)
     or (host_job_stamp_unit is changed) or (host_job_stamp_gone is changed)
+    or (host_job_timer_gone is changed)
 
 - name: "host_job | Timer enabled + running — {{ host_job_name }}"
   ansible.builtin.systemd_service:
@@ -71,7 +84,9 @@
     enabled: true
     state: started
   # --check never wrote a NEW unit, so there is nothing to start yet.
-  when: not ansible_check_mode or (host_job_units is not changed)
+  when:
+    - host_job_timer | bool
+    - not ansible_check_mode or (host_job_units is not changed)
 
 - name: "host_job | Remove the old cron job"
   ansible.builtin.cron:

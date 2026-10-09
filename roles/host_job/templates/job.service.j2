@@ -4,6 +4,12 @@ Description={{ host_job_description or host_job_name }}
 {% if host_job_on_failure | bool %}
 OnFailure=systemd-failure-alert@%n.service
 {% endif %}
+{% if host_job_on_success | length > 0 %}
+OnSuccess={{ host_job_on_success }}
+{% endif %}
+{% if host_job_condition_file_not_empty | length > 0 %}
+ConditionFileNotEmpty={{ host_job_condition_file_not_empty }}
+{% endif %}
 {% if host_job_wants_network | bool %}
 After=network-online.target
 Wants=network-online.target
@@ -29,6 +35,7 @@ UMask={{ host_job_umask }}
 {% endif %}
 {% if host_job_stdout | length > 0 %}
 StandardOutput={{ host_job_stdout }}
+StandardError=journal
 {% endif %}
 {% if host_job_stamp | bool %}
 EnvironmentFile={{ host_job_stamp_file }}
