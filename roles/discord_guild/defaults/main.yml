@@ -36,3 +36,22 @@ discord_guild_categories:
       - { name: alerts, topic: "Alertmanager / Grafana alerts (parked until the alerting trio lands)", webhook: alerts }
 
 discord_guild_post_ready_message: true            # one-line "chat-ops online" in #announcements on first creation
+discord_guild_ready_channel: announcements
+discord_guild_ready_message: "chat-ops online — server managed as code by **BOT** (ansible-platform `discord_guild`)."   # BOT = the bot's name
+
+# --- the REST API (tasks/reconcile.yml) -----------------------------------------
+discord_guild_api: "https://discord.com/api/v10"
+discord_guild_webhook_url_base: "https://discord.com/api/webhooks"
+discord_guild_user_agent: "{{ platform_org }}-chatops/1.0"
+discord_guild_api_timeout: 30
+discord_guild_api_retries: 5                      # a rate-limited call (HTTP 429) is tried again …
+discord_guild_api_delay: 3                        # … after this many seconds
+# Discord's object types
+discord_guild_type_text: 0
+discord_guild_type_category: 4
+discord_guild_type_incoming_webhook: 1
+# Permission bits of an announce channel (Discord: ADD_REACTIONS 64, VIEW_CHANNEL 1024,
+# SEND_MESSAGES 2048, MANAGE_MESSAGES 8192, READ_MESSAGE_HISTORY 65536).
+discord_guild_announce_everyone_allow: 66624      # VIEW_CHANNEL + READ_MESSAGE_HISTORY + ADD_REACTIONS
+discord_guild_announce_everyone_deny: 2048        # SEND_MESSAGES
+discord_guild_announce_poster_allow: 10240        # SEND_MESSAGES + MANAGE_MESSAGES

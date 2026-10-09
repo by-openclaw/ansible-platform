@@ -1,0 +1,292 @@
+---
+# ==============================================================================
+# discord_guild | reconcile — roles, categories, channels (topic, category, permission
+# overwrites of the announce channels) and one webhook per channel that declares one,
+# through the Discord REST API. Reads first, writes only what is missing or different:
+# run twice → changed=0. The bot token travels in the Authorization header of the module
+# call (never on a command line, never in a task environment); every task that carries
+# it is no_log. Reads run under --check too, so a dry run lists what a real run would create.
+#
+# In:  discord_guild_bot (token, guild_id) — bound by tasks/main.yml from Vault.
+# Out: discord_guild_webhooks {name: {id, url, channel}} (secret) and discord_guild_changes.
+# ==============================================================================
+- name: "Discord | Reconcile the guild through its REST API"
+  become: false                 # runs on the controller; no privilege needed
+  module_defaults:
+    ansible.builtin.uri:
+      headers:
+        Authorization: "Bot {{ discord_guild_bot.token }}"
+        User-Agent: "{{ discord_guild_user_agent }}"
+      timeout: "{{ discord_guild_api_timeout }}"
+      status_code: [200, 201, 204, 429]   # 429 = rate limited: retried by `until`
+      # body_format is set on the calls that send a body only: Discord answers 502 to a GET
+      # announced as JSON with nothing in it.
+  block:
+    # --- roles ------------------------------------------------------------------
+    - name: "Discord | Roles on the server"
+      ansible.builtin.uri:
+        url: "{{ discord_guild_api }}/guilds/{{ discord_guild_bot.guild_id }}/roles"
+      register: discord_guild_live_roles
+      retries: "{{ discord_guild_api_retries }}"
+      delay: "{{ discord_guild_api_delay }}"
+      until: discord_guild_live_roles.status | default(0) == 200
+      check_mode: false   # read-only
+      no_log: true
+
+    - name: "Discord | Create the roles that are missing"
+      ansible.builtin.uri:
+        url: "{{ discord_guild_api }}/guilds/{{ discord_guild_bot.guild_id }}/roles"
+        method: POST
+        body_format: json
+        body: "{{ {'name': item.name, 'color': item.color | default(0) | int, 'hoist': item.hoist | default(false) | bool, 'mentionable': true} }}"
+      loop: "{{ discord_guild_roles | rejectattr('name', 'in', discord_guild_live_roles.json | map(attribute='name') | list) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: discord_guild_roles_created
+      retries: "{{ discord_guild_api_retries }}"
+      delay: "{{ discord_guild_api_delay }}"
+      until: discord_guild_roles_created.status | default(0) in [200, 201]
+      changed_when: true
+      no_log: true
+
+    - name: "Discord | Role ids by name"
+      ansible.builtin.set_fact:
+        discord_guild_role_ids: >-
+          {{ (discord_guild_live_roles.json
+              + (discord_guild_roles_created.results | default([]) | selectattr('json', 'defined') | map(attribute='json') | list))
+             | items2dict(key_name='name', value_name='id') }}
+
+    # --- categories -------------------------------------------------------------
+    - name: "Discord | Channels on the server"
+      ansible.builtin.uri:
+        url: "{{ discord_guild_api }}/guilds/{{ discord_guild_bot.guild_id }}/channels"
+      register: discord_guild_live_channels
+      retries: "{{ discord_guild_api_retries }}"
+      delay: "{{ discord_guild_api_delay }}"
+      until: discord_guild_live_channels.status | default(0) == 200
+      check_mode: false   # read-only
+      no_log: true
+
+    - name: "Discord | Create the categories that are missing"
+      ansible.builtin.uri:
+        url: "{{ discord_guild_api }}/guilds/{{ discord_guild_bot.guild_id }}/channels"
+        method: POST
+        body_format: json
+        body: "{{ {'name': item.name, 'type': discord_guild_type_category} }}"
+      loop: >-
+        {{ discord_guild_categories
+           | rejectattr('name', 'in', discord_guild_live_channels.json | selectattr('type', 'equalto', discord_guild_type_category) | map(attribute='name') | list)
+           | list }}
+      loop_control:
+        label: "{{ item.name }}"
+      register: discord_guild_categories_created
+      retries: "{{ discord_guild_api_retries }}"
+      delay: "{{ discord_guild_api_delay }}"
+      until: discord_guild_categories_created.status | default(0) in [200, 201]
+      changed_when: true
+      no_log: true
+
+    - name: "Discord | Category ids by name"
+      ansible.builtin.set_fact:
+        discord_guild_category_ids: >-
+          {{ ((discord_guild_live_channels.json | selectattr('type', 'equalto', discord_guild_type_category) | list)
+              + (discord_guild_categories_created.results | default([]) | selectattr('json', 'defined') | map(attribute='json') | list))
+             | items2dict(key_name='name', value_name='id') }}
+
+    # --- channels ---------------------------------------------------------------
+    # An announce channel: everyone reads, only the admins' role and the bot's role post.
+    - name: "Discord | Permission overwrites of an announce channel"
+      ansible.builtin.set_fact:
+        discord_guild_announce_overwrites: >-
+          {{ [{'id': discord_guild_bot.guild_id | string, 'type': 0,
+               'allow': discord_guild_announce_everyone_allow | string, 'deny': discord_guild_announce_everyone_deny | string}]
+             + ([{'id': discord_guild_role_ids[platform_admins_group], 'type': 0,
+                  'allow': discord_guild_announce_poster_allow | string, 'deny': '0'}]
+                if platform_admins_group in discord_guild_role_ids else [])
+             + ([{'id': discord_guild_role_ids[discord_guild_bot_role], 'type': 0,
+                  'allow': discord_guild_announce_poster_allow | string, 'deny': '0'}]
+                if discord_guild_bot_role in discord_guild_role_ids else []) }}
+
+    - name: "Discord | Create the channels that are missing"
+      ansible.builtin.uri:
+        url: "{{ discord_guild_api }}/guilds/{{ discord_guild_bot.guild_id }}/channels"
+        method: POST
+        body_format: json
+        body: >-
+          {{ {'name': item.1.name, 'type': discord_guild_type_text,
+              'parent_id': discord_guild_category_ids[item.0.name] | default(''),
+              'topic': item.1.topic | default('')}
+             | combine({'permission_overwrites': discord_guild_announce_overwrites} if item.1.announce | default(false) else {}) }}
+      loop: "{{ discord_guild_categories | subelements('channels') }}"
+      loop_control:
+        label: "#{{ item.1.name }} ({{ item.0.name }})"
+      when: item.1.name not in (discord_guild_live_channels.json | selectattr('type', 'equalto', discord_guild_type_text) | map(attribute='name') | list)
+      register: discord_guild_channels_created
+      retries: "{{ discord_guild_api_retries }}"
+      delay: "{{ discord_guild_api_delay }}"
+      until: discord_guild_channels_created.status | default(0) in [200, 201]
+      changed_when: true
+      no_log: true
+
+    # An existing channel is brought back to its category, its topic and — for an announce
+    # channel — its overwrites; the PATCH carries only what differs.
+    - name: "Discord | Converge the channels that differ"
+      vars:
+        discord_guild_live: "{{ discord_guild_live_channels.json | selectattr('type', 'equalto', discord_guild_type_text) | selectattr('name', 'equalto', item.1.name) | first | default({}) }}"
+        discord_guild_live_ow: >-
+          {{ (discord_guild_live.permission_overwrites | default([]) | map(attribute='id') | list)
+             | zip(discord_guild_live.permission_overwrites | default([]) | map(attribute='allow') | map('int') | list,
+                   discord_guild_live.permission_overwrites | default([]) | map(attribute='deny') | map('int') | list)
+             | map('join', ':') | sort }}
+        discord_guild_wanted_ow: >-
+          {{ (discord_guild_announce_overwrites | map(attribute='id') | list)
+             | zip(discord_guild_announce_overwrites | map(attribute='allow') | map('int') | list,
+                   discord_guild_announce_overwrites | map(attribute='deny') | map('int') | list)
+             | map('join', ':') | sort }}
+        discord_guild_patch: >-
+          {{ ({} if discord_guild_live.parent_id | default('', true) == discord_guild_category_ids[item.0.name] | default('')
+              else {'parent_id': discord_guild_category_ids[item.0.name] | default('')})
+             | combine({} if (discord_guild_live.topic | default('', true)) == (item.1.topic | default(''))
+                       else {'topic': item.1.topic | default('')})
+             | combine({'permission_overwrites': discord_guild_announce_overwrites}
+                       if (item.1.announce | default(false)) and discord_guild_live_ow != discord_guild_wanted_ow else {}) }}
+      ansible.builtin.uri:
+        url: "{{ discord_guild_api }}/channels/{{ discord_guild_live.id }}"
+        method: PATCH
+        body_format: json
+        body: "{{ discord_guild_patch }}"
+      loop: "{{ discord_guild_categories | subelements('channels') }}"
+      loop_control:
+        label: "#{{ item.1.name }} {{ discord_guild_patch.keys() | join(',') }}"
+      when:
+        - discord_guild_live | length > 0
+        - discord_guild_patch | length > 0
+      register: discord_guild_channels_patched
+      retries: "{{ discord_guild_api_retries }}"
+      delay: "{{ discord_guild_api_delay }}"
+      until: discord_guild_channels_patched.status | default(0) == 200
+      changed_when: true
+      no_log: true
+
+    - name: "Discord | Channel ids by name"
+      ansible.builtin.set_fact:
+        discord_guild_channel_ids: >-
+          {{ ((discord_guild_live_channels.json | selectattr('type', 'equalto', discord_guild_type_text) | list)
+              + (discord_guild_channels_created.results | default([]) | selectattr('json', 'defined') | map(attribute='json') | list))
+             | items2dict(key_name='name', value_name='id') }}
+
+    # --- webhooks (one per channel that declares one) ---------------------------
+    - name: "Discord | Webhooks on the server"
+      ansible.builtin.uri:
+        url: "{{ discord_guild_api }}/guilds/{{ discord_guild_bot.guild_id }}/webhooks"
+      register: discord_guild_live_webhooks
+      retries: "{{ discord_guild_api_retries }}"
+      delay: "{{ discord_guild_api_delay }}"
+      until: discord_guild_live_webhooks.status | default(0) == 200
+      check_mode: false   # read-only
+      no_log: true
+
+    - name: "Discord | Move the webhooks that sit on another channel"
+      vars:
+        discord_guild_hook: "{{ discord_guild_live_webhooks.json | selectattr('type', 'equalto', discord_guild_type_incoming_webhook) | selectattr('name', 'equalto', item.1.webhook) | first | default({}) }}"
+      ansible.builtin.uri:
+        url: "{{ discord_guild_api }}/webhooks/{{ discord_guild_hook.id }}"
+        method: PATCH
+        body_format: json
+        body: "{{ {'channel_id': discord_guild_channel_ids[item.1.name]} }}"
+      loop: "{{ discord_guild_categories | subelements('channels') | selectattr('1.webhook', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.1.webhook }} -> #{{ item.1.name }}"
+      when:
+        - discord_guild_hook | length > 0
+        - item.1.name in discord_guild_channel_ids
+        - discord_guild_hook.channel_id != discord_guild_channel_ids[item.1.name]
+      register: discord_guild_webhooks_moved
+      retries: "{{ discord_guild_api_retries }}"
+      delay: "{{ discord_guild_api_delay }}"
+      until: discord_guild_webhooks_moved.status | default(0) == 200
+      changed_when: true
+      no_log: true
+
+    - name: "Discord | Create the webhooks that are missing"
+      ansible.builtin.uri:
+        url: "{{ discord_guild_api }}/channels/{{ discord_guild_channel_ids[item.1.name] | default('') }}/webhooks"
+        method: POST
+        body_format: json
+        body: "{{ {'name': item.1.webhook} }}"
+      loop: "{{ discord_guild_categories | subelements('channels') | selectattr('1.webhook', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.1.webhook }} -> #{{ item.1.name }}"
+      when: item.1.webhook not in (discord_guild_live_webhooks.json | selectattr('type', 'equalto', discord_guild_type_incoming_webhook) | map(attribute='name') | list)
+      register: discord_guild_webhooks_created
+      retries: "{{ discord_guild_api_retries }}"
+      delay: "{{ discord_guild_api_delay }}"
+      until: discord_guild_webhooks_created.status | default(0) in [200, 201]
+      changed_when: true
+      no_log: true
+
+    # Each webhook is read by its id: that answer carries its token (the URL's secret part).
+    - name: "Discord | Read every declared webhook"
+      vars:
+        discord_guild_hook_ids: >-
+          {{ ((discord_guild_live_webhooks.json | selectattr('type', 'equalto', discord_guild_type_incoming_webhook) | list)
+              + (discord_guild_webhooks_created.results | default([]) | selectattr('json', 'defined') | map(attribute='json') | list))
+             | items2dict(key_name='name', value_name='id') }}
+      ansible.builtin.uri:
+        url: "{{ discord_guild_api }}/webhooks/{{ discord_guild_hook_ids[item.1.webhook] }}"
+      loop: "{{ discord_guild_categories | subelements('channels') | selectattr('1.webhook', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.1.webhook }}"
+      when: item.1.webhook in discord_guild_hook_ids   # under --check a webhook still to create has no id yet
+      register: discord_guild_webhooks_read
+      retries: "{{ discord_guild_api_retries }}"
+      delay: "{{ discord_guild_api_delay }}"
+      until: discord_guild_webhooks_read.status | default(0) == 200
+      check_mode: false   # read-only
+      no_log: true
+
+    - name: "Discord | Webhook URLs by name (secret)"
+      ansible.builtin.set_fact:
+        discord_guild_webhooks: >-
+          {%- set ns = namespace(out={}) -%}
+          {%- for r in discord_guild_webhooks_read.results | selectattr('json', 'defined') -%}
+          {%-   set ns.out = ns.out | combine({r.item.1.webhook: {'id': r.json.id,
+                                                                'url': discord_guild_webhook_url_base ~ '/' ~ r.json.id ~ '/' ~ r.json.token,
+                                                                'channel': r.item.1.name}}) -%}
+          {%- endfor -%}
+          {{ ns.out }}
+      no_log: true
+
+    # --- the one-line greeting, the first time #announcements is created ----------
+    - name: "Discord | Who the bot is"
+      ansible.builtin.uri:
+        url: "{{ discord_guild_api }}/users/@me"
+      register: discord_guild_me
+      when:
+        - discord_guild_post_ready_message | bool
+        - discord_guild_channels_created.results | default([]) | selectattr('json', 'defined') | selectattr('item.1.name', 'equalto', discord_guild_ready_channel) | list | length > 0
+      check_mode: false   # read-only
+      no_log: true
+
+    - name: "Discord | Say so in the new announcements channel"
+      ansible.builtin.uri:
+        url: "{{ discord_guild_api }}/channels/{{ (discord_guild_channels_created.results | selectattr('json', 'defined') | selectattr('item.1.name', 'equalto', discord_guild_ready_channel) | first).json.id }}/messages"
+        method: POST
+        body_format: json
+        body: "{{ {'content': discord_guild_ready_message | replace('BOT', discord_guild_me.json.username)} }}"
+      when: discord_guild_me.json is defined
+      register: discord_guild_ready_posted
+      changed_when: true
+      no_log: true
+
+    # Names only: what this run created or changed (no id, no URL).
+    - name: "Discord | What changed"
+      ansible.builtin.set_fact:
+        discord_guild_changes: >-
+          {{ (discord_guild_roles_created.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.name') | map('regex_replace', '^', 'role+ ') | list)
+             + (discord_guild_categories_created.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.name') | map('regex_replace', '^', 'category+ ') | list)
+             + (discord_guild_channels_created.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.1.name') | map('regex_replace', '^', 'channel+ #') | list)
+             + (discord_guild_channels_patched.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.1.name') | map('regex_replace', '^', 'channel~ #') | list)
+             + (discord_guild_webhooks_moved.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.1.webhook') | map('regex_replace', '^', 'webhook~ ') | list)
+             + (discord_guild_webhooks_created.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.1.webhook') | map('regex_replace', '^', 'webhook+ ') | list)
+             + (['message+ #' ~ discord_guild_ready_channel] if discord_guild_ready_posted is changed else []) }}
