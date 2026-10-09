@@ -43,6 +43,7 @@
       ansible.posix.authorized_key:
         user: "{{ acct.name }}"
         key: "{{ lookup('file', user_mgmt_key_dir + '/' + acct.pubkey) }}"
+        key_options: "{{ acct.key_options | default(omit) }}"   # e.g. from="…": where the key is accepted
         state: present
         exclusive: true
       # authorized_key can't verify a not-yet-created user in check mode (module

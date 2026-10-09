@@ -1,0 +1,98 @@
+---
+# identity/0004-os-accounts §4: automation escalates as svc-ansible-{env} with the password Vault
+# holds; a person's password is typed, never stored. The controller gets that account like every
+# host. It is created once, by the person typing their own password at the play's prompt; from
+# then on the role's root work goes through it — SSH from the controller to itself, with the
+# automation key, accepted from this machine only — and no person's password is needed again.
+- name: "Controller | Automation account: is it there?"
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ controller_account_name }}"
+    fail_key: false
+
+- name: "Controller | Automation account: present or to create"
+  ansible.builtin.set_fact:
+    controller_account_present: "{{ (ansible_facts['getent_passwd'] | default({}))[controller_account_name] | default(none) is not none }}"
+
+# Read outside the block below: the block escalates with the PERSON's password, and a task
+# delegated to the Vault host from inside it would carry that password there.
+- name: "Controller | Automation account: its password (Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ controller_account_vault_path }}"
+    vault_secret_init: {}
+  when:
+    - not (controller_account_present | bool)
+    - controller_become_password | default('') | length > 0
+
+- name: "Controller | Automation account: create it (the person's password, this once)"
+  when:
+    - not (controller_account_present | bool)
+    - controller_become_password | default('') | length > 0
+  become: true
+  vars:
+    ansible_become_password: "{{ controller_become_password }}"   # this workstation's, typed at the prompt
+  block:
+    - name: "Controller | Automation account: the password has been read"
+      ansible.builtin.assert:
+        that: (vault_secret_result.password | default('') | length) > 0
+        fail_msg: "Vault holds no password at {{ controller_account_vault_path }}: the account is not created"
+        quiet: true
+      no_log: true
+
+    # The fleet's own account task (roles/user-mgmt): group, account with the Vault password,
+    # authorized key, sudoers with a password. Only this one account: the role's other accounts
+    # and its purge of foreign accounts are not for a person's workstation.
+    - name: "Controller | Automation account: account, key and sudoers (roles/user-mgmt)"
+      ansible.builtin.include_role:
+        name: user-mgmt
+        tasks_from: account.yml
+      vars:
+        user_mgmt_passwords: "{{ {controller_account_vault_path: vault_secret_result} }}"
+        acct: >-
+          {{ user_mgmt_accounts | selectattr('name', 'eq', controller_account_name) | first
+             | combine({'key_options': 'from="' ~ (controller_account_key_from | join(',')) ~ '"'}) }}
+
+    - name: "Controller | Automation account: key only for it (sshd)"
+      ansible.builtin.copy:
+        dest: "{{ controller_sshd_dropin }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible (controller role) — the automation account logs in with its key
+          # only; its password exists for sudo, never for a login.
+          Match User {{ controller_account_name }}
+              PasswordAuthentication no
+              KbdInteractiveAuthentication no
+              AuthenticationMethods publickey
+        validate: "sshd -t -f %s"
+      register: controller_sshd_dropin_written
+
+    - name: "Controller | Automation account: sshd reads its configuration again"
+      ansible.builtin.systemd_service:
+        name: "{{ controller_sshd_service }}"
+        state: reloaded
+      when: controller_sshd_dropin_written is changed
+
+    - name: "Controller | Automation account: it is there now"
+      ansible.builtin.set_fact:
+        controller_account_present: true
+      when: not ansible_check_mode
+
+# Every run: the path the root work takes is proven before it is used.
+- name: "Controller | Automation account: it reaches root on the controller (SSH to itself, Vault password)"
+  ansible.builtin.command:
+    argv: [id, -u]
+  become: true
+  vars:
+    ansible_connection: ssh
+    ansible_host: "{{ controller_ssh_host }}"
+    ansible_port: "{{ controller_ssh_port }}"
+    ansible_user: "{{ controller_account_name }}"
+  register: controller_account_root
+  changed_when: false
+  check_mode: false   # read-only probe
+  failed_when: (controller_account_root.stdout | default('') | trim) != '0'
+  when: controller_account_present | bool

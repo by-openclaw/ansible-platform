@@ -12,11 +12,13 @@
   become: false
   # The inventory defines ansible_become_password for EVERY host (the fleet's automation account),
   # localhost included, and that variable wins over -K: on this workstation sudo then receives
-  # the fleet's password and refuses it. Root here belongs to the person: their password is asked
-  # and given to the root-only tasks alone. Enter = what needs root is skipped.
+  # the fleet's password and refuses it. A person's password is typed, never stored
+  # (identity/0004-os-accounts §4): it is asked here and used ONCE, to create the automation
+  # account on the controller (--tags account). After that, Enter: the role's root work goes
+  # through that account with the password Vault holds.
   vars_prompt:
     - name: controller_become_password
-      prompt: "sudo password of this workstation (Enter to skip the root-only part)"
+      prompt: "sudo password of this workstation — only to create the automation account the first time (otherwise Enter)"
       private: true
       default: ""
   roles:
