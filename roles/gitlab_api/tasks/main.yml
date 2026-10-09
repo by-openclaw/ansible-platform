@@ -8,7 +8,7 @@
     name: vault_secret
   vars:
     vault_secret_path: "{{ gitlab_api_vault_path }}"
-    vault_secret_optional: true
+    vault_secret_optional: true   # pragma: allowlist secret
 
 - name: "GitLab API | Keep it"
   ansible.builtin.set_fact:
@@ -28,10 +28,13 @@
 
 - name: "GitLab API | Usable? days left?"
   ansible.builtin.set_fact:
+    # usable = accepted by GitLab AND owned by the automation account (a token of another
+    # account — GitLab's root, until 2026-10-09 — is replaced, then revoked)
     gitlab_api_usable: >-
       {{ (gitlab_api_self.status | default(0)) == 200
          and (gitlab_api_self.json.active | default(false))
-         and not (gitlab_api_self.json.revoked | default(false)) }}
+         and not (gitlab_api_self.json.revoked | default(false))
+         and (gitlab_api_stored.user | default('')) == gitlab_api_token_user }}
     gitlab_api_days_left: >-
       {{ (((gitlab_api_self.json.expires_at | default('1970-01-01', true)) | to_datetime('%Y-%m-%d'))
           - (now(utc=true).strftime('%Y-%m-%d') | to_datetime('%Y-%m-%d'))).days }}
@@ -54,43 +57,159 @@
     - gitlab_api_days_left | int < gitlab_api_token_renew_before_days | int
     - not ansible_check_mode
 
-# --- the first token: GitLab's console (the one exception, see defaults/main.yml) ----
-# Reached only when Vault holds no token GitLab accepts. The program arrives on standard
-# input and its values in the container's environment (module arguments); the token leaves
-# on standard output only, under no_log — never on a command line.
-- name: "GitLab API | Mint the first token (console — the role's one exception to infra/0010 §3)"
-  community.docker.docker_container_exec:
-    container: "{{ gitlab_container }}"
-    argv: [gitlab-rails, runner, "-"]
-    stdin: |
-      u = User.find_by_username!(ENV.fetch("GITLAB_API_USER"))
-      u.personal_access_tokens.active.where(name: ENV.fetch("GITLAB_API_NAME")).find_each(&:revoke!)
-      t = u.personal_access_tokens.create!(name: ENV.fetch("GITLAB_API_NAME"), scopes: ENV.fetch("GITLAB_API_SCOPES").split(","), expires_at: ENV.fetch("GITLAB_API_DAYS").to_i.days.from_now)
-      puts "TOKEN=#{t.token}"
-      puts "EXPIRES=#{t.expires_at}"
-      puts "ID=#{t.id}"
-    env:
-      GITLAB_API_USER: "{{ gitlab_api_token_user }}"
-      GITLAB_API_NAME: "{{ gitlab_api_token_name }}"
-      GITLAB_API_SCOPES: "{{ gitlab_api_token_scopes | join(',') }}"
-      GITLAB_API_DAYS: "{{ gitlab_api_token_days | string }}"
-  register: gitlab_api_minted
-  no_log: true
+# --- the first token ------------------------------------------------------------
+# Reached only when Vault holds no token GitLab accepts for the automation account.
+#  1. THE ONE CONSOLE CALL (the role's exception to infra/0010 §3, see defaults/main.yml):
+#     a bootstrap token for GitLab's built-in administrator, valid one day. The program
+#     arrives on standard input, its values in the container's environment; the token leaves
+#     on standard output only, under no_log — never on a command line.
+#  2. Everything else through the API with that bootstrap token: the automation account
+#     (an administrator of its own — root is break-glass, it keeps no token), then ITS token.
+#  3. The bootstrap token is revoked before the role goes on, whatever happened in between.
+- name: "GitLab API | First token for the automation account"
   when:
     - not (gitlab_api_usable | bool)
     - not ansible_check_mode
+  block:
+    - name: "GitLab API | Bootstrap token (console — the role's one exception to infra/0010 §3)"
+      community.docker.docker_container_exec:
+        container: "{{ gitlab_container }}"
+        argv: [gitlab-rails, runner, "-"]
+        stdin: |
+          u = User.find_by_username!(ENV.fetch("GITLAB_API_ROOT"))
+          u.personal_access_tokens.active.where(name: ENV.fetch("GITLAB_API_NAME")).find_each(&:revoke!)
+          t = u.personal_access_tokens.create!(name: ENV.fetch("GITLAB_API_NAME"), scopes: ENV.fetch("GITLAB_API_SCOPES").split(","), expires_at: 1.day.from_now)
+          puts "TOKEN=#{t.token}"
+        env:
+          GITLAB_API_ROOT: "{{ gitlab_api_bootstrap_user }}"
+          GITLAB_API_NAME: "{{ gitlab_api_bootstrap_token_name }}"
+          GITLAB_API_SCOPES: "{{ gitlab_api_token_scopes | join(',') }}"
+      register: gitlab_api_minted
+      no_log: true
 
-- name: "GitLab API | The new token (renewed or minted)"
+    - name: "GitLab API | Keep the bootstrap token for the next calls"
+      ansible.builtin.set_fact:
+        gitlab_api_bootstrap_token: "{{ gitlab_api_minted.stdout_lines | select('match', '^TOKEN=') | first | regex_replace('^TOKEN=', '') }}"
+      no_log: true
+
+    - name: "GitLab API | Is the automation account there"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/users?username={{ gitlab_api_token_user | urlencode }}"
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_bootstrap_token }}"
+      register: gitlab_api_account
+      no_log: true
+
+    - name: "GitLab API | Create the automation account (an administrator; random password, no login by a person)"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/users"
+        method: POST
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_bootstrap_token }}"
+        body_format: json
+        body: "{{ {'username': gitlab_api_token_user, 'name': gitlab_api_token_user_name, 'email': gitlab_api_token_user_email, 'force_random_password': true, 'skip_confirmation': true, 'admin': true} }}"   # pragma: allowlist secret
+        status_code: [201]
+      register: gitlab_api_account_created
+      changed_when: true
+      no_log: true
+      when: gitlab_api_account.json | selectattr('username', 'equalto', gitlab_api_token_user) | list | length == 0
+
+    - name: "GitLab API | The account as it is now"
+      ansible.builtin.set_fact:
+        gitlab_api_account_now: >-
+          {{ gitlab_api_account_created.json
+             | default(gitlab_api_account.json | selectattr('username', 'equalto', gitlab_api_token_user) | first | default({})) }}
+
+    - name: "GitLab API | The account is active"
+      ansible.builtin.assert:
+        that: gitlab_api_account_now.state | default('') == 'active'
+        fail_msg: "GitLab's account {{ gitlab_api_token_user }} is {{ gitlab_api_account_now.state | default('missing') }}: unblock it (or remove it) before the automation can use it."
+        quiet: true
+
+    - name: "GitLab API | It is an administrator"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/users/{{ gitlab_api_account_now.id }}"
+        method: PUT
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_bootstrap_token }}"
+        body_format: json
+        body: {admin: true}
+      changed_when: true
+      no_log: true
+      when: not (gitlab_api_account_now.is_admin | default(false) | bool)
+
+    - name: "GitLab API | Its tokens of the same name"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/personal_access_tokens?user_id={{ gitlab_api_account_now.id }}&state=active&per_page={{ gitlab_api_page_size }}"
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_bootstrap_token }}"
+      register: gitlab_api_account_tokens
+      check_mode: false   # read-only GET (the block itself does not run under --check)
+      no_log: true
+
+    - name: "GitLab API | Revoke them (one token of that name at a time)"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/personal_access_tokens/{{ item.id }}"
+        method: DELETE
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_bootstrap_token }}"
+        status_code: [204]
+      loop: "{{ gitlab_api_account_tokens.json | selectattr('name', 'equalto', gitlab_api_token_name) | list }}"
+      loop_control:
+        label: "{{ item.id }}"
+      changed_when: true
+      no_log: true
+
+    - name: "GitLab API | The automation account's token"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/users/{{ gitlab_api_account_now.id }}/personal_access_tokens"
+        method: POST
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_bootstrap_token }}"
+        body_format: json
+        body: "{{ {'name': gitlab_api_token_name, 'scopes': gitlab_api_token_scopes, 'expires_at': '%Y-%m-%d' | strftime((now(utc=true).timestamp() | int) + (gitlab_api_token_days | int) * 86400, utc=true)} }}"
+        status_code: [201]
+      register: gitlab_api_first
+      changed_when: true
+      no_log: true
+
+  always:
+    - name: "GitLab API | Revoke the bootstrap token"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/personal_access_tokens/self"
+        method: DELETE
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_bootstrap_token }}"
+        status_code: [204]
+      changed_when: true
+      no_log: true
+      when: gitlab_api_bootstrap_token | default('') | length > 0
+
+    # A stored token GitLab still accepts but that belongs to another account (root's, from
+    # before the automation account existed): revoked once the automation account has its own.
+    - name: "GitLab API | Revoke the stored token of another account"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/personal_access_tokens/self"
+        method: DELETE
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_stored.token }}"
+        status_code: [204]
+      changed_when: true
+      no_log: true
+      when:
+        - (gitlab_api_self.status | default(0)) == 200
+        - (gitlab_api_stored.user | default('')) != gitlab_api_token_user
+        - gitlab_api_first.json.token | default('') | length > 0
+
+- name: "GitLab API | The new token (renewed or first)"
   ansible.builtin.set_fact:
     gitlab_api_new: >-
       {{ ({'token': gitlab_api_renewed.json.token, 'expires_at': gitlab_api_renewed.json.expires_at,
            'id': gitlab_api_renewed.json.id, 'created_via': 'api:personal_access_tokens/self/rotate'}
           if (gitlab_api_renewed.json.token | default('') | length > 0)
-          else ({'token': gitlab_api_minted.stdout_lines | select('match', '^TOKEN=') | first | regex_replace('^TOKEN=', ''),
-                 'expires_at': gitlab_api_minted.stdout_lines | select('match', '^EXPIRES=') | first | regex_replace('^EXPIRES=', ''),
-                 'id': gitlab_api_minted.stdout_lines | select('match', '^ID=') | first | regex_replace('^ID=', ''),
-                 'created_via': 'console'}
-                if (gitlab_api_minted.stdout_lines | default([]) | select('match', '^TOKEN=') | list | length > 0)
+          else ({'token': gitlab_api_first.json.token, 'expires_at': gitlab_api_first.json.expires_at,
+                 'id': gitlab_api_first.json.id, 'created_via': 'api:users/personal_access_tokens after a console bootstrap'}
+                if (gitlab_api_first.json.token | default('') | length > 0)
                 else {})) }}
   no_log: true
 
@@ -104,7 +223,7 @@
     vault_secret_metadata_put:
       rotated_at: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(utc=true) }}"
       rotated_by: ansible-deploy
-      reason: "{{ 'renewed before expiry' if (gitlab_api_renewed.json.token | default('') | length > 0) else 'first token or the stored one was refused' }}"
+      reason: "{{ 'renewed before expiry' if (gitlab_api_renewed.json.token | default('') | length > 0) else 'first token of the automation account (none stored, refused, or owned by another account)' }}"
   when: gitlab_api_new | length > 0
 
 - name: "GitLab API | Publish the token for the tasks that follow"
@@ -127,6 +246,6 @@
   ansible.builtin.debug:
     msg: >-
       {{ 'no token yet — a real run mints the first one' if (gitlab_api_token | length == 0)
-         else ('token ' ~ ('minted' if (gitlab_api_new.created_via | default('')) is match('^console') else ('renewed through the API' if gitlab_api_new | length > 0 else 'reused'))
+         else ('token of ' ~ gitlab_api_token_user ~ ' ' ~ ('created after a console bootstrap' if (gitlab_api_new.created_via | default('')) is search('bootstrap') else ('renewed through the API' if gitlab_api_new | length > 0 else 'reused'))
                ~ ': name ' ~ gitlab_api_final.json.name ~ ', scopes ' ~ gitlab_api_final.json.scopes | join('+')
                ~ ', expires ' ~ gitlab_api_final.json.expires_at) }}
