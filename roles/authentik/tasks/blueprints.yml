@@ -52,27 +52,45 @@
   when: authentik_proxy_apps | default([]) | length > 0
   notify: Restart authentik
 
+# Through the REST API, with the token the role already uses. The list is read whole and
+# matched by exact name HERE: an unknown query filter is ignored by the API and would return
+# every provider — a delete must never depend on it.
+- name: "blueprints | Proxy providers on the server (is a retired one still there?)"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/providers/proxy/?page_size={{ authentik_api_page_size }}"
+    headers:
+      Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}"
+  register: authentik_proxy_providers
+  check_mode: false   # read-only GET: must run under --check too (the next task reads its json)
+  retries: "{{ authentik_api_retries }}"
+  delay: "{{ authentik_api_delay }}"
+  until: authentik_proxy_providers.status | default(0) == 200
+  no_log: true
+  when:
+    - authentik_proxy_apps_retired | default([]) | length > 0
+    - inventory_hostname == authentik_first_member
+
+- name: "blueprints | The list of proxy providers is complete (one page)"
+  ansible.builtin.assert:
+    that: authentik_proxy_providers.json.pagination.total_pages | int <= 1
+    fail_msg: "More proxy providers than one page of {{ authentik_api_page_size }}: raise authentik_api_page_size."
+    quiet: true
+  when:
+    - authentik_proxy_apps_retired | default([]) | length > 0
+    - inventory_hostname == authentik_first_member
+
 - name: "blueprints | Retire proxy providers that are declared retired (the OIDC provider of the same name can then exist)"
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - "{{ authentik_server_container }}"
-      - ak
-      - shell
-      - -c
-      - |
-        from authentik.providers.proxy.models import ProxyProvider
-        names = {{ authentik_proxy_apps_retired | default([]) | to_json }}
-        qs = ProxyProvider.objects.filter(name__in=names)
-        n = qs.count()
-        for p in qs:
-            for o in p.outpost_set.all():
-                o.providers.remove(p)
-        qs.delete()
-        print("retired=%d" % n)
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/providers/proxy/{{ item.pk }}/"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}"
+    status_code: 204
+  loop: "{{ authentik_proxy_providers.json.results | default([]) | selectattr('name', 'in', authentik_proxy_apps_retired | default([])) | list }}"
+  loop_control:
+    label: "{{ item.name }}"
   register: authentik_proxy_retired
-  changed_when: "'retired=0' not in authentik_proxy_retired.stdout"
+  changed_when: true
   when:
     - authentik_proxy_apps_retired | default([]) | length > 0
     - inventory_hostname == authentik_first_member
