@@ -70,6 +70,7 @@ The playbooks of this repo, grouped by scope. Each runs against `inventories/pro
 | `opnsense-pppoe-rotate.yml` | ISP PPPoE credential: rotate, normalise, or (re)apply — Vault-first (hidden prompt, new KV version + metadata), firewall over SSH + wheel sudo (`<ppps>` edit, `configctl` re-dial), API waits for the gateway, fallback file refreshed from Vault. No sudo on the appliance → stops; the seed applies at the re-seed. Role `opnsense_pppoe`, catalog `opn_wan_pppoe`. |
 | `opnsense-unbound-overrides.yml` | Apply opn_unbound.host_overrides (split-DNS: service name -> Traefik / mailcow) to the FW's Unbound through the collection module (lib-opnsense UbHostOverrideManager underneath — l |
 | `opnsense.yml` | OPNsense Configuration Playbook Idempotent. Safe to run repeatedly. Configures: system, interfaces (VLANs), DNS, DHCP, NTP, firewall aliases+rules, WireGuard. |
+| `opnsense-token-gate.yml` | The gate after an OPNsense API token rotation: reads the result of the catalog check run with the new token and fails unless every host reports changed=0, failed=0, unreachable=0. Run by the unit `fw-token-rotation-gate@<env>` (`roles/opnsense_token_rotation`). |
 
 ## Core services
 
