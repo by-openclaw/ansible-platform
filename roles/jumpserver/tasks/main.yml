@@ -136,7 +136,7 @@
         - name: jms_postgres
           image: "{{ jumpserver_image_postgres }}"
           hostname: jms-postgres
-          restart_policy: always
+          restart_policy: "{{ jumpserver_restart_policy }}"
           env:
             TZ: "{{ jumpserver_tz }}"
             POSTGRES_DB: "{{ jumpserver_db_name }}"
@@ -174,7 +174,7 @@
         - name: jms_redis
           image: "{{ jumpserver_image_redis }}"
           hostname: jms-redis
-          restart_policy: always
+          restart_policy: "{{ jumpserver_restart_policy }}"
           # the password reaches redis through its environment, not as a visible argument (SEC-17)
           command: ["sh", "-c", "exec redis-server --requirepass \"$REDIS_PASSWORD\" --appendonly yes"]
           env:
@@ -211,7 +211,7 @@
         - name: jms_core
           image: "{{ jumpserver_image_core }}"
           hostname: jms_core
-          restart_policy: always
+          restart_policy: "{{ jumpserver_restart_policy }}"
           command: start web
           ulimits: ["core:0:0"]
           env: "{{ jumpserver_env_safe | combine(jumpserver_env_db) | combine(jumpserver_env_oidc) | combine({'TIME_ZONE': jumpserver_tz}) }}"
@@ -249,7 +249,7 @@
         - name: jms_celery
           image: "{{ jumpserver_image_core }}"
           hostname: jms_celery
-          restart_policy: always
+          restart_policy: "{{ jumpserver_restart_policy }}"
           command: start task
           ulimits: ["core:0:0"]
           env: "{{ jumpserver_env_safe | combine(jumpserver_env_db) | combine(jumpserver_env_oidc) | combine({'LC_ALL': 'C.UTF-8'}) }}"
@@ -262,7 +262,7 @@
         - name: jms_koko
           image: "{{ jumpserver_image_koko }}"
           hostname: jms_koko
-          restart_policy: always
+          restart_policy: "{{ jumpserver_restart_policy }}"
           ulimits: ["core:0:0"]
           env: "{{ jumpserver_env_safe }}"
           volumes:
@@ -272,7 +272,7 @@
         - name: jms_lion
           image: "{{ jumpserver_image_lion }}"
           hostname: jms_lion
-          restart_policy: always
+          restart_policy: "{{ jumpserver_restart_policy }}"
           ulimits: ["core:0:0"]
           env: "{{ jumpserver_env_safe }}"
           volumes:
@@ -282,7 +282,7 @@
         - name: jms_web
           image: "{{ jumpserver_image_web }}"
           hostname: jms_web
-          restart_policy: always
+          restart_policy: "{{ jumpserver_restart_policy }}"
           ulimits: ["core:0:0"]
           env:
             TZ: "{{ jumpserver_tz }}"
