@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+# Between the rotation and the check: the plays of the jobs that keep a COPY of the firewall's
+# API token (opnsense_token_rotation_consumer_playbooks). The rotation revoked the previous
+# token; each play reads the new one from Vault and re-renders its job's credential.
+[Unit]
+Description=Give the rotated OPNsense API token to the jobs that keep a copy of it, for %i
+OnSuccess=fw-token-rotation-check@%i.service
+
+[Service]
+Type=oneshot
+WorkingDirectory={{ opnsense_token_rotation_repo }}
+Environment=PATH={{ opnsense_token_rotation_ansible_bin }}:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1 ANSIBLE_FORCE_COLOR=0 ANSIBLE_NOCOLOR=1
+Environment=SSH_AUTH_SOCK={{ opnsense_token_rotation_agent_socket }}
+{% for playbook in opnsense_token_rotation_consumer_playbooks %}
+ExecStart={{ opnsense_token_rotation_ansible_bin }}/ansible-playbook -i inventories/%i {{ playbook }}
+{% endfor %}

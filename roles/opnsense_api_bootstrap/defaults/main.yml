@@ -26,11 +26,14 @@ opnsense_api_bootstrap_user_shell: "/bin/sh"
 opnsense_api_bootstrap_admin_group: "admins"     # group granting API (page-all) privileges
 
 # --- genesis (break-glass) admin credentials used to drive the MVC calls -----
-# Provide EITHER a local secret file (fields.key / fields.secret) OR key+secret
-# directly (e.g. resolved from Vault by a wrapping play). File path wins if set.
+# A local secret file (fields.key / fields.secret) wins if set, then key+secret given
+# directly, then the Vault document below — the normal case.
 opnsense_api_bootstrap_genesis_file: ""          # e.g. .../secrets/fabric/net-opnsense-prod-oob-admin.json
 opnsense_api_bootstrap_genesis_key: ""
 opnsense_api_bootstrap_genesis_secret: ""
+# Where none of the three above is given: the break-glass document in Vault (fields key,
+# secret, username), written by the seed build. "" = do not look there.
+opnsense_api_bootstrap_genesis_vault_path: "{{ opnsense_api_bootstrap_env }}/opnsense/oob-admin"   # pragma: allowlist secret
 
 # --- where the minted token is stored (Vault KV v2, via the vault container) --
 # MUST match where opnsense_api_creds READS ({platform_env}/opnsense/api, fields
@@ -39,6 +42,9 @@ opnsense_api_bootstrap_mount: "secret"
 opnsense_api_bootstrap_vault_mount: "{{ opnsense_api_bootstrap_mount }}"
 opnsense_api_bootstrap_env: "{{ platform_env }}"
 opnsense_api_bootstrap_vault_path: "{{ opnsense_api_bootstrap_env }}/opnsense/api"
+# Whenever a key is minted (forced rotation, stale or absent in Vault), the service user's
+# previous keys are revoked first: exactly one key is valid, the one Vault holds.
+opnsense_api_bootstrap_revoke_previous: true
 opnsense_api_bootstrap_vault_host: "{{ platform_vault_host | default(groups['vault'] | first) }}"
 opnsense_api_bootstrap_vault_container: "vault"
 
