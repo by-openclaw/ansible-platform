@@ -15,4 +15,12 @@ StartLimitIntervalSec=0
 [Service]
 Restart=on-failure
 RestartSec=15
-ExecStartPost=/bin/sh -c 'if ! iptables -S INPUT | grep -q -- "-j ufw-before-input"; then iptables -P INPUT ACCEPT; iptables -P FORWARD ACCEPT; echo "ufw chains missing after start: policy set to ACCEPT (fail-open), retrying" >&2; exit 1; fi'
+# The chains must be there once ufw has started — the role's own test of a loaded ruleset. When
+# it fails, the unit fails and systemd retries (Restart=on-failure above).
+ExecStartPost={{ hardening_ufw_check_exec }}
+# What runs after a stop — and after a start that failed: the policies are opened, so that a guest
+# whose chains did not load is not left on "policy DROP without rules" while systemd retries.
+# After a normal stop ufw itself has just set these policies: the two commands change nothing.
+# Plain commands, no shell (infra/0010 §4).
+ExecStopPost={{ hardening_ufw_failopen_bin }} -P INPUT ACCEPT
+ExecStopPost={{ hardening_ufw_failopen_bin }} -P FORWARD ACCEPT
