@@ -41,10 +41,20 @@
     mode: "0600"
   no_log: true
 
-# The nightly export (roles/host_job: systemd service + timer, no script). Steps run
-# in order: download → verify it is an OPNsense config → age-encrypt into daily/ →
-# on the 1st keep a monthly copy. Credentials come from the 0600 environment file
-# (${VAR} = systemd substitution; `$$`/`%%` = literal $ and % for bash/date).
+- name: "FW backup | curl's credentials (root 0600, read with -K)"
+  ansible.builtin.template:
+    src: curl.conf.j2
+    dest: "{{ opnsense_config_backup_curl_config }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+# The nightly export (roles/host_job: systemd service + timer; every step one plain command,
+# infra/0010 §4). In order: download → verify it is an OPNsense config → the two folders →
+# age-encrypt into daily/. The API key and secret are read by curl from its 0600 file; the
+# address, the URL and the age recipient come from the 0600 environment file (${VAR} = systemd
+# substitution); the day of the run is the job's date stamp. The monthly copy is its own job.
 # Retention: daily by age; monthly by age (keep_monthly months).
 - name: "FW backup | Nightly export (roles/host_job)"
   ansible.builtin.include_role:
@@ -57,19 +67,36 @@
     host_job_environment_file: "{{ opnsense_config_backup_env_file }}"
     host_job_requires_mounts_for: "{{ opnsense_config_backup_dest }}"
     host_job_runtime_directory: opnsense-config-backup
+    host_job_stamp: true
+    host_job_umask: "0077"
     host_job_exec:
       - >-
-        /usr/bin/curl -fsS --max-time 60 --resolve ${FW_RESOLVE} -u ${FW_KEY}:${FW_SECRET}
+        /usr/bin/curl -fsS --max-time 60 --resolve ${FW_RESOLVE} -K {{ opnsense_config_backup_curl_config }}
         ${FW_URL}/api/core/backup/download/this -o /run/opnsense-config-backup/config.xml
       - "/usr/bin/grep -q <opnsense> /run/opnsense-config-backup/config.xml"
+      - "/usr/bin/mkdir -p {{ opnsense_config_backup_dest }}/daily {{ opnsense_config_backup_dest }}/monthly"
       - >-
-        /bin/bash -c 'umask 077; mkdir -p {{ opnsense_config_backup_dest }}/daily {{ opnsense_config_backup_dest }}/monthly;
-        age -r "$$AGE_RECIPIENT" -o {{ opnsense_config_backup_dest }}/daily/fw-config-$$(date +%%F).xml.age
-        /run/opnsense-config-backup/config.xml'
-      - >-
-        /bin/bash -c '[ "$$(date +%%d)" != 01 ] || cp -p {{ opnsense_config_backup_dest }}/daily/fw-config-$$(date +%%F).xml.age
-        {{ opnsense_config_backup_dest }}/monthly/'
+        {{ opnsense_config_backup_age_bin }} -r ${AGE_RECIPIENT}
+        -o {{ opnsense_config_backup_dest }}/daily/fw-config-${HOST_JOB_DATE}.xml.age
+        /run/opnsense-config-backup/config.xml
     host_job_retention:
       - { path: "{{ opnsense_config_backup_dest }}/daily", age: "{{ opnsense_config_backup_keep_daily }}d" }
       - { path: "{{ opnsense_config_backup_dest }}/monthly", age: "{{ (opnsense_config_backup_keep_monthly | int) * 31 }}d" }
     host_job_legacy_script: "{{ opnsense_config_backup_script }}"
+
+# On the 1st, the export of that day is kept as the month's copy: a job of its own, after the
+# nightly one, instead of a test of the date in a shell.
+- name: "FW backup | Monthly copy (roles/host_job)"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: opnsense-config-backup-monthly
+    host_job_description: "OPNsense config export: the month's copy"
+    host_job_on_calendar: "{{ opnsense_config_backup_monthly_schedule }}"
+    host_job_requires_mounts_for: "{{ opnsense_config_backup_dest }}"
+    host_job_stamp: true
+    host_job_umask: "0077"
+    host_job_exec:
+      - >-
+        /usr/bin/cp -p {{ opnsense_config_backup_dest }}/daily/fw-config-${HOST_JOB_DATE}.xml.age
+        {{ opnsense_config_backup_dest }}/monthly/
