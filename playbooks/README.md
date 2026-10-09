@@ -61,6 +61,7 @@ The playbooks of this repo, grouped by scope. Each runs against `inventories/pro
 | `cloudflare-dns.yml` | Manage public Cloudflare DNS for {{ platform_domain }} (exposure model). Controller-side only — no FW/host connection. Apply:  ansible-playbook playbooks/cloudflare-dns.yml |
 | `docker-hosts.yml` | Docker baseline on every Docker host (`docker_hosts`): pinned engine, daemon.json (journald + v6), compose v2, and the host-firewall rule that lets container networks reach the host (hairpin to published ports). |
 | `cadvisor.yml` | Per-container metrics on every Docker host (inventory group `docker_hosts`): cAdvisor pinned, SVC-bound, scraped by Prometheus (job `cadvisor`), with container restart / memory alerts. Asserts every member really runs Docker. |
+| `failure-alert.yml` | The failure notifier on every host: the two units that mail the alert mailbox when a scheduled job fails (`roles/systemd_failure_alert`), brought to the same version everywhere. |
 | `crowdsec-agents.yml` | Playbook: crowdsec-agents.yml — a CrowdSec log processor on every guest. Standing rule: every LXC/VM runs an agent. Per the CrowdSec multi-server guide, these hosts are LOG PROCESS |
 | `crowdsec-fw-bouncer.yml` | Point the OPNsense firewall bouncer at the central CrowdSec LAPI. Three plays, one connection mode each, so no task-level connection switching: 1. local  — plugin settings + reconf |
 | `crowdsec.yml` | Playbook: crowdsec.yml — PROD CrowdSec central LAPI/engine (lxc-crowdsec-01, SVC). Native crowdsec daemon: LAPI listens on the LAN for agents + bouncers, base + |

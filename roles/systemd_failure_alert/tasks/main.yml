@@ -8,13 +8,16 @@
     - "{{ systemd_failure_alert_script }}"
     - "{{ systemd_failure_alert_script }}.retired"
 
-- name: "FailureAlert | The templated notifier unit"
+- name: "FailureAlert | The templated notifier units (compose the report, then send it)"
   ansible.builtin.template:
-    src: systemd-failure-alert@.service.j2
-    dest: /etc/systemd/system/systemd-failure-alert@.service
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
     owner: root
     group: root
     mode: "0644"
+  loop:
+    - systemd-failure-alert@.service
+    - systemd-failure-alert-send@.service
   notify: "FailureAlert | Reload systemd"
 
 # A notifier nobody has proven is the same as no notifier — this is the third time

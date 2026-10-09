@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# Hand the composed report to the mailer: the message on its standard input, the recipients
+# from its headers. Started by systemd-failure-alert@ when the report is written; skipped when
+# there is nothing to send. `-` = a mail failure never fails the notifier (it would alert
+# about itself).
+[Unit]
+Description=Send the report about %i
+ConditionFileNotEmpty={{ systemd_failure_alert_report }}
+
+[Service]
+Type=oneshot
+TimeoutStartSec=60
+StandardInput=file:{{ systemd_failure_alert_report }}
+ExecStart=-{{ systemd_failure_alert_submit }}
