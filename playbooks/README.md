@@ -72,6 +72,7 @@ The playbooks of this repo, grouped by scope. Each runs against `inventories/pro
 | `opnsense-unbound-overrides.yml` | Apply opn_unbound.host_overrides (split-DNS: service name -> Traefik / mailcow) to the FW's Unbound through the collection module (lib-opnsense UbHostOverrideManager underneath — l |
 | `opnsense.yml` | OPNsense Configuration Playbook Idempotent. Safe to run repeatedly. Configures: system, interfaces (VLANs), DNS, DHCP, NTP, firewall aliases+rules, WireGuard. |
 | `opnsense-token-gate.yml` | The gate after an OPNsense API token rotation: reads the result of the catalog check run with the new token and fails unless every host reports changed=0, failed=0, unreachable=0. Run by the unit `fw-token-rotation-gate@<env>` (`roles/opnsense_token_rotation`). |
+| `opnsense-token-signal.yml` | The rotation chain's liveness signal: run by the chain's units on the controller, it writes on the monitoring host the time of the last rotation whose gate passed and whether the last run failed (`-e opnsense_token_rotation_signal_result=ok\|failed`); `FirewallTokenRotationFailed` and `FirewallTokenRotationOverdue` read them. |
 
 ## Core services
 

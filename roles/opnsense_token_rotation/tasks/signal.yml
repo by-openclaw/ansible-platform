@@ -1,0 +1,36 @@
+---
+# ==============================================================================
+# opnsense_token_rotation | signal — the rotation chain's liveness signal, written on the
+# monitoring host (node exporter text files). Two files per environment, so a failure does
+# not erase the time of the last success:
+#   platform_fw_token_rotation_last_success_timestamp_seconds{env}   written when the gate passed
+#   platform_fw_token_rotation_failed{env}                           1 after a failed run, 0 after a good one
+# ==============================================================================
+- name: "Token signal | A result is given"
+  ansible.builtin.assert:
+    that: opnsense_token_rotation_signal_result in ['ok', 'failed']
+    fail_msg: "opnsense_token_rotation_signal_result must be ok or failed (got '{{ opnsense_token_rotation_signal_result }}')"
+    quiet: true
+
+- name: "Token signal | The last rotation whose gate passed"
+  ansible.builtin.copy:
+    dest: "{{ opnsense_token_rotation_signal_dir }}/platform_fw_token_rotation_success_{{ opnsense_token_rotation_signal_env }}.prom"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # HELP platform_fw_token_rotation_last_success_timestamp_seconds End of the last firewall API token rotation whose gate passed.
+      # TYPE platform_fw_token_rotation_last_success_timestamp_seconds gauge
+      platform_fw_token_rotation_last_success_timestamp_seconds{env="{{ opnsense_token_rotation_signal_env }}"} {{ now(utc=true).timestamp() | int }}
+  when: opnsense_token_rotation_signal_result == 'ok'
+
+- name: "Token signal | Did the last run of the chain fail"
+  ansible.builtin.copy:
+    dest: "{{ opnsense_token_rotation_signal_dir }}/platform_fw_token_rotation_failed_{{ opnsense_token_rotation_signal_env }}.prom"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # HELP platform_fw_token_rotation_failed 1 when the last run of the firewall API token rotation chain failed.
+      # TYPE platform_fw_token_rotation_failed gauge
+      platform_fw_token_rotation_failed{env="{{ opnsense_token_rotation_signal_env }}"} {{ 1 if opnsense_token_rotation_signal_result == 'failed' else 0 }}

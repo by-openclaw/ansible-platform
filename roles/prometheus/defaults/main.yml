@@ -73,6 +73,7 @@ prometheus_keep:
     - "node_hwmon_temp_celsius"
     - "node_textfile_.*"
     - "platform_backup_.*"                 # the backup signal the node writes (roles/pve_host) — the Backup* rules
+    - "platform_fw_token_.*"               # the firewall token rotation's signal (roles/opnsense_token_rotation) — the FirewallTokenRotation* rules
   cadvisor:
     - "container_(start_time_seconds|last_seen)"
     - "container_memory_(working_set|usage)_bytes"
@@ -114,6 +115,9 @@ prometheus_postgres_exporter_hosts: "{{ platform_pg_members | default(groups['po
 # The Backup* rules (platform-backup group). A guest is backed up nightly by each job, so
 # its newest backup is at most a day old plus the length of the job: older = a missed night.
 prometheus_backup_max_age_hours: 30
+# The FirewallTokenRotation* rules (SEC-09). The rotation is quarterly (up to 92 days between
+# two runs, plus the timer's jitter): older than this = a rotation that did not happen.
+prometheus_fw_token_rotation_max_age_days: 100
 # The container that replicates the object store to the offsite bucket (the third copy).
 prometheus_offsite_replica_container: "{{ seaweedfs_backup_container }}"
 # Containers that a timer starts on purpose, several times within the window ContainerRestarting
