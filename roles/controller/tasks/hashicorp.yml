@@ -42,21 +42,17 @@
       controller_hashicorp_key_fingerprint after checking it against HashiCorp's security bulletin.
     success_msg: "the key HashiCorp serves is the pinned one ({{ controller_hashicorp_key_pinned }})"
 
-# The controller is a workstation: root belongs to the person. The part below runs when the
-# person typed their sudo password at the play's prompt (or sudo asks for none); otherwise it is
-# skipped and the report says so. `sudo -n` never prompts: no failed attempt is logged.
-- name: "Controller | HashiCorp: does sudo ask for a password?"
-  ansible.builtin.command: "sudo -n true"
-  register: controller_hashicorp_sudo
-  check_mode: false  # read-only probe
-  changed_when: false
-  failed_when: false
-
+# Root work goes through the automation account (tasks/automation_account.yml): SSH from the
+# controller to itself, sudo with the password Vault holds. Without that account the part below
+# is skipped and the report says how to create it.
 - name: "Controller | HashiCorp: repository, key and Terraform (root)"
-  when: controller_hashicorp_root | bool
+  when: controller_account_present | default(false) | bool
   become: true
   vars:
-    ansible_become_password: "{{ controller_become_password | default('') }}"   # this workstation's, not the fleet's
+    ansible_connection: ssh
+    ansible_host: "{{ controller_ssh_host }}"
+    ansible_port: "{{ controller_ssh_port }}"
+    ansible_user: "{{ controller_account_name }}"
   block:
     - name: "Controller | HashiCorp: apt's keyring folder"
       ansible.builtin.file:
@@ -123,6 +119,5 @@
     msg: >-
       {{ 'HashiCorp repository managed: key ' ~ controller_hashicorp_key_pinned ~ ', source ' ~ controller_hashicorp_source_file
          ~ ', Terraform ' ~ controller_terraform_version ~ (' held' if controller_terraform_hold | bool else '')
-         if controller_hashicorp_root | bool
-         else 'HashiCorp key verified, NOTHING INSTALLED — root is required on this workstation. Run:
-               ansible-playbook playbooks/controller.yml --tags hashicorp   and type the sudo password of this workstation at the prompt' }}
+         if controller_account_present | default(false) | bool
+         else 'HashiCorp key verified, NOTHING INSTALLED — the automation account is not on this controller yet. Run once: ansible-playbook playbooks/controller.yml --tags account   and type the sudo password of this workstation at the prompt' }}

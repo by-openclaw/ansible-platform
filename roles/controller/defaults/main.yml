@@ -62,8 +62,20 @@ controller_terraform_hold: true
 # Root on the workstation: the password typed at the play's prompt (playbooks/controller.yml), or
 # a sudo that asks for none.
 controller_become_password: ""
-controller_hashicorp_root: >-
-  {{ (controller_hashicorp_sudo.rc | default(1)) == 0 or (controller_become_password | default('') | length > 0) }}
+
+# --- The automation account on the controller (tasks/automation_account.yml) ---------------------
+# identity/0004-os-accounts §4. Created once with the person's typed password (the play's
+# prompt); the root work of this role then goes through it and needs no person.
+controller_account_name: "svc-ansible-{{ platform_env }}"
+controller_account_vault_path: "{{ platform_env }}/svc-ansible/os"   # the path roles/user-mgmt uses for that account
+controller_ssh_host: localhost
+controller_ssh_port: 22
+controller_account_key_from: ["127.0.0.1", "::1"]   # the automation key is accepted from this machine only
+controller_sshd_dropin: "/etc/ssh/sshd_config.d/60-{{ controller_account_name }}.conf"
+controller_sshd_service: ssh
+# A root task of this role reaches the controller as that account, over SSH to itself
+# (controller_ssh_host:controller_ssh_port); `become` then uses the inventory's become password,
+# the one Vault holds for the account.
 # Derived from `gpg --show-keys --with-colons`: how many primary keys the file holds, and the
 # fingerprint of the first one.
 controller_hashicorp_key_pinned: "{{ controller_hashicorp_key_fingerprint | replace(' ', '') | upper }}"
