@@ -8,14 +8,27 @@
 #   tasks/instance_variables.yml  instance-level CI/CD variables from a list (additive).
 #   tasks/project_variable.yml    one CI/CD variable of one project.
 #
-# The one console call of this role mints the FIRST token (tasks/main.yml): there is no API
-# without a token, and GitLab's own way to create one without a person is its console. It is
-# the single exception of this role to infra/0010 §3; every renewal after it is an API call.
+# The token belongs to a dedicated automation account, an administrator of its own: GitLab's
+# built-in root is break-glass and keeps no token (the platform's rule for PostgreSQL's
+# superuser, services/0004 SVC-31, applied here).
 #
-# Shared values (inventory, group_vars/all/gitlab.yml): gitlab_container, gitlab_api_url.
+# THE ONE EXCEPTION of this role to infra/0010 §3 is one console call in tasks/main.yml: a
+# bootstrap token for root, valid one day and revoked in the same run. There is no API without
+# a token, and the console is GitLab's own way to create one without a person. With it the
+# role creates the automation account and its token THROUGH THE API; every renewal after that
+# is an API call with the automation account's own token.
+#
+# Shared values (inventory, group_vars/all/gitlab.yml): gitlab_container, gitlab_api_url,
+# gitlab_automation_user (roles/gitlab_rbac keeps that account an administrator).
 # ==============================================================================
-gitlab_api_vault_path: "{{ platform_env }}/gitlab/api"           # pragma: allowlist secret
-gitlab_api_token_user: root                                       # GitLab's built-in administrator
+# Under the automation's own subtree, NOT under <env>/gitlab/: the GitLab service's own Vault
+# identity reads <env>/gitlab/* and must not be able to read an administrator token.
+gitlab_api_vault_path: "{{ platform_env }}/svc-ansible/gitlab-api"   # pragma: allowlist secret
+gitlab_api_token_user: "{{ gitlab_automation_user }}"             # the automation account (inventory) — never root
+gitlab_api_token_user_name: "Ansible automation ({{ platform_env }})"
+gitlab_api_token_user_email: "{{ platform_alert_email }}"         # GitLab's notices about the account (e.g. a token about to expire) reach the alert mailbox
+gitlab_api_bootstrap_user: root                                   # GitLab's built-in administrator: used for the one-day bootstrap token only
+gitlab_api_bootstrap_token_name: "ansible-bootstrap-{{ platform_env }}"
 gitlab_api_token_name: "ansible-{{ platform_env }}"
 gitlab_api_token_scopes: [api, admin_mode]
 gitlab_api_token_days: 90                                         # a token lives this long …
