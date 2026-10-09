@@ -3,8 +3,8 @@
 # jumpserver | Idempotent RBAC + asset reconcile (runs the Django reconcile.py
 # inside jms_core, token-free). adm_yboujraf -> System Admin + bastion-admins;
 # register assets; vault the rune key as each asset account; grant the group all;
-# replay storage -> SeaweedFS S3. Secrets (rune key, S3) are shipped as 0600 temp
-# files, no_log, and shredded afterwards.
+# replay storage -> SeaweedFS S3. Secrets (rune key, S3) are put into the container as 0600
+# files through the Docker API (no_log) and removed afterwards, whatever the outcome.
 # ==============================================================================
 - name: "JumpServer reconcile | Read replay S3 creds from Vault"
   ansible.builtin.include_role:
@@ -61,7 +61,7 @@
         port: "{{ jumpserver_asset_default_port | int }}"
         account: "{{ jumpserver_asset_default_account }}"
         privileged: "{{ jumpserver_asset_default_privileged | bool }}"
-        key_file: /tmp/jms_key_asset
+        key_file: "{{ jumpserver_reconcile_key_path }}"
       email: "{{ jumpserver_email_cfg }}"
   no_log: true
 
@@ -87,52 +87,66 @@
     jumpserver_key_unlock: {key_passphrase: "{{ vault_secret_result.passphrase }}"}  # pragma: allowlist secret
   no_log: true
 
-- name: "JumpServer reconcile | Stage the (still encrypted) key on the LXC (0600)"
-  ansible.builtin.copy:
-    content: "{{ jumpserver_asset_key_b64 | b64decode }}"
-    dest: /tmp/jms_key_asset
-    mode: "0600"
-  no_log: true
-  changed_when: false  # transient scaffolding, shredded below
+# The key (still encrypted), the desired state (it carries the key's passphrase and the S3
+# credentials) and the program go INTO the container through the Docker API: nothing is staged
+# on the host, nothing is on a command line. The two secret files are removed from the
+# container whatever the reconcile's outcome.
+- name: "JumpServer reconcile | Key and desired state in the container, then the reconcile"
+  block:
+    - name: "JumpServer reconcile | The (still encrypted) key, in the container (0600)"
+      community.docker.docker_container_copy_into:
+        container: "{{ jumpserver_core_container }}"
+        container_path: "{{ jumpserver_reconcile_key_path }}"
+        content: "{{ jumpserver_asset_key_b64 | b64decode }}"
+        owner_id: 0
+        group_id: 0
+        mode: "0600"
+        mode_parse: octal_string_only
+      diff: false   # the content is a key
+      no_log: true
+      changed_when: false  # transient scaffolding, removed below
 
-- name: "JumpServer reconcile | Stage the desired-state config on the LXC (0600)"
-  ansible.builtin.copy:
-    # The key's passphrase rides in this 0600 file: reconcile.py decrypts the key in
-    # memory (cryptography, already in jms_core). No askpass helper, no ssh-keygen,
-    # nothing on argv; the file is shredded at the end.
-    content: >-
-      {{ jumpserver_reconcile_cfg
-         | combine({'asset_defaults': jumpserver_key_unlock}, recursive=True)
-         | to_json }}
-    dest: /tmp/jms_reconcile.json
-    mode: "0600"
-  no_log: true
-  changed_when: false  # transient scaffolding, shredded below
+    # The key's passphrase rides in this 0600 file: reconcile.py decrypts the key in memory
+    # (cryptography, already in the container). No askpass helper, no ssh-keygen.
+    - name: "JumpServer reconcile | The desired state, in the container (0600)"
+      community.docker.docker_container_copy_into:
+        container: "{{ jumpserver_core_container }}"
+        container_path: "{{ jumpserver_reconcile_config_path }}"
+        content: >-
+          {{ jumpserver_reconcile_cfg
+             | combine({'asset_defaults': jumpserver_key_unlock}, recursive=True)
+             | to_json }}
+        owner_id: 0
+        group_id: 0
+        mode: "0600"
+        mode_parse: octal_string_only
+      diff: false   # the content carries secrets
+      no_log: true
+      changed_when: false  # transient scaffolding, removed below
 
-- name: "JumpServer reconcile | Stage reconcile.py on the LXC"
-  ansible.builtin.copy:
-    src: reconcile.py
-    dest: /tmp/jms_reconcile.py
-    mode: "0644"
-  changed_when: false  # transient scaffolding, shredded below
+    # The program is read by the application's console on standard input: no shell, no copy.
+    - name: "JumpServer reconcile | Run the reconcile (idempotent)"
+      community.docker.docker_container_exec:
+        container: "{{ jumpserver_core_container }}"
+        chdir: "{{ jumpserver_apps_dir }}"
+        argv: [python, manage.py, shell]
+        stdin: "{{ lookup('ansible.builtin.file', 'reconcile.py') }}"
+      register: jumpserver_reconcile_out
+      changed_when: "'RECONCILE_CHANGED' in jumpserver_reconcile_out.stdout"
+      failed_when: "'RECONCILE_OK' not in jumpserver_reconcile_out.stdout"
 
-- name: "JumpServer reconcile | Copy key + config + script into jms_core"
-  ansible.builtin.command:
-    cmd: "docker cp {{ item.src }} jms_core:{{ item.dst }}"
-  loop:
-    - { src: /tmp/jms_key_asset, dst: /tmp/jms_key_asset }
-    - { src: /tmp/jms_reconcile.json, dst: /tmp/jms_reconcile.json }
-    - { src: /tmp/jms_reconcile.py, dst: /tmp/reconcile.py }
-  changed_when: false  # transient scaffolding, shredded below
+  always:
+    - name: "JumpServer reconcile | Remove the key and the desired state from the container"
+      community.docker.docker_container_exec:
+        container: "{{ jumpserver_core_container }}"
+        argv: [rm, -f, "{{ jumpserver_reconcile_key_path }}", "{{ jumpserver_reconcile_config_path }}", /tmp/reconcile.py]
+      changed_when: false  # transient scaffolding
 
-- name: "JumpServer reconcile | Run the reconcile (idempotent)"
-  ansible.builtin.command:
-    cmd: >-
-      docker exec jms_core sh -c
-      'cd /opt/jumpserver/apps && python manage.py shell < /tmp/reconcile.py'
-  register: jumpserver_reconcile_out
-  changed_when: "'RECONCILE_CHANGED' in jumpserver_reconcile_out.stdout"
-  failed_when: "'RECONCILE_OK' not in jumpserver_reconcile_out.stdout"
+    - name: "JumpServer reconcile | What earlier versions staged on the host"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ jumpserver_reconcile_retired_host_files }}"
 
 - name: "JumpServer reconcile | Summary"
   ansible.builtin.debug:
@@ -153,12 +167,3 @@
       (port/account/key per the hardening baseline — see roles/jumpserver/defaults)
     success_msg: "bastion login OK on {{ jumpserver_reconcile_out.stdout_lines | select('match', '^PROBE_OK') | list | length }} assets"
   when: not ansible_check_mode
-- name: "JumpServer reconcile | Shred the staged secrets (LXC + container)"
-  ansible.builtin.command:
-    cmd: "{{ item }}"
-  loop:
-    - "docker exec jms_core rm -f /tmp/jms_key_asset /tmp/jms_reconcile.json"
-    - "shred -u /tmp/jms_key_asset"
-    - "shred -u /tmp/jms_reconcile.json"
-    - "rm -f /tmp/jms_reconcile.py"
-  changed_when: false  # transient scaffolding, shredded below
