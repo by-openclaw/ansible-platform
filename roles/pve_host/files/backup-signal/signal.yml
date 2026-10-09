@@ -1,0 +1,49 @@
+---
+# The backup liveness signal (infra/0008 · INF-45) — a play the hypervisor runs on itself.
+# roles/pve_host installs it with its settings (vars.yml) and a timer (roles/host_job).
+# It asks PVE for the guests, the backup jobs and the backup content of every target storage,
+# and writes the Prometheus series node_exporter's textfile collector reads. A read that fails
+# ends the play before the file is written: the previous file stays and its age raises
+# BackupSignalStale, instead of a partial signal.
+- name: "Backup liveness signal"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"   # the one ansible-playbook itself runs on
+  tasks:
+    - name: "Guests of the cluster"
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+      register: signal_guests
+      changed_when: false
+
+    - name: "Backup jobs"
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/backup, --output-format, json]
+      register: signal_jobs
+      changed_when: false
+
+    - name: "Backup content of every target storage"
+      ansible.builtin.command:
+        argv: [pvesh, get, "/nodes/{{ signal_node }}/storage/{{ item }}/content", --content, backup, --output-format, json]
+      loop: "{{ signal_storages }}"
+      register: signal_content
+      changed_when: false
+
+    - name: "The signal (written whole, then renamed into place)"
+      ansible.builtin.template:
+        src: "{{ signal_template }}"
+        dest: "{{ signal_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    # The template is rewritten only when its content changes; the file's age is what
+    # BackupSignalStale reads, so every run that got this far marks it fresh.
+    - name: "The signal is fresh"
+      ansible.builtin.file:
+        path: "{{ signal_file }}"
+        state: touch
+        modification_time: now
+        access_time: preserve

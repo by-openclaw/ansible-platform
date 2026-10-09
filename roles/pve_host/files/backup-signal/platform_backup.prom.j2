@@ -1,0 +1,52 @@
+{#- The backup liveness signal, in the Prometheus text format (roles/pve_host, tasks/backup_signal.yml;
+    rendered ON the hypervisor by files/backup-signal/signal.yml — the role copies this file as it is).
+      platform_backup_expected               a guest an enabled job covers, per storage
+      platform_backup_last_timestamp_seconds the start of the newest backup it has there
+      platform_backup_verify_failed          its snapshots whose verification failed
+    A job with `all` covers every guest but its `exclude` list; otherwise its `vmid` list. -#}
+{%- set ns = namespace(expected={}, have={}) -%}
+{%- for j in signal_jobs.stdout | from_json -%}
+{%-   set j_enabled = j.enabled if (j.enabled is defined and j.enabled is not none and j.enabled is not sameas false) else 1 -%}
+{%-   if j_enabled | string == '1' -%}
+{%-     set j_all = j.all if (j.all is defined and j.all is not none and j.all is not sameas false) else 0 -%}
+{%-     set j_excluded = ((j.exclude if (j.exclude is defined and j.exclude is not none) else '') | string).split(',') -%}
+{%-     set j_listed = ((j.vmid if (j.vmid is defined and j.vmid is not none) else '') | string).split(',') -%}
+{%-     for g in signal_guests.stdout | from_json -%}
+{%-       set v = g.vmid | string -%}
+{%-       if ((v not in j_excluded) if (j_all | string == '1') else (v in j_listed)) -%}
+{%-         set k = j.storage ~ ' ' ~ v -%}
+{%-         if k not in ns.expected -%}
+{%-           set g_name = g.name if (g.name is defined and g.name is not none and g.name is not sameas false) else v -%}
+{%-           set ns.expected = ns.expected | combine({k: {'storage': j.storage, 'vmid': v, 'name': g_name}}) -%}
+{%-         endif -%}
+{%-       endif -%}
+{%-     endfor -%}
+{%-   endif -%}
+{%- endfor -%}
+{%- for r in signal_content.results -%}
+{%-   for b in r.stdout | from_json -%}
+{%-     if b.vmid is defined and b.vmid is not none -%}
+{%-       set b_storage = b.volid.split(':')[0] -%}
+{%-       set v = b.vmid | string -%}
+{%-       set k = b_storage ~ ' ' ~ v -%}
+{%-       set b_failed = 1 if ((b.verification | default({}, true)).state | default('') == 'failed') else 0 -%}
+{%-       set cur = ns.have.get(k, {'last': b.ctime, 'failed': 0}) -%}
+{%-       set ns.have = ns.have | combine({k: {'storage': b_storage, 'vmid': v, 'last': [cur.last, b.ctime] | max, 'failed': cur.failed + b_failed}}) -%}
+{%-     endif -%}
+{%-   endfor -%}
+{%- endfor -%}
+# HELP platform_backup_expected Guest covered by an enabled backup job, per target storage.
+# TYPE platform_backup_expected gauge
+{% for e in ns.expected.values() | sort(attribute='storage,vmid', case_sensitive=true) %}
+platform_backup_expected{storage="{{ e.storage }}",vmid="{{ e.vmid }}",name="{{ e.name }}"} 1
+{% endfor %}
+# HELP platform_backup_last_timestamp_seconds Start of the newest backup of the guest on the storage.
+# TYPE platform_backup_last_timestamp_seconds gauge
+{% for h in ns.have.values() | sort(attribute='storage,vmid', case_sensitive=true) %}
+platform_backup_last_timestamp_seconds{storage="{{ h.storage }}",vmid="{{ h.vmid }}"} {{ h.last }}
+{% endfor %}
+# HELP platform_backup_verify_failed Snapshots of the guest whose verification failed.
+# TYPE platform_backup_verify_failed gauge
+{% for h in ns.have.values() | sort(attribute='storage,vmid', case_sensitive=true) %}
+platform_backup_verify_failed{storage="{{ h.storage }}",vmid="{{ h.vmid }}"} {{ h.failed }}
+{% endfor %}
