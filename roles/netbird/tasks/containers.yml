@@ -88,7 +88,7 @@
       containers:
         - name: netbird-dashboard
           image: "{{ netbird_dashboard_image }}"
-          restart_policy: always
+          restart_policy: "{{ netbird_restart_policy }}"
           published:
             - "{{ netbird_listen_ip }}:{{ netbird_dashboard_port }}:80"
           env_file: "{{ netbird_build_dir }}/dashboard.env"
@@ -97,7 +97,7 @@
           image: "{{ netbird_management_image }}"
           read_only: true                 # SEC-22: it writes to its volumes only
           tmpfs: ["/tmp:rw,size=64m"]
-          restart_policy: always
+          restart_policy: "{{ netbird_restart_policy }}"
           published:
             - "{{ netbird_listen_ip }}:{{ netbird_mgmt_port }}:{{ netbird_mgmt_port }}"
             - "{{ netbird_listen_ip }}:{{ netbird_mgmt_metrics_port }}:{{ netbird_metrics_port_internal }}"   # /metrics (INF-33)
@@ -142,7 +142,7 @@
           image: "{{ netbird_signal_image }}"
           read_only: true                 # SEC-22: it writes to its volumes only
           tmpfs: ["/tmp:rw,size=64m"]
-          restart_policy: always
+          restart_policy: "{{ netbird_restart_policy }}"
           published:
             - "{{ netbird_listen_ip }}:{{ netbird_signal_grpc_port }}:{{ netbird_signal_grpc_port }}"
             - "{{ netbird_listen_ip }}:{{ netbird_signal_ws_host_port }}:{{ netbird_signal_ws_port }}"
@@ -154,7 +154,7 @@
           image: "{{ netbird_relay_image }}"
           read_only: true                 # SEC-22: it writes to its volumes only
           tmpfs: ["/tmp:rw,size=64m"]
-          restart_policy: always
+          restart_policy: "{{ netbird_restart_policy }}"
           published:
             - "{{ netbird_listen_ip }}:{{ netbird_relay_port }}:{{ netbird_relay_port }}"
             - "{{ netbird_listen_ip }}:{{ netbird_relay_metrics_port }}:{{ netbird_metrics_port_internal }}"   # /metrics (INF-33)
@@ -176,7 +176,7 @@
         - name: netbird-coturn
           image: "{{ netbird_coturn_image }}"
           state: "{{ 'started' if netbird_coturn_enabled | bool else 'absent' }}"
-          restart_policy: always
+          restart_policy: "{{ netbird_restart_policy }}"
           network_mode: host
           volumes:
             - "{{ netbird_build_dir }}/turnserver.conf:/etc/turnserver.conf:ro"
