@@ -76,3 +76,30 @@ pgadmin_pg_root_cert_path: "/home/pgadmin/.postgresql/root.crt"
 pgadmin_state_db: "pgadmin"
 pgadmin_state_user: "pgadmin"
 pgadmin_state_vault_path: "{{ platform_env }}/pgadmin/db-pgsql"
+# The per-user server rows are written on that database from the cluster's leader, through
+# the PostgreSQL container's local socket (no password travels).
+pgadmin_state_pg_container: "postgres"   # the shared cluster's container on the database host
+pgadmin_state_pg_delegate: "{{ platform_pg_leader | default(groups['postgresql'] | first) }}"   # the leader (the task asks postgres_db/leader first)
+pgadmin_state_psql: [psql, -U, postgres, -d, "{{ pgadmin_state_db }}", -X, -At, -v, ON_ERROR_STOP=1]
+pgadmin_pg_server_comment: "Per-user server (pgadmin role) — passexec, passwordless connect."
+pgadmin_pg_server_group: "Servers"       # the group created for a user who has none
+pgadmin_per_user_server_psql_vars:
+  - -v
+  - "p_name={{ pgadmin_pg_server_name }}"
+  - -v
+  - "p_host={{ pgadmin_pg_host }}"
+  - -v
+  - "p_port={{ pgadmin_pg_port }}"
+  - -v
+  - "p_maintenance_db={{ pgadmin_pg_maintenance_db }}"
+  - -v
+  - "p_username={{ pgadmin_pg_username }}"
+  - -v
+  - "p_connection_params={{ {'sslmode': pgadmin_pg_sslmode} | to_json }}"
+  - -v
+  - "p_passexec={{ pgadmin_pg_passexec_cmd }}"
+  - -v
+  - "p_comment={{ pgadmin_pg_server_comment }}"
+  - -v
+  - "p_group={{ pgadmin_pg_server_group }}"
+pgadmin_retired_provisioner_files: [/tmp/pg_provision.py, /tmp/pg_provision.json]   # staged by the retired program

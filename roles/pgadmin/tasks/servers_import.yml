@@ -18,38 +18,59 @@
 # single SHARED server can never connect passwordless for non-owner SSO users
 # (they get a "Connect to Server" password prompt / HTTP 428, sharedserverbad).
 # Provision a PER-USER server (owned by each pgAdmin user) with passexec instead.
-# pg_provision.py is idempotent — matches by (user_id, name), converges on drift,
-# and un-shares any legacy shared copy of the same name.
-- name: "servers | Stage the per-user provisioner config"
-  ansible.builtin.copy:
-    dest: /tmp/pg_provision.json
-    mode: "0644"
-    content: >-
-      {{ {'name': pgadmin_pg_server_name, 'host': pgadmin_pg_host, 'port': pgadmin_pg_port,
-          'maintenance_db': pgadmin_pg_maintenance_db, 'username': pgadmin_pg_username,
-          'sslmode': pgadmin_pg_sslmode, 'passexec': pgadmin_pg_passexec_cmd,
-          'comment': 'Per-user server (pgadmin role) — passexec, passwordless connect.'} | to_json }}
+# Three statements on pgAdmin's state database, idempotent: a user's server of that name is
+# converged when it drifted (the oldest one where a user has several — a legacy shared copy is
+# left alone), a user without one gets one in their first group, and a user without a group
+# gets a group first. The values are psql variables (`-v`, quoted by psql with `:'name'`), so
+# nothing is pasted into the SQL text. The state database lives on the shared PostgreSQL:
+# statements that write run on the cluster's LEADER (a replica is read-only) — ask once.
+- name: "servers | Which PostgreSQL member leads"
+  ansible.builtin.include_role:
+    name: postgres_db
+    tasks_from: leader
+  when: platform_pg_leader is not defined
 
-- name: "servers | Stage the provisioner script"
-  ansible.builtin.copy:
-    src: pg_provision.py
-    dest: /tmp/pg_provision.py
-    mode: "0644"
-
-- name: "servers | Copy provisioner + config into the container"
-  ansible.builtin.command:
-    cmd: "docker cp {{ item }} pgadmin:{{ item }}"
-  loop:
-    - /tmp/pg_provision.json
-    - /tmp/pg_provision.py
-  changed_when: false
-
-- name: "servers | Provision a per-user passexec server for every pgAdmin user"
+- name: "servers | A per-user passexec server for every pgAdmin user"
   community.docker.docker_container_exec:
-    container: pgadmin
-    command: /venv/bin/python3 /tmp/pg_provision.py
+    container: "{{ pgadmin_state_pg_container }}"
+    argv: "{{ pgadmin_state_psql + pgadmin_per_user_server_psql_vars }}"
+    stdin: |  # pragma: allowlist secret
+      BEGIN;
+      UPDATE server s
+         SET host = :'p_host', port = :'p_port'::integer, maintenance_db = :'p_maintenance_db',
+             username = :'p_username', connection_params = :'p_connection_params'::json,
+             db_res_type = 'databases', shared = false, save_password = 1,
+             passexec_cmd = :'p_passexec', comment = :'p_comment',
+             password = NULL  -- nothing stored: the passexec command supplies it
+       WHERE s.id IN (SELECT min(id) FROM server WHERE name = :'p_name' GROUP BY user_id)
+         AND (s.host, s.port, s.username, s.maintenance_db, s.passexec_cmd, coalesce(s.shared, false))
+             IS DISTINCT FROM
+             (:'p_host', :'p_port'::integer, :'p_username', :'p_maintenance_db', :'p_passexec', false);
+      INSERT INTO servergroup (user_id, name)
+      SELECT u.id, :'p_group' FROM "user" u
+       WHERE NOT EXISTS (SELECT 1 FROM server s WHERE s.user_id = u.id AND s.name = :'p_name')
+         AND NOT EXISTS (SELECT 1 FROM servergroup g WHERE g.user_id = u.id);
+      INSERT INTO server (user_id, servergroup_id, name, host, port, maintenance_db, username,
+                          connection_params, db_res_type, shared, save_password, passexec_cmd,
+                          password, comment)
+      SELECT u.id, (SELECT min(g.id) FROM servergroup g WHERE g.user_id = u.id), :'p_name',
+             :'p_host', :'p_port'::integer, :'p_maintenance_db', :'p_username',
+             :'p_connection_params'::json, 'databases', false, 1, :'p_passexec', NULL, :'p_comment'
+        FROM "user" u
+       WHERE NOT EXISTS (SELECT 1 FROM server s WHERE s.user_id = u.id AND s.name = :'p_name');
+      COMMIT;
+  delegate_to: "{{ pgadmin_state_pg_delegate }}"
   register: pgadmin_provision
-  changed_when: "'CHANGED=0' not in pgadmin_provision.stdout"
+  # psql prints one line per statement: "UPDATE n", "INSERT 0 n".
+  changed_when: pgadmin_provision.stdout_lines | select('match', '^(UPDATE|INSERT 0) [1-9]') | list | length > 0
+
+# What the program this replaced left on the host. (Its copies inside the container go with the
+# container at its next recreation; nothing runs them.)
+- name: "servers | The retired provisioner's staging files (host)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ pgadmin_retired_provisioner_files }}"
 
 # --- Passexec connect flow: no password prompt, survives container recreate ------
 # pgAdmin runs PasswordExecCommand (cat the passfile) at connect. The passfile is put INTO the
@@ -72,4 +93,4 @@
   no_log: true
   when: pgadmin_pg_dba_password is defined
 
-# (passexec_cmd is set per-user by pg_provision.py above — no separate task needed.)
+# (passexec_cmd is set per user by the statements above — no separate task needed.)
