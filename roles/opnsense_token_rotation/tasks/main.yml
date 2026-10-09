@@ -16,10 +16,14 @@
 
 - name: "Token rotation | systemd user units (template instance per env)"
   ansible.builtin.template:
-    src: "fw-token-rotation@.{{ item }}.j2"
-    dest: "{{ opnsense_token_rotation_unit_dir }}/fw-token-rotation@.{{ item }}"
+    src: "{{ item }}.j2"
+    dest: "{{ opnsense_token_rotation_unit_dir }}/{{ item }}"
     mode: "0644"
-  loop: [service, timer]
+  loop:
+    - fw-token-rotation@.service
+    - fw-token-rotation-check@.service
+    - fw-token-rotation-gate@.service
+    - fw-token-rotation@.timer
   register: opnsense_token_rotation_units
 
 - name: "Token rotation | Reload the user systemd"   # noqa: no-handler (same play, must precede enable)
