@@ -24,6 +24,27 @@ wazuh_indexer_port: 9200                                        # indexer, publi
 wazuh_api_url: "https://127.0.0.1:{{ wazuh_api_port }}"
 wazuh_indexer_url: "https://127.0.0.1:{{ wazuh_indexer_port }}"
 wazuh_indexer_home: /usr/share/wazuh-indexer                    # inside the indexer image
+# The vendor's securityadmin: pushes the security configuration of the directory into the index,
+# authenticated with the admin certificate, over the indexer's own loopback listener.
+wazuh_indexer_certs: "{{ wazuh_indexer_home }}/config/certs"
+wazuh_indexer_api_port: 9200
+wazuh_indexer_loopback: "127.0.0.1"
+wazuh_securityadmin_argv:
+  - "{{ wazuh_indexer_home }}/plugins/opensearch-security/tools/securityadmin.sh"
+  - -cd
+  - "{{ wazuh_indexer_home }}/config/opensearch-security/"
+  - -nhnv
+  - -cacert
+  - "{{ wazuh_indexer_certs }}/root-ca.pem"
+  - -cert
+  - "{{ wazuh_indexer_certs }}/admin.pem"
+  - -key
+  - "{{ wazuh_indexer_certs }}/admin-key.pem"
+  - -p
+  - "{{ wazuh_indexer_api_port | string }}"
+  - -icl
+  - -h
+  - "{{ wazuh_indexer_loopback }}"
 wazuh_listen_ip: "{{ ansible_host }}"
 wazuh_dashboard_port: 5601          # HTTP on the SVC address; TLS is the platform Traefik's (SEC-28)
 wazuh_agent_port: 1514              # agents → manager (TLS)
