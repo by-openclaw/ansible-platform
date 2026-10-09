@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# Started by OnFailure= of every unit of the chain: raises the "failed" flag monitoring alerts
+# on. If this unit cannot run either (the controller reaches nothing), the time of the last
+# success is not refreshed and FirewallTokenRotationOverdue says so later.
+[Unit]
+Description=Tell monitoring the OPNsense API token rotation for %i failed
+
+[Service]
+Type=oneshot
+WorkingDirectory={{ opnsense_token_rotation_repo }}
+Environment=PATH={{ opnsense_token_rotation_ansible_bin }}:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1 ANSIBLE_FORCE_COLOR=0 ANSIBLE_NOCOLOR=1
+Environment=SSH_AUTH_SOCK={{ opnsense_token_rotation_agent_socket }}
+ExecStart={{ opnsense_token_rotation_ansible_bin }}/ansible-playbook -i inventories/%i {{ opnsense_token_rotation_signal_playbook }} -e opnsense_token_rotation_signal_result=failed

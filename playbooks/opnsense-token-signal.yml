@@ -1,0 +1,17 @@
+---
+# ==============================================================================
+# The firewall API token rotation's liveness signal (SEC-09). Run by the rotation chain's
+# units on the controller (roles/opnsense_token_rotation): after the gate passed with
+# -e opnsense_token_rotation_signal_result=ok, after any failed unit with …=failed.
+# Writes two text-file series on the monitoring host; roles/prometheus alerts on them.
+#   ansible-playbook -i inventories/prod playbooks/opnsense-token-signal.yml -e opnsense_token_rotation_signal_result=ok
+# ==============================================================================
+- name: "OPNsense API token rotation — liveness signal for monitoring"
+  hosts: monitoring
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Write the signal"
+      ansible.builtin.include_role:
+        name: opnsense_token_rotation
+        tasks_from: signal

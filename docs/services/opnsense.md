@@ -44,7 +44,8 @@ is the WAN sensor (feed to CrowdSec tracked on #326).
 
 Rotation: quarterly user timer per env on the controller (`playbooks/opnsense-token-rotation.yml`,
 `fw-token-rotation@<env>.timer`): the previous key is revoked and a new one minted, the jobs that keep
-a copy of the token are re-rendered, then the `--tags dns --check` gate. No secret in the catalog.
+a copy of the token are re-rendered, then the `--tags dns --check` gate. The chain tells monitoring how it
+ended (`FirewallTokenRotationFailed`, `FirewallTokenRotationOverdue`). No secret in the catalog.
 ISP PPPoE password: portal first, then `playbooks/opnsense-pppoe-rotate.yml` (Vault → firewall over SSH +
 wheel sudo, `configctl` re-dial, API waits for the gateway; without sudo the seed applies it at the re-seed).
 The fabric fallback file is refreshed *from* Vault by that playbook — never edited by hand.

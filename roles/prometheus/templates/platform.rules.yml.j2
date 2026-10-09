@@ -180,6 +180,27 @@ groups:
           description: "The exporter cannot reach the cluster: either PostgreSQL is down, or the exporter's own credential stopped working. Every service with a database is affected."
           runbook: "Check the container on the database host, then the exporter's credential in Vault ({{ platform_env }}/postgresql/exporter)."
 
+  - name: platform-firewall-token
+    rules:
+      # The series come from the rotation chain on the controller, written on the monitoring
+      # host (roles/opnsense_token_rotation, tasks/signal.yml): the controller mails nobody.
+      - alert: FirewallTokenRotationFailed
+        expr: platform_fw_token_rotation_failed == 1
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "The firewall API token rotation for {{ '{{' }} $labels.env {{ '}}' }} failed"
+          description: "The last run of the rotation chain (rotate, refresh the jobs that keep a copy, catalog check, gate) did not finish. The firewall's Ansible token may be revoked without a new one in Vault: plays that talk to the firewall, and the firewall config backup, may fail until it is run again."
+          runbook: "On the controller: systemctl --user status 'fw-token-rotation*@{{ '{{' }} $labels.env {{ '}}' }}.service' and their journals; then systemctl --user start fw-token-rotation@{{ '{{' }} $labels.env {{ '}}' }}.service — the break-glass credential in Vault is not touched by a rotation, so a second run repairs a half-done one."
+      - alert: FirewallTokenRotationOverdue
+        expr: (time() - platform_fw_token_rotation_last_success_timestamp_seconds > {{ prometheus_fw_token_rotation_max_age_days }} * 86400) or absent(platform_fw_token_rotation_last_success_timestamp_seconds{env="{{ platform_env }}"})
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "No successful firewall API token rotation for over {{ prometheus_fw_token_rotation_max_age_days }} days"
+          description: "SEC-09 asks for a quarterly rotation. Either the timer on the controller did not run (controller off, timer disabled), or the chain failed and could not even say so."
+          runbook: "On the controller: systemctl --user list-timers 'fw-token-rotation@*' and the journals of the chain's units; start fw-token-rotation@<env>.service by hand."
+
   - name: platform-backup
     rules:
       # The series come from the node (roles/pve_host, tasks/backup_signal.yml): one per

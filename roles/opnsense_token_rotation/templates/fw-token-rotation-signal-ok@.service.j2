@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# After the gate passed: the time of this rotation goes to monitoring, and the "failed" flag
+# is lowered (playbooks/opnsense-token-signal.yml, on the monitoring host).
+[Unit]
+Description=Tell monitoring the OPNsense API token rotation for %i succeeded
+OnFailure=fw-token-rotation-signal-failed@%i.service
+
+[Service]
+Type=oneshot
+WorkingDirectory={{ opnsense_token_rotation_repo }}
+Environment=PATH={{ opnsense_token_rotation_ansible_bin }}:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1 ANSIBLE_FORCE_COLOR=0 ANSIBLE_NOCOLOR=1
+Environment=SSH_AUTH_SOCK={{ opnsense_token_rotation_agent_socket }}
+ExecStart={{ opnsense_token_rotation_ansible_bin }}/ansible-playbook -i inventories/%i {{ opnsense_token_rotation_signal_playbook }} -e opnsense_token_rotation_signal_result=ok

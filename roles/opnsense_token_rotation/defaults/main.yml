@@ -30,3 +30,12 @@ opnsense_token_rotation_envs:
 # before the check: these plays are run, in order, between the rotation and the check.
 opnsense_token_rotation_consumer_playbooks:
   - playbooks/opnsense-config-backup.yml      # the firewall config backup job's credential (on the hypervisor)
+# The chain's liveness signal (tasks/signal.yml, run on the monitoring host by
+# playbooks/opnsense-token-signal.yml): two series written where that host's node exporter
+# reads text files — the end of the last rotation whose gate passed, and whether the last run
+# of the chain failed. roles/prometheus raises FirewallTokenRotationFailed and
+# FirewallTokenRotationOverdue from them: the controller is a workstation and mails nobody.
+opnsense_token_rotation_signal_playbook: playbooks/opnsense-token-signal.yml
+opnsense_token_rotation_signal_dir: /var/lib/prometheus/node-exporter      # the Debian node exporter's text-file directory
+opnsense_token_rotation_signal_env: "{{ platform_env }}"
+opnsense_token_rotation_signal_result: ""                                  # ok | failed — given by the unit that runs the play
