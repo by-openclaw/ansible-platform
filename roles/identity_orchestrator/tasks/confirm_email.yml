@@ -6,15 +6,70 @@
     vault_secret_path: "{{ identity_orchestrator_env }}/mail/authentik"
     vault_secret_init: {}
 
-- name: "IdentityOrch | Render + send the confirmation (587 STARTTLS, authenticated)"
-  ansible.builtin.command:
-    argv:
-      - python3
-      - -c
-      - "import smtplib,os,ssl,sys; msg=sys.stdin.read(); s=smtplib.SMTP('{{ identity_orchestrator_mail_host }}',587,timeout=20); s.starttls(context=ssl.create_default_context()); s.login('{{ vault_secret_result.address }}',os.environ['MP']); s.sendmail('{{ identity_orchestrator_mail_from }}', ['{{ io_person.email }}','{{ identity_orchestrator_mail_delegate }}'], msg.encode('utf-8')); s.quit(); print('SENT')"
-    stdin: "{{ lookup('template', 'welcome.txt.j2') }}"
-  environment:
-    MP: "{{ vault_secret_result.password }}"
-  register: io_mail
-  changed_when: "'SENT' in (io_mail.stdout | default(''))"
-  no_log: true
+# curl sends the message: port 587, STARTTLS required, the server's certificate verified against
+# the host's CA store — what the Python it replaces did with its default TLS context. curl reads
+# its credentials as configuration on standard input (--config -): they are never an argument
+# and never in the task's environment (infra/0010 §5). The message holds no secret; it is a
+# temporary file, removed whatever happens. `--crlf`: SMTP wants CRLF line ends.
+- name: "IdentityOrch | The confirmation: render, send, clean up"
+  block:
+    - name: "IdentityOrch | A temporary file for the message"
+      ansible.builtin.tempfile:
+        state: file
+        prefix: identity-confirm-
+      register: io_mail_file
+      changed_when: false
+
+    - name: "IdentityOrch | Render the confirmation"
+      ansible.builtin.copy:
+        dest: "{{ io_mail_file.path }}"
+        content: "{{ lookup('template', 'welcome.txt.j2') }}"
+        mode: "0600"
+      changed_when: false
+
+    # Written between quotes in curl's configuration, a value must hold no quote, backslash or
+    # control character: `to_json` would have to escape exactly those, so "unchanged by to_json"
+    # is the test — without a single escape sequence to get wrong here.
+    - name: "IdentityOrch | The sender's credentials can be handed to curl as they are"
+      ansible.builtin.assert:
+        that:
+          - (vault_secret_result.address | to_json) == '"' ~ vault_secret_result.address ~ '"'
+          - (vault_secret_result.password | to_json) == '"' ~ vault_secret_result.password ~ '"'
+        fail_msg: "the sender mailbox's address or password holds a quote, a backslash or a control character: not sent"
+        quiet: true
+      no_log: true
+
+    - name: "IdentityOrch | Send the confirmation (587 STARTTLS, authenticated, certificate verified)"
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - --ssl-reqd
+          - --crlf
+          - --max-time
+          - "{{ identity_orchestrator_mail_timeout }}"
+          - --url
+          - "smtp://{{ identity_orchestrator_mail_host }}:{{ identity_orchestrator_mail_port }}"
+          - --mail-from
+          - "{{ identity_orchestrator_mail_from }}"
+          - --mail-rcpt
+          - "{{ io_person.email }}"
+          - --mail-rcpt
+          - "{{ identity_orchestrator_mail_delegate }}"
+          - --upload-file
+          - "{{ io_mail_file.path }}"
+          - --config
+          - "-"
+        stdin: 'user = "{{ vault_secret_result.address }}:{{ vault_secret_result.password }}"'
+      register: io_mail
+      changed_when: io_mail.rc == 0
+      no_log: true
+  always:
+    - name: "IdentityOrch | The temporary file goes"
+      ansible.builtin.file:
+        path: "{{ io_mail_file.path }}"
+        state: absent
+      when: io_mail_file.path is defined
+      changed_when: false
