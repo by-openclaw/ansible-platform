@@ -4,12 +4,22 @@ Description={{ host_job_description or host_job_name }}
 {% if host_job_on_failure | bool %}
 OnFailure=systemd-failure-alert@%n.service
 {% endif %}
+{% if host_job_on_success | length > 0 %}
+OnSuccess={{ host_job_on_success }}
+{% endif %}
+{% if host_job_condition_file_not_empty | length > 0 %}
+ConditionFileNotEmpty={{ host_job_condition_file_not_empty }}
+{% endif %}
 {% if host_job_wants_network | bool %}
 After=network-online.target
 Wants=network-online.target
 {% endif %}
 {% if host_job_requires_mounts_for | length > 0 %}
 RequiresMountsFor={{ host_job_requires_mounts_for }}
+{% endif %}
+{% if host_job_stamp | bool %}
+Requires={{ host_job_name }}-stamp.service
+After={{ host_job_name }}-stamp.service
 {% endif %}
 
 [Service]
@@ -19,6 +29,16 @@ TimeoutStartSec={{ host_job_timeout }}
 {% if host_job_runtime_directory | length > 0 %}
 RuntimeDirectory={{ host_job_runtime_directory }}
 RuntimeDirectoryMode=0700
+{% endif %}
+{% if host_job_umask | length > 0 %}
+UMask={{ host_job_umask }}
+{% endif %}
+{% if host_job_stdout | length > 0 %}
+StandardOutput={{ host_job_stdout }}
+StandardError=journal
+{% endif %}
+{% if host_job_stamp | bool %}
+EnvironmentFile={{ host_job_stamp_file }}
 {% endif %}
 {% if host_job_environment_file | length > 0 %}
 EnvironmentFile={{ host_job_environment_file }}

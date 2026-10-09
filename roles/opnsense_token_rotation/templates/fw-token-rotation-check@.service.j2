@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+# The catalog's DNS part in check mode with the token just rotated; its result, as the JSON the
+# stock `ansible.posix.json` output writes, goes to a file for the gate. One command: a unit
+# that captures its output has only one. Error output (warnings) goes to the journal.
+[Unit]
+Description=Catalog check with the rotated OPNsense API token for %i
+OnSuccess=fw-token-rotation-gate@%i.service
+
+[Service]
+Type=oneshot
+WorkingDirectory={{ opnsense_token_rotation_repo }}
+Environment=PATH={{ opnsense_token_rotation_ansible_bin }}:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1 ANSIBLE_FORCE_COLOR=0 ANSIBLE_NOCOLOR=1
+Environment=SSH_AUTH_SOCK={{ opnsense_token_rotation_agent_socket }}
+Environment=ANSIBLE_STDOUT_CALLBACK={{ opnsense_token_rotation_result_format }}
+UMask=0077
+StandardOutput=truncate:{{ opnsense_token_rotation_state_dir }}/check-%i.json
+StandardError=journal
+ExecStart={{ opnsense_token_rotation_ansible_bin }}/ansible-playbook -i inventories/%i playbooks/opnsense.yml --tags {{ opnsense_token_rotation_check_tags }} --check

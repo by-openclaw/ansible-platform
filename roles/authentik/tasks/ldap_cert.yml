@@ -84,17 +84,22 @@
       {{ (authentik_ldap_cert_create.json.pk if (authentik_ldap_cert_create is not skipped) else authentik_ldap_cert_get.json.results[0].pk) }}
     authentik_ldap_cert_changed: "{{ (authentik_ldap_cert_create is not skipped) or (authentik_ldap_cert_update is not skipped) }}"
 
+# `name__iexact` is the filter this list knows; a filter it does not know (`name`, used here
+# until 2026-10-09) is ignored and returns every LDAP provider. The provider is then matched
+# by exact name in the task below as well: never "the first of the list".
 - name: "LDAP cert | LDAP provider (by name)"
   ansible.builtin.uri:
-    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/providers/ldap/?name={{ authentik_ldap_provider_name | urlencode }}"
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/providers/ldap/?name__iexact={{ authentik_ldap_provider_name | urlencode }}"
     headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}" }
   register: authentik_ldap_provider_get
   check_mode: false   # read-only GET: must run under --check too (later tasks read its json)
   no_log: true
 
 - name: "LDAP cert | Provider references the wildcard keypair"
+  vars:
+    authentik_ldap_provider: "{{ authentik_ldap_provider_get.json.results | selectattr('name', 'equalto', authentik_ldap_provider_name) | first | default({}) }}"
   ansible.builtin.uri:
-    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/providers/ldap/{{ authentik_ldap_provider_get.json.results[0].pk }}/"
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/providers/ldap/{{ authentik_ldap_provider.pk }}/"
     method: PATCH
     headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}", Content-Type: "application/json" }
     body_format: json
@@ -102,8 +107,8 @@
     status_code: [200]
   register: authentik_ldap_provider_patch
   when:
-    - authentik_ldap_provider_get.json.results | length > 0
-    - authentik_ldap_provider_get.json.results[0].certificate != authentik_ldap_cert_pk
+    - authentik_ldap_provider | length > 0
+    - authentik_ldap_provider.certificate != authentik_ldap_cert_pk
   no_log: true
   changed_when: true
 

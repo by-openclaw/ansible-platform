@@ -10,36 +10,12 @@
     discord_guild_bot: "{{ vault_secret_result }}"
   no_log: true
 
-- name: "Discord | Reconcile the guild (categories, channels, roles, overwrites, webhooks)"
-  ansible.builtin.command:
-    argv: [python3, "{{ role_path }}/files/discord_reconcile.py"]
-  environment:
-    DISCORD_TOKEN: "{{ discord_guild_bot.token }}"
-    DISCORD_DESIRED: >-
-      {{ {'guild_id': discord_guild_bot.guild_id, 'bot_role': discord_guild_bot_role,
-          'roles': discord_guild_roles, 'categories': discord_guild_categories,
-          'post_ready_message': discord_guild_post_ready_message,
-          'admin_role': platform_admins_group} | to_json }}
-  become: false                 # runs on the controller; no privilege needed (global become=True would sudo here)
-  register: discord_guild_run
-  changed_when: "'changes=0' not in discord_guild_run.stdout"
-  failed_when: "'DISCORD_DONE' not in discord_guild_run.stdout"
-  no_log: true
-
-# The reconcile above CREATES Discord objects, so --check rightly skips it — and then hands this
-# role an empty stdout. Parsing it into a fact with a safe default is what keeps the rest of the
-# role working: `when: not ansible_check_mode` on the loop below would not help, because Ansible
-# evaluates a task's loop expression BEFORE its when, and `| last` on an empty list ends the play.
-- name: "Discord | Parse the reconcile result (empty when --check skipped it)"
-  ansible.builtin.set_fact:
-    discord_guild_webhooks: >-
-      {{ ((discord_guild_run.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}'))
-          | from_json).webhooks | default({}) }}
-  no_log: true
+- name: "Discord | Reconcile the guild (roles, categories, channels, overwrites, webhooks)"
+  ansible.builtin.import_tasks: reconcile.yml
 
 - name: "Discord | Report (webhook URLs never shown)"
   ansible.builtin.debug:
-    msg: "{{ discord_guild_run.stdout_lines | default([]) | reject('match', '^\\{') | list }}"
+    msg: "{{ discord_guild_changes + ['changes=' ~ discord_guild_changes | length, 'webhooks=' ~ discord_guild_webhooks | length] }}"
 
 - name: "Discord | Webhook URLs → Vault (get-or-create per webhook; secret stays in Vault)"
   ansible.builtin.include_role:

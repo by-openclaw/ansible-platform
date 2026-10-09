@@ -195,25 +195,13 @@
     # vendor's securityadmin. Runs on drift of the rendered files, or whenever the index
     # is not initialised (503) — the same tool repairs an aborted first boot.
     - name: "Wazuh | Push the security configuration (drift, or index not initialised)"
-      ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - -e
-          - "CACERT={{ wazuh_indexer_home }}/config/certs/root-ca.pem"
-          - -e
-          - "CERT={{ wazuh_indexer_home }}/config/certs/admin.pem"
-          - -e
-          - "KEY={{ wazuh_indexer_home }}/config/certs/admin-key.pem"
-          - -e
-          - JAVA_HOME={{ wazuh_indexer_home }}/jdk    # the tool runs `which java` otherwise; the image has neither
-          - "{{ wazuh_indexer_container }}"
-          - bash
-          - -c
-          - >-
-            bash {{ wazuh_indexer_home }}/plugins/opensearch-security/tools/securityadmin.sh
-            -cd {{ wazuh_indexer_home }}/config/opensearch-security/ -nhnv
-            -cacert $CACERT -cert $CERT -key $KEY -p 9200 -icl -h 127.0.0.1
+      # The vendor's tool is run as it is (it is executable for the container's own user), its
+      # arguments one by one: no shell is needed to pass three paths.
+      community.docker.docker_container_exec:
+        container: "{{ wazuh_indexer_container }}"
+        argv: "{{ wazuh_securityadmin_argv }}"
+        env:
+          JAVA_HOME: "{{ wazuh_indexer_home }}/jdk"    # the tool runs `which java` otherwise; the image has neither
       when:
         - not ansible_check_mode
         - >-

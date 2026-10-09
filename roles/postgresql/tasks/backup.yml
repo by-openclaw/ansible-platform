@@ -7,25 +7,45 @@
     group: root
     mode: "0700"
 
-# Daily logical dump of the whole cluster (roles/host_job: systemd service + timer,
-# no script). One line, bash for pipefail so a failed pg_dumpall is not masked by
-# gzip; `%%` and `$$` are systemd's escapes for a literal % and $.
-# The job is installed on every member and dumps only where the LEADER runs (a replica exits
-# clean): one dump per night, wherever the leadership is.
+# Daily logical dump of the whole cluster (roles/host_job: systemd units, every step one plain
+# command — infra/0010 §4). Two jobs where a shell had a pipe:
+#   pg-backup       the dump, written to a file by systemd (a failed pg_dumpall fails the job and
+#                   leaves no dated file behind);
+#   pg-backup-pack  started when the dump ends: compress, then name by the day of the run —
+#                   only if the dump's file holds something.
+# Installed on every member, the dump runs only where the LEADER is: the cluster manager's own
+# answer decides (its /primary endpoint: 200 on the leader). Anything else skips the run without
+# marking the job failed — one dump per night, wherever the leadership is.
 - name: "backup | Daily pg_dumpall (roles/host_job)"
   ansible.builtin.include_role:
     name: host_job
   vars:
     host_job_name: pg-backup
-    host_job_description: "PostgreSQL logical backup (pg_dumpall, gzip)"
-    host_job_on_calendar: "*-*-* 02:00:00"
-    host_job_exec:
+    host_job_description: "PostgreSQL logical backup (pg_dumpall)"
+    host_job_on_calendar: "{{ pg_backup_on_calendar }}"
+    host_job_exec_condition:
       - >-
-        /bin/bash -c 'set -o pipefail;
-        [ "$$(docker exec {{ pg_container_name }} psql -U postgres -Atc "select pg_is_in_recovery()")" = f ] || exit 0;
-        docker exec {{ pg_container_name }} pg_dumpall -U postgres
-        | gzip > {{ pg_backup_dir }}/all-$$(date +%%F).sql.gz'
+        /usr/bin/curl -fsS -o /dev/null --max-time {{ pg_backup_leader_check_timeout }}
+        --cacert {{ pg_ca_bundle }} https://{{ pg_fqdn }}:{{ pg_patroni_port }}/primary
+    host_job_stdout: "truncate:{{ pg_backup_dir }}/{{ pg_backup_partial }}"
+    host_job_exec:
+      - "/usr/bin/docker exec {{ pg_container_name }} pg_dumpall -U postgres"
+    host_job_on_success: pg-backup-pack.service
     host_job_retention:
       - { path: "{{ pg_backup_dir }}", age: "{{ pg_backup_keep_days }}d" }
     host_job_legacy_cron: pg-backup
     host_job_legacy_script: /usr/local/bin/pg-backup.sh
+
+- name: "backup | Compress the dump and name it by the day (roles/host_job, started by the dump)"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: pg-backup-pack
+    host_job_description: "PostgreSQL logical backup: compress, name by date"
+    host_job_timer: false
+    host_job_stamp: true
+    # On a member that does not lead, the dump is skipped and leaves its file empty: nothing to pack.
+    host_job_condition_file_not_empty: "{{ pg_backup_dir }}/{{ pg_backup_partial }}"
+    host_job_exec:
+      - "/usr/bin/gzip -f {{ pg_backup_dir }}/{{ pg_backup_partial }}"
+      - "/usr/bin/mv {{ pg_backup_dir }}/{{ pg_backup_partial }}.gz {{ pg_backup_dir }}/all-${HOST_JOB_DATE}.sql.gz"

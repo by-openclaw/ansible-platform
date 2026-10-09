@@ -48,7 +48,18 @@ pve_host_root_email: "{{ platform_ops_email }}"
 # package reads this directory by default).
 pve_host_backup_signal_interval: "15min"
 pve_host_backup_signal_file: /var/lib/prometheus/node-exporter/platform_backup.prom
-pve_host_backup_signal_filter: /etc/platform-backup-signal/backup-signal.jq
+pve_host_backup_signal_dir: /etc/platform-backup-signal        # the play, its template and its settings
+pve_host_backup_signal_ansible_playbook: /usr/bin/ansible-playbook
+# The play runs as a systemd service: its home and its scratch files are the unit's private
+# runtime directory, removed after each run.
+pve_host_backup_signal_environment:
+  HOME: /run/platform-backup-signal
+  ANSIBLE_HOME: /run/platform-backup-signal/ansible
+  ANSIBLE_REMOTE_TEMP: /run/platform-backup-signal/tmp
+  ANSIBLE_NOCOLOR: "1"
+  ANSIBLE_LOCALHOST_WARNING: "false"
+  ANSIBLE_INVENTORY_UNPARSED_WARNING: "false"
+pve_host_backup_signal_retired_filter: /etc/platform-backup-signal/backup-signal.jq   # the jq filter (removed)
 
 # The NAS (NFS) backup job: every guest, nightly, reports mailed to the ops mailbox.
 # Matched by its storage (one job per target storage); tasks/backup_jobs.yml creates

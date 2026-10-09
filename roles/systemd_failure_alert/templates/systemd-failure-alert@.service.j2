@@ -1,11 +1,23 @@
 # {{ ansible_managed }}
-# Mail the failed unit's status and last journal lines. One pipeline, no script;
-# `-` = a mail failure never fails the notifier (it would alert about itself). %i is
-# the failed unit (systemd specifier); `$$` is systemd's escape for a literal $.
+# Compose the report of a failed unit: its state and its last journal lines, as a mail message
+# in a private file. Every step is one plain command (infra/0010 §4); their output is appended
+# to the file by systemd, their error output goes to the journal. A second unit hands the file
+# to the mailer (systemd-failure-alert-send@). %i is the failed unit; `%%` is a literal %.
+# `-` in front of a step = its failure does not stop the report: what could be read is sent.
 [Unit]
 Description=Report %i failing
+OnSuccess=systemd-failure-alert-send@%i.service
 
 [Service]
 Type=oneshot
 TimeoutStartSec=60
-ExecStart=-/bin/bash -c '{ printf "From: {{ systemd_failure_alert_from }}\nTo: {{ systemd_failure_alert_to }}\nSubject: [$$(hostname -f)] unit failed: %i\nAuto-Submitted: auto-generated\n\n%i failed on $$(hostname -f).\n\n"; systemctl show %i --no-pager -p Result -p ExecMainStatus -p ExecMainExitTimestamp -p NRestarts; printf "\nLast {{ systemd_failure_alert_journal_lines }} journal lines:\n"; journalctl -u %i -n {{ systemd_failure_alert_journal_lines }} --no-pager --output=short-iso; } | {{ systemd_failure_alert_submit }}'
+# The file sits directly under /run with a private mode: systemd opens a unit's output file
+# before it creates the unit's own runtime directory, so a file inside one cannot be opened.
+UMask=0077
+StandardOutput=append:{{ systemd_failure_alert_report }}
+StandardError=journal
+ExecStart=/usr/bin/rm -f {{ systemd_failure_alert_report }}
+ExecStart=/usr/bin/printf 'From: %%s\nTo: %%s\nSubject: [%%s] unit failed: %%s\nAuto-Submitted: auto-generated\n\n%%s failed on %%s.\n\n' {{ systemd_failure_alert_from }} {{ systemd_failure_alert_to }} {{ systemd_failure_alert_host }} %i %i {{ systemd_failure_alert_host }}
+ExecStart=-/usr/bin/systemctl show %i --no-pager -p Result -p ExecMainStatus -p ExecMainExitTimestamp -p NRestarts
+ExecStart=/usr/bin/printf '\nLast %%s journal lines:\n' {{ systemd_failure_alert_journal_lines }}
+ExecStart=-/usr/bin/journalctl -u %i -n {{ systemd_failure_alert_journal_lines }} --no-pager --output=short-iso

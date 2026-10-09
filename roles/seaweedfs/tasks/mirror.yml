@@ -45,14 +45,16 @@
     host_job_on_calendar: "{{ seaweedfs_mirror.schedule }}"
     host_job_wants_network: true
     host_job_timeout: "6h"
+    host_job_stamp: true
     host_job_exec:
-      # the date in the trash prefix needs a shell; every credential stays in the env file
+      # the day of the run in the trash prefix is the job's date stamp (roles/host_job);
+      # every credential stays in the env file
       - >-
-        /bin/sh -c '/usr/bin/docker run --rm --name s3-mirror-{{ seaweedfs_mirror.name }} --network host
+        /usr/bin/docker run --rm --name s3-mirror-{{ seaweedfs_mirror.name }} --network host
         --env-file {{ seaweedfs_mirror_env_dir }}/{{ seaweedfs_mirror.name }}.env {{ seaweedfs_mirror_image }}
         sync src:{{ seaweedfs_mirror.source_bucket }} dst:{{ seaweedfs_mirror.bucket }}
-        --backup-dir dst:{{ seaweedfs_mirror.bucket }}-trash/$$(date +%%F)
-        --fast-list --checksum --transfers {{ seaweedfs_mirror_transfers }} --stats-one-line -v'
+        --backup-dir dst:{{ seaweedfs_mirror.bucket }}-trash/${HOST_JOB_DATE}
+        --fast-list --checksum --transfers {{ seaweedfs_mirror_transfers }} --stats-one-line -v
       - >-
         /usr/bin/docker run --rm --name s3-mirror-{{ seaweedfs_mirror.name }}-purge --network host
         --env-file {{ seaweedfs_mirror_env_dir }}/{{ seaweedfs_mirror.name }}.env {{ seaweedfs_mirror_image }}

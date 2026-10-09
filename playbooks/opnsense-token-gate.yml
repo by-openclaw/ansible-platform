@@ -1,0 +1,35 @@
+---
+# ==============================================================================
+# The gate after an OPNsense API token rotation (roles/opnsense_token_rotation): reads the
+# result of the catalog check that ran with the new token — the JSON written by Ansible's stock
+# `ansible.posix.json` output — and fails unless every host in it reports changed=0, failed=0
+# and unreachable=0. Run by the unit fw-token-rotation-gate@<env>; by hand:
+#   ansible-playbook -i inventories/<env> playbooks/opnsense-token-gate.yml \
+#     -e opnsense_token_gate_file=<the check's result file>
+# ==============================================================================
+- name: "OPNsense token rotation — gate on the catalog check"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  tasks:
+    # The file holds the JSON document and, around it, the lines the repository's timing output
+    # adds: the document is what stands between the first line that is `{` and the last that is
+    # `}`. No such pair, or not JSON in between: the gate fails.
+    - name: "Gate | The check's result"
+      ansible.builtin.set_fact:
+        opnsense_token_gate_stats: "{{ (opnsense_token_gate_lines[opnsense_token_gate_first | int:(opnsense_token_gate_last | int) + 1] | join(' ') | from_json).stats | default({}) }}"
+      vars:
+        opnsense_token_gate_lines: "{{ lookup('ansible.builtin.file', opnsense_token_gate_file).splitlines() }}"
+        opnsense_token_gate_first: "{{ opnsense_token_gate_lines.index('{') }}"
+        opnsense_token_gate_last: "{{ (opnsense_token_gate_lines | length) - 1 - (opnsense_token_gate_lines | reverse | list).index('}') }}"
+
+    - name: "Gate | Every host of the check: nothing changed, nothing failed, all reached"
+      ansible.builtin.assert:
+        that:
+          - opnsense_token_gate_stats | length > 0
+          - opnsense_token_gate_stats.values() | map(attribute='changed') | sum == 0
+          - opnsense_token_gate_stats.values() | map(attribute='failures') | sum == 0
+          - opnsense_token_gate_stats.values() | map(attribute='unreachable') | sum == 0
+        fail_msg: "the catalog does not converge with the rotated token: {{ opnsense_token_gate_stats }}"
+        success_msg: "converged with the rotated token: {{ opnsense_token_gate_stats.keys() | list }}"

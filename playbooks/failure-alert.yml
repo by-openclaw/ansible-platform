@@ -1,0 +1,13 @@
+---
+# ==============================================================================
+# The failure notifier on every host: the two templated units that mail the alert mailbox when
+# a scheduled job fails (roles/systemd_failure_alert). Each role that owns a job installs them
+# on its own host; this play is the one place that brings them to the same version everywhere.
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/failure-alert.yml
+# ==============================================================================
+- name: "Failure notifier — every host that runs scheduled jobs"
+  hosts: "{{ target | default('all:!opnsense') }}"
+  become: true
+  gather_facts: false
+  roles:
+    - role: systemd_failure_alert

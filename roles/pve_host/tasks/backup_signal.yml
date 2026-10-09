@@ -5,27 +5,37 @@
 # job covers, when its newest backup started and how many of its snapshots failed
 # verification. roles/prometheus raises the Backup* alerts from those series, so a
 # missed or failed backup reaches the alert channel instead of a mailbox.
-# No script: one pipeline through a jq filter, then an atomic rename (roles/host_job).
-- name: "PVE host | jq (the filter of the backup signal)"
+# No shell and no filter program: the timer runs a small play ON the node (ansible-playbook,
+# local connection) — three reads of PVE, then a template written whole and renamed into place.
+- name: "PVE host | Ansible on the node (the signal is a local play)"
   ansible.builtin.apt:
-    name: jq
+    name: ansible-core
     state: present
+    install_recommends: false
 
-- name: "PVE host | Backup signal filter directory"
+- name: "PVE host | Backup signal directory"
   ansible.builtin.file:
-    path: "{{ pve_host_backup_signal_filter | dirname }}"
+    path: "{{ pve_host_backup_signal_dir }}"
     state: directory
     owner: root
     group: root
     mode: "0755"
 
-- name: "PVE host | Backup signal filter"
+- name: "PVE host | Backup signal play and its template (copied as they are: rendered on the node)"
   ansible.builtin.copy:
-    src: backup-signal.jq
-    dest: "{{ pve_host_backup_signal_filter }}"
+    src: "backup-signal/{{ item }}"
+    dest: "{{ pve_host_backup_signal_dir }}/{{ item }}"
     owner: root
     group: root
     mode: "0644"
+  loop:
+    - signal.yml
+    - platform_backup.prom.j2
+
+- name: "PVE host | The jq filter the signal used to go through"
+  ansible.builtin.file:
+    path: "{{ pve_host_backup_signal_retired_filter }}"
+    state: absent
 
 - name: "PVE host | Backup jobs (the storages the signal reads)"
   ansible.builtin.command:
@@ -42,6 +52,20 @@
       {{ ((pve_host_backup_signal_jobs.stdout | from_json | map(attribute='storage') | list)
           + [pve_host_nfs_backup_job.storage]) | unique | sort }}
 
+# One `pvesh get …/content` per target storage, so the play is told which ones.
+- name: "PVE host | Backup signal settings"
+  ansible.builtin.copy:
+    dest: "{{ pve_host_backup_signal_dir }}/vars.yml"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/pve_host) — the settings of signal.yml.
+      {{ {'signal_node': pve_host_node,
+          'signal_storages': pve_host_backup_signal_storages,
+          'signal_file': pve_host_backup_signal_file,
+          'signal_template': pve_host_backup_signal_dir ~ '/platform_backup.prom.j2'} | to_nice_yaml(indent=2) }}
+
 - name: "PVE host | Backup signal timer (roles/host_job)"
   ansible.builtin.include_role:
     name: host_job
@@ -52,18 +76,15 @@
     host_job_on_boot_sec: "120"
     host_job_on_unit_active_sec: "{{ pve_host_backup_signal_interval }}"
     host_job_timeout: "10min"
-    # The filter is told how many answers to expect (guests, jobs, one per storage): a read
-    # that fails leaves the pipeline short, the filter refuses it, the unit fails and the
+    host_job_runtime_directory: platform-backup-signal
+    host_job_environment: "{{ pve_host_backup_signal_environment }}"
+    # A read that fails ends the play before the file is written: the unit fails and the
     # previous file stays — BackupSignalStale then says so, instead of a partial signal.
     host_job_exec:
       - >-
-        /bin/sh -c '{ pvesh get /cluster/resources --type vm --output-format json;
-        pvesh get /cluster/backup --output-format json;
-        {% for s in pve_host_backup_signal_storages %}pvesh get /nodes/{{ pve_host_node }}/storage/{{ s }}/content --content backup --output-format json;
-        {% endfor %}}
-        | jq -rs --argjson answers {{ 2 + pve_host_backup_signal_storages | length }}
-        -f {{ pve_host_backup_signal_filter }} > {{ pve_host_backup_signal_file }}.tmp'
-      - "/bin/mv {{ pve_host_backup_signal_file }}.tmp {{ pve_host_backup_signal_file }}"
+        {{ pve_host_backup_signal_ansible_playbook }} --inventory localhost,
+        --extra-vars @{{ pve_host_backup_signal_dir }}/vars.yml
+        {{ pve_host_backup_signal_dir }}/signal.yml
 
 - name: "PVE host | Write the signal now"
   ansible.builtin.systemd_service:

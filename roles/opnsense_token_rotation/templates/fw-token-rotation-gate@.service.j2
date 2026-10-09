@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# The gate: a play reads the check's result and fails unless every host of it reports
+# changed=0, failed=0, unreachable=0 (playbooks/opnsense-token-gate.yml). Skipped when the
+# check left nothing to read.
+[Unit]
+Description=Gate on the catalog check after the OPNsense API token rotation for %i
+ConditionFileNotEmpty={{ opnsense_token_rotation_state_dir }}/check-%i.json
+
+[Service]
+Type=oneshot
+WorkingDirectory={{ opnsense_token_rotation_repo }}
+Environment=PATH={{ opnsense_token_rotation_ansible_bin }}:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1 ANSIBLE_FORCE_COLOR=0 ANSIBLE_NOCOLOR=1
+Environment=SSH_AUTH_SOCK={{ opnsense_token_rotation_agent_socket }}
+ExecStart={{ opnsense_token_rotation_ansible_bin }}/ansible-playbook -i inventories/%i playbooks/opnsense-token-gate.yml -e opnsense_token_gate_file={{ opnsense_token_rotation_state_dir }}/check-%i.json
