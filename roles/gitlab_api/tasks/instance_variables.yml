@@ -1,0 +1,99 @@
+---
+# ==============================================================================
+# gitlab_api | instance-level CI/CD variables from gitlab_api_instance_variables.
+# Created when missing, converged when value/masked/protected/raw differ, never removed.
+# Values travel in the body of the module call (no_log) — never on a command line, never in
+# a task environment. Runs on the GitLab host.
+# ==============================================================================
+- name: "GitLab variables | The API token"
+  ansible.builtin.include_tasks: main.yml
+  when: gitlab_api_token is not defined
+
+- name: "GitLab variables | With a token"
+  when: gitlab_api_token | default('') | length > 0
+  block:
+    - name: "GitLab variables | The instance variables GitLab has"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/admin/ci/variables?per_page={{ gitlab_api_page_size }}"
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+      register: gitlab_api_vars_live
+      check_mode: false   # read-only GET: must run under --check too (the next tasks read its json)
+      no_log: true
+
+    - name: "GitLab variables | The list is complete (one page)"
+      ansible.builtin.assert:
+        that: (gitlab_api_vars_live.x_total_pages | default(1) | int) <= 1
+        fail_msg: "More instance variables than one page of {{ gitlab_api_page_size }}: raise gitlab_api_page_size."
+        quiet: true
+
+    # What is wanted, with `masked` as GitLab can honour it.
+    - name: "GitLab variables | Wanted"
+      ansible.builtin.set_fact:
+        gitlab_api_vars_wanted: >-
+          {%- set ns = namespace(out=[]) -%}
+          {%- for v in gitlab_api_instance_variables -%}
+          {%-   set ns.out = ns.out + [{'key': v.key, 'value': v.value | string,
+                                        'masked': (v.masked | default(false) | bool) and ((v.value | string) is match(gitlab_api_maskable)),
+                                        'protected': v.protected | default(false) | bool,
+                                        'raw': v.raw | default(false) | bool}] -%}
+          {%- endfor -%}
+          {{ ns.out }}
+      no_log: true
+
+    - name: "GitLab variables | Create the missing ones"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/admin/ci/variables"
+        method: POST
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+        body_format: json
+        body: "{{ item | combine({'variable_type': 'env_var'}) }}"
+        status_code: [201]
+      loop: "{{ gitlab_api_vars_wanted | rejectattr('key', 'in', gitlab_api_vars_live.json | map(attribute='key') | list) | list }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: gitlab_api_vars_created
+      changed_when: true
+      no_log: true
+
+    - name: "GitLab variables | Converge the ones that differ"
+      vars:
+        gitlab_api_var_live: "{{ gitlab_api_vars_live.json | selectattr('key', 'equalto', item.key) | first | default({}) }}"
+        gitlab_api_var_diff: >-
+          {{ ['value', 'masked', 'protected', 'raw']
+             | reject('in', ['value', 'masked', 'protected', 'raw']
+                            | select('in', (['value'] if (gitlab_api_var_live.value | default('') | string) == item.value else [])
+                                           + (['masked'] if (gitlab_api_var_live.masked | default(false) | bool) == item.masked else [])
+                                           + (['protected'] if (gitlab_api_var_live.protected | default(false) | bool) == item.protected else [])
+                                           + (['raw'] if (gitlab_api_var_live.raw | default(false) | bool) == item.raw else []))
+                            | list)
+             | list }}
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/admin/ci/variables/{{ item.key | urlencode }}"
+        method: PUT
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+        body_format: json
+        body: "{{ {'value': item.value, 'masked': item.masked, 'protected': item.protected, 'raw': item.raw} }}"
+        status_code: [200]
+      loop: "{{ gitlab_api_vars_wanted | selectattr('key', 'in', gitlab_api_vars_live.json | map(attribute='key') | list) | list }}"
+      loop_control:
+        label: "{{ item.key }} {{ gitlab_api_var_diff | join(',') }}"
+      when: gitlab_api_var_diff | length > 0
+      register: gitlab_api_vars_updated
+      changed_when: true
+      no_log: true
+
+    # Names only — never a value.
+    - name: "GitLab variables | Result"
+      ansible.builtin.debug:
+        msg: >-
+          {{ (gitlab_api_vars_created.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.key') | map('regex_replace', '^', 'var+ ') | list)
+             + (gitlab_api_vars_updated.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.key') | map('regex_replace', '^', 'var~ ') | list)
+             + ['wanted=' ~ gitlab_api_vars_wanted | length ~ ' on the instance=' ~ gitlab_api_vars_live.json | length] }}
+
+- name: "GitLab variables | Without a token (dry run before the first one exists)"
+  ansible.builtin.debug:
+    msg: "no API token yet: a real run mints it, then reconciles {{ gitlab_api_instance_variables | map(attribute='key') | join(', ') }}"
+  when: gitlab_api_token | default('') | length == 0

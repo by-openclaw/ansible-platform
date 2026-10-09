@@ -1,0 +1,29 @@
+---
+# ==============================================================================
+# gitlab_api — GitLab provisioned through its REST API (infra/0010: a task is a module call).
+#
+#   tasks/main.yml                the automation's API token: read from Vault, checked against
+#                                 GitLab, renewed THROUGH THE API when it nears its expiry, and
+#                                 published as gitlab_api_token for the tasks that follow.
+#   tasks/instance_variables.yml  instance-level CI/CD variables from a list (additive).
+#
+# The one console call of this role mints the FIRST token (tasks/main.yml): there is no API
+# without a token, and GitLab's own way to create one without a person is its console. It is
+# the single exception of this role to infra/0010 §3; every renewal after it is an API call.
+#
+# Shared values (inventory, group_vars/all/gitlab.yml): gitlab_container, gitlab_api_url.
+# ==============================================================================
+gitlab_api_vault_path: "{{ platform_env }}/gitlab/api"           # pragma: allowlist secret
+gitlab_api_token_user: root                                       # GitLab's built-in administrator
+gitlab_api_token_name: "ansible-{{ platform_env }}"
+gitlab_api_token_scopes: [api, admin_mode]
+gitlab_api_token_days: 90                                         # a token lives this long …
+gitlab_api_token_renew_before_days: 30                            # … and is renewed when fewer days are left
+
+# tasks/instance_variables.yml: [{key, value, masked, protected, raw}] — created when missing,
+# converged when different, never removed (other plays own other variables).
+gitlab_api_instance_variables: []
+gitlab_api_page_size: 100                                         # a list the role reads whole must fit in one page (asserted)
+# GitLab masks a value only if it has 8 characters or more from this alphabet; a variable asked
+# as masked whose value does not qualify is stored unmasked, as GitLab itself would refuse it.
+gitlab_api_maskable: "^[a-zA-Z0-9+/=@:.~-]{8,}$"

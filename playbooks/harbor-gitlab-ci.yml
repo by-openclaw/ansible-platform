@@ -6,8 +6,7 @@
 # and push private images to harbor.{{ platform_domain }}/gitlab/<image>.
 #
 # Consumes {env}/harbor/robot-gitlab in Vault (written by roles/harbor gitlab-ci.yml).
-# House pattern = gitlab-rails runner reconciler (no API token), same as gitlab_rbac.
-# The desired-state file carries the token, so it is 0600 and removed after the run.
+# Through GitLab's REST API (roles/gitlab_api), the automation's token from Vault.
 # GitLab is a normal inventory host: the play uses the inventory connection (jump
 # host, user, key) like every other play. It used to add the host at runtime with
 # its own root login, keys and ProxyCommand, which no longer matched the inventory
@@ -29,35 +28,20 @@
         harbor_ci_robot: "{{ vault_secret_result }}"
       no_log: true
 
-    - name: "The pre-container staging path (retired)"
+    - name: "The reconciler program the play used to stage (retired)"
       ansible.builtin.file:
-        path: /opt/harbor-ci-vars.rb
+        path: "{{ item }}"
         state: absent
+      loop:
+        - /opt/harbor-ci-vars.rb
+        - "{{ gitlab_scripts_dir }}/harbor-ci-vars.rb"
 
-    - name: "Stage the CI-variable reconciler on the GitLab host"
-      ansible.builtin.copy:
-        src: files/harbor_ci_vars.rb
-        dest: "{{ gitlab_scripts_dir }}/harbor-ci-vars.rb"   # mounted into the GitLab container
-        owner: root
-        group: root
-        mode: "0644"
-
-    - name: "Reconcile the CI variables (gitlab-rails runner; token via env, not disk)"
+    - name: "Reconcile the CI variables (GitLab API, roles/gitlab_api)"
+      ansible.builtin.include_role:
+        name: gitlab_api
+        tasks_from: instance_variables
       vars:
-        harbor_ci_desired:
-          variables:
-            - { key: "HARBOR_HOST", value: "{{ harbor_ci_robot.host }}", masked: false, protected: false, raw: false }
-            - { key: "HARBOR_ROBOT_USER", value: "{{ harbor_ci_robot.username }}", masked: false, protected: false, raw: true }
-            - { key: "HARBOR_ROBOT_TOKEN", value: "{{ harbor_ci_robot.token }}", masked: true, protected: false, raw: true }  # pragma: allowlist secret
-      ansible.builtin.command:
-        argv: "{{ gitlab_exec + ['-e', 'HARBOR_CI_DESIRED', gitlab_container, 'gitlab-rails', 'runner', gitlab_scripts_dir ~ '/harbor-ci-vars.rb'] }}"
-      environment:
-        HARBOR_CI_DESIRED: "{{ harbor_ci_desired | to_json }}"
-      register: harbor_ci_vars_run
-      changed_when: "'changes=0' not in harbor_ci_vars_run.stdout"
-      failed_when: "'HARBOR_CI_VARS_DONE' not in harbor_ci_vars_run.stdout"
-      no_log: true
-
-    - name: "Result (change lines only — no secret values)"
-      ansible.builtin.debug:
-        msg: "{{ harbor_ci_vars_run.stdout_lines }}"
+        gitlab_api_instance_variables:
+          - { key: "HARBOR_HOST", value: "{{ harbor_ci_robot.host }}", masked: false, protected: false, raw: false }
+          - { key: "HARBOR_ROBOT_USER", value: "{{ harbor_ci_robot.username }}", masked: false, protected: false, raw: true }
+          - { key: "HARBOR_ROBOT_TOKEN", value: "{{ harbor_ci_robot.token }}", masked: true, protected: false, raw: true }  # pragma: allowlist secret

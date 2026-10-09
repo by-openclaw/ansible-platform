@@ -5,6 +5,10 @@
 # task's environment, never argv), then gitlab_container, then the command.
 gitlab_container: gitlab
 gitlab_exec: [docker, exec, -i]
+# GitLab's REST API as the roles and plays reach it: on the GitLab host itself, the container's
+# HTTP backend port (plain HTTP on the loopback; the public name goes through the reverse proxy).
+gitlab_http_backend_port: 80
+gitlab_api_url: "http://localhost:{{ gitlab_http_backend_port }}/api/v4"
 # What callers stage for `gitlab-rails runner` (scripts, desired-state files): a host directory
 # mounted read-only into the container at the same path.
 gitlab_scripts_dir: /opt/gitlab-scripts

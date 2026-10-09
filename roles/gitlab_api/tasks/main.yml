@@ -1,0 +1,132 @@
+---
+# ==============================================================================
+# gitlab_api | the automation's API token — Vault > check > renew by API > (first time) mint.
+# Out: gitlab_api_token ("" under --check when there is none yet). Runs on the GitLab host.
+# ==============================================================================
+- name: "GitLab API | The token Vault holds (if any)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ gitlab_api_vault_path }}"
+    vault_secret_optional: true
+
+- name: "GitLab API | Keep it"
+  ansible.builtin.set_fact:
+    gitlab_api_stored: "{{ vault_secret_result | default({}) }}"
+  no_log: true
+
+- name: "GitLab API | Does GitLab accept it, and until when"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/personal_access_tokens/self"
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_stored.token }}"
+    status_code: [200, 401]
+  register: gitlab_api_self
+  check_mode: false   # read-only GET: must run under --check too (the next task reads its result)
+  no_log: true
+  when: gitlab_api_stored.token | default('') | length > 0
+
+- name: "GitLab API | Usable? days left?"
+  ansible.builtin.set_fact:
+    gitlab_api_usable: >-
+      {{ (gitlab_api_self.status | default(0)) == 200
+         and (gitlab_api_self.json.active | default(false))
+         and not (gitlab_api_self.json.revoked | default(false)) }}
+    gitlab_api_days_left: >-
+      {{ (((gitlab_api_self.json.expires_at | default('1970-01-01', true)) | to_datetime('%Y-%m-%d'))
+          - (now(utc=true).strftime('%Y-%m-%d') | to_datetime('%Y-%m-%d'))).days }}
+
+# --- renewal: through the API, with the token that is about to expire -----------
+- name: "GitLab API | Renew the token through the API (it nears its expiry)"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/personal_access_tokens/self/rotate"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_stored.token }}"
+    body_format: json
+    body: "{{ {'expires_at': '%Y-%m-%d' | strftime((now(utc=true).timestamp() | int) + (gitlab_api_token_days | int) * 86400, utc=true)} }}"
+    status_code: [200, 201]
+  register: gitlab_api_renewed
+  changed_when: true
+  no_log: true
+  when:
+    - gitlab_api_usable | bool
+    - gitlab_api_days_left | int < gitlab_api_token_renew_before_days | int
+    - not ansible_check_mode
+
+# --- the first token: GitLab's console (the one exception, see defaults/main.yml) ----
+# Reached only when Vault holds no token GitLab accepts. The program arrives on standard
+# input and its values in the container's environment (module arguments); the token leaves
+# on standard output only, under no_log — never on a command line.
+- name: "GitLab API | Mint the first token (console — the role's one exception to infra/0010 §3)"
+  community.docker.docker_container_exec:
+    container: "{{ gitlab_container }}"
+    argv: [gitlab-rails, runner, "-"]
+    stdin: |
+      u = User.find_by_username!(ENV.fetch("GITLAB_API_USER"))
+      u.personal_access_tokens.active.where(name: ENV.fetch("GITLAB_API_NAME")).find_each(&:revoke!)
+      t = u.personal_access_tokens.create!(name: ENV.fetch("GITLAB_API_NAME"), scopes: ENV.fetch("GITLAB_API_SCOPES").split(","), expires_at: ENV.fetch("GITLAB_API_DAYS").to_i.days.from_now)
+      puts "TOKEN=#{t.token}"
+      puts "EXPIRES=#{t.expires_at}"
+      puts "ID=#{t.id}"
+    env:
+      GITLAB_API_USER: "{{ gitlab_api_token_user }}"
+      GITLAB_API_NAME: "{{ gitlab_api_token_name }}"
+      GITLAB_API_SCOPES: "{{ gitlab_api_token_scopes | join(',') }}"
+      GITLAB_API_DAYS: "{{ gitlab_api_token_days | string }}"
+  register: gitlab_api_minted
+  no_log: true
+  when:
+    - not (gitlab_api_usable | bool)
+    - not ansible_check_mode
+
+- name: "GitLab API | The new token (renewed or minted)"
+  ansible.builtin.set_fact:
+    gitlab_api_new: >-
+      {{ ({'token': gitlab_api_renewed.json.token, 'expires_at': gitlab_api_renewed.json.expires_at,
+           'id': gitlab_api_renewed.json.id, 'created_via': 'api:personal_access_tokens/self/rotate'}
+          if (gitlab_api_renewed.json.token | default('') | length > 0)
+          else ({'token': gitlab_api_minted.stdout_lines | select('match', '^TOKEN=') | first | regex_replace('^TOKEN=', ''),
+                 'expires_at': gitlab_api_minted.stdout_lines | select('match', '^EXPIRES=') | first | regex_replace('^EXPIRES=', ''),
+                 'id': gitlab_api_minted.stdout_lines | select('match', '^ID=') | first | regex_replace('^ID=', ''),
+                 'created_via': 'console'}
+                if (gitlab_api_minted.stdout_lines | default([]) | select('match', '^TOKEN=') | list | length > 0)
+                else {})) }}
+  no_log: true
+
+- name: "GitLab API | Store it in Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ gitlab_api_vault_path }}"
+    vault_secret_optional: true
+    vault_secret_force_fields: "{{ gitlab_api_new | combine({'user': gitlab_api_token_user, 'name': gitlab_api_token_name, 'scopes': gitlab_api_token_scopes | join(',')}) }}"
+    vault_secret_metadata_put:
+      rotated_at: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(utc=true) }}"
+      rotated_by: ansible-deploy
+      reason: "{{ 'renewed before expiry' if (gitlab_api_renewed.json.token | default('') | length > 0) else 'first token or the stored one was refused' }}"
+  when: gitlab_api_new | length > 0
+
+- name: "GitLab API | Publish the token for the tasks that follow"
+  ansible.builtin.set_fact:
+    gitlab_api_token: "{{ gitlab_api_new.token | default(gitlab_api_stored.token if (gitlab_api_usable | bool) else '') }}"
+  no_log: true
+
+- name: "GitLab API | GitLab accepts the published token"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/personal_access_tokens/self"
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+    status_code: [200]
+  register: gitlab_api_final
+  check_mode: false   # read-only
+  no_log: true
+  when: gitlab_api_token | length > 0
+
+- name: "GitLab API | Report (no token shown)"
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'no token yet — a real run mints the first one' if (gitlab_api_token | length == 0)
+         else ('token ' ~ ('minted' if (gitlab_api_new.created_via | default('')) is match('^console') else ('renewed through the API' if gitlab_api_new | length > 0 else 'reused'))
+               ~ ': name ' ~ gitlab_api_final.json.name ~ ', scopes ' ~ gitlab_api_final.json.scopes | join('+')
+               ~ ', expires ' ~ gitlab_api_final.json.expires_at) }}
