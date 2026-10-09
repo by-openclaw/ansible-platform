@@ -30,6 +30,25 @@
   loop: [service, timer]
   register: host_job_units
 
+# The companion unit that tells the job the day of its run (host_job_stamp); gone where a job
+# does not ask for it.
+- name: "host_job | Date of the run — {{ host_job_name }}"
+  ansible.builtin.template:
+    src: stamp.service.j2
+    dest: "/etc/systemd/system/{{ host_job_name }}-stamp.service"
+    owner: root
+    group: root
+    mode: "0644"
+  register: host_job_stamp_unit
+  when: host_job_stamp | bool
+
+- name: "host_job | No date unit where the job asks for none — {{ host_job_name }}"
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ host_job_name }}-stamp.service"
+    state: absent
+  register: host_job_stamp_gone
+  when: not (host_job_stamp | bool)
+
 - name: "host_job | Retention (systemd-tmpfiles) — {{ host_job_name }}"
   ansible.builtin.template:
     src: tmpfiles.conf.j2
@@ -42,7 +61,9 @@
 - name: "host_job | Reload systemd"
   ansible.builtin.systemd_service:
     daemon_reload: true
-  when: (host_job_units is changed) or (host_job_old_dropin is changed)
+  when: >-
+    (host_job_units is changed) or (host_job_old_dropin is changed)
+    or (host_job_stamp_unit is changed) or (host_job_stamp_gone is changed)
 
 - name: "host_job | Timer enabled + running — {{ host_job_name }}"
   ansible.builtin.systemd_service:

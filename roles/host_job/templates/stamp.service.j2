@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+# Writes what the job needs to know about the day of its run — the one thing systemd has no
+# specifier for — as an environment file the job reads. One plain command, no shell.
+[Unit]
+Description=Date of the run for {{ host_job_description or host_job_name }}
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/date +{{ host_job_stamp_format | replace('%', '%%') }}
+StandardOutput=truncate:{{ host_job_stamp_file }}

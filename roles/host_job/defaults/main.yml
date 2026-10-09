@@ -1,9 +1,12 @@
 ---
 # ==============================================================================
 # Role: host_job — ONE way to run a scheduled job on a host: a oneshot systemd
-# service + timer rendered by Ansible. No script is ever deployed: each step is a
-# single ExecStart line (they run in order); a one-line `sh -c '…'` only where a
-# pipe, redirect or date-stamped name is unavoidable (USER rule, 2026-09-27).
+# service + timer rendered by Ansible. No script is ever deployed and no shell is
+# handed a program (infra/0010 §4): each step is one ExecStart line — a command and its
+# arguments — and they run in order. What a shell used to be asked for is a setting here:
+# today's date (host_job_stamp), a value from a file (host_job_environment_file and
+# `${NAME}` in an argument), where the output goes (host_job_stdout), whether the run
+# happens at all (host_job_exec_condition), the mode of what it writes (host_job_umask).
 # Retention is systemd-tmpfiles (age), never `find -delete`. A failed run reaches
 # the alert mail through OnFailure= (roles/systemd_failure_alert).
 # ==============================================================================
@@ -30,6 +33,14 @@ host_job_environment: {}             # plain (non-secret) Environment= pairs: {N
 host_job_timeout: "1h"
 host_job_on_failure: true            # OnFailure=systemd-failure-alert@%n.service (installs the notifier)
 host_job_runtime_directory: ""       # private /run/<name> for temp files, removed after each run
+# The day of the run, without a shell: a companion unit (<name>-stamp.service) writes it just
+# before each run and the job reads it as its environment, so `${HOST_JOB_DATE}` (YYYY-MM-DD)
+# and `${HOST_JOB_DAY}` (DD) can be used in any ExecStart argument.
+host_job_stamp: false
+host_job_stamp_format: "HOST_JOB_DATE=%F%nHOST_JOB_DAY=%d"   # `date` format; %n = a new line
+host_job_stamp_file: "/run/{{ host_job_name }}.stamp"
+host_job_stdout: ""                  # e.g. "truncate:/var/backups/x/dump.sql" — the commands' output, instead of the journal
+host_job_umask: ""                   # e.g. "0077" for a job whose files are private
 host_job_requires_mounts_for: ""     # e.g. an NFS backup target
 # systemd-tmpfiles age rules: [{path: /var/backups/x, age: 7d}] → files older are removed
 host_job_retention: []
