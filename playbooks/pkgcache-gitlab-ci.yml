@@ -3,7 +3,7 @@
 # PyPI cache for CI. Seeds the GitLab INSTANCE-level CI/CD variable PIP_INDEX_URL so
 # every pipeline (via the shared runners) installs Python packages through the
 # platform's cache (roles/pkgcache, devpi) instead of pypi.org directly.
-# Same reconciler as the npm registry and Harbor (files/ci_vars.rb): additive, idempotent.
+# Same reconcile as the npm registry and Harbor (roles/gitlab_api, GitLab's REST API): additive, idempotent.
 #   Run: ansible-playbook -i inventories/prod playbooks/pkgcache-gitlab-ci.yml
 # ==============================================================================
 - name: "Seed the PyPI cache CI variable into GitLab"
@@ -13,27 +13,15 @@
   vars_files:
     - ../roles/pkgcache/defaults/main.yml   # pkgcache_pypi_index_url
   tasks:
-    - name: "Stage the CI-variable reconciler"
-      ansible.builtin.copy:
-        src: files/ci_vars.rb
-        dest: "{{ gitlab_scripts_dir }}/pkgcache-ci-vars.rb"   # mounted into the GitLab container
-        owner: root
-        group: root
-        mode: "0644"
+    - name: "The reconciler program the play used to stage (retired)"
+      ansible.builtin.file:
+        path: "{{ gitlab_scripts_dir }}/pkgcache-ci-vars.rb"
+        state: absent
 
-    - name: "Reconcile the PyPI CI variable (gitlab-rails runner; desired via env)"
+    - name: "Reconcile the PyPI CI variable (GitLab API, roles/gitlab_api)"
+      ansible.builtin.include_role:
+        name: gitlab_api
+        tasks_from: instance_variables
       vars:
-        pkgcache_ci_desired:
-          variables:
-            - {key: "PIP_INDEX_URL", value: "{{ pkgcache_pypi_index_url }}", masked: false, protected: false, raw: true}
-      ansible.builtin.command:
-        argv: "{{ gitlab_exec + ['-e', 'CI_VARS_DESIRED', gitlab_container, 'gitlab-rails', 'runner', gitlab_scripts_dir ~ '/pkgcache-ci-vars.rb'] }}"
-      environment:
-        CI_VARS_DESIRED: "{{ pkgcache_ci_desired | to_json }}"
-      register: pkgcache_ci_vars_run
-      changed_when: "'changes=0' not in pkgcache_ci_vars_run.stdout"
-      failed_when: "'CI_VARS_DONE' not in pkgcache_ci_vars_run.stdout"
-
-    - name: "Result"
-      ansible.builtin.debug:
-        msg: "{{ pkgcache_ci_vars_run.stdout_lines | select('match', '^(var|changes)') | list }}"
+        gitlab_api_instance_variables:
+          - {key: "PIP_INDEX_URL", value: "{{ pkgcache_pypi_index_url }}", masked: false, protected: false, raw: true}

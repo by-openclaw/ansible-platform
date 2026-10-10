@@ -49,7 +49,8 @@ gitlab_rbac_settings:
   # then `root` with the password from Vault `gitlab/secrets` at `/users/sign_in?auto_sign_in=false`.
   password_authentication_enabled_for_web: false
 
-# --- Instance admins = the people in the GitLab admin group (people.yml) — root always exempt
+# --- Instance admins = the people in the GitLab admin group (people.yml) — root always exempt;
+# the automation account of roles/gitlab_api stays an administrator too (gitlab_rbac_admin_accounts)
 # Nobody is spelled out here: platform_people is the one place a person is written down
 # (identity/0004); the group names come from platform_service_groups (one source).
 gitlab_rbac_admin_group: "{{ platform_service_groups.gitlab.admin }}"     # gitlab-admins
@@ -58,6 +59,10 @@ gitlab_rbac_people_active: "{{ platform_people | selectattr('state', 'equalto', 
 gitlab_rbac_instance_admins: >-
   {{ gitlab_rbac_people_active | selectattr('groups', 'contains', gitlab_rbac_admin_group)
      | map(attribute='username') | list }}
+# Who stays an instance administrator: those people and the automation account. The account is
+# NOT in gitlab_rbac_instance_admins on purpose: that list also makes its members Owners of the
+# group tree (gitlab_rbac_members below), which is for people.
+gitlab_rbac_admin_accounts: "{{ gitlab_rbac_instance_admins + [gitlab_automation_user] }}"
 gitlab_rbac_enforce_admin_exact: true
 
 # --- Group tree --------------------------------------------------------------

@@ -6,7 +6,7 @@
 #   NPM_CONFIG_REGISTRY  https://npm.<domain>/
 #   NPM_AUTH             base64(user:password) of the svc account (masked)
 # Creds come from Vault prod/verdaccio/registry; the token never touches disk
-# (house pattern: gitlab-rails reconciler, desired state via env).
+# (through GitLab's REST API, roles/gitlab_api: the value travels in the module call).
 #   ansible-playbook -i inventories/prod playbooks/verdaccio-gitlab-ci.yml
 # ==============================================================================
 - name: "Seed npm registry CI variables into GitLab"
@@ -22,38 +22,30 @@
       vars:
         vault_secret_path: "{{ platform_env }}/verdaccio/registry"
 
-    - name: "The pre-container staging path (retired)"
-      ansible.builtin.file:
-        path: /opt/gitlab-ci-vars.rb
-        state: absent
-
-    - name: "Stage the CI-variable reconciler"
-      ansible.builtin.copy:
-        src: files/ci_vars.rb
-        dest: "{{ gitlab_scripts_dir }}/verdaccio-ci-vars.rb"   # mounted into the GitLab container
-        owner: root
-        group: root
-        mode: "0644"
-
-    - name: "Reconcile the npm CI variables (gitlab-rails runner; desired via env)"
-      vars:
-        verdaccio_ci_desired:
-          variables:
-            - { key: "NPM_CONFIG_REGISTRY", value: "{{ verdaccio_ci_registry }}", masked: false, protected: false, raw: true }
-            - key: "NPM_AUTH"   # pragma: allowlist secret
-              value: "{{ (vault_secret_result.username ~ ':' ~ vault_secret_result.password) | b64encode }}"
-              masked: true
-              protected: false
-              raw: true
-      ansible.builtin.command:
-        argv: "{{ gitlab_exec + ['-e', 'CI_VARS_DESIRED', gitlab_container, 'gitlab-rails', 'runner', gitlab_scripts_dir ~ '/verdaccio-ci-vars.rb'] }}"
-      environment:
-        CI_VARS_DESIRED: "{{ verdaccio_ci_desired | to_json }}"
-      register: verdaccio_ci_vars_run
-      changed_when: "'changes=0' not in verdaccio_ci_vars_run.stdout"
-      failed_when: "'CI_VARS_DONE' not in verdaccio_ci_vars_run.stdout"
+    # Bound under its own name: the role below reads another Vault document (its API token),
+    # and vault_secret_result always holds the LAST document read.
+    - name: "Bind the registry account"
+      ansible.builtin.set_fact:
+        verdaccio_ci_account: "{{ vault_secret_result }}"
       no_log: true
 
-    - name: "Result"
-      ansible.builtin.debug:
-        msg: "{{ verdaccio_ci_vars_run.stdout_lines | select('match', '^(var|changes)') | list }}"
+    - name: "The reconciler program the play used to stage (retired)"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /opt/gitlab-ci-vars.rb
+        - "{{ gitlab_scripts_dir }}/verdaccio-ci-vars.rb"
+
+    - name: "Reconcile the npm CI variables (GitLab API, roles/gitlab_api)"
+      ansible.builtin.include_role:
+        name: gitlab_api
+        tasks_from: instance_variables
+      vars:
+        gitlab_api_instance_variables:
+          - { key: "NPM_CONFIG_REGISTRY", value: "{{ verdaccio_ci_registry }}", masked: false, protected: false, raw: true }
+          - key: "NPM_AUTH"   # pragma: allowlist secret
+            value: "{{ (verdaccio_ci_account.username ~ ':' ~ verdaccio_ci_account.password) | b64encode }}"
+            masked: true
+            protected: false
+            raw: true
