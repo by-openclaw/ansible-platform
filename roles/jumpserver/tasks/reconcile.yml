@@ -43,9 +43,29 @@
          if (jumpserver_mail.smtp_host | default('')) | length > 0 else {} }}
   no_log: true
 
+# The product's built-in local administrator: break-glass for the bastion itself (sign-in when
+# the identity provider is down). Its password is generated in Vault and set by the reconcile.
+- name: "JumpServer reconcile | The built-in administrator's password (Vault, generated once)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ jumpserver_builtin_admin_vault_path }}"
+    vault_secret_init:
+      username: "{{ jumpserver_builtin_admin_user }}"
+      password: "{{ lookup('community.general.random_string', length=jumpserver_builtin_admin_password_length, special=false) }}"  # pragma: allowlist secret
+      _note: "JumpServer built-in local administrator (roles/jumpserver) — break-glass for the bastion; people sign in through the identity provider"
+
+- name: "JumpServer reconcile | Keep it for the reconcile config (no_log)"
+  ansible.builtin.set_fact:
+    jumpserver_builtin_admin_cfg:
+      username: "{{ jumpserver_builtin_admin_user }}"
+      password: "{{ vault_secret_result.password | default('') }}"
+  no_log: true
+
 - name: "JumpServer reconcile | Build desired-state config"
   ansible.builtin.set_fact:
     jumpserver_reconcile_cfg:
+      builtin_admin: "{{ jumpserver_builtin_admin_cfg }}"
       bastion_admin: "{{ jumpserver_bastion_admin }}"
       bastion_group: "{{ jumpserver_bastion_group }}"
       permission_name: "{{ jumpserver_permission_name }}"

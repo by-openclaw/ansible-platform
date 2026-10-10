@@ -5,7 +5,8 @@
 # Reads desired state from /tmp/jms_reconcile.json and the SSH key(s) from files
 # it references. Prints a summary; never prints secrets. Safe to re-run.
 #
-# Does: (1) bastion admin user -> System Admin + bastion group,
+# Does: (0) the built-in administrator's password = the one in Vault,
+#       (1) bastion admin user -> System Admin + bastion group,
 #       (2) register assets into nodes, (3) vault the SSH key as each asset's
 #       account, (4) grant the bastion group all-assets, (5) replay storage -> S3.
 # ==============================================================================
@@ -68,6 +69,22 @@ def load_key(path, passphrase=""):
         serialization.NoEncryption(),
     ).decode()
 
+
+# --- (0) the built-in administrator never keeps the product's initial password --
+# The product creates a local administrator with a documented initial password. Nobody signs
+# in with it here (people come through the identity provider), so nothing ever changed it:
+# until 2026-10-10 it was still accepted. Its password is the one Vault holds — set whenever
+# the stored one differs, so a later change made in the UI does not survive a run either.
+builtin = CFG.get("builtin_admin") or {}
+if builtin.get("password"):
+    b = User.objects.filter(username=builtin["username"], source="local").first()
+    if b is None:
+        summary.append(f"builtin_admin={builtin['username']} absent")
+    elif b.check_password(builtin["password"]):
+        summary.append(f"builtin_admin={b.username} password updated=False")
+    else:
+        b.reset_password(builtin["password"])
+        summary.append(f"builtin_admin={b.username} password updated=True")
 
 # --- (1) bastion admin user -> System Admin + bastion group ------------------
 admin = CFG["bastion_admin"]
