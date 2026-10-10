@@ -61,7 +61,12 @@ callbacks_enabled   = timer, profile_tasks
 become        = True
 become_method = sudo
 become_user   = root
+
+[vars_host_group_vars]
+stage = inventory   ; group_vars/host_vars read once, with the inventory
 ```
+
+> Variables live in the inventory only (`inventories/<env>/group_vars`, `host_vars`): a `group_vars/` or `host_vars/` directory next to a playbook is not read, and the `vars-in-inventory-only` pre-commit hook refuses one.
 
 > For OPNsense targets: `become` is not used — all operations go through the OPNsense REST/MVC API via the `by_systems.opnsense` modules (token auth, not SSH sudo). The inventory sets `ansible_connection: local`, `ansible_become: false`, `ansible_python_interpreter: /usr/bin/python3` on the FW host.
 

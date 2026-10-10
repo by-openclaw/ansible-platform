@@ -54,6 +54,14 @@ repos:
         additional_dependencies: [pyyaml]
         pass_filenames: false
         files: ^(roles|playbooks)/.*|^scripts/(check_no_embedded_scripts\.py|embedded_scripts_baseline\.json)$
+      # ansible.cfg reads group_vars/host_vars once, with the inventory: a directory next to a
+      # playbook would be silently ignored.
+      - id: vars-in-inventory-only
+        name: group_vars/host_vars live in the inventory only
+        entry: "group_vars/host_vars outside inventories/ are never loaded (ansible.cfg: [vars_host_group_vars] stage = inventory) - move the variables into the inventory"
+        language: fail
+        files: (^|/)(group_vars|host_vars)/
+        exclude: ^inventories/
 
   # General hygiene
   - repo: https://github.com/pre-commit/pre-commit-hooks

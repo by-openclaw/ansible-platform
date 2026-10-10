@@ -93,6 +93,37 @@ ciso_assistant_oidc_vault_path: "{{ platform_env }}/{{ ciso_assistant_service }}
 # procedure, so it must not be the one service that locks its own administrators out when the
 # IdP is down. Set force_sso true only once the break-glass path is proven elsewhere.
 ciso_assistant_oidc_force: false
+# What the "sso" row must hold (tasks/sso.yml merges it into the application's own row). The
+# keys are the application's: iam/sso/models.py. Just-in-time provisioning: Authentik decides WHO
+# may sign in (the application is restricted to the access group), so the account is created at
+# the first sign-in instead of being created by hand in a second place.
+ciso_assistant_sso_desired:
+  is_enabled: true
+  force_sso: "{{ ciso_assistant_oidc_force | bool }}"
+  slo_enabled: false
+  provider: "openid_connect"
+  provider_id: "{{ ciso_assistant_oidc_provider_id }}"
+  name: "{{ ciso_assistant_oidc_display_name }}"
+  client_id: "{{ ciso_assistant_oidc.client_id }}"
+  secret: "{{ ciso_assistant_oidc.client_secret }}"  # pragma: allowlist secret
+  jit_provisioning_enabled: true
+  default_user_groups: []
+  settings:
+    server_url: "{{ ciso_assistant_oidc_issuer }}"
+    token_auth_method: "client_secret_post"
+    oauth_pkce_enabled: true
+    attribute_mapping:
+      uid: ["sub"]
+      email: ["email"]
+      email_verified: ["email_verified"]
+      groups: ["groups"]
+ciso_assistant_sso_info_path: "/api/settings/sso/info/"   # what the sign-in page reads
+ciso_assistant_idp_group_source: "sso"                    # iam.models.IdPGroup.Source.SSO
+# The tool's database is on the shared PostgreSQL: statements that write run on the cluster's
+# leader (tasks/sso.yml asks roles/postgres_db which member that is).
+ciso_assistant_db_pg_container: "postgres"
+ciso_assistant_db_pg_delegate: "{{ platform_pg_leader | default(platform_pg_members | first) }}"
+ciso_assistant_db_psql: [psql, -U, postgres, -d, "{{ ciso_assistant_db_name }}", -X, -At, -v, ON_ERROR_STOP=1, -v, VERBOSITY=terse]
 ciso_assistant_access_group: "{{ ciso_assistant_service }}-users"
 ciso_assistant_admin_group: "{{ ciso_assistant_service }}-admins"
 # Identity-provider group -> the tool's own group. The tool resolves a person's rights through
