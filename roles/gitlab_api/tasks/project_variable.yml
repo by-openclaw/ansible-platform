@@ -1,0 +1,90 @@
+---
+# ==============================================================================
+# gitlab_api | one CI/CD variable of one project: created when missing, converged when its
+# value / masked / protected / raw differ.
+# In: gitlab_api_project (full path, e.g. group/sub/project) and gitlab_api_project_variable
+#     {key, value, masked, protected, raw}.
+# Runs on the GitLab host: a caller on another host includes it with
+#     apply: {delegate_to: <the GitLab host>}
+# The value travels in the body of the module call (no_log).
+# ==============================================================================
+- name: "GitLab project variable | The API token"
+  ansible.builtin.include_tasks: main.yml
+  when: gitlab_api_token is not defined
+
+- name: "GitLab project variable | With a token"
+  when: gitlab_api_token | default('') | length > 0
+  vars:
+    gitlab_api_project_url: "{{ gitlab_api_url }}/projects/{{ gitlab_api_project | replace('/', '%2F') }}/variables"
+    gitlab_api_pv:
+      key: "{{ gitlab_api_project_variable.key }}"
+      value: "{{ gitlab_api_project_variable.value | string }}"
+      masked: "{{ (gitlab_api_project_variable.masked | default(false) | bool) and ((gitlab_api_project_variable.value | string) is match(gitlab_api_maskable)) }}"
+      protected: "{{ gitlab_api_project_variable.protected | default(false) | bool }}"
+      raw: "{{ gitlab_api_project_variable.raw | default(false) | bool }}"
+  block:
+    - name: "GitLab project variable | As GitLab has it"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_project_url }}/{{ gitlab_api_pv.key | urlencode }}"
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+        status_code: [200, 404]
+      register: gitlab_api_pv_live
+      check_mode: false   # read-only GET: must run under --check too (the next tasks read its result)
+      no_log: true
+
+    # 404 is also what GitLab answers for a project that does not exist: say which.
+    - name: "GitLab project variable | The project exists"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/projects/{{ gitlab_api_project | replace('/', '%2F') }}"
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+        status_code: [200]
+      check_mode: false   # read-only
+      no_log: true
+      when: gitlab_api_pv_live.status == 404
+
+    - name: "GitLab project variable | Create it"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_project_url }}"
+        method: POST
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+        body_format: json
+        body: "{{ {'key': gitlab_api_pv.key, 'value': gitlab_api_pv.value, 'masked': gitlab_api_pv.masked | bool, 'protected': gitlab_api_pv.protected | bool, 'raw': gitlab_api_pv.raw | bool, 'variable_type': 'env_var'} }}"
+        status_code: [201]
+      register: gitlab_api_pv_created
+      changed_when: true
+      no_log: true
+      when: gitlab_api_pv_live.status == 404
+
+    - name: "GitLab project variable | Converge it"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_project_url }}/{{ gitlab_api_pv.key | urlencode }}"
+        method: PUT
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+        body_format: json
+        body: "{{ {'value': gitlab_api_pv.value, 'masked': gitlab_api_pv.masked | bool, 'protected': gitlab_api_pv.protected | bool, 'raw': gitlab_api_pv.raw | bool} }}"
+        status_code: [200]
+      register: gitlab_api_pv_updated
+      changed_when: true
+      no_log: true
+      when:
+        - gitlab_api_pv_live.status == 200
+        - (gitlab_api_pv_live.json.value | string) != gitlab_api_pv.value
+          or (gitlab_api_pv_live.json.masked | bool) != (gitlab_api_pv.masked | bool)
+          or (gitlab_api_pv_live.json.protected | bool) != (gitlab_api_pv.protected | bool)
+          or (gitlab_api_pv_live.json.raw | default(false) | bool) != (gitlab_api_pv.raw | bool)
+
+    # The name only — never the value.
+    - name: "GitLab project variable | Result"
+      ansible.builtin.debug:
+        msg: >-
+          {{ gitlab_api_pv.key }} on {{ gitlab_api_project }}:
+          {{ 'created' if gitlab_api_pv_created is changed else ('converged' if gitlab_api_pv_updated is changed else ('would be created' if gitlab_api_pv_live.status == 404 else 'as wanted (or to converge in a real run)' if ansible_check_mode else 'as wanted')) }}
+
+- name: "GitLab project variable | Without a token (dry run before the first one exists)"
+  ansible.builtin.debug:
+    msg: "no API token yet: a real run mints it, then sets {{ gitlab_api_project_variable.key }} on {{ gitlab_api_project }}"
+  when: gitlab_api_token | default('') | length == 0
