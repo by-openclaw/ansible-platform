@@ -1,0 +1,144 @@
+---
+# SSO for CISO Assistant: Authentik bound as the identity provider, accounts created at the first
+# sign-in, rights from GROUP membership only.
+#
+# The tool keeps all of it in its own tables (database `{{ ciso_assistant_db_name }}` on the shared
+# PostgreSQL), not in its environment or a file:
+#   - global_settings, row "sso": provider, client, secret, endpoints;
+#   - global_settings, row "feature-flags": `jit_provisioning` — the setting in the "sso" row is
+#     inert without it (iam/adapter.py: jit_provisioning_active is the AND of the two), and a
+#     person the identity provider authorised still gets "user not found";
+#   - iam_idpgroup + its link to iam_usergroup: an identity-provider group bound to one of the
+#     tool's own groups — the account created at sign-in has no rights of its own.
+# One transaction of plain SQL writes them, on the cluster's leader, only where a value differs.
+- name: "CISO Assistant | Read the OIDC client credentials from Vault"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ ciso_assistant_oidc_vault_path }}"
+    vault_secret_init: {}
+
+- name: "CISO Assistant | Bind the OIDC client credentials"
+  ansible.builtin.set_fact:
+    ciso_assistant_oidc: "{{ vault_secret_result }}"
+    # A dry run executes the same statements and rolls them back: it reports what a run would write.
+    ciso_assistant_sso_transaction_end: "{{ 'ROLLBACK' if ansible_check_mode else 'COMMIT' }}"
+  no_log: true
+
+- name: "CISO Assistant | The IdP minted this app's credentials"
+  ansible.builtin.assert:
+    that:
+      - ciso_assistant_oidc.client_id | default('') | length > 0
+      - ciso_assistant_oidc.client_secret | default('') | length > 0
+    fail_msg: >-
+      No OIDC client at {{ ciso_assistant_oidc_vault_path }} — run playbooks/authentik.yml first
+      (the app is declared in authentik_oidc_apps with slug {{ ciso_assistant_oidc_slug }}).
+    quiet: true
+
+# The application creates the "sso" row itself, with its own defaults, the first time anything
+# reads the SSO settings (iam/sso/models.py) — the sign-in page does, through this address. Those
+# defaults hold the blocks the sign-in page reads unconditionally (`sp`), so the row is always the
+# application's, and the statements below only merge into it.
+# A dry run before the first installation finds no application: nothing to compare, the
+# statements are skipped.
+- name: "CISO Assistant | The application has its SSO settings row (created at the first read)"
+  ansible.builtin.uri:
+    url: "http://{{ ciso_assistant_listen_ip }}:{{ ciso_assistant_backend_port }}{{ ciso_assistant_sso_info_path }}"
+    status_code: [200]
+  register: ciso_assistant_sso_seed
+  check_mode: false   # a read
+  failed_when:
+    - not ansible_check_mode
+    - ciso_assistant_sso_seed.status | default(0) != 200
+
+- name: "CISO Assistant | Which PostgreSQL member leads"
+  ansible.builtin.include_role:
+    name: postgres_db
+    tasks_from: leader
+  when:
+    - platform_pg_leader is not defined
+    - ciso_assistant_sso_seed.status | default(0) == 200
+
+# Values reach psql on standard input, base64-encoded (`\set`), never on its command line; the
+# server is told not to log these statements, whatever its logging settings, because the first
+# one carries the client secret.
+# Merge rules, the same as the application's own form: the top-level keys are replaced one by
+# one, `settings` is merged one level down — replacing it whole removes the `sp` block and takes
+# the sign-in page down.
+- name: "CISO Assistant | Authentik bound, JIT provisioning on, IdP group → tool group"
+  community.docker.docker_container_exec:
+    container: "{{ ciso_assistant_db_pg_container }}"
+    argv: "{{ ciso_assistant_db_psql }}"
+    stdin: |  # pragma: allowlist secret
+      \set p_sso '{{ ciso_assistant_sso_desired | to_json | b64encode }}'
+      \set p_map '{{ ciso_assistant_group_map | to_json | b64encode }}'
+      \set p_source '{{ ciso_assistant_idp_group_source }}'
+      BEGIN;
+      SET LOCAL log_statement = 'none';
+      SET LOCAL log_min_error_statement = 'panic';
+      SET LOCAL log_min_duration_statement = -1;
+      CREATE TEMP TABLE want_pairs ON COMMIT DROP AS
+      SELECT p->>'idp' AS idp, p->>'app' AS app
+        FROM jsonb_array_elements(convert_from(decode(:'p_map', 'base64'), 'UTF8')::jsonb) p;
+      INSERT INTO global_settings_globalsettings (id, created_at, updated_at, name, value, folder_id)
+      SELECT gen_random_uuid(), now(), now(), 'feature-flags', '{}'::jsonb, s.folder_id
+        FROM global_settings_globalsettings s WHERE s.name = 'sso'
+          ON CONFLICT (name) DO NOTHING;
+      UPDATE global_settings_globalsettings
+         SET value = value || '{"jit_provisioning": true}'::jsonb, updated_at = now()
+       WHERE name = 'feature-flags' AND value->'jit_provisioning' IS DISTINCT FROM 'true'::jsonb;
+      WITH want AS (SELECT convert_from(decode(:'p_sso', 'base64'), 'UTF8')::jsonb AS v),
+           merged AS (
+             SELECT s.id,
+                    (s.value || (w.v - 'settings'))
+                    || jsonb_build_object('settings', coalesce(s.value->'settings', '{}'::jsonb) || (w.v->'settings')) AS v
+               FROM global_settings_globalsettings s, want w
+              WHERE s.name = 'sso')
+      UPDATE global_settings_globalsettings s
+         SET value = m.v, updated_at = now()
+        FROM merged m
+       WHERE s.id = m.id AND s.value IS DISTINCT FROM m.v;
+      INSERT INTO iam_idpgroup (id, created_at, updated_at, name, folder_id, source)
+      SELECT gen_random_uuid(), now(), now(), d.idp, s.folder_id, :'p_source'
+        FROM (SELECT DISTINCT idp FROM want_pairs) d, global_settings_globalsettings s
+       WHERE s.name = 'sso'
+          ON CONFLICT (name) DO NOTHING;
+      UPDATE iam_idpgroup
+         SET source = :'p_source', updated_at = now()
+       WHERE name IN (SELECT idp FROM want_pairs) AND source IS DISTINCT FROM :'p_source';
+      INSERT INTO iam_idpgroup_user_groups (idpgroup_id, usergroup_id)
+      SELECT i.id, g.id
+        FROM want_pairs p
+        JOIN iam_idpgroup i ON i.name = p.idp
+        JOIN iam_usergroup g ON g.id = (SELECT u.id FROM iam_usergroup u WHERE u.name = p.app ORDER BY u.id LIMIT 1)
+       WHERE NOT EXISTS (SELECT 1 FROM iam_idpgroup_user_groups b
+                          WHERE b.idpgroup_id = i.id AND b.usergroup_id = g.id);
+      SELECT 'NO-SSO-ROW' WHERE NOT EXISTS (SELECT 1 FROM global_settings_globalsettings WHERE name = 'sso');
+      SELECT 'NO-SP-BLOCK' FROM global_settings_globalsettings WHERE name = 'sso' AND NOT (value->'settings' ? 'sp');
+      SELECT 'NO-TOOL-GROUP ' || p.app FROM want_pairs p
+       WHERE NOT EXISTS (SELECT 1 FROM iam_usergroup u WHERE u.name = p.app);
+      {{ ciso_assistant_sso_transaction_end }};
+  delegate_to: "{{ ciso_assistant_db_pg_delegate }}"
+  register: ciso_assistant_sso
+  check_mode: false   # runs in a dry run too: the transaction is then rolled back
+  # psql prints one line per statement: "UPDATE n", "INSERT 0 n".
+  changed_when: ciso_assistant_sso.stdout_lines | default([]) | select('match', '^(UPDATE|INSERT 0) [1-9]') | list | length > 0
+  failed_when: false   # judged by the next task, which can say why (this one is not logged)
+  no_log: true
+  when: ciso_assistant_sso_seed.status | default(0) == 200
+
+# NO-SSO-ROW: the application did not create its row. NO-SP-BLOCK: the row lost the application's
+# defaults (an old wholesale write) — remove the row, the application creates it again.
+# NO-TOOL-GROUP: ciso_assistant_group_map names a group the tool does not have.
+- name: "CISO Assistant | The statements ran, and found what they need"
+  ansible.builtin.assert:
+    that:
+      - ciso_assistant_sso.rc | default(1) == 0
+      - ciso_assistant_sso.stdout_lines | select('match', '^NO-') | list | length == 0
+    fail_msg: >-
+      SSO binding refused: {{ ciso_assistant_sso.stdout_lines | default([]) | select('match', '^NO-') | list }}
+      {{ ciso_assistant_sso.stderr_lines | default([]) | select('match', '^(psql:|ERROR|FATAL)') | list }}
+    success_msg: >-
+      {{ 'dry run, rolled back — a run would write' if ansible_check_mode else 'written' }}:
+      {{ ciso_assistant_sso.stdout_lines | default([]) | select('match', '^(UPDATE|INSERT 0) [1-9]') | list | default([], true) }}
+  when: ciso_assistant_sso_seed.status | default(0) == 200
