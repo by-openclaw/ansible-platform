@@ -125,20 +125,26 @@ jumpserver_asset_key_passphrase_vault_path: "{{ platform_env }}/break-glass/ssh-
 # address the inventory already holds — a second copy free to drift, and a new service was
 # only reachable through the bastion if someone remembered to add a row here.
 #
-# Now a service registers itself by joining a group. Adding one tomorrow is one line in the
-# map below (or nothing at all, if its group is already listed); removing it is deleting the
-# host from the inventory. The node names are the JumpServer tree, which groups by function
-# rather than by network zone — that grouping is a curation decision, so it stays declared.
+# Now a service registers itself by being in the inventory: EVERY inventory host is an asset
+# (docs/service-access.md: the bastion reaches all hosts), the bastion itself excepted. The map
+# below only decides WHERE a host shows in the JumpServer tree, which groups by function rather
+# than by network zone — a curation decision, so it stays declared. A host whose groups the map
+# does not name is still registered, under jumpserver_asset_default_node: until 2026-10-10 such
+# a host was silently left out (15 of 39: the cluster replicas and eight newer services).
 jumpserver_asset_groups:
-  Databases:  [postgresql, redis, pgadmin]
-  Identity:   [authentik, vault, vaultwarden]
-  Storage:    [seaweedfs, pbs, nextcloud, collab]
-  Networking: [traefik, netbird, adguard, opnsense]
-  DevOps:     [gitlab, gitlab_runner, diagrams, portainer]
-  Monitoring: [wazuh, monitoring, crowdsec]
-  Mail:       [mailcow]
-  IPAM:       [netbox]
-  Hypervisor: [proxmox_nodes]
+  Databases:     [postgresql, postgresql_replicas, pg_endpoint, redis, redis_replicas, pgadmin]
+  Identity:      [authentik, authentik_replicas, vault, vault_replicas, vaultwarden, step_ca]
+  Storage:       [seaweedfs, pbs, nextcloud, collab]
+  Networking:    [traefik, netbird, adguard, opnsense]
+  DevOps:        [gitlab, gitlab_runner, harbor, verdaccio, pkgcache, k3s, diagrams, portainer]
+  Monitoring:    [wazuh, monitoring, crowdsec]
+  Mail:          [mailcow]
+  Collaboration: [jitsi]
+  Compliance:    [ciso_assistant]
+  IPAM:          [netbox]
+  Platform:      [warden]
+  Hypervisor:    [proxmox_nodes]
+jumpserver_asset_default_node: "Other"
 
 # The bastion does not register itself.
 jumpserver_asset_exclude: ["{{ inventory_hostname }}"]
@@ -146,18 +152,29 @@ jumpserver_asset_exclude: ["{{ inventory_hostname }}"]
 # OPNsense blocks root SSH by design and the Proxmox node carves root out to OOB/FAB only;
 # from the bastion both are reached as the break-glass admin, same key, same port as every
 # other host. Shell access here is audited — firewall config stays API-managed.
+# One entry per host: the first node of the map that names one of its groups, else the default.
 jumpserver_assets: >-
   {%- set out = [] -%}
+  {%- set seen = [] -%}
   {%- for node, grps in jumpserver_asset_groups.items() -%}
     {%- for g in grps -%}
       {%- for h in groups.get(g, []) -%}
-        {%- if h not in jumpserver_asset_exclude -%}
+        {%- if h not in jumpserver_asset_exclude and h not in seen -%}
+          {%- set _ = seen.append(h) -%}
           {%- set _ = out.append({'name': h,
                                   'address': hostvars[h].ansible_host,
                                   'node': node}) -%}
         {%- endif -%}
       {%- endfor -%}
     {%- endfor -%}
+  {%- endfor -%}
+  {%- for h in groups['all'] | sort -%}
+    {%- if h not in jumpserver_asset_exclude and h not in seen -%}
+      {%- set _ = seen.append(h) -%}
+      {%- set _ = out.append({'name': h,
+                              'address': hostvars[h].ansible_host,
+                              'node': jumpserver_asset_default_node}) -%}
+    {%- endif -%}
   {%- endfor -%}
   {{ out }}
 
