@@ -33,10 +33,20 @@
         groups: "{{ (acct.groups | default([])) + ([user_mgmt_docker_group] if ((acct.docker | default(false)) and um_dockerd.rc == 0) else []) }}"
         append: false
         shell: "{{ acct.shell | default('/bin/bash') }}"
-        password: "{{ (um_acct_pw | password_hash('sha512')) if (acct.password | default(false)) else omit }}"  # pragma: allowlist secret
-        update_password: on_create  # pragma: allowlist secret
+        password: "{{ (um_acct_hash_converged if acct.password_rounds is defined else (um_acct_pw | password_hash('sha512'))) if (acct.password | default(false)) else omit }}"  # pragma: allowlist secret
+        update_password: "{{ 'always' if acct.password_rounds is defined else 'on_create' }}"  # pragma: allowlist secret
         create_home: true
         state: present
+      vars:
+        # An account that declares password_rounds has its stored hash CONVERGED: the same
+        # password (Vault), the declared cost, and a salt derived from the host and the account
+        # (a salt is not a secret — it is stored beside the hash; deriving it makes the hash the
+        # same at every run, so the module writes only when it differs). The others keep a hash
+        # made once, at creation.
+        um_acct_hash_converged: >-
+          {{ um_acct_pw | default('') | password_hash('sha512',
+               (inventory_hostname ~ ':' ~ acct.name) | hash('sha256') | truncate(user_mgmt_salt_length, true, ''),
+               rounds=(acct.password_rounds | default(user_mgmt_fast_hash_rounds) | int)) }}
       no_log: true
 
     - name: "User-mgmt | Install the authorized key (one per identity) — {{ acct.name }}"

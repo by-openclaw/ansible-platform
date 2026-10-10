@@ -20,6 +20,15 @@ user_mgmt_key_dir: "{{ role_path }}/files/keys"
 # identity/0004 §4): each password: true account carries its Vault path; the
 # password is generated once there (get-or-create) and never lands on disk.
 
+#
+# Cost of the stored hash. sudo verifies the automation account's password at EVERY Ansible
+# task; with the hash made by default (656 000 rounds of SHA-512) that verification alone took
+# ~2.4 s of each ~5 s task on the node's CPU (measured 2026-10-10). That account's password is
+# 28 random characters from Vault: its strength is the password, not the cost of the hash, so
+# it is stored at SHA-512's own standard cost. An account opts in with `password_rounds`.
+user_mgmt_fast_hash_rounds: 5000
+user_mgmt_salt_length: 16   # the longest salt SHA-512 crypt accepts
+
 # Role groups (naming/0002 §5.2) — capabilities, not users.
 user_mgmt_role_groups:
   - sudo
@@ -64,6 +73,7 @@ user_mgmt_accounts:
     pubkey: "id_ed25519_svc-ansible-{{ user_mgmt_env }}.pub"
     sudo: true
     password: true
+    password_rounds: "{{ user_mgmt_fast_hash_rounds }}"
     vault_path: "{{ user_mgmt_env }}/svc-ansible/os"
     docker: false
     state: present
