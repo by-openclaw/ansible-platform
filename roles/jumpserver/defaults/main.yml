@@ -79,6 +79,12 @@ jumpserver_bastion_admin:
   username: "{{ platform_owner_admin.username }}"
   name: "{{ platform_owner_admin.username }}"
   email: "{{ platform_owner_admin.email }}"
+# The product's built-in local administrator. People never sign in with it (they come through
+# Authentik); it stays as the bastion's own break-glass, with a password generated in Vault —
+# never the product's initial one.
+jumpserver_builtin_admin_user: "admin"
+jumpserver_builtin_admin_vault_path: "{{ platform_env }}/break-glass/jumpserver-admin"
+jumpserver_builtin_admin_password_length: 40
 # NOT an Authentik group: JumpServer creates and owns this one internally (reconcile.yml), so it
 # is deliberately absent from platform_service_groups and stays a literal here.
 jumpserver_bastion_group: "bastion-admins"
