@@ -16,29 +16,17 @@
 #   -e '{"opn_fw_only": ["<rule description>", ...]}'
 # Empty (default) = converge the entire catalog (gated by opn_fw_confirm_full in main.yml).
 
-- name: "Rules | Dump the catalog for the lint"
-  ansible.builtin.copy:
-    content: "{{ {'aliases': opn_aliases, 'rules': opn_filter_rules, 'single_family_interfaces': opn_single_family_interfaces | default([])} | to_json }}"
-    dest: "/tmp/opnsense-catalog-{{ inventory_hostname }}.json"
-    mode: "0600"
-  delegate_to: localhost
-  become: false
-  changed_when: false
-  check_mode: false  # a controller-side temp file the guard below reads: it must exist under --check too
+# The catalog guard (naming/0003): computed from the catalog, no program, nothing staged.
+- name: "Rules | Catalog guard (naming/0003)"
+  ansible.builtin.import_tasks: catalog_lint.yml
   tags: [firewall, rules]
 
-- name: "Rules | Catalog guard (naming/0003)"
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ role_path }}/files/catalog_lint.py"
-      - "/tmp/opnsense-catalog-{{ inventory_hostname }}.json"
+- name: "Rules | The catalog dump earlier versions wrote on the controller"
+  ansible.builtin.file:
+    path: "/tmp/opnsense-catalog-{{ inventory_hostname }}.json"
+    state: absent
   delegate_to: localhost
   become: false
-  changed_when: false
-  register: opnsense_catalog_lint
-  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-  failed_when: opnsense_catalog_lint.rc != 0
   tags: [firewall, rules]
 
 - name: "Rules | Select the rules in scope"

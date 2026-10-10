@@ -1,0 +1,76 @@
+---
+# ==============================================================================
+# opnsense | the catalog guard (naming/0003) — what the firewall catalog violates,
+# computed from the catalog itself, before anything is sent to the firewall.
+# Present entries only:
+#   §1a  a family-suffixed alias (host4_/host6_/net4_/net6_/grp_net4_/grp_net6_) has its pair
+#   §3   every source/destination net and port of a rule is an alias (or any / (self));
+#        ipprotocol is inet, inet6 or inet46
+#   §4   a rule with a port is protocol tcp, udp or tcp/udp (OPNsense refuses the rest:
+#        "Destination ports are only valid for tcp or udp type rules")
+#   twin an inet (inet6) rule whose nets are family-suffixed has its inet6 (inet) twin — the
+#        same description without the family marker — unless its interface is single-family
+#        or the rule is inet46
+# The run stops here with the list when there is any.
+# ==============================================================================
+- name: "Rules | Catalog guard (naming/0003): what the catalog violates"
+  ansible.builtin.set_fact:
+    opnsense_catalog_violations: >-
+      {%- set suffix = '^(host|net|grp_net)([46])_(.+)$' -%}
+      {%- set single_if = opn_single_family_interfaces | default([], true) -%}
+      {%- set ns = namespace(v=[], fams={}, names=[], rules=0) -%}
+      {%- for a in opn_aliases if (a.state | default('present')) == 'present' -%}
+      {%-   set ns.names = ns.names + [a.name] -%}
+      {%- endfor -%}
+      {%- for a in ns.names if a is match(suffix) -%}
+      {%-   set m = a | regex_search(suffix, '\\1', '\\2', '\\3') -%}
+      {%-   set p = m[0] ~ ('6' if m[1] == '4' else '4') ~ '_' ~ m[2] -%}
+      {%-   if p not in ns.names -%}
+      {%-     set ns.v = ns.v + ["§1a alias '" ~ a ~ "' is family-suffixed but '" ~ p ~ "' is missing (single-family scope → unsuffixed name)"] -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- set known = ns.names + ['any', '(self)', ''] -%}
+      {%- for r in opn_filter_rules if (r.state | default('present')) == 'present' -%}
+      {%-   set ns.rules = ns.rules + 1 -%}
+      {%-   set desc = r.description | default('?') -%}
+      {%-   for k in ['source_net', 'destination_net', 'destination_port', 'source_port'] -%}
+      {%-     set val = (r[k] | default('', true)) | string -%}
+      {%-     if val not in known -%}
+      {%-       set ns.v = ns.v + ["§3 rule '" ~ desc ~ "': " ~ k ~ "='" ~ val ~ "' is not an alias"] -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%-   set proto = r.ipprotocol | default('inet') -%}
+      {%-   if proto not in ['inet', 'inet6', 'inet46'] -%}
+      {%-     set ns.v = ns.v + ["rule '" ~ desc ~ "': ipprotocol '" ~ proto ~ "' invalid"] -%}
+      {%-   endif -%}
+      {%-   set l4 = (r.protocol | default('any', true)) | string | lower -%}
+      {%-   if (((r.destination_port | default('', true)) | string | length > 0) or ((r.source_port | default('', true)) | string | length > 0))
+               and l4 not in ['tcp', 'udp', 'tcp/udp'] -%}
+      {%-     set ns.v = ns.v + ["§4 rule '" ~ desc ~ "': has a port alias but protocol='" ~ l4 ~ "' (ports need tcp, udp or tcp/udp)"] -%}
+      {%-   endif -%}
+      {%-   set base = desc | regex_replace('[ \t]*[(]v[46][)][ \t]*$', '') | regex_replace('[ \t]+v[46][)]$', ')') | regex_replace('[ \t]+v[46]$', '') | trim -%}
+      {%-   set ns.fams = ns.fams | combine({base: (ns.fams[base] | default({})) | combine({proto: r})}) -%}
+      {%- endfor -%}
+      {%- for base, byfam in ns.fams.items() -%}
+      {%-   if not ('inet46' in byfam or ('inet' in byfam and 'inet6' in byfam)) -%}
+      {%-     set proto = (byfam.keys() | list)[0] -%}
+      {%-     set r = byfam[proto] -%}
+      {%-     if (r.interface | default(none)) not in single_if -%}
+      {%-       set nets = [(r.source_net | default('', true)) | string, (r.destination_net | default('', true)) | string] -%}
+      {%-       if nets | select('match', suffix) | list | length > 0 -%}
+      {%-         set ns.v = ns.v + ["twin: '" ~ (r.description | default(none)) ~ "' (" ~ proto ~ ", if=" ~ (r.interface | default(none)) ~ ") has no " ~ ('inet6' if proto == 'inet' else 'inet') ~ " twin"] -%}
+      {%-       endif -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ {'aliases': ns.names | length, 'rules': ns.rules, 'violations': ns.v} }}
+
+- name: "Rules | Catalog guard: summary"
+  ansible.builtin.debug:
+    msg: "catalog guard: aliases={{ opnsense_catalog_violations.aliases }} rules={{ opnsense_catalog_violations.rules }} violations={{ opnsense_catalog_violations.violations | length }}"
+
+- name: "Rules | Catalog guard: the catalog violates nothing"
+  ansible.builtin.assert:
+    that: opnsense_catalog_violations.violations | length == 0
+    fail_msg: "{{ ['The firewall catalog violates naming/0003:'] + opnsense_catalog_violations.violations }}"
+    quiet: true
