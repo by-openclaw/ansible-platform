@@ -1,0 +1,136 @@
+---
+# One account per asset: the platform's break-glass identity, with the SSH key Vault escrows.
+# The key travels to the bastion still encrypted, with its passphrase beside it — the product
+# decrypts it itself and stores it in its own vault. The bastion never returns a stored key, so
+# what tells a rotated key apart is a mark in the account's comment: a digest of the PUBLIC key
+# that was last pushed. An account without the mark, or with another one, receives the key again.
+- name: "JumpServer accounts | The key's mark, and the accounts as the bastion has them"
+  ansible.builtin.set_fact:
+    jumpserver_key_mark: "{{ jumpserver_account_mark_prefix }}{{ jumpserver_asset_key_public | hash('sha256') | truncate(jumpserver_account_mark_length, true, '') }}"
+
+- name: "JumpServer accounts | The accounts"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/accounts/accounts/?limit={{ jumpserver_api_page_size }}"
+    headers: "{{ jumpserver_api_headers }}"
+  register: jumpserver_accounts_read
+  check_mode: false   # read-only
+
+- name: "JumpServer accounts | One page holds them all"
+  ansible.builtin.assert:
+    that: jumpserver_accounts_read.json.count | int <= jumpserver_api_page_size | int
+    fail_msg: "More accounts than jumpserver_api_page_size ({{ jumpserver_api_page_size }}): raise it."
+    quiet: true
+
+# create: the asset has no account of that name · rekey: the mark differs · privileged: the flag
+# differs · stale: an account the catalog no longer declares for a managed asset (it cannot log
+# in anyway: the connect dialog must offer only what works).
+- name: "JumpServer accounts | Plan"
+  ansible.builtin.set_fact:
+    jumpserver_accounts_plan: >-
+      {%- set create = [] -%}
+      {%- set rekey = [] -%}
+      {%- set privileged = [] -%}
+      {%- set stale = [] -%}
+      {%- set kept = [] -%}
+      {%- for a in jumpserver_assets -%}
+        {%- set host_id = jumpserver_host_ids.get(a.name, '') -%}
+        {%- set user = a.account | default(jumpserver_asset_default_account) -%}
+        {%- set priv = (a.privileged | default(jumpserver_asset_default_privileged)) | bool -%}
+        {%- set mine = jumpserver_accounts_read.json.results | selectattr('asset.id', 'equalto', host_id) | list -%}
+        {%- set acct = mine | selectattr('username', 'equalto', user) | first | default({}) -%}
+        {%- if host_id | length > 0 -%}
+          {%- if acct | length == 0 -%}
+            {%- set _ = create.append({'asset': a.name, 'asset_id': host_id, 'username': user, 'privileged': priv}) -%}
+          {%- else -%}
+            {%- set _ = kept.append(acct.id) -%}
+            {%- if (acct.comment | default('')) != jumpserver_key_mark -%}
+              {%- set _ = rekey.append({'asset': a.name, 'id': acct.id}) -%}
+            {%- endif -%}
+            {%- if (acct.privileged | bool) != priv -%}
+              {%- set _ = privileged.append({'asset': a.name, 'id': acct.id, 'privileged': priv}) -%}
+            {%- endif -%}
+          {%- endif -%}
+          {%- for s in mine | rejectattr('username', 'equalto', user) -%}
+            {%- set _ = stale.append({'asset': a.name, 'id': s.id, 'username': s.username}) -%}
+          {%- endfor -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ {'create': create, 'rekey': rekey, 'privileged': privileged, 'stale': stale, 'kept': kept} }}
+
+- name: "JumpServer accounts | Create the missing accounts (key from Vault)"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/accounts/accounts/"
+    method: POST
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      asset: "{{ item.asset_id }}"
+      username: "{{ item.username }}"
+      name: "{{ item.username }}"
+      secret_type: "{{ jumpserver_account_secret_type }}"
+      secret: "{{ jumpserver_asset_key_b64 | b64decode }}"
+      passphrase: "{{ jumpserver_asset_key_passphrase }}"
+      privileged: "{{ item.privileged }}"
+      comment: "{{ jumpserver_key_mark }}"
+    status_code: [201]
+  loop: "{{ jumpserver_accounts_plan.create }}"
+  loop_control:
+    label: "{{ item.asset }} / {{ item.username }}"
+  changed_when: true
+  no_log: true
+  when: not ansible_check_mode
+
+- name: "JumpServer accounts | Push the key where the mark differs"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/accounts/accounts/{{ item.id }}/"
+    method: PATCH
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      secret_type: "{{ jumpserver_account_secret_type }}"
+      secret: "{{ jumpserver_asset_key_b64 | b64decode }}"
+      passphrase: "{{ jumpserver_asset_key_passphrase }}"
+      comment: "{{ jumpserver_key_mark }}"
+    status_code: [200]
+  loop: "{{ jumpserver_accounts_plan.rekey }}"
+  loop_control:
+    label: "{{ item.asset }}"
+  changed_when: true
+  no_log: true
+  when: not ansible_check_mode
+
+- name: "JumpServer accounts | Correct the privileged flag"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/accounts/accounts/{{ item.id }}/"
+    method: PATCH
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      privileged: "{{ item.privileged }}"
+    status_code: [200]
+  loop: "{{ jumpserver_accounts_plan.privileged }}"
+  loop_control:
+    label: "{{ item.asset }}"
+  changed_when: true
+  when: not ansible_check_mode
+
+- name: "JumpServer accounts | Remove the accounts the catalog no longer declares"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/accounts/accounts/{{ item.id }}/"
+    method: DELETE
+    headers: "{{ jumpserver_api_headers }}"
+    status_code: [204]
+  loop: "{{ jumpserver_accounts_plan.stale }}"
+  loop_control:
+    label: "{{ item.asset }} / {{ item.username }}"
+  changed_when: true
+  when: not ansible_check_mode
+
+- name: "JumpServer accounts | Note the changes"
+  ansible.builtin.set_fact:
+    jumpserver_changes: >-
+      {{ jumpserver_changes
+         + (['accounts created: ' ~ (jumpserver_accounts_plan.create | length)] if jumpserver_accounts_plan.create | length > 0 else [])
+         + (['accounts that received the key: ' ~ (jumpserver_accounts_plan.rekey | length)] if jumpserver_accounts_plan.rekey | length > 0 else [])
+         + (['privileged flag corrected: ' ~ (jumpserver_accounts_plan.privileged | length)] if jumpserver_accounts_plan.privileged | length > 0 else [])
+         + (['stale accounts removed: ' ~ (jumpserver_accounts_plan.stale | map(attribute='username') | unique | join(', '))] if jumpserver_accounts_plan.stale | length > 0 else []) }}

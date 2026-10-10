@@ -1,0 +1,72 @@
+---
+# Notifications leave through the service's own mailbox (the platform's mail server). Optional:
+# without a mailbox document in Vault the bastion sends nothing and this file does nothing.
+# The bastion never returns the mailbox password: it is sent at every run (the mailbox role may
+# have rotated it), and the task reports a change only when a setting it can read differs.
+- name: "JumpServer email | Settings as the bastion has them"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/settings/setting/?category={{ item }}"
+    headers: "{{ jumpserver_api_headers }}"
+  loop: [email, email_content]
+  register: jumpserver_email_read
+  check_mode: false   # read-only
+  when: jumpserver_email_cfg | length > 0
+
+- name: "JumpServer email | What they must be"
+  ansible.builtin.set_fact:
+    jumpserver_email_want:
+      EMAIL_PROTOCOL: "{{ jumpserver_email_protocol }}"
+      EMAIL_HOST: "{{ jumpserver_email_cfg.smtp_host }}"
+      EMAIL_PORT: "{{ jumpserver_email_cfg.smtp_port | string }}"
+      EMAIL_HOST_USER: "{{ jumpserver_email_cfg.smtp_user }}"
+      EMAIL_FROM: "{{ jumpserver_email_from_name }} <{{ jumpserver_email_cfg.smtp_user }}>"
+      EMAIL_USE_TLS: true
+      EMAIL_USE_SSL: false
+    jumpserver_email_has: >-
+      {{ dict(['EMAIL_PROTOCOL', 'EMAIL_HOST', 'EMAIL_PORT', 'EMAIL_HOST_USER', 'EMAIL_FROM', 'EMAIL_USE_TLS', 'EMAIL_USE_SSL']
+              | zip([jumpserver_email_read.results[0].json.EMAIL_PROTOCOL | default(''),
+                     jumpserver_email_read.results[0].json.EMAIL_HOST | default(''),
+                     jumpserver_email_read.results[0].json.EMAIL_PORT | default('') | string,
+                     jumpserver_email_read.results[0].json.EMAIL_HOST_USER | default(''),
+                     jumpserver_email_read.results[0].json.EMAIL_FROM | default(''),
+                     jumpserver_email_read.results[0].json.EMAIL_USE_TLS | default(false) | bool,
+                     jumpserver_email_read.results[0].json.EMAIL_USE_SSL | default(false) | bool])) }}
+  no_log: true
+  when: jumpserver_email_cfg | length > 0
+
+- name: "JumpServer email | Server, sender and the mailbox password"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/settings/setting/?category=email"
+    method: PATCH
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body: "{{ jumpserver_email_want | combine({'EMAIL_HOST_PASSWORD': jumpserver_email_cfg.smtp_password}) }}"  # pragma: allowlist secret
+    status_code: [200]
+  changed_when: jumpserver_email_want != jumpserver_email_has
+  no_log: true
+  when:
+    - jumpserver_email_cfg | length > 0
+    - not ansible_check_mode
+
+- name: "JumpServer email | Subject prefix"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/settings/setting/?category=email_content"
+    method: PATCH
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      EMAIL_SUBJECT_PREFIX: "{{ jumpserver_email_subject_prefix }}"
+    status_code: [200]
+  changed_when: true
+  when:
+    - jumpserver_email_cfg | length > 0
+    - (jumpserver_email_read.results[1].json.EMAIL_SUBJECT_PREFIX | default('')) != jumpserver_email_subject_prefix
+    - not ansible_check_mode
+
+- name: "JumpServer email | Note the changes"
+  ansible.builtin.set_fact:
+    jumpserver_changes: >-
+      {{ jumpserver_changes
+         + (['email settings corrected'] if jumpserver_email_want != jumpserver_email_has else [])
+         + (['email subject prefix set'] if (jumpserver_email_read.results[1].json.EMAIL_SUBJECT_PREFIX | default('')) != jumpserver_email_subject_prefix else []) }}
+  when: jumpserver_email_cfg | length > 0

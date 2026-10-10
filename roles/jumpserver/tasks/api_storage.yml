@@ -1,0 +1,60 @@
+---
+# Session replays go to the platform's object store, and that storage is the default one. The
+# bastion never returns the storage's secret key; what tells a changed credential apart is the
+# access key it does return (the two are issued together).
+- name: "JumpServer storage | Replay storages as the bastion has them"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/terminal/replay-storages/?limit={{ jumpserver_api_page_size }}"
+    headers: "{{ jumpserver_api_headers }}"
+  register: jumpserver_storages_read
+  check_mode: false   # read-only
+  no_log: true
+
+- name: "JumpServer storage | The platform's one, in detail"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/terminal/replay-storages/{{ item.id }}/"
+    headers: "{{ jumpserver_api_headers }}"
+  loop: "{{ jumpserver_storages_read.json.results | default(jumpserver_storages_read.json) | selectattr('name', 'equalto', jumpserver_s3_storage_name) | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: jumpserver_storage_detail
+  check_mode: false   # read-only
+  no_log: true
+
+- name: "JumpServer storage | Compare"
+  ansible.builtin.set_fact:
+    jumpserver_storage_now: "{{ (jumpserver_storage_detail.results | map(attribute='json') | first) | default({}) }}"
+    jumpserver_storage_differs: >-
+      {{ (jumpserver_storage_detail.results | length == 0)
+         or ((jumpserver_storage_detail.results | first).json.type.value | default('')) != jumpserver_s3_storage_type
+         or not ((jumpserver_storage_detail.results | first).json.is_default | default(false))
+         or ((jumpserver_storage_detail.results | first).json.meta.BUCKET | default('')) != jumpserver_s3_bucket
+         or ((jumpserver_storage_detail.results | first).json.meta.ENDPOINT | default('')) != jumpserver_s3_creds.endpoint
+         or ((jumpserver_storage_detail.results | first).json.meta.ACCESS_KEY | default('')) != jumpserver_s3_creds.access_key }}
+  no_log: true
+
+- name: "JumpServer storage | Create or correct it (default storage)"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/terminal/replay-storages/{{ (jumpserver_storage_now.id ~ '/') if jumpserver_storage_now | length > 0 else '' }}"
+    method: "{{ 'PATCH' if jumpserver_storage_now | length > 0 else 'POST' }}"
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      name: "{{ jumpserver_s3_storage_name }}"
+      type: "{{ jumpserver_s3_storage_type }}"
+      is_default: true
+      meta:
+        BUCKET: "{{ jumpserver_s3_bucket }}"
+        ENDPOINT: "{{ jumpserver_s3_creds.endpoint }}"
+        ACCESS_KEY: "{{ jumpserver_s3_creds.access_key }}"
+        SECRET_KEY: "{{ jumpserver_s3_creds.secret_key }}"
+    status_code: [200, 201]
+  changed_when: true
+  no_log: true
+  when:
+    - jumpserver_storage_differs | bool
+    - not ansible_check_mode
+
+- name: "JumpServer storage | Note the change"
+  ansible.builtin.set_fact:
+    jumpserver_changes: "{{ jumpserver_changes + (['replay storage ' ~ jumpserver_s3_storage_name ~ (' corrected' if jumpserver_storage_now | length > 0 else ' created') ~ ' (default)'] if jumpserver_storage_differs | bool else []) }}"

@@ -1,12 +1,12 @@
 # JumpServer — service page
 
-Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: jumpserver`). Role `roles/jumpserver` (+ `files/reconcile.py`), play `playbooks/jumpserver.yml`, guest `lxc-jumpserver-01` (ct 571). Audit: [`docs/audits/jumpserver-2026-10-02.md`](../audits/jumpserver-2026-10-02.md).
+Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: jumpserver`). Role `roles/jumpserver` (the bastion's own API: `tasks/api_*.yml`), play `playbooks/jumpserver.yml`, guest `lxc-jumpserver-01` (ct 571). Audit: [`docs/audits/jumpserver-2026-10-02.md`](../audits/jumpserver-2026-10-02.md).
 
 ## Identity (identity/0002 §per-tool identity doc)
 
 1. **ADR:** `identity/0001-authentication` — OpenID Connect against Authentik (`jumpserver_oidc_enabled`), users auto-provisioned; the bastion's asset access uses the platform break-glass identity vaulted in JumpServer (key + passphrase from Vault at reconcile time, shredded afterwards).
 2. **Authentik application:** OIDC, slug `jumpserver` (`group_vars/all/sso.yml`).
-3. **Access model:** people sign in through Authentik; the `bastion-admins` group and its permission to every asset are reconciled from the catalog (`reconcile.py`); assets = every managed host on the hardening baseline (`:22222`, the local break-glass admin, sudo with the escrowed password). Local `admin` of JumpServer = break-glass (password in Vault).
+3. **Access model:** people sign in through Authentik; the `bastion-admins` group and its permission to every asset are reconciled from the catalog through the bastion's API, by the automation account `svc-ansible-{env}` (password in Vault, `{env}/svc-ansible/jumpserver-api`); assets = every inventory host on the hardening baseline (`:22222`, the local break-glass admin, sudo with the escrowed password). Local `admin` of JumpServer = break-glass (password in Vault).
 4. **Vault paths:** `secret/{env}/jumpserver/app` (SECRET_KEY, BOOTSTRAP_TOKEN, DB and Redis passwords), `jumpserver/oidc` (`roles/authentik`), `jumpserver/s3` (`seaweedfs_bucket`, session replays), `mail/jumpserver` (service mailbox), `break-glass/ssh-key` + `break-glass/ssh-passphrase` (read only inside the reconcile).
 5. **Ansible adapter + vars:** `roles/jumpserver` (`defaults/main.yml`: pin, ports, OIDC endpoints, bastion group, asset baseline; `tasks/main.yml` the five containers + bundled PostgreSQL/Redis through `service_scaffold`; `tasks/reconcile.yml` + `files/reconcile.py` = settings, users, groups, assets, permissions, replay storage, email — idempotent).
 6. **Removal notes:** `playbooks/decommission-service.yml`; class B — the bundled database volume (audit trail, sessions) and the replay bucket `jumpserver-replays` are archived before destroy.

@@ -1,0 +1,85 @@
+---
+# The product's built-in local administrator. People never sign in with it (they come through
+# the identity provider), so nothing ever changed the documented initial password it ships with:
+# until 2026-10-10 it was still accepted. It stays as the bastion's own break-glass; its password
+# is the one Vault holds — set whenever the bastion refuses that one, so a password changed by
+# hand in the UI does not survive a run either.
+- name: "JumpServer admin | The built-in administrator's password (Vault, generated once)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ jumpserver_builtin_admin_vault_path }}"
+    vault_secret_init:
+      username: "{{ jumpserver_builtin_admin_user }}"
+      password: "{{ lookup('community.general.random_string', length=jumpserver_builtin_admin_password_length, special=false) }}"  # pragma: allowlist secret
+      _note: "JumpServer built-in local administrator (roles/jumpserver) — break-glass for the bastion; people sign in through the identity provider"
+
+- name: "JumpServer admin | Keep it"
+  ansible.builtin.set_fact:
+    jumpserver_builtin_admin_password: "{{ vault_secret_result.password | default('') }}"
+  no_log: true
+
+- name: "JumpServer admin | Does the bastion accept the password Vault holds"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/authentication/auth/"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ jumpserver_builtin_admin_user }}"
+      password: "{{ jumpserver_builtin_admin_password }}"
+    status_code: [201, 200, 400, 401, 403]
+  register: jumpserver_builtin_admin_login
+  check_mode: false   # a sign-in changes nothing
+  no_log: true
+  when: jumpserver_builtin_admin_password | length > 0
+
+- name: "JumpServer admin | The account (when its password differs)"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/users/users/?username={{ jumpserver_builtin_admin_user | urlencode }}&limit={{ jumpserver_api_page_size }}"
+    headers: "{{ jumpserver_api_headers }}"
+  register: jumpserver_builtin_admin_found
+  check_mode: false   # read-only
+  no_log: true
+  when:
+    - jumpserver_builtin_admin_password | length > 0
+    - (jumpserver_builtin_admin_login.status | default(0)) != 201
+
+- name: "JumpServer admin | Its id"
+  ansible.builtin.set_fact:
+    jumpserver_builtin_admin_id: >-
+      {{ (jumpserver_builtin_admin_found.json.results | default([])
+          | selectattr('username', 'equalto', jumpserver_builtin_admin_user) | map(attribute='id') | first) | default('') }}
+
+- name: "JumpServer admin | Its password differs: set the one from Vault"
+  when:
+    - jumpserver_builtin_admin_id | length > 0
+    - not ansible_check_mode
+  block:
+    - name: "JumpServer admin | Set its password"
+      ansible.builtin.uri:
+        url: "{{ jumpserver_api_url }}/users/users/{{ jumpserver_builtin_admin_id }}/"
+        method: PATCH
+        headers: "{{ jumpserver_api_headers }}"
+        body_format: json
+        body:
+          password_strategy: custom  # pragma: allowlist secret
+          password: "{{ jumpserver_builtin_admin_password }}"
+          need_update_password: false
+        status_code: [200]
+      changed_when: true
+      no_log: true
+
+    - name: "JumpServer admin | The bastion accepts it now"
+      ansible.builtin.uri:
+        url: "{{ jumpserver_api_url }}/authentication/auth/"
+        method: POST
+        body_format: json
+        body:
+          username: "{{ jumpserver_builtin_admin_user }}"
+          password: "{{ jumpserver_builtin_admin_password }}"
+        status_code: [201]
+      no_log: true
+
+    - name: "JumpServer admin | Note the change"
+      ansible.builtin.set_fact:
+        jumpserver_changes: "{{ jumpserver_changes + ['built-in administrator ' ~ jumpserver_builtin_admin_user ~ ': password set from Vault'] }}"

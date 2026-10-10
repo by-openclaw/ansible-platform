@@ -1,0 +1,72 @@
+---
+# The built-in integration test: the bastion itself logs in to every asset with the account it
+# holds (its own "verify" task: the escrowed key, over the bastion's own network path) and
+# records the outcome on the account. Every account must come back "ok".
+- name: "JumpServer verify | The accounts before the test"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/accounts/accounts/?limit={{ jumpserver_api_page_size }}"
+    headers: "{{ jumpserver_api_headers }}"
+  register: jumpserver_verify_before
+  when: not ansible_check_mode
+
+- name: "JumpServer verify | The accounts of the managed assets"
+  ansible.builtin.set_fact:
+    jumpserver_verify_ids: >-
+      {{ jumpserver_verify_before.json.results
+         | selectattr('asset.id', 'in', jumpserver_assets | map(attribute='name') | map('extract', jumpserver_host_ids) | list)
+         | selectattr('username', 'equalto', jumpserver_asset_default_account)
+         | map(attribute='id') | list }}
+    jumpserver_verify_stamp: >-
+      {{ dict(jumpserver_verify_before.json.results | map(attribute='id')
+              | zip(jumpserver_verify_before.json.results | map(attribute='date_verified') | map('default', '', true) | map('string'))) }}
+  when: not ansible_check_mode
+
+- name: "JumpServer verify | Ask the bastion to log in to every asset"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/accounts/accounts/tasks/"
+    method: POST
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      action: verify
+      accounts: "{{ jumpserver_verify_ids }}"
+    status_code: [200, 201]
+  changed_when: false   # a test: it changes nothing on the assets
+  when: not ansible_check_mode
+
+- name: "JumpServer verify | Wait until every account has been tested"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/accounts/accounts/?limit={{ jumpserver_api_page_size }}"
+    headers: "{{ jumpserver_api_headers }}"
+  register: jumpserver_verify_after
+  until: >-
+    jumpserver_verify_after.json.results | default([])
+    | selectattr('id', 'in', jumpserver_verify_ids)
+    | selectattr('date_verified')
+    | rejectattr('date_verified', 'in', jumpserver_verify_stamp.values() | list)
+    | list | length == jumpserver_verify_ids | length
+  retries: "{{ jumpserver_verify_retries }}"
+  delay: "{{ jumpserver_verify_delay }}"
+  failed_when: false   # judged by the next task, which names the assets
+  when: not ansible_check_mode
+
+- name: "JumpServer verify | Every login succeeded"
+  ansible.builtin.assert:
+    that:
+      - jumpserver_verify_ids | length == jumpserver_assets | length
+      - jumpserver_verify_tested | length == jumpserver_verify_ids | length
+      - jumpserver_verify_tested | rejectattr('connectivity.value', 'equalto', 'ok') | list | length == 0
+    fail_msg: >-
+      bastion login failed —
+      not tested in time: {{ jumpserver_verify_after.json.results | default([]) | selectattr('id', 'in', jumpserver_verify_ids) | rejectattr('id', 'in', jumpserver_verify_tested | map(attribute='id') | list) | map(attribute='asset.name') | list }};
+      refused: {{ jumpserver_verify_tested | rejectattr('connectivity.value', 'equalto', 'ok') | map(attribute='asset.name') | list }}
+      (port/account/key per the hardening baseline — see roles/jumpserver/defaults)
+    success_msg: "bastion login OK on {{ jumpserver_verify_tested | length }} assets"
+  vars:
+    jumpserver_verify_tested: >-
+      {{ jumpserver_verify_after.json.results | default([])
+         | selectattr('id', 'in', jumpserver_verify_ids)
+         | selectattr('date_verified')
+         | rejectattr('date_verified', 'in', jumpserver_verify_stamp.values() | list)
+         | list }}
+  when: not ansible_check_mode

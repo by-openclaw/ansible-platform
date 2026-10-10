@@ -1,0 +1,110 @@
+---
+# ==============================================================================
+# jumpserver | the automation's API session.
+# Out: jumpserver_api_headers — for ansible.builtin.uri, valid for the run.
+#
+# The automation account signs in with its password (Vault) and receives a token (the product
+# keeps it valid for a day). Why a password: the product's access keys need a signed request
+# (HMAC), which no Ansible module or filter produces, and its "private token" can only be made
+# in the console.
+#
+# THE ROLE'S ONE EXCEPTION to infra/0010 §3 is below: the first time, the account does not
+# exist and nothing can sign in to create it through the API. One console call creates it —
+# reached only when the sign-in with the Vault password is refused.
+# ==============================================================================
+- name: "JumpServer API | The automation account's credential (Vault, generated once)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ jumpserver_api_vault_path }}"
+    vault_secret_init:
+      username: "{{ jumpserver_api_user }}"
+      password: "{{ lookup('community.general.random_string', length=jumpserver_api_password_length, special=false) }}"  # pragma: allowlist secret
+      _note: "JumpServer automation account (roles/jumpserver, tasks/api_session.yml) — a system administrator of the bastion, used by Ansible only"
+
+- name: "JumpServer API | Keep it"
+  ansible.builtin.set_fact:
+    jumpserver_api_cred: "{{ vault_secret_result | default({}) }}"
+  no_log: true
+
+- name: "JumpServer API | Sign in"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/authentication/auth/"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ jumpserver_api_user }}"
+      password: "{{ jumpserver_api_cred.password }}"
+    status_code: [201, 200, 400, 401, 403]   # refused = the account is not there yet (or its password differs)
+  register: jumpserver_api_login
+  check_mode: false   # a sign-in changes nothing: must run under --check too (later tasks read the session)
+  no_log: true
+  when: jumpserver_api_cred.password | default('') | length > 0
+
+- name: "JumpServer API | First time: the automation account"
+  when:
+    - (jumpserver_api_login.status | default(0)) != 201
+    - not ansible_check_mode
+  block:
+    # The program arrives on standard input with its values inside it (base64): nothing is on
+    # a command line or in an environment. It creates the account or resets its password to
+    # the one in Vault, makes it a local account without a second factor, and gives it the
+    # product's two built-in administrator roles (system, and the default organisation).
+    - name: "JumpServer API | The automation account (console — the role's one exception to infra/0010 §3)"
+      community.docker.docker_container_exec:
+        container: "{{ jumpserver_core_container }}"
+        chdir: "{{ jumpserver_apps_dir }}"
+        argv: [python, manage.py, shell]
+        stdin: |
+          import base64, json
+          from orgs.models import Organization
+          from orgs.utils import set_current_org
+          set_current_org(Organization.default())
+          from rbac.builtin import BuiltinRole
+          from users.models import User
+          c = json.loads(base64.b64decode("{{ jumpserver_api_bootstrap | to_json | b64encode }}"))
+          u, _ = User.objects.get_or_create(username=c["username"], defaults={"name": c["name"], "email": c["email"], "source": "local"})
+          u.source, u.is_active, u.mfa_level = "local", True, 0
+          u.reset_password(c["password"])
+          u.system_roles.add_role_system_admin()
+          u.org_roles.add(BuiltinRole.org_admin.get_role())
+          print("BOOTSTRAP_OK")
+      vars:
+        jumpserver_api_bootstrap:
+          username: "{{ jumpserver_api_user }}"
+          name: "{{ jumpserver_api_user_name }}"
+          email: "{{ jumpserver_api_user_email }}"
+          password: "{{ jumpserver_api_cred.password }}"
+      register: jumpserver_api_bootstrap_out
+      changed_when: true
+      failed_when: (jumpserver_api_bootstrap_out.stdout_lines | default(['']) | last) != 'BOOTSTRAP_OK'
+      no_log: true
+
+    - name: "JumpServer API | Sign in (the account exists now)"
+      ansible.builtin.uri:
+        url: "{{ jumpserver_api_url }}/authentication/auth/"
+        method: POST
+        body_format: json
+        body:
+          username: "{{ jumpserver_api_user }}"
+          password: "{{ jumpserver_api_cred.password }}"
+        status_code: [201]
+      register: jumpserver_api_login_first
+      no_log: true
+
+- name: "JumpServer API | The session"
+  ansible.builtin.set_fact:
+    jumpserver_api_headers:
+      Authorization: "Bearer {{ (jumpserver_api_login_first.json | default(jumpserver_api_login.json | default({}))).token | default('') }}"
+      X-JMS-ORG: "{{ jumpserver_default_org_id }}"
+    jumpserver_api_ready: "{{ ((jumpserver_api_login_first.json | default(jumpserver_api_login.json | default({}))).token | default('')) | length > 0 }}"
+  no_log: true
+
+- name: "JumpServer API | Signed in"
+  ansible.builtin.assert:
+    that: jumpserver_api_ready | bool or ansible_check_mode
+    fail_msg: "The bastion refused the automation account's sign-in ({{ jumpserver_api_user }}): {{ jumpserver_api_login.json.error | default('no answer') }}"
+    success_msg: >-
+      OK — signed in on the bastion as {{ jumpserver_api_user }}
+      (account created in this run: {{ 'yes' if (jumpserver_api_bootstrap_out is defined and jumpserver_api_bootstrap_out is not skipped) else 'no, it existed' }};
+      password in Vault: {{ jumpserver_api_vault_path }})

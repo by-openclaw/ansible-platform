@@ -1,11 +1,16 @@
 ---
 # ==============================================================================
-# jumpserver | Idempotent RBAC + asset reconcile (runs the Django reconcile.py
-# inside jms_core, token-free). adm_yboujraf -> System Admin + bastion-admins;
-# register assets; vault the rune key as each asset account; grant the group all;
-# replay storage -> SeaweedFS S3. Secrets (rune key, S3) are put into the container as 0600
-# files through the Docker API (no_log) and removed afterwards, whatever the outcome.
+# jumpserver | what the bastion must hold, through its own API (session: api_session.yml).
+#   the built-in administrator's password · the owner's account and the administrators group ·
+#   the tree and every inventory host · one account per host (the break-glass key) · the
+#   permission · the replay storage · the email settings · and the bastion's own login test.
+# Each part reads what the bastion has, compares, and writes only what differs; a dry run reads
+# and compares. Secrets come from Vault and travel in request bodies only (not logged).
 # ==============================================================================
+- name: "JumpServer reconcile | Nothing changed yet"
+  ansible.builtin.set_fact:
+    jumpserver_changes: []
+
 - name: "JumpServer reconcile | Read replay S3 creds from Vault"
   ansible.builtin.include_role:
     name: vault_secret
@@ -32,57 +37,14 @@
     jumpserver_mail: "{{ vault_secret_result | default({}) }}"
   no_log: true
 
-# reconcile.py expects smtp_host/smtp_port/smtp_user/smtp_password: mapped from the ONE mailbox
-# document (address = the SMTP user). {} when the mailbox is not minted yet → email stays off.
+# The four values the email settings need, from the ONE mailbox document (address = the SMTP
+# user). {} when the mailbox is not minted yet → email stays off.
 - name: "JumpServer reconcile | Build email config ({} when no mailbox)"
   ansible.builtin.set_fact:
-    # the four keys reconcile.py expects, from the one mailbox document (address = the SMTP user)
     jumpserver_email_cfg: >-
       {{ dict(['smtp_host', 'smtp_port', 'smtp_user', 'smtp_password']
               | zip([jumpserver_mail.smtp_host, jumpserver_mail.smtp_port, jumpserver_mail.address, jumpserver_mail.password]))
          if (jumpserver_mail.smtp_host | default('')) | length > 0 else {} }}
-  no_log: true
-
-# The product's built-in local administrator: break-glass for the bastion itself (sign-in when
-# the identity provider is down). Its password is generated in Vault and set by the reconcile.
-- name: "JumpServer reconcile | The built-in administrator's password (Vault, generated once)"
-  ansible.builtin.include_role:
-    name: vault_secret
-  vars:
-    vault_secret_path: "{{ jumpserver_builtin_admin_vault_path }}"
-    vault_secret_init:
-      username: "{{ jumpserver_builtin_admin_user }}"
-      password: "{{ lookup('community.general.random_string', length=jumpserver_builtin_admin_password_length, special=false) }}"  # pragma: allowlist secret
-      _note: "JumpServer built-in local administrator (roles/jumpserver) — break-glass for the bastion; people sign in through the identity provider"
-
-- name: "JumpServer reconcile | Keep it for the reconcile config (no_log)"
-  ansible.builtin.set_fact:
-    jumpserver_builtin_admin_cfg:
-      username: "{{ jumpserver_builtin_admin_user }}"
-      password: "{{ vault_secret_result.password | default('') }}"
-  no_log: true
-
-- name: "JumpServer reconcile | Build desired-state config"
-  ansible.builtin.set_fact:
-    jumpserver_reconcile_cfg:
-      builtin_admin: "{{ jumpserver_builtin_admin_cfg }}"
-      bastion_admin: "{{ jumpserver_bastion_admin }}"
-      bastion_group: "{{ jumpserver_bastion_group }}"
-      permission_name: "{{ jumpserver_permission_name }}"
-      s3_storage_name: "{{ jumpserver_s3_storage_name }}"
-      s3:
-        bucket: "{{ jumpserver_s3_bucket }}"
-        endpoint: "{{ jumpserver_s3_creds.endpoint }}"
-        access_key: "{{ jumpserver_s3_creds.access_key }}"
-        secret_key: "{{ jumpserver_s3_creds.secret_key }}"
-      assets: "{{ jumpserver_assets }}"   # per-asset key_file honoured; reconcile.py defaults to the rune key
-      settings: "{{ jumpserver_settings }}"
-      asset_defaults:
-        port: "{{ jumpserver_asset_default_port | int }}"
-        account: "{{ jumpserver_asset_default_account }}"
-        privileged: "{{ jumpserver_asset_default_privileged | bool }}"
-        key_file: "{{ jumpserver_reconcile_key_path }}"
-      email: "{{ jumpserver_email_cfg }}"
   no_log: true
 
 - name: "JumpServer reconcile | Read the break-glass SSH key from Vault"
@@ -94,6 +56,7 @@
 - name: "JumpServer reconcile | Keep the key material (no_log)"
   ansible.builtin.set_fact:
     jumpserver_asset_key_b64: "{{ vault_secret_result.private_b64 }}"
+    jumpserver_asset_key_public: "{{ vault_secret_result.public }}"
   no_log: true
 
 - name: "JumpServer reconcile | Read the key passphrase from Vault"
@@ -102,88 +65,42 @@
   vars:
     vault_secret_path: "{{ jumpserver_asset_key_passphrase_vault_path }}"
 
-- name: "JumpServer reconcile | Keep the passphrase for the reconcile config (no_log)"
+- name: "JumpServer reconcile | Keep the passphrase (no_log)"
   ansible.builtin.set_fact:
-    jumpserver_key_unlock: {key_passphrase: "{{ vault_secret_result.passphrase }}"}  # pragma: allowlist secret
+    jumpserver_asset_key_passphrase: "{{ vault_secret_result.passphrase }}"  # pragma: allowlist secret
   no_log: true
 
-# The key (still encrypted), the desired state (it carries the key's passphrase and the S3
-# credentials) and the program go INTO the container through the Docker API: nothing is staged
-# on the host, nothing is on a command line. The two secret files are removed from the
-# container whatever the reconcile's outcome.
-- name: "JumpServer reconcile | Key and desired state in the container, then the reconcile"
-  block:
-    - name: "JumpServer reconcile | The (still encrypted) key, in the container (0600)"
-      community.docker.docker_container_copy_into:
-        container: "{{ jumpserver_core_container }}"
-        container_path: "{{ jumpserver_reconcile_key_path }}"
-        content: "{{ jumpserver_asset_key_b64 | b64decode }}"
-        owner_id: 0
-        group_id: 0
-        mode: "0600"
-        mode_parse: octal_string_only
-      diff: false   # the content is a key
-      no_log: true
-      changed_when: false  # transient scaffolding, removed below
+- name: "JumpServer reconcile | The built-in administrator"
+  ansible.builtin.import_tasks: api_builtin_admin.yml
 
-    # The key's passphrase rides in this 0600 file: reconcile.py decrypts the key in memory
-    # (cryptography, already in the container). No askpass helper, no ssh-keygen.
-    - name: "JumpServer reconcile | The desired state, in the container (0600)"
-      community.docker.docker_container_copy_into:
-        container: "{{ jumpserver_core_container }}"
-        container_path: "{{ jumpserver_reconcile_config_path }}"
-        content: >-
-          {{ jumpserver_reconcile_cfg
-             | combine({'asset_defaults': jumpserver_key_unlock}, recursive=True)
-             | to_json }}
-        owner_id: 0
-        group_id: 0
-        mode: "0600"
-        mode_parse: octal_string_only
-      diff: false   # the content carries secrets
-      no_log: true
-      changed_when: false  # transient scaffolding, removed below
+- name: "JumpServer reconcile | The owner's account and the administrators group"
+  ansible.builtin.import_tasks: api_people.yml
 
-    # The program is read by the application's console on standard input: no shell, no copy.
-    - name: "JumpServer reconcile | Run the reconcile (idempotent)"
-      community.docker.docker_container_exec:
-        container: "{{ jumpserver_core_container }}"
-        chdir: "{{ jumpserver_apps_dir }}"
-        argv: [python, manage.py, shell]
-        stdin: "{{ lookup('ansible.builtin.file', 'reconcile.py') }}"
-      register: jumpserver_reconcile_out
-      changed_when: "'RECONCILE_CHANGED' in jumpserver_reconcile_out.stdout"
-      failed_when: "'RECONCILE_OK' not in jumpserver_reconcile_out.stdout"
+- name: "JumpServer reconcile | The tree and the hosts"
+  ansible.builtin.import_tasks: api_assets.yml
 
-  always:
-    - name: "JumpServer reconcile | Remove the key and the desired state from the container"
-      community.docker.docker_container_exec:
-        container: "{{ jumpserver_core_container }}"
-        argv: [rm, -f, "{{ jumpserver_reconcile_key_path }}", "{{ jumpserver_reconcile_config_path }}", /tmp/reconcile.py]
-      changed_when: false  # transient scaffolding
+- name: "JumpServer reconcile | The accounts"
+  ansible.builtin.import_tasks: api_accounts.yml
 
-    - name: "JumpServer reconcile | What earlier versions staged on the host"
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop: "{{ jumpserver_reconcile_retired_host_files }}"
+- name: "JumpServer reconcile | The permission"
+  ansible.builtin.import_tasks: api_permission.yml
+
+- name: "JumpServer reconcile | The replay storage"
+  ansible.builtin.import_tasks: api_storage.yml
+
+- name: "JumpServer reconcile | The email settings"
+  ansible.builtin.import_tasks: api_email.yml
+
+- name: "JumpServer reconcile | The bastion's own login test"
+  ansible.builtin.import_tasks: api_verify.yml
+
+# What the program this replaced staged on the host (until 2026-10-09).
+- name: "JumpServer reconcile | What earlier versions staged on the host"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ jumpserver_reconcile_retired_host_files }}"
 
 - name: "JumpServer reconcile | Summary"
   ansible.builtin.debug:
-    msg: "{{ jumpserver_reconcile_out.stdout_lines | select('match', '^  -') | list }}"
-
-- name: "JumpServer reconcile | Every probe must have logged in"
-  # reconcile.py probes every default-key asset with the in-memory key (paramiko) and
-  # prints one PROBE_OK / PROBE_FAIL line per asset.
-  ansible.builtin.assert:
-    that:
-      - jumpserver_reconcile_out.stdout_lines | select('match', '^PROBE_FAIL') | list | length == 0
-      - >-
-        jumpserver_reconcile_out.stdout_lines | select('match', '^PROBE_OK') | list | length
-        == jumpserver_assets | rejectattr('key_file', 'defined') | list | length
-    fail_msg: >-
-      bastion login failed:
-      {{ jumpserver_reconcile_out.stdout_lines | select('match', '^PROBE_(FAIL|OK)') | reject('match', '^PROBE_OK') | list }}
-      (port/account/key per the hardening baseline — see roles/jumpserver/defaults)
-    success_msg: "bastion login OK on {{ jumpserver_reconcile_out.stdout_lines | select('match', '^PROBE_OK') | list | length }} assets"
-  when: not ansible_check_mode
+    msg: "{{ jumpserver_changes + ['RECONCILE_DONE changes=' ~ (jumpserver_changes | length) ~ ' · assets ' ~ (jumpserver_assets | length)] }}"

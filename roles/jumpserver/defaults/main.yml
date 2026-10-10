@@ -96,12 +96,14 @@ jumpserver_s3_bucket: "jumpserver-replays"
 # path are provisioned via roles/mailcow config). Empty creds -> email stays off.
 jumpserver_mail_vault_path: "{{ platform_env }}/mail/jumpserver"   # the service mailbox (roles/mailbox): SMTP for notifications (SVC-11/16)
 
-# JumpServer dynamic feature settings reconciled into the DB (idempotent).
+# Product settings given to the core and task containers in their environment.
 # ANSIBLE_DOCKER_ENABLED=false -> asset connectivity/account tasks run inside the
 # celery container (we don't mount docker.sock, so the per-task ansible-executor
-# Docker container can't spawn — the default would fail every connectivity test).
+# Docker container can't spawn — the default would fail every connectivity test,
+# the role's own login test included).
 jumpserver_settings:
   ANSIBLE_DOCKER_ENABLED: false
+jumpserver_settings_env: "{{ dict(jumpserver_settings.keys() | zip(jumpserver_settings.values() | map('string') | map('lower'))) }}"
 
 # --- Asset access follows the hardening baseline (roles/hardening, sshd-hardening) ---
 # Every managed host listens on hardening_ssh_port and denies root; the admin identity
@@ -184,9 +186,38 @@ jumpserver_assets: >-
   {%- endfor -%}
   {{ out }}
 
-# --- the reconcile (tasks/reconcile.yml): where its inputs are put INSIDE the core container ---
+# --- the bastion through its own API (tasks/api_session.yml) -----------------------------------
+# The automation account is a system administrator of the bastion that only Ansible uses. Its
+# password is in Vault, outside the service's own path (the service's AppRole reads
+# <env>/jumpserver/* — it must not be able to read its administrator's credential).
+jumpserver_api_url: "http://127.0.0.1:{{ jumpserver_web_host_port }}/api/v1"   # on the bastion host itself
+jumpserver_api_user: "svc-ansible-{{ platform_env }}"
+jumpserver_api_user_name: "Ansible automation ({{ platform_env }})"
+jumpserver_api_user_email: "{{ platform_alert_email }}"
+jumpserver_api_vault_path: "{{ platform_env }}/svc-ansible/jumpserver-api"
+jumpserver_api_password_length: 40
+jumpserver_default_org_id: "00000000-0000-0000-0000-000000000002"   # the product's built-in "Default" organisation
+jumpserver_api_page_size: 500
+
+# --- the reconcile (tasks/reconcile.yml and its api_*.yml) -------------------------------------
 jumpserver_core_container: jms_core
-jumpserver_apps_dir: /opt/jumpserver/apps                  # where the application's manage.py lives
-jumpserver_reconcile_key_path: /tmp/jms_key_asset          # the (still encrypted) break-glass key; the program's default
-jumpserver_reconcile_config_path: /tmp/jms_reconcile.json  # the desired state; the path the program reads
+jumpserver_apps_dir: /opt/jumpserver/apps                  # where the application's manage.py lives (api_session.yml, first run only)
 jumpserver_reconcile_retired_host_files: [/tmp/jms_key_asset, /tmp/jms_reconcile.json, /tmp/jms_reconcile.py]   # staged on the host until 2026-10-09
+# The product's own built-in objects and vocabulary.
+jumpserver_system_admin_role_id: "00000000-0000-0000-0000-000000000001"   # role SystemAdmin
+jumpserver_asset_platform_ids: {Linux: 1, Windows: 5}
+jumpserver_asset_default_platform: "Linux"
+jumpserver_asset_protocol: "ssh"
+jumpserver_account_secret_type: "ssh_key"   # pragma: allowlist secret
+jumpserver_account_mark_prefix: "key sha256:"   # + a digest of the PUBLIC key last pushed (tasks/api_accounts.yml)
+jumpserver_account_mark_length: 16
+jumpserver_permission_accounts: ["@ALL"]
+jumpserver_permission_protocols: ["all"]
+jumpserver_permission_actions: [connect, upload, download, copy, paste, delete, share]
+jumpserver_s3_storage_type: "s3"
+jumpserver_email_protocol: "smtp"
+jumpserver_email_from_name: "JumpServer"
+jumpserver_email_subject_prefix: "[JumpServer] "
+# The login test: the bastion logs in to every asset itself; it is asked, then awaited.
+jumpserver_verify_retries: 40
+jumpserver_verify_delay: 5

@@ -1,0 +1,90 @@
+---
+# Who administers the bastion: the platform owner's account is a system administrator and a
+# member of the bastion's own administrators group. People sign in through the identity
+# provider; the product matches them to an account by user name, so an account created here
+# before the first sign-in is the one that sign-in lands on.
+- name: "JumpServer people | Users and groups as the bastion has them"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}{{ item }}?limit={{ jumpserver_api_page_size }}"
+    headers: "{{ jumpserver_api_headers }}"
+  loop: [/users/users/, /users/groups/]
+  register: jumpserver_people
+  check_mode: false   # read-only
+  no_log: true
+
+- name: "JumpServer people | The owner's account and the group, if they exist"
+  ansible.builtin.set_fact:
+    jumpserver_owner: "{{ jumpserver_people.results[0].json.results | selectattr('username', 'equalto', jumpserver_bastion_admin.username) | first | default({}) }}"
+    jumpserver_group: "{{ jumpserver_people.results[1].json.results | selectattr('name', 'equalto', jumpserver_bastion_group) | first | default({}) }}"
+
+- name: "JumpServer people | The bastion's administrators group"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/users/groups/"
+    method: POST
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      name: "{{ jumpserver_bastion_group }}"
+    status_code: [201]
+  register: jumpserver_group_created
+  changed_when: true
+  when:
+    - jumpserver_group | length == 0
+    - not ansible_check_mode
+
+- name: "JumpServer people | The group's id"
+  ansible.builtin.set_fact:
+    jumpserver_group_id: "{{ jumpserver_group_created.json.id | default(jumpserver_group.id | default('')) }}"
+
+# Created only on a first installation, before the owner ever signed in. The password is random
+# and kept nowhere: the account is entered through the identity provider.
+- name: "JumpServer people | The owner's account (first installation)"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/users/users/"
+    method: POST
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      username: "{{ jumpserver_bastion_admin.username }}"
+      name: "{{ jumpserver_bastion_admin.name }}"
+      email: "{{ jumpserver_bastion_admin.email }}"
+      password_strategy: custom  # pragma: allowlist secret
+      password: "{{ lookup('community.general.random_string', length=jumpserver_api_password_length, special=false) }}"
+      need_update_password: false
+      system_roles: ["{{ jumpserver_system_admin_role_id }}"]
+      groups: ["{{ jumpserver_group_id }}"]
+    status_code: [201]
+  changed_when: true
+  no_log: true
+  when:
+    - jumpserver_owner | length == 0
+    - not ansible_check_mode
+
+- name: "JumpServer people | The owner is a system administrator and a member of the group"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/users/users/{{ jumpserver_owner.id }}/"
+    method: PATCH
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      system_roles: "{{ (jumpserver_owner.system_roles | map(attribute='id') | list + [jumpserver_system_admin_role_id]) | unique }}"
+      groups: "{{ (jumpserver_owner.groups | map(attribute='id') | list + [jumpserver_group_id]) | unique }}"
+    status_code: [200]
+  changed_when: true
+  when:
+    - jumpserver_owner | length > 0
+    - >-
+      jumpserver_system_admin_role_id not in (jumpserver_owner.system_roles | map(attribute='id') | list)
+      or jumpserver_group_id not in (jumpserver_owner.groups | map(attribute='id') | list)
+    - not ansible_check_mode
+
+- name: "JumpServer people | Note the changes"
+  ansible.builtin.set_fact:
+    jumpserver_changes: >-
+      {{ jumpserver_changes
+         + (['group ' ~ jumpserver_bastion_group ~ ' created'] if jumpserver_group | length == 0 else [])
+         + (['owner account created (system administrator, member of ' ~ jumpserver_bastion_group ~ ')'] if jumpserver_owner | length == 0 else [])
+         + (['owner account: system administrator role and group membership granted']
+            if (jumpserver_owner | length > 0
+                and (jumpserver_system_admin_role_id not in (jumpserver_owner.system_roles | map(attribute='id') | list)
+                     or jumpserver_group_id not in (jumpserver_owner.groups | map(attribute='id') | list))) else []) }}
