@@ -16,5 +16,10 @@ jobs:
       - uses: googleapis/release-please-action@v4.4.1
         id: release
         with:
-          release-type: simple
+          # No `release-type` here: with it the action ignores release-please-config.json and
+          # .release-please-manifest.json and searches the history for the previous release —
+          # 1,456 commits after v1.0.0 it no longer found it and proposed 1.0.0 again
+          # (2026-10-10). The two files give it the released version; it only computes the next.
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
           token: ${{ secrets.RUNE_GITHUB_TOKEN }}
