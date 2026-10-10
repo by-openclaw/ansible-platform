@@ -59,7 +59,7 @@ production LE; test: staging. Binding a freshly seeded FW's GUI to the leaf = se
 ## 6. Configuration source (instead of an environment file)
 
 `inventories/<env>/group_vars/opnsense.yml` — the catalog. Keys and consumers: `roles/opnsense/README.md`
-(task table). Lint gate `roles/opnsense/files/catalog_lint.py` (naming/0003). No environment file exists.
+(task table). Catalog guard `roles/opnsense/tasks/catalog_lint.yml` (naming/0003). No environment file exists.
 
 ## 7. Provisioning (instead of docker compose)
 
