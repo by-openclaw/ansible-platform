@@ -64,15 +64,17 @@
         # Health gate: every runit service up, the app answers, no failed migration.
         # The banner in the UI comes from a CACHED version check: after an upgrade the
         # cache still holds the pre-upgrade verdict (severity danger, critical flag),
-        # so the console warns about a version that is no longer running. Drop it here.
+        # so the console warns about a version that is no longer running. GitLab's own
+        # task empties the application cache (that verdict with it); the instance refills
+        # it as pages are read.
         upgrade_path_verify:
           - name: "no runit service is down"
             argv: [docker, exec, "{{ gitlab_container }}", gitlab-ctl, status]
             stdout_not_regex: ['(?m)^down:']
           - name: "the application is ready"
             url: "http://127.0.0.1:8080/-/readiness"
-          - name: "drop the cached version check"
-            argv: [docker, exec, "{{ gitlab_container }}", gitlab-rails, runner, 'Rails.cache.delete("version_check")']
+          - name: "empty the application cache (the cached version check with it)"
+            argv: [docker, exec, "{{ gitlab_container }}", gitlab-rake, "cache:clear"]
             changes: true
 
         upgrade_path_settle_seconds: 90
