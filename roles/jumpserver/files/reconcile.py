@@ -326,7 +326,13 @@ if _default_kp in key_cache:
         except Exception as e:  # noqa: BLE001 — reported per asset, never fatal here
             print("PROBE_FAIL %s: %s" % (a["name"], type(e).__name__))
 
-_changed = ("created=True" in "\n".join(summary)) or ("updated=True" in "\n".join(summary))
+# An asset, an account, a port, a stale account or a re-key is a change too (the summary line of
+# the assets carries counts, not "created=True": 15 new hosts were reported as "no change").
+_changed = (
+    ("created=True" in "\n".join(summary))
+    or ("updated=True" in "\n".join(summary))
+    or any((n_hosts, n_accounts, n_ports, n_stale, n_rekeyed))
+)
 if _changed:
     print("RECONCILE_CHANGED")
 print("RECONCILE_OK")
