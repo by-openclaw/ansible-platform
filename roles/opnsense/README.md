@@ -3,9 +3,9 @@
 Applies the per-env **FW catalog** (`inventories/<env>/group_vars/opnsense.yml`) to OPNsense through
 the REST/MVC API using `by_systems.opnsense` modules (lib-opnsense managers underneath). Every catalog
 key has a consumer task file; the role has **no raw API writer** (`uri` appears only for read-only
-lookups where no module exists). Nothing on the firewall is written by a shell or command task — the
-one `ansible.builtin.command` in the role runs `files/catalog_lint.py` **on the controller** as a
-pre-apply guard (naming/0003) and never touches the appliance.
+lookups where no module exists). Nothing on the firewall is written by a shell or command task. The
+pre-apply guard (naming/0003) is computed from the catalog by `tasks/catalog_lint.yml` — no program, no
+command — and never touches the appliance.
 
 Ownership split: the **seed** (infra-terraform-proxmox `modules/vm-opnsense/seed`) owns L2/L3 topology,
 system identity, interface settings and gateways; **Ansible** owns every
@@ -43,7 +43,7 @@ converge.
 | `dhcp`, `kea`, `radvd`, `dnsmasq` | `dhcp.yml` | `opn_kea_dhcp4`, `opn_kea_dhcp6`, `opn_radvd`, `opn_dnsmasq` | `opnsense_kea4/6_settings`, `opnsense_kea4/6_subnet` (with `option_data`), `opnsense_kea_service`, `opnsense_radvd_entry/_service`, `opnsense_dnsmasq_settings/_service` (kept off) |
 | `services`, `lldpd` | `lldpd.yml` | `opnsense_lldpd_*` | `opnsense_lldpd_settings`, `opnsense_lldpd_service` |
 | `firewall`, `aliases` | `aliases.yml` | `opn_aliases` | `opnsense_fw_alias` |
-| `firewall`, `rules` | `rules.yml` | `opn_filter_rules` | catalog lint gate (`files/catalog_lint.py` §1a/§3/§4/twins) then `opnsense_fw_filter` |
+| `firewall`, `rules` | `rules.yml` | `opn_filter_rules` | catalog guard (`tasks/catalog_lint.yml` §1a/§3/§4/twins) then `opnsense_fw_filter` |
 | `firewall`, `nat` | `nat.yml` | `opn_dnat_rules`, `opn_snat_rules` | `opnsense_fw_dnat`, `opnsense_fw_source_nat` |
 | `services` | `services.yml` | — | `opnsense_qemuguestagent_settings/_service`, `opnsense_crowdsec_service`, `opnsense_netflow_settings` (`opn_netflow`: capture + local collection, catalog-owned since 26.7.5), `opnsense_netflow_service` (reconfigure) |
 | `services`, `monit` | `monit.yml` | `opnsense_monit_*` + Vault SMTP | `opnsense_monit_settings/_alert/_test/_service` (`ProcessDown` is `type: Custom`) |
