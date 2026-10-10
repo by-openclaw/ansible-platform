@@ -170,6 +170,8 @@
 # instance, the flow, the group binding. The client reads the shared secret and the request
 # from two files (never from its command line): they are written to memory on the test host
 # (`/run`), readable by the client's user only, and removed whatever the outcome.
+# These files exist for the length of the test only: writing and removing them is not a change
+# of the host (a run that changes nothing must report no change).
 - name: "radius | Self-test from the monitoring host"
   when:
     - authentik_radius_present | bool
@@ -183,6 +185,7 @@
         group: "{{ authentik_radius_test_user.split(':')[1] }}"
         mode: "0700"
       delegate_to: "{{ authentik_radius_test_host }}"
+      changed_when: false
 
     - name: "radius | The self-test provider's shared secret (file in memory)"
       ansible.builtin.copy:
@@ -192,6 +195,7 @@
         group: "{{ authentik_radius_test_user.split(':')[1] }}"
         mode: "0400"
       delegate_to: "{{ authentik_radius_test_host }}"
+      changed_when: false
       no_log: true
 
     - name: "radius | The two requests: the probe's login, and the same with a wrong password"
@@ -207,6 +211,7 @@
       loop: "{{ authentik_radius_test_cases }}"
       loop_control:
         label: "{{ item.case }}"
+      changed_when: false
       no_log: true
 
     - name: "radius | The probe is accepted, a wrong password is refused"
@@ -253,6 +258,7 @@
         path: "{{ authentik_radius_test_dir }}"
         state: absent
       delegate_to: "{{ authentik_radius_test_host }}"
+      changed_when: false
 
 - name: "radius | Report"
   ansible.builtin.debug:
