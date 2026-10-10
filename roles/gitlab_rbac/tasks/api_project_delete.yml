@@ -1,0 +1,52 @@
+---
+# gitlab_rbac | 5. ONE project to remove for good (included per path). GitLab deletes in two
+# steps: the first DELETE schedules it (the project is renamed, its path is free at once), the
+# second — with the renamed path as confirmation — removes it. In: gitlab_rbac_delete_path.
+- name: "RBAC cleanup | {{ gitlab_rbac_delete_path }} — is it there"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects/{{ gitlab_rbac_delete_path | replace('/', '%2F') }}"
+    headers: "{{ gitlab_rbac_headers }}"
+    status_code: [200, 404]
+  register: gitlab_rbac_del
+  check_mode: false   # read-only GET: must run under --check too (the next tasks read its result)
+
+- name: "RBAC cleanup | {{ gitlab_rbac_delete_path }} — remove it for good"
+  when: gitlab_rbac_del.status == 200
+  block:
+    - name: "RBAC cleanup | {{ gitlab_rbac_delete_path }} — schedule the deletion"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/projects/{{ gitlab_rbac_del.json.id }}"
+        method: DELETE
+        headers: "{{ gitlab_rbac_headers }}"
+        status_code: [202]
+      changed_when: true
+
+    - name: "RBAC cleanup | {{ gitlab_rbac_delete_path }} — the path it waits under"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/projects/{{ gitlab_rbac_del.json.id }}"
+        headers: "{{ gitlab_rbac_headers }}"
+      register: gitlab_rbac_del_marked
+      when: not ansible_check_mode
+
+    - name: "RBAC cleanup | {{ gitlab_rbac_delete_path }} — remove permanently"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/projects/{{ gitlab_rbac_del.json.id }}?permanently_remove=true&full_path={{ gitlab_rbac_del_marked.json.path_with_namespace | replace('/', '%2F') }}"
+        method: DELETE
+        headers: "{{ gitlab_rbac_headers }}"
+        status_code: [202]
+      changed_when: true
+
+    - name: "RBAC cleanup | {{ gitlab_rbac_delete_path }} — gone"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/projects/{{ gitlab_rbac_del.json.id }}"
+        headers: "{{ gitlab_rbac_headers }}"
+        status_code: [200, 404]
+      register: gitlab_rbac_del_gone
+      until: gitlab_rbac_del_gone.status == 404
+      retries: "{{ gitlab_rbac_delete_retries }}"
+      delay: "{{ gitlab_rbac_delete_delay }}"
+      when: not ansible_check_mode
+
+    - name: "RBAC cleanup | {{ gitlab_rbac_delete_path }} — note"
+      ansible.builtin.set_fact:
+        gitlab_rbac_changes: "{{ gitlab_rbac_changes | default([]) + ['project- deleted ' ~ gitlab_rbac_delete_path] }}"

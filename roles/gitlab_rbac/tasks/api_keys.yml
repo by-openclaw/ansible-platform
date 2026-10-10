@@ -1,0 +1,91 @@
+---
+# gitlab_rbac | 10. the SSH and GPG keys of ONE identity (included per identity). Managed SSH
+# keys are the ones titled "ansible:<label>": a key a person added by hand is never touched.
+# A managed key that is no longer declared is removed; a declared one is added, or replaced
+# when its material differs. GPG keys are matched by content and only ever added.
+# In: gitlab_rbac_uk {username, ssh_keys: [{label, key}], gpg_keys: [{label, key}]}.
+- name: "RBAC keys | {{ gitlab_rbac_uk.username }} — the account"
+  ansible.builtin.set_fact:
+    gitlab_rbac_uk_id: "{{ (gitlab_rbac_users_live.json | selectattr('username', 'equalto', gitlab_rbac_uk.username) | map(attribute='id') | first) | default('') }}"
+
+- name: "RBAC keys | {{ gitlab_rbac_uk.username }} — with the account there"
+  when: gitlab_rbac_uk_id | string | length > 0
+  block:
+    - name: "RBAC keys | {{ gitlab_rbac_uk.username }} — keys GitLab has"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/users/{{ gitlab_rbac_uk_id }}/{{ item }}?per_page={{ gitlab_rbac_page_size }}"
+        headers: "{{ gitlab_rbac_headers }}"
+      loop: [keys, gpg_keys]
+      register: gitlab_rbac_uk_live
+      check_mode: false   # read-only GET: must run under --check too (the next task reads its results)
+
+    # SSH material is compared on its first two fields (type and key), not on its comment.
+    - name: "RBAC keys | {{ gitlab_rbac_uk.username }} — what to remove and add"
+      ansible.builtin.set_fact:
+        gitlab_rbac_uk_plan: >-
+          {%- set ns = namespace(remove=[], add=[], gpg=[], notes=[]) -%}
+          {%- set declared = gitlab_rbac_uk.ssh_keys | default([]) -%}
+          {%- set titles = declared | map(attribute='label') | map('regex_replace', '^', 'ansible:') | list -%}
+          {%- for k in gitlab_rbac_uk_live.results[0].json if k.title is match('^ansible:') and k.title not in titles -%}
+          {%-   set ns.remove = ns.remove + [{'id': k.id, 'title': k.title}] -%}
+          {%-   set ns.notes = ns.notes + ['sshkey- ' ~ gitlab_rbac_uk.username ~ ' ' ~ k.title] -%}
+          {%- endfor -%}
+          {%- for d in declared -%}
+          {%-   set title = 'ansible:' ~ d.label -%}
+          {%-   set ex = gitlab_rbac_uk_live.results[0].json | selectattr('title', 'equalto', title) | first | default({}) -%}
+          {%-   if ex | length == 0 -%}
+          {%-     set ns.add = ns.add + [{'title': title, 'key': d.key}] -%}
+          {%-     set ns.notes = ns.notes + ['sshkey+ ' ~ gitlab_rbac_uk.username ~ ' ' ~ title] -%}
+          {%-   elif (ex.key | string).split()[:2] != (d.key | string).split()[:2] -%}
+          {%-     set ns.remove = ns.remove + [{'id': ex.id, 'title': title}] -%}
+          {%-     set ns.add = ns.add + [{'title': title, 'key': d.key}] -%}
+          {%-     set ns.notes = ns.notes + ['sshkey~ ' ~ gitlab_rbac_uk.username ~ ' ' ~ title] -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {%- set have = gitlab_rbac_uk_live.results[1].json | map(attribute='key') | map('trim') | list -%}
+          {%- for g in gitlab_rbac_uk.gpg_keys | default([]) if (g.key | string | trim | length > 0) and (g.key | string | trim) not in have -%}
+          {%-   set ns.gpg = ns.gpg + [{'label': g.label, 'key': g.key | string | trim}] -%}
+          {%-   set ns.notes = ns.notes + ['gpgkey+ ' ~ gitlab_rbac_uk.username ~ ' ' ~ g.label] -%}
+          {%- endfor -%}
+          {{ {'remove': ns.remove, 'add': ns.add, 'gpg': ns.gpg, 'notes': ns.notes} }}
+
+    - name: "RBAC keys | {{ gitlab_rbac_uk.username }} — remove the managed SSH keys no longer declared (or to replace)"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/users/{{ gitlab_rbac_uk_id }}/keys/{{ item.id }}"
+        method: DELETE
+        headers: "{{ gitlab_rbac_headers }}"
+        status_code: [204]
+      loop: "{{ gitlab_rbac_uk_plan.remove }}"
+      loop_control:
+        label: "{{ item.title }}"
+      changed_when: true
+
+    - name: "RBAC keys | {{ gitlab_rbac_uk.username }} — add the declared SSH keys"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/users/{{ gitlab_rbac_uk_id }}/keys"
+        method: POST
+        headers: "{{ gitlab_rbac_headers }}"
+        body_format: json
+        body: "{{ {'title': item.title, 'key': item.key} }}"
+        status_code: [201]
+      loop: "{{ gitlab_rbac_uk_plan.add }}"
+      loop_control:
+        label: "{{ item.title }}"
+      changed_when: true
+
+    - name: "RBAC keys | {{ gitlab_rbac_uk.username }} — add the declared GPG keys"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/users/{{ gitlab_rbac_uk_id }}/gpg_keys"
+        method: POST
+        headers: "{{ gitlab_rbac_headers }}"
+        body_format: json
+        body: "{{ {'key': item.key} }}"
+        status_code: [201]
+      loop: "{{ gitlab_rbac_uk_plan.gpg }}"
+      loop_control:
+        label: "{{ item.label }}"
+      changed_when: true
+
+    - name: "RBAC keys | {{ gitlab_rbac_uk.username }} — note"
+      ansible.builtin.set_fact:
+        gitlab_rbac_changes: "{{ gitlab_rbac_changes | default([]) + gitlab_rbac_uk_plan.notes }}"

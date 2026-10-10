@@ -1,0 +1,65 @@
+---
+# gitlab_rbac | 8. the declared files of ONE project (included per project): each compared with
+# the repository on the default branch; ONE commit for those missing or different (it starts
+# the project's pipeline). A file's content is given inline (`content`) or read on the
+# controller (`src`). In: gitlab_rbac_pf {project, files: [{path, src | content}]}.
+- name: "RBAC files | {{ gitlab_rbac_pf.project }} — the project"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects/{{ gitlab_rbac_pf.project | replace('/', '%2F') }}"
+    headers: "{{ gitlab_rbac_headers }}"
+    status_code: [200, 404]
+  register: gitlab_rbac_pf_project
+  check_mode: false   # read-only GET: must run under --check too (the next tasks read its result)
+
+- name: "RBAC files | {{ gitlab_rbac_pf.project }} — with the project there"
+  when: gitlab_rbac_pf_project.status == 200   # under --check a project still to create is not there
+  vars:
+    gitlab_rbac_pf_branch: "{{ gitlab_rbac_pf_project.json.default_branch | default(gitlab_rbac_default_branch, true) }}"
+  block:
+    - name: "RBAC files | {{ gitlab_rbac_pf.project }} — each file as the repository has it"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/projects/{{ gitlab_rbac_pf_project.json.id }}/repository/files/{{ item.path | urlencode | replace('/', '%2F') }}?ref={{ gitlab_rbac_pf_branch | urlencode }}"
+        headers: "{{ gitlab_rbac_headers }}"
+        status_code: [200, 404]
+      loop: "{{ gitlab_rbac_pf.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      register: gitlab_rbac_pf_live
+      check_mode: false   # read-only GET: must run under --check too (the next task reads its results)
+
+    - name: "RBAC files | {{ gitlab_rbac_pf.project }} — the files to create or update"
+      ansible.builtin.set_fact:
+        gitlab_rbac_pf_actions: >-
+          {%- set ns = namespace(out=[]) -%}
+          {%- for r in gitlab_rbac_pf_live.results -%}
+          {%-   set wanted = r.item.content if r.item.content is defined else lookup('ansible.builtin.file', r.item.src, rstrip=false) -%}
+          {%-   if r.status == 404 -%}
+          {%-     set ns.out = ns.out + [{'action': 'create', 'file_path': r.item.path, 'content': wanted}] -%}
+          {%-   elif (r.json.content | b64decode) != wanted -%}
+          {%-     set ns.out = ns.out + [{'action': 'update', 'file_path': r.item.path, 'content': wanted}] -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ ns.out }}
+
+    - name: "RBAC files | {{ gitlab_rbac_pf.project }} — commit them"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/projects/{{ gitlab_rbac_pf_project.json.id }}/repository/commits"
+        method: POST
+        headers: "{{ gitlab_rbac_headers }}"
+        body_format: json
+        body: "{{ {'branch': gitlab_rbac_pf_branch, 'commit_message': gitlab_rbac_files_commit_message, 'actions': gitlab_rbac_pf_actions} }}"
+        status_code: [201]
+      changed_when: true
+      when: gitlab_rbac_pf_actions | length > 0
+
+    - name: "RBAC files | {{ gitlab_rbac_pf.project }} — note"
+      ansible.builtin.set_fact:
+        gitlab_rbac_changes: >-
+          {{ gitlab_rbac_changes | default([])
+             + (gitlab_rbac_pf_actions | map(attribute='action') | map('replace', 'create', 'file+') | map('replace', 'update', 'file~')
+                | zip(gitlab_rbac_pf_actions | map(attribute='file_path') | map('regex_replace', '^', gitlab_rbac_pf.project ~ ':')) | map('join', ' ') | list) }}
+
+- name: "RBAC files | {{ gitlab_rbac_pf.project }} — the project is missing"
+  ansible.builtin.set_fact:
+    gitlab_rbac_notes: "{{ gitlab_rbac_notes | default([]) + ['files? ' ~ gitlab_rbac_pf.project ~ ': project missing'] }}"
+  when: gitlab_rbac_pf_project.status != 200

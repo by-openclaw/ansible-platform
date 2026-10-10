@@ -1,7 +1,7 @@
 ---
 # ==============================================================================
 # Role: gitlab_rbac — reconcile GitLab instance policy + groups + memberships
-# from desired state, idempotently, via gitlab-rails (no token). GitLab CE can't
+# from desired state, idempotently, through GitLab's REST API (roles/gitlab_api). GitLab CE can't
 # sync group membership from OIDC and only re-evaluates admin at login, so this
 # role is the source of truth for GitLab-side RBAC. Re-run to converge.
 # Secure model (per BY-SYSTEMS): nothing public, Owner = adm_* only, only admins
@@ -132,9 +132,8 @@ gitlab_rbac_projects:
     description: "Pipeline smoke test: the runner pulls through npm.<domain> (Verdaccio) with the instance CI credentials."
 
 # --- Project files: pushed to the default branch when content differs -------
-# src = path the reconciler reads INSIDE the GitLab container: staged by this role (from
-# roles/gitlab/files/ci-templates) into the scripts directory the container mounts.
-gitlab_rbac_ci_templates_dir: "{{ gitlab_scripts_dir }}/ci-templates"
+# src = a file read on the controller (roles/gitlab/files/ci-templates); content = given here.
+gitlab_rbac_ci_templates_dir: "{{ role_path }}/../gitlab/files/ci-templates"
 gitlab_rbac_project_files:
   - project: platform/infra/ci-templates
     files:
@@ -185,3 +184,23 @@ gitlab_rbac_integrations:
 gitlab_rbac_user_keys: []   # built at runtime from Vault (roles/identity_keys escrow) in tasks/main.yml
 
 gitlab_rbac_host: "{{ groups['gitlab'] | first }}"
+
+# --- how the sections talk to the API (tasks/api_*.yml) ----------------------------------
+gitlab_rbac_page_size: 100                       # a list a section reads whole must fit in one page (asserted)
+gitlab_rbac_access_levels: {guest: 10, reporter: 20, developer: 30, maintainer: 40, owner: 50}
+# Accounts the role never demotes and never removes from a group: GitLab's built-in root, and
+# the automation account (it creates the groups, so GitLab makes it their Owner).
+gitlab_rbac_untouched_accounts: ["root", "{{ gitlab_automation_user }}"]
+# Declared settings this edition's API does not offer (and that are inert on it): kept in
+# gitlab_rbac_settings as the statement of intent, not sent.
+gitlab_rbac_settings_not_in_api: [default_project_deletion_protection]
+gitlab_rbac_managed_paths: >-
+  {%- set ns = namespace(out=[]) -%}
+  {%- for g in gitlab_rbac_groups -%}
+  {%-   set ns.out = ns.out + [(g.parent ~ '/' if g.parent is defined else '') ~ g.path] -%}
+  {%- endfor -%}
+  {{ ns.out }}
+gitlab_rbac_delete_retries: 40                   # a permanent delete is asynchronous: polled this many times …
+gitlab_rbac_delete_delay: 3                      # … this many seconds apart
+gitlab_rbac_default_branch: main                 # the branch of a first commit when a repository is empty
+gitlab_rbac_files_commit_message: "ci: shared files (ansible gitlab_rbac)"
