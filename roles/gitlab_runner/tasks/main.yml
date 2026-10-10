@@ -18,39 +18,47 @@
     gitlab_runner_token_stored: "{{ vault_secret_result.token | default('') }}"
   no_log: true
 
-- name: "Runner | Mint an instance runner + token on the GitLab server (first run)"
-  ansible.builtin.command:
-    # gitlab-rails in the GitLab container (gitlab_exec, group_vars/all/gitlab.yml); the Ruby is
-    # one argv element, so no shell parses it.
-    argv: "{{ gitlab_exec + [gitlab_container, 'gitlab-rails', 'runner', gitlab_runner_mint_rb] }}"
-  vars:
-    gitlab_runner_mint_rb: >-
-      r = Ci::Runner.create!(runner_type: 'instance_type',
-      description: '{{ gitlab_runner_description }}',
-      tag_list: %w[{{ gitlab_runner_tags | join(' ') }}],
-      run_untagged: {{ gitlab_runner_run_untagged | lower }});
-      puts r.token
+# First registration only (Vault holds no token yet): through GitLab's REST API, with the
+# automation's token (roles/gitlab_api), on the GitLab host.
+- name: "Runner | The GitLab API token (first registration only)"
+  ansible.builtin.include_role:
+    name: gitlab_api
+    apply:
+      delegate_to: "{{ gitlab_runner_gitlab_host }}"
+  when: gitlab_runner_token_stored | length == 0
+
+- name: "Runner | Create an instance runner on GitLab and get its token (first run)"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/user/runners"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+    body_format: json
+    body: "{{ {'runner_type': 'instance_type', 'description': gitlab_runner_description, 'tag_list': gitlab_runner_tags, 'run_untagged': gitlab_runner_run_untagged | bool} }}"
+    status_code: [201]
   delegate_to: "{{ gitlab_runner_gitlab_host }}"
-  become: true
   register: gitlab_runner_mint
   changed_when: true
   no_log: true
-  when: gitlab_runner_token_stored | length == 0
+  when:
+    - gitlab_runner_token_stored | length == 0
+    - gitlab_api_token | default('') | length > 0
+    - not ansible_check_mode
 
 - name: "Runner | Store the minted auth token in Vault"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
     vault_secret_path: "{{ gitlab_runner_token_vault_path }}"
-    vault_secret_init: { token: "{{ gitlab_runner_mint.stdout_lines | select('match', '^glrt') | first }}" }
-  when: gitlab_runner_token_stored | length == 0 and gitlab_runner_mint.stdout_lines is defined
+    vault_secret_init: { token: "{{ gitlab_runner_mint.json.token }}" }
+  when: gitlab_runner_token_stored | length == 0 and gitlab_runner_mint.json is defined
 
 - name: "Runner | Resolve the auth token (Vault)"
   ansible.builtin.set_fact:
     gitlab_runner_token: >-
       {{ gitlab_runner_token_stored
          if (gitlab_runner_token_stored | length > 0)
-         else (gitlab_runner_mint.stdout_lines | default([]) | select('match', '^glrt') | first | default('')) }}
+         else (gitlab_runner_mint.json.token | default('')) }}
   no_log: true
 
 # --- 2. The runner is a container (the platform runs services as containers) ----
