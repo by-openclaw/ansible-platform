@@ -1,0 +1,78 @@
+---
+# ==============================================================================
+# gitlab_rbac | 2. instance administrators — gitlab_rbac_admin_accounts and nobody else.
+# GitLab's built-in root is never touched; an account that is not a person (a bot) neither.
+# ==============================================================================
+- name: "RBAC admins | The accounts GitLab has"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/users?per_page={{ gitlab_rbac_page_size }}&exclude_internal=true"
+    headers: "{{ gitlab_rbac_headers }}"
+  register: gitlab_rbac_users_live
+  check_mode: false   # read-only GET: must run under --check too (later tasks read its json)
+  no_log: true
+
+- name: "RBAC admins | The list is complete (one page)"
+  ansible.builtin.assert:
+    that: (gitlab_rbac_users_live.x_total_pages | default(1) | int) <= 1
+    fail_msg: "More accounts than one page of {{ gitlab_rbac_page_size }}: raise gitlab_rbac_page_size."
+    quiet: true
+
+- name: "RBAC admins | Demote every other administrator"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/users/{{ item.id }}"
+    method: PUT
+    headers: "{{ gitlab_rbac_headers }}"
+    body_format: json
+    body: {admin: false}
+  loop: >-
+    {{ gitlab_rbac_users_live.json | selectattr('is_admin', 'defined') | selectattr('is_admin')
+       | rejectattr('bot') | rejectattr('username', 'in', gitlab_rbac_admin_accounts + gitlab_rbac_untouched_accounts) | list }}
+  loop_control:
+    label: "{{ item.username }}"
+  register: gitlab_rbac_demoted
+  changed_when: true
+  when: gitlab_rbac_enforce_admin_exact | bool
+
+- name: "RBAC admins | Promote the declared accounts that exist and are not administrators"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/users/{{ item.id }}"
+    method: PUT
+    headers: "{{ gitlab_rbac_headers }}"
+    body_format: json
+    body: {admin: true}
+  loop: >-
+    {{ gitlab_rbac_users_live.json | selectattr('username', 'in', gitlab_rbac_admin_accounts)
+       | rejectattr('is_admin') | list }}
+  loop_control:
+    label: "{{ item.username }}"
+  register: gitlab_rbac_promoted
+  changed_when: true
+
+# The instance forbids its users to create top-level groups (can_create_group: false) and
+# GitLab copies that onto every new account, administrators included. The automation account
+# creates the declared group tree, so it is the one account allowed to.
+- name: "RBAC admins | The automation account may create top-level groups"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/users/{{ item.id }}"
+    method: PUT
+    headers: "{{ gitlab_rbac_headers }}"
+    body_format: json
+    body: {can_create_group: true}
+  loop: >-
+    {{ gitlab_rbac_users_live.json | selectattr('username', 'equalto', gitlab_automation_user)
+       | rejectattr('can_create_group') | list }}
+  loop_control:
+    label: "{{ item.username }}"
+  register: gitlab_rbac_group_creator
+  changed_when: true
+
+- name: "RBAC admins | Note"
+  ansible.builtin.set_fact:
+    gitlab_rbac_changes: >-
+      {{ gitlab_rbac_changes | default([])
+         + (gitlab_rbac_demoted.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.username') | map('regex_replace', '^', 'admin- demoted ') | list)
+         + (gitlab_rbac_promoted.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.username') | map('regex_replace', '^', 'admin+ promoted ') | list)
+         + (gitlab_rbac_group_creator.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.username') | map('regex_replace', '^', 'account~ may create groups: ') | list) }}
+    gitlab_rbac_notes: >-
+      {{ gitlab_rbac_notes | default([])
+         + (gitlab_rbac_admin_accounts | reject('in', gitlab_rbac_users_live.json | map(attribute='username') | list) | map('regex_replace', '^', 'admin? no such account yet: ') | list) }}

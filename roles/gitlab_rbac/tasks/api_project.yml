@@ -1,0 +1,65 @@
+---
+# gitlab_rbac | 6. ONE declared project (included per project): created when missing under its
+# group, then its description, visibility and Service Desk flag converged. In: gitlab_rbac_project.
+- name: "RBAC project | {{ gitlab_rbac_project_full }} — as GitLab has it"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects/{{ gitlab_rbac_project_full | replace('/', '%2F') }}"
+    headers: "{{ gitlab_rbac_headers }}"
+    status_code: [200, 404]
+  register: gitlab_rbac_project_live
+  check_mode: false   # read-only GET: must run under --check too (the next tasks read its result)
+
+- name: "RBAC project | {{ gitlab_rbac_project_full }} — its group"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups/{{ gitlab_rbac_project.group | replace('/', '%2F') }}"
+    headers: "{{ gitlab_rbac_headers }}"
+  register: gitlab_rbac_project_group
+  check_mode: false   # read-only
+  when:
+    - gitlab_rbac_project_live.status == 404
+    - not ansible_check_mode   # a group still to create has no id under --check
+
+- name: "RBAC project | {{ gitlab_rbac_project_full }} — create"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects"
+    method: POST
+    headers: "{{ gitlab_rbac_headers }}"
+    body_format: json
+    body: >-
+      {{ {'name': gitlab_rbac_project.name, 'path': gitlab_rbac_project.path, 'namespace_id': gitlab_rbac_project_group.json.id,
+          'description': gitlab_rbac_project.description | default('') | string,
+          'visibility': gitlab_rbac_project.visibility | default('private'),
+          'initialize_with_readme': gitlab_rbac_project.readme | default(true) | bool} }}
+    status_code: [201]
+  register: gitlab_rbac_project_created
+  changed_when: true
+  when: gitlab_rbac_project_live.status == 404
+
+- name: "RBAC project | {{ gitlab_rbac_project_full }} — converge"
+  vars:
+    gitlab_rbac_project_now: "{{ gitlab_rbac_project_created.json | default(gitlab_rbac_project_live.json | default({})) }}"
+    gitlab_rbac_project_upd: >-
+      {{ ({'description': gitlab_rbac_project.description | string}
+          if (gitlab_rbac_project.description is defined and (gitlab_rbac_project_now.description | default('', true) | string) != (gitlab_rbac_project.description | string)) else {})
+         | combine({'visibility': gitlab_rbac_project.visibility}
+                   if (gitlab_rbac_project.visibility is defined and gitlab_rbac_project_now.visibility | default('') != gitlab_rbac_project.visibility) else {})
+         | combine({'service_desk_enabled': gitlab_rbac_project.service_desk | bool}
+                   if (gitlab_rbac_project.service_desk is defined and (gitlab_rbac_project_now.service_desk_enabled | default(none)) != (gitlab_rbac_project.service_desk | bool)) else {}) }}
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects/{{ gitlab_rbac_project_now.id }}"
+    method: PUT
+    headers: "{{ gitlab_rbac_headers }}"
+    body_format: json
+    body: "{{ gitlab_rbac_project_upd }}"
+  register: gitlab_rbac_project_updated
+  changed_when: true
+  when:
+    - gitlab_rbac_project_now | length > 0
+    - gitlab_rbac_project_upd | length > 0
+
+- name: "RBAC project | {{ gitlab_rbac_project_full }} — note"
+  ansible.builtin.set_fact:
+    gitlab_rbac_changes: >-
+      {{ gitlab_rbac_changes | default([])
+         + (['project+ created ' ~ gitlab_rbac_project_full] if gitlab_rbac_project_created is changed else [])
+         + (['project~ ' ~ gitlab_rbac_project_full] if gitlab_rbac_project_updated is changed else []) }}

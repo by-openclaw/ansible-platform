@@ -1,0 +1,47 @@
+---
+# ==============================================================================
+# gitlab_rbac | 1. instance policy — the declared application settings, through the API.
+# Only what differs is sent. Needs gitlab_rbac_headers (tasks/main.yml).
+# ==============================================================================
+- name: "RBAC settings | As GitLab has them"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/application/settings"
+    headers: "{{ gitlab_rbac_headers }}"
+  register: gitlab_rbac_settings_live
+  check_mode: false   # read-only GET: must run under --check too (the next task reads its json)
+  no_log: true
+
+# A nested setting is compared key by key and sent merged over what GitLab has; a list is
+# compared without regard to order.
+- name: "RBAC settings | What differs"
+  ansible.builtin.set_fact:
+    gitlab_rbac_settings_diff: >-
+      {%- set ns = namespace(out={}) -%}
+      {%- for k, v in gitlab_rbac_settings.items() if k not in gitlab_rbac_settings_not_in_api -%}
+      {%-   set live = gitlab_rbac_settings_live.json[k] | default(none) -%}
+      {%-   if v is mapping -%}
+      {%-     set merged = (live if live is mapping else {}) | combine(v) -%}
+      {%-     if merged != live -%}{%- set ns.out = ns.out | combine({k: merged}) -%}{%- endif -%}
+      {%-   elif v is sequence and v is not string -%}
+      {%-     if live is not sequence or live is string or (live | sort) != (v | sort) -%}{%- set ns.out = ns.out | combine({k: v}) -%}{%- endif -%}
+      {%-   elif live != v -%}
+      {%-     set ns.out = ns.out | combine({k: v}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ ns.out }}
+
+- name: "RBAC settings | Apply what differs"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/application/settings"
+    method: PUT
+    headers: "{{ gitlab_rbac_headers }}"
+    body_format: json
+    body: "{{ gitlab_rbac_settings_diff }}"
+  register: gitlab_rbac_settings_put
+  changed_when: true
+  no_log: true
+  when: gitlab_rbac_settings_diff | length > 0
+
+- name: "RBAC settings | Note"
+  ansible.builtin.set_fact:
+    gitlab_rbac_changes: "{{ gitlab_rbac_changes | default([]) + (gitlab_rbac_settings_diff.keys() | map('regex_replace', '^', 'setting~ ') | list) }}"

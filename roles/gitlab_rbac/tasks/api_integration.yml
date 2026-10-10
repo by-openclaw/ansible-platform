@@ -1,0 +1,49 @@
+---
+# gitlab_rbac | 7. ONE project integration (included per entry; Discord). In: gitlab_rbac_integration
+# {project, type, webhook, events: {push: true, ...}, branches}.
+# GitLab never returns an integration's webhook, so the secret cannot be compared: it is
+# re-sent at every run (the same value changes nothing; a rotated one takes effect), and the
+# task reports a change only when the integration was missing or a visible field differed.
+- name: "RBAC integration | {{ gitlab_rbac_integration.project }} {{ gitlab_rbac_integration.type }} — as GitLab has it"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects/{{ gitlab_rbac_integration.project | replace('/', '%2F') }}/integrations/{{ gitlab_rbac_integration.type }}"
+    headers: "{{ gitlab_rbac_headers }}"
+    status_code: [200, 404]
+  register: gitlab_rbac_integ_live
+  check_mode: false   # read-only GET: must run under --check too (the next task reads its result)
+
+- name: "RBAC integration | {{ gitlab_rbac_integration.project }} {{ gitlab_rbac_integration.type }} — what is wanted, what differs"
+  ansible.builtin.set_fact:
+    gitlab_rbac_integ_events: "{{ dict((gitlab_rbac_integration.events | default({})).keys() | map('regex_replace', '$', '_events') | zip((gitlab_rbac_integration.events | default({})).values())) }}"
+    gitlab_rbac_integ_branches: "{{ gitlab_rbac_integration.branches | default('default') }}"
+
+- name: "RBAC integration | {{ gitlab_rbac_integration.project }} {{ gitlab_rbac_integration.type }} — visible differences"
+  ansible.builtin.set_fact:
+    gitlab_rbac_integ_diff: >-
+      {%- set ns = namespace(d=[]) -%}
+      {%- if gitlab_rbac_integ_live.status == 404 -%}
+      {%-   set ns.d = ['missing'] -%}
+      {%- else -%}
+      {%-   if not (gitlab_rbac_integ_live.json.active | default(false)) -%}{%- set ns.d = ns.d + ['active'] -%}{%- endif -%}
+      {%-   if ((gitlab_rbac_integ_live.json.properties | default({})).branches_to_be_notified | default('')) != gitlab_rbac_integ_branches -%}{%- set ns.d = ns.d + ['branches_to_be_notified'] -%}{%- endif -%}
+      {%-   for k, v in gitlab_rbac_integ_events.items() if (gitlab_rbac_integ_live.json[k] | default(none)) != v -%}{%- set ns.d = ns.d + [k] -%}{%- endfor -%}
+      {%- endif -%}
+      {{ ns.d }}
+
+- name: "RBAC integration | {{ gitlab_rbac_integration.project }} {{ gitlab_rbac_integration.type }} — apply (the webhook is always re-sent)"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects/{{ gitlab_rbac_integration.project | replace('/', '%2F') }}/integrations/{{ gitlab_rbac_integration.type }}"
+    method: PUT
+    headers: "{{ gitlab_rbac_headers }}"
+    body_format: json
+    body: "{{ {'webhook': gitlab_rbac_integration.webhook, 'branches_to_be_notified': gitlab_rbac_integ_branches} | combine(gitlab_rbac_integ_events) }}"
+  register: gitlab_rbac_integ_put
+  changed_when: gitlab_rbac_integ_diff | length > 0
+  no_log: true
+
+- name: "RBAC integration | {{ gitlab_rbac_integration.project }} {{ gitlab_rbac_integration.type }} — note"
+  ansible.builtin.set_fact:
+    gitlab_rbac_changes: >-
+      {{ gitlab_rbac_changes | default([])
+         + (['integration~ ' ~ gitlab_rbac_integration.project ~ ' ' ~ gitlab_rbac_integration.type ~ ' ' ~ gitlab_rbac_integ_diff | join(',')]
+            if gitlab_rbac_integ_diff | length > 0 else []) }}
