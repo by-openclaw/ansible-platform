@@ -119,7 +119,7 @@ migrations on start, so read its log before declaring the upgrade done. Back up 
 |---|---|---|
 | every page 400, backend healthy | the container name the frontend calls is not in the backend's `ALLOWED_HOSTS` | one variable feeds both — see the role defaults |
 | login page 500, `SyntaxError: Unexpected token '<'` | the backend answered HTML to an API call; read the backend log for the real error | fix the underlying 400/500 |
-| login page 500, `KeyError('sp')` | the SSO settings block was replaced instead of merged, dropping the SAML defaults the info endpoint reads | re-run the play; `sso_bind.py.j2` repairs the row |
+| login page 500, `KeyError('sp')` | the SSO settings block was replaced instead of merged, dropping the SAML defaults the info endpoint reads | the role only merges into the row and cannot cause this; the play stops at its first SSO read (HTTP 500). Remove the `sso` row of `global_settings` — the application creates it again with its defaults — and re-run the play |
 | `connection failed: root certificate file … does not exist` | CA bundle not mounted | `ciso_assistant_ca_bundle` → `ciso_assistant_container_ca_path` |
 | frontend cannot reach the backend, IPv6 timeout | user-defined network given IPv6 with no route | the network is IPv4-only by design |
 | probe fails on a first install | migrations and catalog import still running | raise `ciso_assistant_api_probe_retries`; check the backend log |
@@ -132,9 +132,11 @@ is the only gate on who gets one.
 
 **The binding is written by the role, not clicked in the admin UI.** The tool keeps its
 identity-provider configuration in a database row (`global_settings`, name `sso`), which is why
-upstream documents it as a manual step. `templates/sso_bind.py.j2` is piped into `manage.py shell`
-on standard input — keeping the client secret out of the guest's process list — and merges the OIDC
-keys over the application's own SAML defaults.
+upstream documents it as a manual step. `roles/ciso_assistant/tasks/sso.yml` writes it with one
+transaction of plain SQL on the shared PostgreSQL's leader: the values reach `psql` on standard
+input (the client secret is on no command line and the statements are kept out of the server's
+log), the OIDC keys are merged into the row the application created with its own defaults, and a
+dry run executes the same statements and rolls them back.
 
 Local login stays available (`ciso_assistant_oidc_force: false`). This is the tool that documents
 the break-glass procedure; it must not be the one service that locks its administrators out when the
