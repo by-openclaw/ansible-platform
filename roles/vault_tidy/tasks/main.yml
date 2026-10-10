@@ -1,0 +1,27 @@
+---
+- name: "Vault tidy | Authenticate (deploy identity)"
+  ansible.builtin.include_role:
+    name: vault_login
+  when: vault_deploy_token is not defined
+
+- name: "Vault tidy | Nothing retired yet"
+  ansible.builtin.set_fact:
+    vault_tidy_done: []
+
+- name: "Vault tidy | Retired documents"
+  ansible.builtin.include_tasks: document.yml
+  loop: "{{ vault_tidy_retired_documents }}"
+  loop_control:
+    loop_var: vault_tidy_item
+    label: "{{ vault_tidy_item.path }}"
+
+- name: "Vault tidy | Retired fields"
+  ansible.builtin.include_tasks: field.yml
+  loop: "{{ vault_tidy_retired_fields }}"
+  loop_control:
+    loop_var: vault_tidy_item
+    label: "{{ vault_tidy_item.path }}"
+
+- name: "Vault tidy | Summary"
+  ansible.builtin.debug:
+    msg: "{{ vault_tidy_done + ['VAULT_TIDY_DONE changes=' ~ (vault_tidy_done | length) ~ ' · declared: ' ~ (vault_tidy_retired_documents | length) ~ ' document(s), ' ~ (vault_tidy_retired_fields | length) ~ ' field set(s)'] }}"

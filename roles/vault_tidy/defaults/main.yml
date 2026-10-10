@@ -1,0 +1,21 @@
+---
+# ==============================================================================
+# Role: vault_tidy — one document per secret.
+# A document, or a field of a document, that nothing reads any more is retired here, by data:
+#   - a retired DOCUMENT is archived (copied under archive/, the copy read back, then the
+#     original removed — the routine of roles/service_decommission);
+#   - a retired FIELD is removed from its document (the previous version of the document stays
+#     in the store's own version history).
+# Each entry may name where the SAME value lives now (`same_as`): the run then refuses to retire
+# anything whose value differs from that owner — the last copy of a secret is never removed.
+# Declared per environment in the inventory. A run with nothing left to retire changes nothing.
+# ==============================================================================
+vault_tidy_env: "{{ platform_env }}"
+vault_tidy_host: "{{ platform_vault_host | default(groups['vault'] | first) }}"
+vault_tidy_kv_url: "{{ platform_vault_addr }}/v1/{{ vault_kv_path | default('secret') }}"
+vault_tidy_timeout: "{{ vault_api_timeout | default(15) }}"
+
+# [{path: "<service>/<document>", reason: "...", same_as: [{field: f, path: "<service>/<document>", field_there: g}]}]
+vault_tidy_retired_documents: "{{ platform_vault_retired_documents | default([]) }}"
+# [{path: "<service>/<document>", fields: [f, ...], reason: "...", same_as: [{field: f, path: "...", field_there: g}]}]
+vault_tidy_retired_fields: "{{ platform_vault_retired_fields | default([]) }}"

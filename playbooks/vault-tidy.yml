@@ -1,0 +1,16 @@
+---
+# ==============================================================================
+# Vault: one document per secret. Archives the documents and removes the fields the inventory
+# declares as retired (platform_vault_retired_documents / platform_vault_retired_fields), and
+# refuses to retire a value that is not still held by its declared owner.
+#   Dry run (reads, compares, says what it would do):
+#     ansible-playbook -i inventories/prod/hosts.yml playbooks/vault-tidy.yml --check
+#   Apply:
+#     ansible-playbook -i inventories/prod/hosts.yml playbooks/vault-tidy.yml
+# ==============================================================================
+- name: "Vault — retired documents archived, retired fields removed"
+  hosts: "{{ groups['vault'] | first }}"
+  become: true
+  gather_facts: false
+  roles:
+    - vault_tidy

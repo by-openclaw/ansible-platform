@@ -1,0 +1,40 @@
+---
+# The guard shared by documents and fields: every `same_as` entry of the item must hold — the
+# value about to be retired equals the value at its declared owner. Values are compared in
+# memory (digests); nothing is printed but names.
+- name: "Vault tidy | The owners named by same_as — {{ vault_tidy_item.path }}"
+  ansible.builtin.uri:
+    url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_env }}/{{ item }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_tidy_timeout }}"
+    status_code: [200, 404]
+  delegate_to: "{{ vault_tidy_host }}"
+  loop: "{{ vault_tidy_item.same_as | default([]) | map(attribute='path') | unique | list }}"
+  register: vault_tidy_owners
+  check_mode: false   # read-only
+  changed_when: false
+  no_log: true
+
+- name: "Vault tidy | Which same_as entries do not hold — {{ vault_tidy_item.path }}"
+  ansible.builtin.set_fact:
+    vault_tidy_mismatch: >-
+      {%- set owners = dict(vault_tidy_owners.results | map(attribute='item') | zip(vault_tidy_owners.results | map(attribute='json.data.data', default={}))) -%}
+      {%- set bad = [] -%}
+      {%- for s in vault_tidy_item.same_as | default([]) -%}
+        {%- set mine = vault_tidy_current.get(s.field) -%}
+        {%- set theirs = owners.get(s.path, {}).get(s.field_there) -%}
+        {%- if mine is not none and (theirs is none or (mine | string | hash('sha256')) != (theirs | string | hash('sha256'))) -%}
+          {%- set _ = bad.append(s.field ~ ' ≠ ' ~ s.path ~ ':' ~ s.field_there) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ bad }}
+  no_log: true
+
+- name: "Vault tidy | Every retired value still lives at its owner — {{ vault_tidy_item.path }}"
+  ansible.builtin.assert:
+    that: vault_tidy_mismatch | length == 0
+    fail_msg: >-
+      {{ vault_tidy_item.path }} is NOT retired: {{ vault_tidy_mismatch }} — the value differs from
+      (or is absent at) its declared owner, so this may be the last copy.
+    quiet: true
