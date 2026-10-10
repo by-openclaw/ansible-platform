@@ -1,42 +1,167 @@
 ---
 # ==============================================================================
-# gitlab_demo | create the demo project + seed its files (idempotent).
+# gitlab_demo | the demo project and its files, through GitLab's REST API (roles/gitlab_api).
+# Idempotent: the project is created when missing, one commit carries the files that are
+# missing or different, the deploy token for the k3s pull secret is created once and its two
+# CI variables with it, PLATFORM_DOMAIN is kept as declared. Runs on the GitLab host.
 # ==============================================================================
-- name: "Demo | The pre-container staging paths (retired)"
+- name: "Demo | What the play used to stage for the console (retired)"
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
-  loop: [/opt/gitlab-demo, /opt/gitlab-demo-seed.rb]
+  loop:
+    - /opt/gitlab-demo
+    - /opt/gitlab-demo-seed.rb
+    - "{{ gitlab_scripts_dir }}/demo"
+    - "{{ gitlab_scripts_dir }}/demo-seed.rb"
 
-- name: "Demo | Stage the demo app files on the GitLab host"
-  ansible.builtin.copy:
-    src: demo/
-    dest: "{{ gitlab_scripts_dir }}/demo/"   # mounted into the GitLab container
-    owner: root
-    group: root
-    mode: "0644"
-    directory_mode: "0755"
+- name: "Demo | The GitLab API token (roles/gitlab_api)"
+  ansible.builtin.include_role:
+    name: gitlab_api
 
-- name: "Demo | Stage the seeder"
-  ansible.builtin.copy:
-    src: seed.rb
-    dest: "{{ gitlab_scripts_dir }}/demo-seed.rb"
-    owner: root
-    group: root
-    mode: "0644"
+- name: "Demo | With a token"
+  when: gitlab_api_token | default('') | length > 0
+  vars:
+    gitlab_demo_headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+    gitlab_demo_project_url: "{{ gitlab_api_url }}/projects/{{ gitlab_demo_path | replace('/', '%2F') }}"
+  block:
+    # --- the project ------------------------------------------------------------
+    - name: "Demo | The namespace exists"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/groups/{{ (gitlab_demo_path | dirname) | replace('/', '%2F') }}"
+        headers: "{{ gitlab_demo_headers }}"
+      register: gitlab_demo_ns
+      check_mode: false   # read-only GET: must run under --check too (later tasks read its result)
+      no_log: true
 
-- name: "Demo | Create the project + commit files (triggers the pipeline)"
-  ansible.builtin.command:
-    argv: >-
-      {{ gitlab_exec + ['-e', 'PLATFORM_DOMAIN', gitlab_container, 'gitlab-rails', 'runner',
-         gitlab_scripts_dir ~ '/demo-seed.rb', gitlab_scripts_dir ~ '/demo', gitlab_demo_path, gitlab_demo_name] }}
-  environment:
-    PLATFORM_DOMAIN: "{{ platform_domain }}"
-  register: gitlab_demo_run
-  changed_when: >-
-    gitlab_demo_run.stdout is search('(commit|project|deploytoken|variable)[+~]')
-  failed_when: "'DEMO_DONE' not in gitlab_demo_run.stdout"
+    - name: "Demo | Is the project there"
+      ansible.builtin.uri:
+        url: "{{ gitlab_demo_project_url }}"
+        headers: "{{ gitlab_demo_headers }}"
+        status_code: [200, 404]
+      register: gitlab_demo_project
+      check_mode: false   # read-only GET: must run under --check too (later tasks read its result)
+      no_log: true
 
-- name: "Demo | Result"
+    - name: "Demo | Create the project"
+      ansible.builtin.uri:
+        url: "{{ gitlab_api_url }}/projects"
+        method: POST
+        headers: "{{ gitlab_demo_headers }}"
+        body_format: json
+        body: >-
+          {{ {'name': gitlab_demo_name, 'path': gitlab_demo_path | basename, 'namespace_id': gitlab_demo_ns.json.id,
+              'visibility': 'private', 'initialize_with_readme': false} | combine(gitlab_demo_create_options) }}
+        status_code: [201]
+      register: gitlab_demo_created
+      changed_when: true
+      no_log: true
+      when: gitlab_demo_project.status == 404
+
+    - name: "Demo | Project id and branch"
+      ansible.builtin.set_fact:
+        gitlab_demo_id: "{{ gitlab_demo_created.json.id | default(gitlab_demo_project.json.id | default('')) }}"
+        gitlab_demo_branch: "{{ (gitlab_demo_created.json.default_branch | default(gitlab_demo_project.json.default_branch | default('', true), true)) | default(gitlab_demo_default_branch, true) }}"
+
+    # Under --check a project still to create has no id: the rest needs one.
+    - name: "Demo | Files, deploy token and variables"
+      when: gitlab_demo_id | string | length > 0
+      block:
+        # --- its files: one commit for what is missing or different --------------
+        - name: "Demo | Each file as the repository has it"
+          ansible.builtin.uri:
+            url: "{{ gitlab_api_url }}/projects/{{ gitlab_demo_id }}/repository/files/{{ item.path | urlencode | replace('/', '%2F') }}?ref={{ gitlab_demo_branch | urlencode }}"
+            headers: "{{ gitlab_demo_headers }}"
+            status_code: [200, 404]
+          loop: "{{ query('community.general.filetree', role_path ~ '/files/demo') | selectattr('state', 'equalto', 'file') | list }}"
+          loop_control:
+            label: "{{ item.path }}"
+          register: gitlab_demo_files_live
+          check_mode: false   # read-only GET: must run under --check too (the next task reads its results)
+
+        # Compared as text, byte for byte (the file read without stripping its last line end).
+        - name: "Demo | The files to create or update"
+          ansible.builtin.set_fact:
+            gitlab_demo_actions: >-
+              {%- set ns = namespace(out=[]) -%}
+              {%- for r in gitlab_demo_files_live.results -%}
+              {%-   set wanted = lookup('ansible.builtin.file', r.item.src, rstrip=false) -%}
+              {%-   if r.status == 404 -%}
+              {%-     set ns.out = ns.out + [{'action': 'create', 'file_path': r.item.path, 'content': wanted}] -%}
+              {%-   elif (r.json.content | b64decode) != wanted -%}
+              {%-     set ns.out = ns.out + [{'action': 'update', 'file_path': r.item.path, 'content': wanted}] -%}
+              {%-   endif -%}
+              {%- endfor -%}
+              {{ ns.out }}
+
+        - name: "Demo | Commit them (this starts the project's pipeline)"
+          ansible.builtin.uri:
+            url: "{{ gitlab_api_url }}/projects/{{ gitlab_demo_id }}/repository/commits"
+            method: POST
+            headers: "{{ gitlab_demo_headers }}"
+            body_format: json
+            body: "{{ {'branch': gitlab_demo_branch, 'commit_message': gitlab_demo_commit_message, 'actions': gitlab_demo_actions} }}"
+            status_code: [201]
+          register: gitlab_demo_commit
+          changed_when: true
+          when: gitlab_demo_actions | length > 0
+
+        # --- the deploy token of the k3s pull secret, once, and its two variables ----
+        - name: "Demo | The project's deploy tokens"
+          ansible.builtin.uri:
+            url: "{{ gitlab_api_url }}/projects/{{ gitlab_demo_id }}/deploy_tokens?active=true"
+            headers: "{{ gitlab_demo_headers }}"
+          register: gitlab_demo_tokens
+          check_mode: false   # read-only GET: must run under --check too (the next task reads its result)
+          no_log: true
+
+        - name: "Demo | Create the deploy token (read the registry)"
+          ansible.builtin.uri:
+            url: "{{ gitlab_api_url }}/projects/{{ gitlab_demo_id }}/deploy_tokens"
+            method: POST
+            headers: "{{ gitlab_demo_headers }}"
+            body_format: json
+            body: "{{ {'name': gitlab_demo_deploy_token_name, 'scopes': ['read_registry'], 'expires_at': '%Y-%m-%d' | strftime((now(utc=true).timestamp() | int) + (gitlab_demo_deploy_token_days | int) * 86400, utc=true)} }}"
+            status_code: [201]
+          register: gitlab_demo_token
+          changed_when: true
+          no_log: true
+          when: gitlab_demo_deploy_token_name not in (gitlab_demo_tokens.json | map(attribute='name') | list)
+
+        # The token's secret is shown once, at creation: its two CI variables are set then.
+        - name: "Demo | The pull secret's CI variables (when the deploy token was just created)"
+          ansible.builtin.include_role:
+            name: gitlab_api
+            tasks_from: project_variable
+          vars:
+            gitlab_api_project: "{{ gitlab_demo_path }}"
+            gitlab_api_project_variable: "{{ gitlab_demo_pull_var }}"
+          loop:
+            - {key: K8S_PULL_USER, value: "{{ gitlab_demo_token.json.username | default('') }}", masked: false, protected: true, raw: false}
+            - {key: K8S_PULL_TOKEN, value: "{{ gitlab_demo_token.json.token | default('') }}", masked: true, protected: true, raw: false}
+          loop_control:
+            loop_var: gitlab_demo_pull_var
+            label: "{{ gitlab_demo_pull_var.key }}"
+          no_log: true
+          when: gitlab_demo_token is changed
+
+        - name: "Demo | PLATFORM_DOMAIN for the pipeline"
+          ansible.builtin.include_role:
+            name: gitlab_api
+            tasks_from: project_variable
+          vars:
+            gitlab_api_project: "{{ gitlab_demo_path }}"
+            gitlab_api_project_variable: {key: PLATFORM_DOMAIN, value: "{{ platform_domain }}", masked: false, protected: false, raw: false}
+
+    - name: "Demo | Result"
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['project ' ~ ('created' if gitlab_demo_created is changed else ('exists' if gitlab_demo_project.status == 200 else 'would be created')) ~ ': ' ~ gitlab_demo_path,
+              'commit: ' ~ ((gitlab_demo_actions | default([]) | map(attribute='action') | zip(gitlab_demo_actions | default([]) | map(attribute='file_path')) | map('join', ' ') | join(', ')) if (gitlab_demo_actions | default([]) | length > 0) else 'no file to create or update'),
+              'deploy token ' ~ gitlab_demo_deploy_token_name ~ ': ' ~ ('created' if gitlab_demo_token is changed else 'as it was')] }}
+
+- name: "Demo | Without a token (dry run before the first one exists)"
   ansible.builtin.debug:
-    msg: "{{ gitlab_demo_run.stdout_lines }}"
+    msg: "no API token yet: a real run mints it, then seeds {{ gitlab_demo_path }}"
+  when: gitlab_api_token | default('') | length == 0

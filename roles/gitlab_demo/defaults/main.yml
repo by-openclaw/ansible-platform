@@ -1,9 +1,14 @@
 ---
 # ==============================================================================
 # Role: gitlab_demo — provision a demo project (Kaniko build → registry + Pages)
-# under the platform tree, idempotently, via gitlab-rails. Committing the seeded
+# under the platform tree, idempotently, through GitLab's REST API (roles/gitlab_api). Committing the seeded
 # .gitlab-ci.yml triggers the pipeline on the linux+kaniko runner.
 # ==============================================================================
 gitlab_demo_path: "platform/apps/demo"   # namespace must exist (gitlab_rbac tree)
 gitlab_demo_name: "Demo"
 gitlab_demo_host: "{{ groups['gitlab'] | first }}"
+gitlab_demo_default_branch: main                       # the branch of the first commit when the repository is empty
+gitlab_demo_commit_message: "demo: provision ci-cd + pages (ansible)"
+gitlab_demo_deploy_token_name: k3s-pull                # read the registry: the k3s pull secret
+gitlab_demo_deploy_token_days: 730
+gitlab_demo_create_options: {}                         # more fields for the project's creation, e.g. {description: "…"}
