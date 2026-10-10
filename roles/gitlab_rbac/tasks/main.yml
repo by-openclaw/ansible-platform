@@ -1,21 +1,23 @@
 ---
 # ==============================================================================
-# gitlab_rbac | reconcile GitLab admins + groups + memberships from desired state.
-# Runs on the GitLab server via gitlab-rails (no token). Idempotent + re-runnable.
+# gitlab_rbac | GitLab's instance policy, administrators, group tree, memberships, projects,
+# integrations, shared files and identities' keys — from the declared state, through GitLab's
+# REST API with the automation account's token (roles/gitlab_api). Idempotent: every section
+# reads first and writes only what is missing or different. Runs on the GitLab host.
 # ==============================================================================
-- name: "RBAC | The pre-container staging paths (retired; the desired state held webhooks)"
+# What earlier versions staged on the GitLab host for the console program — the desired-state
+# file among them held the integration webhooks.
+- name: "RBAC | What earlier versions staged on the GitLab host (retired)"
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
-  loop: [/opt/gitlab-rbac-reconcile.rb, /opt/gitlab-rbac-desired.json, /opt/gitlab-ci-templates]
-
-- name: "RBAC | Stage the reconciler script"
-  ansible.builtin.copy:
-    src: reconcile.rb
-    dest: "{{ gitlab_scripts_dir }}/rbac-reconcile.rb"   # mounted into the GitLab container
-    owner: root
-    group: root
-    mode: "0644"
+  loop:
+    - /opt/gitlab-rbac-reconcile.rb
+    - /opt/gitlab-rbac-desired.json
+    - /opt/gitlab-ci-templates
+    - "{{ gitlab_scripts_dir }}/rbac-reconcile.rb"
+    - "{{ gitlab_scripts_dir }}/rbac-desired.json"
+    - "{{ gitlab_scripts_dir }}/ci-templates"
 
 # --- Discord webhooks are secrets: resolve each Vault path into the desired state
 - name: "RBAC | Integration webhooks from Vault (roles/vault_secret)"
@@ -37,15 +39,6 @@
   loop_control:
     label: "{{ item.project | default('') }}"
   when: gitlab_rbac_integrations | length > 0
-
-- name: "RBAC | Stage the shared CI templates on the GitLab host"
-  ansible.builtin.copy:
-    src: "{{ role_path }}/../gitlab/files/ci-templates/"
-    dest: "{{ gitlab_rbac_ci_templates_dir }}/"
-    owner: root
-    group: root
-    mode: "0644"
-    directory_mode: "0755"
 
 # --- Per-identity public keys: sourced from Vault (roles/identity_keys escrow) ---
 - name: "RBAC | Managed identities (manage_keys)"
@@ -78,30 +71,82 @@
   no_log: true
   when: gitlab_rbac_key_people | length > 0
 
-- name: "RBAC | The container's git group (gitlab-rails runs as git)"
-  ansible.builtin.command:
-    argv: "{{ gitlab_exec + [gitlab_container, 'id', '-g', 'git'] }}"
-  register: gitlab_rbac_git_gid
-  changed_when: false
-  check_mode: false   # read-only
+# --- the reconcile, section by section ------------------------------------------
+- name: "RBAC | The GitLab API token (roles/gitlab_api)"
+  ansible.builtin.include_role:
+    name: gitlab_api
 
-- name: "RBAC | Render the desired-state JSON"
-  ansible.builtin.template:
-    src: desired.json.j2
-    dest: "{{ gitlab_scripts_dir }}/rbac-desired.json"
-    owner: root
-    group: "{{ gitlab_rbac_git_gid.stdout | trim }}"
-    mode: "0640"   # carries the integration webhooks (secrets): root + the container's git only
+- name: "RBAC | Reconcile through the API"
+  when: gitlab_api_token | default('') | length > 0
+  vars:
+    gitlab_rbac_headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+  block:
+    - name: "RBAC | Start the list of changes"
+      ansible.builtin.set_fact:
+        gitlab_rbac_changes: []
+        gitlab_rbac_notes: []
 
-- name: "RBAC | Reconcile (admins, groups, memberships)"
-  ansible.builtin.command:
-    argv: >-
-      {{ gitlab_exec + [gitlab_container, 'gitlab-rails', 'runner',
-         gitlab_scripts_dir ~ '/rbac-reconcile.rb', gitlab_scripts_dir ~ '/rbac-desired.json'] }}
-  register: gitlab_rbac_run
-  changed_when: "'changes=0' not in gitlab_rbac_run.stdout"
-  failed_when: "'RBAC_DONE' not in gitlab_rbac_run.stdout"
+    - name: "RBAC | 1. Instance policy"
+      ansible.builtin.include_tasks: api_settings.yml
 
-- name: "RBAC | Reconcile result"
+    - name: "RBAC | 2. Instance administrators"
+      ansible.builtin.include_tasks: api_admins.yml
+
+    - name: "RBAC | 3. Group tree (parents first)"
+      ansible.builtin.include_tasks: api_group.yml
+      vars:
+        gitlab_rbac_group_full: "{{ (gitlab_rbac_group.parent ~ '/' if gitlab_rbac_group.parent is defined else '') ~ gitlab_rbac_group.path }}"
+      loop: "{{ gitlab_rbac_groups }}"
+      loop_control:
+        loop_var: gitlab_rbac_group
+        label: "{{ gitlab_rbac_group.path }}"
+
+    - name: "RBAC | 4. Memberships"
+      ansible.builtin.include_tasks: api_members.yml
+
+    - name: "RBAC | 5. Projects to remove"
+      ansible.builtin.include_tasks: api_project_delete.yml
+      loop: "{{ gitlab_rbac_delete_projects }}"
+      loop_control:
+        loop_var: gitlab_rbac_delete_path
+
+    - name: "RBAC | 6. Declared projects"
+      ansible.builtin.include_tasks: api_project.yml
+      vars:
+        gitlab_rbac_project_full: "{{ gitlab_rbac_project.group }}/{{ gitlab_rbac_project.path }}"
+      loop: "{{ gitlab_rbac_projects }}"
+      loop_control:
+        loop_var: gitlab_rbac_project
+        label: "{{ gitlab_rbac_project.group }}/{{ gitlab_rbac_project.path }}"
+
+    - name: "RBAC | 7. Project integrations"
+      ansible.builtin.include_tasks: api_integration.yml
+      loop: "{{ gitlab_rbac_integrations_resolved | default([]) }}"
+      loop_control:
+        loop_var: gitlab_rbac_integration
+        label: "{{ gitlab_rbac_integration.project | default('') }}"
+      no_log: true   # the loop items carry the webhooks
+
+    - name: "RBAC | 8. Project files"
+      ansible.builtin.include_tasks: api_files.yml
+      loop: "{{ gitlab_rbac_project_files | default([]) }}"
+      loop_control:
+        loop_var: gitlab_rbac_pf
+        label: "{{ gitlab_rbac_pf.project }}"
+
+    - name: "RBAC | 10. Identities' SSH and GPG keys"
+      ansible.builtin.include_tasks: api_keys.yml
+      loop: "{{ gitlab_rbac_user_keys | default([]) }}"
+      loop_control:
+        loop_var: gitlab_rbac_uk
+        label: "{{ gitlab_rbac_uk.username }}"
+
+    - name: "RBAC | Reconcile result"
+      ansible.builtin.debug:
+        msg: "{{ gitlab_rbac_changes + gitlab_rbac_notes + ['RBAC_DONE changes=' ~ gitlab_rbac_changes | length] }}"
+
+- name: "RBAC | Without a token (dry run before the first one exists)"
   ansible.builtin.debug:
-    msg: "{{ gitlab_rbac_run.stdout_lines }}"
+    msg: "no API token yet: a real run mints it, then reconciles GitLab's policy, groups and memberships"
+  when: gitlab_api_token | default('') | length == 0

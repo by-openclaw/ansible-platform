@@ -2,12 +2,12 @@
 
 Group-based GitLab RBAC via the API (CE has no OIDC group-sync): Authentik groups → project/group roles.
 
-Everything runs through one idempotent reconciler (`files/reconcile.rb`, `gitlab-rails runner`, no token) driven by `templates/desired.json.j2`; it prints one line per change and `RBAC_DONE changes=N` (`changes=0` on a clean re-run).
+Everything goes through GitLab's REST API with the automation account's token (`roles/gitlab_api`): one task file per section (`tasks/api_*.yml`), each reading first and writing only what is missing or different. The run ends with one line per change and `RBAC_DONE changes=N` (`changes=0` on a clean re-run).
 
 | Section | Vars | What it reconciles |
 |---|---|---|
 | Instance policy | `gitlab_rbac_settings` | any `ApplicationSetting` key — sign-up off, visibility caps, **diagram rendering** (`kroki_*`, `plantuml_*`, `diagramsnet_*` → `roles/diagrams`, browser-reachable HTTPS names) |
-| Admins | `gitlab_rbac_instance_admins` (+`_enforce_admin_exact`) | mirrors Authentik `gitlab-admins`; root exempt |
+| Admins | `gitlab_rbac_instance_admins`, `gitlab_rbac_admin_accounts` (+`_enforce_admin_exact`) | mirrors Authentik `gitlab-admins`, plus the automation account; root and bots never touched |
 | Groups | `gitlab_rbac_groups` | `platform/{infra,apps,devops,docs,support}` — visibility + creation levels |
 | Memberships | `gitlab_rbac_members` | Owner = `adm_*` only; users Developer (code) / Reporter (docs) / Developer (support) |
 | Cleanup | `gitlab_rbac_delete_projects` | throwaway projects from bring-up |
