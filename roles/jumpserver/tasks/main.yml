@@ -214,7 +214,7 @@
           restart_policy: "{{ jumpserver_restart_policy }}"
           command: start web
           ulimits: ["core:0:0"]
-          env: "{{ jumpserver_env_safe | combine(jumpserver_env_db) | combine(jumpserver_env_oidc) | combine({'TIME_ZONE': jumpserver_tz}) }}"
+          env: "{{ jumpserver_env_safe | combine(jumpserver_env_db) | combine(jumpserver_env_oidc) | combine({'TIME_ZONE': jumpserver_tz}) | combine(jumpserver_settings_env) }}"
           volumes:
             - "{{ jumpserver_base_dir }}/certs:/opt/jumpserver/data/certs"
             - "{{ jumpserver_data_dir }}/data:/opt/jumpserver/data"
@@ -252,7 +252,7 @@
           restart_policy: "{{ jumpserver_restart_policy }}"
           command: start task
           ulimits: ["core:0:0"]
-          env: "{{ jumpserver_env_safe | combine(jumpserver_env_db) | combine(jumpserver_env_oidc) | combine({'LC_ALL': 'C.UTF-8'}) }}"
+          env: "{{ jumpserver_env_safe | combine(jumpserver_env_db) | combine(jumpserver_env_oidc) | combine({'LC_ALL': 'C.UTF-8'}) | combine(jumpserver_settings_env) }}"
           volumes:
             - "{{ jumpserver_base_dir }}/certs:/opt/jumpserver/data/certs"
             - "{{ jumpserver_data_dir }}/data:/opt/jumpserver/data"
@@ -362,9 +362,19 @@
   retries: 30
   delay: 5
 
-# RBAC + assets (adm_yboujraf System Admin, bastion-admins, register assets,
-# vault the rune key, grant all, replay storage -> S3). Idempotent; runs after
-# core is healthy so the Django models are migrated + serving.
+# The automation's API session: part of every provisioning run. On a first installation (or
+# whenever the automation account is missing) it creates the account by itself, with the
+# password Ansible generated in Vault — no manual step, from a terminal or from CI alike.
+- name: "JumpServer | The automation's API session"
+  ansible.builtin.include_tasks:
+    file: api_session.yml
+    apply:
+      tags: [reconcile, api]
+  when: jumpserver_reconcile_enabled | bool
+  tags: [reconcile, api]
+
+# What the bastion must hold (administrators, tree, hosts, accounts, permission, replay storage,
+# email) and its own login test — through its API, after the core is healthy.
 - name: "JumpServer | RBAC + asset reconcile"
   ansible.builtin.include_tasks:
     file: reconcile.yml

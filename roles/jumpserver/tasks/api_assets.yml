@@ -1,0 +1,134 @@
+---
+# The bastion's assets ARE the inventory (defaults: jumpserver_assets): every host, placed
+# under the node of the tree its group maps to, reached on the hardening baseline's SSH port.
+# Read once, compare, write only what differs.
+- name: "JumpServer assets | The tree as the bastion has it"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/assets/nodes/?limit={{ jumpserver_api_page_size }}"
+    headers: "{{ jumpserver_api_headers }}"
+  register: jumpserver_nodes_read
+  check_mode: false   # read-only
+
+- name: "JumpServer assets | Its root, and the nodes the inventory needs that are missing"
+  ansible.builtin.set_fact:
+    jumpserver_root_node: "{{ jumpserver_nodes_read.json.results | selectattr('key', 'match', '^[0-9]+$') | first }}"
+    jumpserver_nodes_missing: >-
+      {{ jumpserver_assets | map(attribute='node') | unique
+         | difference(jumpserver_nodes_read.json.results | selectattr('key', 'match', '^[0-9]+:[0-9]+$') | map(attribute='value') | list) }}
+
+- name: "JumpServer assets | Create the missing nodes (children of the root)"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/assets/nodes/{{ jumpserver_root_node.id }}/children/"
+    method: POST
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      value: "{{ item }}"
+    status_code: [200, 201]
+  loop: "{{ jumpserver_nodes_missing }}"
+  changed_when: true
+  when: not ansible_check_mode
+
+- name: "JumpServer assets | The tree and the hosts"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}{{ item }}?limit={{ jumpserver_api_page_size }}"
+    headers: "{{ jumpserver_api_headers }}"
+  loop: [/assets/nodes/, /assets/hosts/]
+  register: jumpserver_assets_read
+  check_mode: false   # read-only
+
+- name: "JumpServer assets | One page holds them all"
+  ansible.builtin.assert:
+    that:
+      - jumpserver_assets_read.results[0].json.count | int <= jumpserver_api_page_size | int
+      - jumpserver_assets_read.results[1].json.count | int <= jumpserver_api_page_size | int
+    fail_msg: "More objects than jumpserver_api_page_size ({{ jumpserver_api_page_size }}): raise it."
+    quiet: true
+
+# What each inventory host must be on the bastion, against what it is.
+- name: "JumpServer assets | Plan"
+  ansible.builtin.set_fact:
+    jumpserver_node_ids: >-
+      {{ dict(jumpserver_assets_read.results[0].json.results | selectattr('key', 'match', '^[0-9]+:[0-9]+$') | map(attribute='value')
+              | zip(jumpserver_assets_read.results[0].json.results | selectattr('key', 'match', '^[0-9]+:[0-9]+$') | map(attribute='id'))) }}
+    jumpserver_hosts_plan: >-
+      {%- set node_ids = dict(jumpserver_assets_read.results[0].json.results | selectattr('key', 'match', '^[0-9]+:[0-9]+$') | map(attribute='value')
+                              | zip(jumpserver_assets_read.results[0].json.results | selectattr('key', 'match', '^[0-9]+:[0-9]+$') | map(attribute='id'))) -%}
+      {%- set have = dict(jumpserver_assets_read.results[1].json.results | map(attribute='name') | zip(jumpserver_assets_read.results[1].json.results)) -%}
+      {%- set create = [] -%}
+      {%- set correct = [] -%}
+      {%- for a in jumpserver_assets -%}
+        {%- set want = {'name': a.name,
+                        'address': a.address,
+                        'node': a.node,
+                        'node_id': node_ids.get(a.node, ''),
+                        'protocol': a.protocol | default(jumpserver_asset_protocol),
+                        'port': (a.port | default(jumpserver_asset_default_port)) | int,
+                        'platform': jumpserver_asset_platform_ids[a.platform | default(jumpserver_asset_default_platform)]} -%}
+        {%- if a.name not in have -%}
+          {%- set _ = create.append(want) -%}
+        {%- else -%}
+          {%- set h = have[a.name] -%}
+          {%- set port_now = (h.protocols | selectattr('name', 'equalto', want.protocol) | map(attribute='port') | first | default(0)) | int -%}
+          {%- if h.address != want.address or (h.nodes | map(attribute='id') | list) != [want.node_id] or port_now != want.port -%}
+            {%- set _ = correct.append(want | combine({'id': h.id})) -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ {'create': create, 'correct': correct} }}
+
+- name: "JumpServer assets | Register the hosts the bastion does not know"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/assets/hosts/"
+    method: POST
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      address: "{{ item.address }}"
+      platform: "{{ item.platform }}"
+      nodes: ["{{ item.node_id }}"]
+      protocols:
+        - name: "{{ item.protocol }}"
+          port: "{{ item.port }}"
+    status_code: [201]
+  loop: "{{ jumpserver_hosts_plan.create }}"
+  loop_control:
+    label: "{{ item.name }} → {{ item.node }}"
+  changed_when: true
+  when: not ansible_check_mode
+
+- name: "JumpServer assets | Correct the hosts that differ (address, node, port)"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/assets/hosts/{{ item.id }}/"
+    method: PATCH
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      address: "{{ item.address }}"
+      nodes: ["{{ item.node_id }}"]
+      protocols:
+        - name: "{{ item.protocol }}"
+          port: "{{ item.port }}"
+    status_code: [200]
+  loop: "{{ jumpserver_hosts_plan.correct }}"
+  loop_control:
+    label: "{{ item.name }} → {{ item.node }}, {{ item.address }}:{{ item.port }}"
+  changed_when: true
+  when: not ansible_check_mode
+
+- name: "JumpServer assets | The hosts, after the writes"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/assets/hosts/?limit={{ jumpserver_api_page_size }}"
+    headers: "{{ jumpserver_api_headers }}"
+  register: jumpserver_hosts_read
+  check_mode: false   # read-only
+
+- name: "JumpServer assets | Ids, and the changes"
+  ansible.builtin.set_fact:
+    jumpserver_host_ids: "{{ dict(jumpserver_hosts_read.json.results | map(attribute='name') | zip(jumpserver_hosts_read.json.results | map(attribute='id'))) }}"
+    jumpserver_changes: >-
+      {{ jumpserver_changes
+         + (['nodes created: ' ~ (jumpserver_nodes_missing | join(', '))] if jumpserver_nodes_missing | length > 0 else [])
+         + (['hosts registered: ' ~ (jumpserver_hosts_plan.create | map(attribute='name') | join(', '))] if jumpserver_hosts_plan.create | length > 0 else [])
+         + (['hosts corrected: ' ~ (jumpserver_hosts_plan.correct | map(attribute='name') | join(', '))] if jumpserver_hosts_plan.correct | length > 0 else []) }}
