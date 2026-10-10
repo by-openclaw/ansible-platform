@@ -34,11 +34,19 @@ answers every request with 400 while looking perfectly healthy. One variable fee
 
 ## SSO is not a manual step
 
-The tool keeps its identity-provider configuration in a database row (`global_settings`, name
-`sso`), which is why upstream documents it as a UI task. The row is reachable through the ORM, so
-this role writes it: `templates/sso_bind.py.j2` is piped into `manage.py shell` on standard input,
-which keeps the client secret out of the guest's process list. The program merges the desired keys,
-writes only on a real difference and prints `CHANGED` or `UNCHANGED` for Ansible.
+The tool keeps its identity-provider configuration in its own tables (`global_settings`, rows
+`sso` and `feature-flags`; `iam_idpgroup` and its link to the tool's groups), which is why upstream
+documents it as a UI task. Its database is on the shared PostgreSQL, so `tasks/sso.yml` writes
+them with one transaction of plain SQL on the cluster's leader: values reach `psql` on standard
+input (the client secret is on no command line and the server is told not to log the
+statements), a row is written only where it differs, and a dry run executes the same statements
+and rolls them back — it reports what a run would write. The application creates the `sso` row
+itself, with its defaults; the role only merges into it.
+
+Two things besides the binding, or a sign-in ends in "SSO authentication failed": the
+`jit_provisioning` feature flag (the setting alone is inert) and an identity-provider group
+bound to one of the tool's groups (`ciso_assistant_group_map`) — membership decides who
+administers the registry, nobody is granted anything by name.
 
 The callback path is read from the application's own routes rather than guessed: `core/urls.py`
 mounts `accounts/oidc/` and django-allauth appends `<provider_id>/login/callback/`. The provider id
