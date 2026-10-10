@@ -1,0 +1,90 @@
+---
+# ==============================================================================
+# gitlab_rbac | 4. memberships — the DIRECT members of the managed groups are exactly the
+# declared ones. Pruned first (a stale grant high in the tree would be inherited below and
+# floor a lower role), then added or converged. Never touched: inherited memberships, bots,
+# and the accounts of gitlab_rbac_untouched_accounts (root, and the automation account that
+# creates the groups and so owns them).
+# ==============================================================================
+- name: "RBAC members | Direct members of each managed group"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups/{{ item | replace('/', '%2F') }}/members?per_page={{ gitlab_rbac_page_size }}"
+    headers: "{{ gitlab_rbac_headers }}"
+    status_code: [200, 404]
+  loop: "{{ gitlab_rbac_managed_paths }}"
+  register: gitlab_rbac_members_live
+  check_mode: false   # read-only GET: must run under --check too (the next tasks read its results)
+
+- name: "RBAC members | What to remove, add, change"
+  ansible.builtin.set_fact:
+    gitlab_rbac_members_plan: >-
+      {%- set ns = namespace(remove=[], add=[], change=[], skip=[]) -%}
+      {%- set wanted = gitlab_rbac_members | map(attribute='group') | zip(gitlab_rbac_members | map(attribute='username')) | map('join', ' ') | list -%}
+      {%- set users = gitlab_rbac_users_live.json | items2dict(key_name='username', value_name='id') -%}
+      {%- set live = {} -%}
+      {%- for r in gitlab_rbac_members_live.results if r.status == 200 -%}
+      {%-   for x in r.json -%}
+      {%-     if not (x.bot | default(false)) and x.username not in gitlab_rbac_untouched_accounts and (r.item ~ ' ' ~ x.username) not in wanted -%}
+      {%-       set ns.remove = ns.remove + [{'group': r.item, 'username': x.username, 'user_id': x.id}] -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {%- for m in gitlab_rbac_members -%}
+      {%-   set r = gitlab_rbac_members_live.results | selectattr('item', 'equalto', m.group) | first | default({'status': 404}) -%}
+      {%-   if r.status != 200 or m.username not in users -%}
+      {%-     set ns.skip = ns.skip + ['member? skip ' ~ m.username ~ '/' ~ m.group ~ ' (missing user or group)'] -%}
+      {%-   else -%}
+      {%-     set cur = r.json | selectattr('username', 'equalto', m.username) | first | default({}) -%}
+      {%-     if cur | length == 0 -%}
+      {%-       set ns.add = ns.add + [{'group': m.group, 'username': m.username, 'user_id': users[m.username], 'access': m.access, 'level': gitlab_rbac_access_levels[m.access]}] -%}
+      {%-     elif cur.access_level != gitlab_rbac_access_levels[m.access] -%}
+      {%-       set ns.change = ns.change + [{'group': m.group, 'username': m.username, 'user_id': users[m.username], 'access': m.access, 'level': gitlab_rbac_access_levels[m.access]}] -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ {'remove': ns.remove, 'add': ns.add, 'change': ns.change, 'skip': ns.skip} }}
+
+- name: "RBAC members | Remove the direct members that are not declared"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups/{{ item.group | replace('/', '%2F') }}/members/{{ item.user_id }}"
+    method: DELETE
+    headers: "{{ gitlab_rbac_headers }}"
+    status_code: [204]
+  loop: "{{ gitlab_rbac_members_plan.remove }}"
+  loop_control:
+    label: "{{ item.username }} from {{ item.group }}"
+  changed_when: true
+
+- name: "RBAC members | Add the declared members that are missing"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups/{{ item.group | replace('/', '%2F') }}/members"
+    method: POST
+    headers: "{{ gitlab_rbac_headers }}"
+    body_format: json
+    body: "{{ {'user_id': item.user_id, 'access_level': item.level} }}"
+    status_code: [201]
+  loop: "{{ gitlab_rbac_members_plan.add }}"
+  loop_control:
+    label: "{{ item.username }} -> {{ item.group }} ({{ item.access }})"
+  changed_when: true
+
+- name: "RBAC members | Converge the role of the members that have another"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups/{{ item.group | replace('/', '%2F') }}/members/{{ item.user_id }}"
+    method: PUT
+    headers: "{{ gitlab_rbac_headers }}"
+    body_format: json
+    body: "{{ {'access_level': item.level} }}"
+  loop: "{{ gitlab_rbac_members_plan.change }}"
+  loop_control:
+    label: "{{ item.username }} in {{ item.group }} -> {{ item.access }}"
+  changed_when: true
+
+- name: "RBAC members | Note"
+  ansible.builtin.set_fact:
+    gitlab_rbac_changes: >-
+      {{ gitlab_rbac_changes | default([])
+         + (gitlab_rbac_members_plan.remove | map(attribute='username') | zip(gitlab_rbac_members_plan.remove | map(attribute='group')) | map('join', ' from ') | map('regex_replace', '^', 'member- removed ') | list)
+         + (gitlab_rbac_members_plan.add | map(attribute='username') | zip(gitlab_rbac_members_plan.add | map(attribute='group')) | map('join', ' -> ') | map('regex_replace', '^', 'member+ ') | list)
+         + (gitlab_rbac_members_plan.change | map(attribute='username') | zip(gitlab_rbac_members_plan.change | map(attribute='group')) | map('join', ' in ') | map('regex_replace', '^', 'member~ ') | list) }}
+    gitlab_rbac_notes: "{{ gitlab_rbac_notes | default([]) + gitlab_rbac_members_plan.skip }}"

@@ -1,0 +1,61 @@
+---
+# gitlab_rbac | 3. ONE group of the tree (included per group, parents first): created when
+# missing, else its visibility and its two creation levels converged. In: gitlab_rbac_group.
+- name: "RBAC group | {{ gitlab_rbac_group_full }} — as GitLab has it"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups/{{ gitlab_rbac_group_full | replace('/', '%2F') }}"
+    headers: "{{ gitlab_rbac_headers }}"
+    status_code: [200, 404]
+  register: gitlab_rbac_group_live
+  check_mode: false   # read-only GET: must run under --check too (the next tasks read its result)
+
+- name: "RBAC group | {{ gitlab_rbac_group_full }} — its parent"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups/{{ gitlab_rbac_group.parent | replace('/', '%2F') }}"
+    headers: "{{ gitlab_rbac_headers }}"
+  register: gitlab_rbac_group_parent
+  check_mode: false   # read-only
+  when:
+    - gitlab_rbac_group_live.status == 404
+    - gitlab_rbac_group.parent is defined
+    - not ansible_check_mode   # a parent still to create has no id under --check
+
+- name: "RBAC group | {{ gitlab_rbac_group_full }} — create"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups"
+    method: POST
+    headers: "{{ gitlab_rbac_headers }}"
+    body_format: json
+    body: >-
+      {{ {'name': gitlab_rbac_group.name, 'path': gitlab_rbac_group.path, 'visibility': gitlab_rbac_group.visibility,
+          'project_creation_level': gitlab_rbac_group.project_creation, 'subgroup_creation_level': gitlab_rbac_group.subgroup_creation}
+         | combine({'parent_id': gitlab_rbac_group_parent.json.id} if gitlab_rbac_group.parent is defined else {}) }}
+    status_code: [201]
+  register: gitlab_rbac_group_created
+  changed_when: true
+  when: gitlab_rbac_group_live.status == 404
+
+- name: "RBAC group | {{ gitlab_rbac_group_full }} — converge"
+  vars:
+    gitlab_rbac_group_upd: >-
+      {{ ({} if gitlab_rbac_group_live.json.visibility == gitlab_rbac_group.visibility else {'visibility': gitlab_rbac_group.visibility})
+         | combine({} if gitlab_rbac_group_live.json.project_creation_level == gitlab_rbac_group.project_creation else {'project_creation_level': gitlab_rbac_group.project_creation})
+         | combine({} if gitlab_rbac_group_live.json.subgroup_creation_level == gitlab_rbac_group.subgroup_creation else {'subgroup_creation_level': gitlab_rbac_group.subgroup_creation}) }}
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups/{{ gitlab_rbac_group_live.json.id }}"
+    method: PUT
+    headers: "{{ gitlab_rbac_headers }}"
+    body_format: json
+    body: "{{ gitlab_rbac_group_upd }}"
+  register: gitlab_rbac_group_updated
+  changed_when: true
+  when:
+    - gitlab_rbac_group_live.status == 200
+    - gitlab_rbac_group_upd | length > 0
+
+- name: "RBAC group | {{ gitlab_rbac_group_full }} — note"
+  ansible.builtin.set_fact:
+    gitlab_rbac_changes: >-
+      {{ gitlab_rbac_changes | default([])
+         + (['group+ created ' ~ gitlab_rbac_group_full] if gitlab_rbac_group_created is changed else [])
+         + (['group~ ' ~ gitlab_rbac_group_full] if gitlab_rbac_group_updated is changed else []) }}
