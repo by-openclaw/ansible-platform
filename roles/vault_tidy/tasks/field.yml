@@ -1,0 +1,71 @@
+---
+# Retired fields of one document: read it, check the values still live at their owners, write
+# the document back without those fields (only if the document did not change meanwhile), and
+# read it back.
+- name: "Vault tidy | Read the document — {{ vault_tidy_item.path }}"
+  ansible.builtin.uri:
+    url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_env }}/{{ vault_tidy_item.path }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_tidy_timeout }}"
+    status_code: [200, 404]
+  delegate_to: "{{ vault_tidy_host }}"
+  register: vault_tidy_read
+  check_mode: false   # read-only
+  changed_when: false
+  no_log: true
+
+- name: "Vault tidy | Its fields, and the retired ones it still holds — {{ vault_tidy_item.path }}"
+  ansible.builtin.set_fact:
+    vault_tidy_current: "{{ vault_tidy_read.json.data.data | default({}) }}"
+    vault_tidy_present: "{{ vault_tidy_item.fields | intersect((vault_tidy_read.json.data.data | default({})).keys() | list) }}"
+  no_log: true
+
+- name: "Vault tidy | Guard and remove — {{ vault_tidy_item.path }}"
+  when: vault_tidy_present | length > 0
+  block:
+    - name: "Vault tidy | Guard — {{ vault_tidy_item.path }}"
+      ansible.builtin.include_tasks: same_as.yml
+
+    - name: "Vault tidy | Write the document without them — {{ vault_tidy_item.path }}"
+      ansible.builtin.uri:
+        url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_env }}/{{ vault_tidy_item.path }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_tidy_timeout }}"
+        body_format: json
+        body:
+          options:
+            cas: "{{ vault_tidy_read.json.data.metadata.version }}"
+          data: "{{ vault_tidy_current | dict2items | rejectattr('key', 'in', vault_tidy_item.fields) | items2dict }}"
+        status_code: [200, 204]
+      delegate_to: "{{ vault_tidy_host }}"
+      changed_when: true
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: "Vault tidy | Read it back — {{ vault_tidy_item.path }}"
+      ansible.builtin.uri:
+        url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_env }}/{{ vault_tidy_item.path }}"
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_tidy_timeout }}"
+      delegate_to: "{{ vault_tidy_host }}"
+      register: vault_tidy_back
+      changed_when: false
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: "Vault tidy | Only those fields are gone — {{ vault_tidy_item.path }}"
+      ansible.builtin.assert:
+        that:
+          - vault_tidy_back.json.data.data == (vault_tidy_current | dict2items | rejectattr('key', 'in', vault_tidy_item.fields) | items2dict)
+        fail_msg: "{{ vault_tidy_item.path }}: the document read back is not the former one minus {{ vault_tidy_present }}"
+        quiet: true
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: "Vault tidy | Note — {{ vault_tidy_item.path }}"
+      ansible.builtin.set_fact:
+        vault_tidy_done: "{{ vault_tidy_done + [('would remove ' if ansible_check_mode else 'removed ') ~ (vault_tidy_present | join(', ')) ~ ' from ' ~ vault_tidy_item.path ~ ' — ' ~ vault_tidy_item.reason] }}"

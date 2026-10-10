@@ -51,6 +51,7 @@ The playbooks of this repo, grouped by scope. Each runs against `inventories/pro
 | `vault-approles.yml` | Provision a per-service Vault identity (policy + AppRole) for every service (SEC-04 least-privilege policy scoped to its own prefix, SEC-05 AppRole auth). |
 | `wazuh.yml` | Security monitoring: Wazuh manager + indexer + dashboard on `lxc-wazuh-01` (vendor single-node, pinned, Vault secrets, edge TLS, Authentik OpenID), then the agent on every guest (FIM, log collection, inventory), enrolled with a Vault-held password. Decommission with `-e wazuh_state=absent`. |
 | `vault-backup.yml` | Vault DR backup: install the daily raft-snapshot timer on the vault host and pull the newest snapshot to the controller store for an immediate off-host copy. |
+| `vault-tidy.yml` | One document per secret: archive the Vault documents and remove the fields the inventory declares as retired (`platform_vault_retired_*`), refusing any value not still held by its declared owner. `--check` says what it would do. |
 | `vault.yml` | Configure PROD Vault (lxc-vault-01, SVC) — Docker secrets backend. |
 | `vaultwarden.yml` | Configure PROD Vaultwarden (lxc-vaultwarden-01, SVC) — Docker password manager. |
 

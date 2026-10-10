@@ -1,0 +1,36 @@
+---
+# One retired document: read it, check its values still live at their owners, archive it.
+- name: "Vault tidy | Read the document — {{ vault_tidy_item.path }}"
+  ansible.builtin.uri:
+    url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_env }}/{{ vault_tidy_item.path }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_tidy_timeout }}"
+    status_code: [200, 404]
+  delegate_to: "{{ vault_tidy_host }}"
+  register: vault_tidy_read
+  check_mode: false   # read-only
+  changed_when: false
+  no_log: true
+
+- name: "Vault tidy | Its fields — {{ vault_tidy_item.path }}"
+  ansible.builtin.set_fact:
+    vault_tidy_current: "{{ vault_tidy_read.json.data.data | default({}) }}"
+  no_log: true
+
+- name: "Vault tidy | Guard and archive — {{ vault_tidy_item.path }}"
+  when: vault_tidy_read.status == 200
+  block:
+    - name: "Vault tidy | Guard — {{ vault_tidy_item.path }}"
+      ansible.builtin.include_tasks: same_as.yml
+
+    - name: "Vault tidy | Archive — {{ vault_tidy_item.path }}"
+      ansible.builtin.include_role:
+        name: service_decommission
+        tasks_from: vault_archive_one
+      vars:
+        decommission_secret: "{{ vault_tidy_env }}/{{ vault_tidy_item.path }}"
+
+    - name: "Vault tidy | Note — {{ vault_tidy_item.path }}"
+      ansible.builtin.set_fact:
+        vault_tidy_done: "{{ vault_tidy_done + [('would archive ' if ansible_check_mode else 'archived ') ~ vault_tidy_item.path ~ ' — ' ~ vault_tidy_item.reason] }}"

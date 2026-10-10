@@ -1,0 +1,23 @@
+---
+# Vault documents and fields that nothing reads any more (applied by playbooks/vault-tidy.yml,
+# roles/vault_tidy). Paths are under secret/<env>/. `same_as` names where the same value lives
+# now: the run refuses to retire a value that differs from it. An entry stays here after it has
+# been applied — it is the record of what was retired and why, and a later run changes nothing.
+platform_vault_retired_documents:
+  - path: "gitlab/smtp"
+    reason: "replaced by the service mailbox document mail/gitlab (roles/mailbox); roles/gitlab no longer reads it"
+    same_as:
+      - {field: smtp_password, path: "mail/gitlab", field_there: password}
+  - path: "jumpserver/smtp"
+    reason: "replaced by the service mailbox document mail/jumpserver (roles/mailbox); nothing reads it"
+    same_as:
+      - {field: smtp_password, path: "mail/jumpserver", field_there: password}
+
+platform_vault_retired_fields:
+  - path: "mailcow/admin"
+    fields: [gitlab_password, jumpserver_password, alerts_password]
+    reason: "copies of three service mailbox passwords, each owned by mail/<service>; no role reads them here"
+    same_as:
+      - {field: gitlab_password, path: "mail/gitlab", field_there: password}
+      - {field: jumpserver_password, path: "mail/jumpserver", field_there: password}
+      - {field: alerts_password, path: "mail/alerts", field_there: password}
