@@ -31,3 +31,23 @@ loki_s3_vault_path: "{{ platform_env }}/loki/s3"   # minted by seaweedfs_bucket 
 # Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
 loki_firewall_rules:
   - { port: "{{ loki_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "Loki push (promtail on every guest)" }
+
+# --- Alerts on logs (the ruler) ---------------------------------------------------------------
+# security/0001 §People reading in Vault: what an administrator of Vault could do by changing a
+# policy is DETECTED, not prevented. The rules (templates/rules.yml.j2) read Vault's audit log,
+# shipped from every member by promtail (job vault_audit); alerts go to the alert manager of the
+# same host. A rule file is picked up without a restart; the ruler itself needs one, once.
+loki_ruler_enabled: true
+loki_rules_dir: "{{ loki_config_dir }}/rules"
+loki_rules_tenant: "fake"                      # the one tenant of an instance without authentication
+loki_rules_scratch_dir: "{{ loki_data_dir }}/rules-temp"
+loki_rule_interval: "1m"
+loki_alertmanager_url: "http://127.0.0.1:9093"   # roles/alertmanager (alertmanager_listen), same host
+loki_vault_audit_selector: '{job="vault_audit"}'
+loki_vault_oidc_mount: "oidc"                  # a person's name in the log is <mount>-<username>
+loki_vault_people_area: "{{ platform_vault_people_area | default('users') }}"
+loki_vault_automation_login: "{{ platform_vault_automation_login | default('ansible-deploy') }}"
+loki_vault_window: "5m"                        # how long an event keeps its alert firing
+loki_vault_audit_silence: "26h"                # the nightly snapshot alone writes entries every day
+loki_rules_wait_retries: 18                    # the ruler reads its directory once a minute
+loki_rules_wait_delay: 10

@@ -37,6 +37,8 @@
   loop:
     - {path: "{{ loki_config_dir }}", owner: root, mode: "0755"}
     - {path: "{{ loki_data_dir }}", owner: "{{ loki_account }}", mode: "0750"}
+    - {path: "{{ loki_rules_dir }}", owner: root, mode: "0755"}
+    - {path: "{{ loki_rules_dir }}/{{ loki_rules_tenant }}", owner: root, mode: "0755"}
   loop_control:
     label: "{{ item.path }}"
 
@@ -47,8 +49,21 @@
     owner: root
     group: "{{ loki_account_group }}"
     mode: "0640"
+    # A config Loki cannot read never replaces the one it runs on: the image itself checks the
+    # new file first (as root: the temporary file is root's).
+    validate: "docker run --rm --user 0:0 --read-only --network none -v %s:/etc/loki-verify.yml:ro {{ loki_image }} -config.file=/etc/loki-verify.yml -verify-config"
   no_log: true   # contains S3 secret key
   register: loki_config_file
+
+# Read by the ruler once a minute: a change needs no restart.
+- name: "Loki | Alert rules on logs ({{ loki_rules_dir }}/{{ loki_rules_tenant }})"
+  ansible.builtin.template:
+    src: rules.yml.j2
+    dest: "{{ loki_rules_dir }}/{{ loki_rules_tenant }}/platform.yml"
+    owner: root
+    group: "{{ loki_account_group }}"
+    mode: "0640"
+  when: loki_ruler_enabled | bool
 
 - name: "Loki | The native unit stops (retired; it holds :{{ loki_port }})"
   ansible.builtin.include_role:
@@ -90,6 +105,25 @@
   retries: 30
   delay: 5
   when: not ansible_check_mode
+
+# The ruler lists what it evaluates: every declared alert must be there (a rule it cannot
+# parse is left out, and only its log says so).
+- name: "Loki | The ruler holds every declared alert"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ loki_port }}/loki/api/v1/rules"
+    return_content: true
+    status_code: [200, 404]   # 404: no rule group loaded yet
+  register: loki_rules_loaded
+  until: >-
+    loki_rules_loaded.status == 200 and
+    (lookup('template', 'rules.yml.j2') | from_yaml).groups | map(attribute='rules') | flatten | map(attribute='alert')
+    | reject('in', loki_rules_loaded.content | default('')) | list | length == 0
+  retries: "{{ loki_rules_wait_retries }}"
+  delay: "{{ loki_rules_wait_delay }}"
+  changed_when: false
+  when:
+    - loki_ruler_enabled | bool
+    - not ansible_check_mode
 
 - name: "Loki | The native install (retired)"
   ansible.builtin.include_role:
