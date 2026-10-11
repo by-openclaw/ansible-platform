@@ -56,7 +56,7 @@ Three things must hold, in this order: your desk routes the platform's networks 
 | step-ca | `ca.<domain>` | an administrator's desk | — | — | — | — |
 | traefik | `traefik.<domain>` | an administrator's desk | single sign-on | its administrators | `traefik-admins` | — |
 | vault | `vault.<domain>` | an administrator's desk | single sign-on | `vault-users` | `vault-admins` | — |
-| vaultwarden | `vaultwarden.<domain>` | the Internet | single sign-on | its administrators | `vaultwarden-admins` | `secret/<env>/vaultwarden/admin` |
+| vaultwarden | `vaultwarden.<domain>` | the Internet | single sign-on | `vaultwarden-users` | `vaultwarden-admins` | `secret/<env>/vaultwarden/admin` |
 | verdaccio | `npm.<domain>` | the office or the VPN | single sign-on | `verdaccio-users` | — | — |
 | wazuh | `wazuh.<domain>` | the office or the VPN | single sign-on | — | — | — |
 
