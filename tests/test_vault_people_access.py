@@ -89,10 +89,15 @@ ACCESSOR = "auth_oidc_0000"
 SELF = "{{identity.entity.aliases." + ACCESSOR + ".name}}"
 
 
+ACCESS = [{"group": GROUPS[svc]["admin"], "paths": paths} for svc, paths in LOGINS.items()]
+
+
 def _render(name: str) -> list[tuple[str, list[str]]]:
     env = jinja2.Environment(trim_blocks=True)  # noqa: S701 — a policy text, not HTML
+    env.filters["flatten"] = lambda lists: [x for sub in lists for x in sub]   # Ansible's, one level
     text = env.from_string((ROOT / "roles" / "vault" / "templates" / name).read_text()).render(
-        vault_kv_path="secret", platform_env="prod", vault_people_area="users", vault_people_accessor=ACCESSOR
+        vault_kv_path="secret", platform_env="prod", vault_people_area="users", vault_people_accessor=ACCESSOR,
+        vault_people_access=ACCESS,
     )
     rules = re.findall(r'path "([^"]+)" \{\s*capabilities = \[([^\]]*)\]', text)
     return [(p, [c.strip().strip('"') for c in caps.split(",")]) for p, caps in rules]
@@ -130,8 +135,27 @@ def test_the_person_proof_cleans_up_and_gives_its_token_back():
     assert not any("/data/" in u for u in urls)
 
 
-def test_both_kinds_of_person_are_proved():
+def test_every_kind_of_person_is_proved():
     defaults = yaml.safe_load((ROOT / "roles" / "vault" / "defaults" / "main.yml").read_text())
     probes = defaults["vault_people_probes"]
-    assert len({p["name"] for p in probes}) == 2, "one entity per kind of person (one name per sign-in method)"
-    assert [len(p["policies"]) for p in probes] == [1, 2]
+    assert len({p["name"] for p in probes}) == 3, "one entity per kind of person (one name per sign-in method)"
+    assert [len(p["policies"]) for p in probes] == [1, 2, 3]
+    # a plain person and an administrator of Vault are refused every service login …
+    assert all("vault_people_login_paths" in p["deny"] and p["read"] == [] for p in probes[:2])
+    # … an administrator of Vault who is in a service's group reads that one only
+    assert "vault_people_first_paths" in probes[2]["read"] and "difference" in probes[2]["deny"]
+
+
+def test_an_administrator_of_vault_is_refused_every_service_login():
+    rules = dict(_render("admins-policy.hcl.j2"))
+    for paths in LOGINS.values():
+        for path in paths:
+            assert rules[f"secret/+/prod/{path}"] == ["deny"], path
+
+
+@pytest.mark.parametrize("service", sorted(LOGINS))
+def test_the_groups_own_exact_path_wins_over_that_refusal(service):
+    """Vault prefers the path whose first wildcard comes later: the group's path has none."""
+    for path, caps in _policy(GROUPS[service]["admin"], LOGINS[service]):
+        if path.startswith("secret/data/"):
+            assert "+" not in path and "*" not in path and caps == ["read"]
