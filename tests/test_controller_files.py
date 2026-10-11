@@ -12,6 +12,7 @@ import re
 import pytest
 
 yaml = pytest.importorskip("yaml")
+jinja2 = pytest.importorskip("jinja2")
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DATA = yaml.safe_load((ROOT / "inventories" / "prod" / "group_vars" / "all" / "controller_files.yml").read_text())
@@ -96,3 +97,27 @@ def test_only_the_purge_deletes_and_only_when_asked_alone():
     assert "not (controller_files_set_aside | bool)" in when
     assert PLAY["vars"]["controller_files_purge"] is False
     assert PLAY["vars"]["controller_files_set_aside"] is False
+
+
+def _closing_message(purged_changed: bool, aside: int, check: bool = False) -> str:
+    task = next(t for t in PLAY["tasks"] if "ansible.builtin.assert" in t)
+    env = jinja2.Environment()  # noqa: S701 — a log line, not HTML
+    env.tests["changed"] = lambda r: bool(r.get("changed"))
+    return " ".join(
+        env.from_string(task["ansible.builtin.assert"]["success_msg"])
+        .render(
+            controller_files_kept=["a"] * 56,
+            controller_files_aside_count=aside,
+            controller_files_purged={"changed": purged_changed},
+            ansible_check_mode=check,
+        )
+        .split()
+    )
+
+
+def test_the_closing_message_says_what_this_run_did():
+    """The run that emptied the area ended on "waiting for the purge: 196" (counted before)."""
+    assert _closing_message(True, 196) == "only declared files: 56; the set-aside area was emptied by this run (196 file(s))"
+    assert "would be emptied" in _closing_message(True, 196, check=True)
+    assert _closing_message(False, 0) == "only declared files: 56; nothing is set aside"
+    assert "12 file(s) set aside, waiting for" in _closing_message(False, 12)
