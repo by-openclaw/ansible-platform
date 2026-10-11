@@ -1,0 +1,129 @@
+---
+# ==============================================================================
+# Adopt a FRESH Proxmox node — the first contact.
+#
+# The owner stores the node's factory login in Vault (the only hand step):
+#   secret/<env>/pve.dev/root  with fields  host, password  (+ ssh_port when not 22)
+# This play signs in with it ONCE, installs the platform's automation keys for root, proves a
+# key-only sign-in, and then turns root's password sign-in off (keys stay). Nothing else is
+# touched: the node joins the inventory by PR afterwards, and the normal plays take over
+# (hardening, user-mgmt, pve_host). Re-runnable: with the password already refused, the
+# key-holding plays still converge.
+#
+#   ansible-playbook playbooks/pve-adopt.yml [-e pve_adopt_vault_path=prod/pve.dev/root]
+# ==============================================================================
+- name: "Adopt | The first-contact login the owner stored (Vault)"
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    pve_adopt_vault_path: "{{ platform_env }}/pve.dev/root"
+  tasks:
+    - name: "Adopt | Read it"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ pve_adopt_vault_path }}"
+
+    - name: "Adopt | It holds what the first contact needs"
+      ansible.builtin.assert:
+        that:
+          - vault_secret_result.host | default('') | length > 0
+          - vault_secret_result.password | default('') | length > 0
+        fail_msg: >-
+          {{ pve_adopt_vault_path }} must hold the fields `host` and `password`
+          (and `ssh_port` when not 22) — the owner creates it in Vault first.
+        quiet: true
+
+    # Two faces of the same node: once with the stored password (works only before the adopt),
+    # once with the platform's keys (works only after the keys landed). Each play below uses
+    # the face that must work at that moment, so a re-run converges whichever state it finds.
+    - name: "Adopt | The node, by password and by key"
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups: "{{ item.group }}"
+        ansible_host: "{{ vault_secret_result.host }}"
+        ansible_port: "{{ vault_secret_result.ssh_port | default(22) }}"
+        ansible_user: root
+        ansible_password: "{{ item.password | default(omit) }}"
+        ansible_become: false
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+      loop:
+        - {name: pve-adopt-password, group: pve_adopt_password, password: "{{ vault_secret_result.password }}"}
+        - {name: pve-adopt-keyed, group: pve_adopt_keyed}
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: false
+      no_log: true
+
+- name: "Adopt | The platform's keys land (first contact, by password)"
+  hosts: pve_adopt_password
+  gather_facts: false
+  become: false
+  vars:
+    pve_adopt_keys_dir: "{{ playbook_dir }}/../roles/user-mgmt/files/keys"
+    pve_adopt_key_files:
+      - id_ed25519_svc-ansible-prod.pub
+      - id_ed25519_svc-rune-prod.pub
+  tasks:
+    - name: "Adopt | Can the stored password still sign in?"
+      ansible.builtin.wait_for_connection:
+        timeout: 20
+      register: pve_adopt_password_works
+      failed_when: false
+
+    # Already adopted (password refused): everything below belongs to the keyed face.
+    - name: "Adopt | Keys for root (the one hand-held sign-in ends here)"
+      when: pve_adopt_password_works is success
+      block:
+        - name: "Adopt | It is a Proxmox node"
+          ansible.builtin.command:
+            argv: [pveversion]
+          register: pve_adopt_version
+          changed_when: false
+
+        - name: "Adopt | The platform's automation keys for root"
+          ansible.posix.authorized_key:
+            user: root
+            key: "{{ lookup('file', pve_adopt_keys_dir ~ '/' ~ item) }}"
+          loop: "{{ pve_adopt_key_files }}"
+
+- name: "Adopt | Keys proven, password sign-in off"
+  hosts: pve_adopt_keyed
+  gather_facts: true
+  become: false
+  tasks:
+    - name: "Adopt | A key-only sign-in works (nothing is changed before this holds)"
+      ansible.builtin.ping:
+
+    - name: "Adopt | Root signs in with keys only from now on"
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?\\s*PermitRootLogin\\b"
+        line: "PermitRootLogin prohibit-password"
+        validate: "/usr/sbin/sshd -t -f %s"
+      register: pve_adopt_sshd
+
+    - name: "Adopt | Reload sshd (open sessions stay)"
+      ansible.builtin.systemd_service:
+        name: ssh
+        state: reloaded
+      when: pve_adopt_sshd is changed
+
+    - name: "Adopt | What the node is (for the inventory PR and the BoM)"
+      ansible.builtin.command:
+        argv: [zpool, list, -H, -o, name,size,health]
+      register: pve_adopt_pools
+      changed_when: false
+      failed_when: false
+
+    - name: "Adopt | Report"
+      ansible.builtin.debug:
+        msg: >-
+          PVE_ADOPT {{ pve_adopt_version.stdout | default('pve') }} ·
+          {{ ansible_processor_vcpus | default('?') }} vcpus ·
+          {{ (ansible_memtotal_mb | default(0) / 1024) | round | int }} GiB RAM ·
+          pools: {{ pve_adopt_pools.stdout_lines | default(['?']) | join(' | ') }} ·
+          keys in, root password sign-in off — next: the inventory PR, then hardening/pve_host
+      vars:
+        pve_adopt_version: "{{ hostvars['pve-adopt-password'].pve_adopt_version | default({}) }}"
