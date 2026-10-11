@@ -39,6 +39,12 @@
     - vault_genesis | default(false) | bool
     - inventory_hostname == vault_first_member
 
+# Steady state (the deploy login, no root): converged at every run, and alone with --tags people.
+- name: People reading in Vault — read rights per administrators' group (security/0001)
+  ansible.builtin.import_tasks: people.yml
+  tags: [vault, people]
+  when: inventory_hostname == vault_first_member
+
 - name: Publish Vault via Traefik (internal-only)
   ansible.builtin.include_role:
     name: traefik_route

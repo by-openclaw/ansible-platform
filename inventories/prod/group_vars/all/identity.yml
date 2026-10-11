@@ -66,6 +66,19 @@ platform_service_groups:
   vaultwarden: {admin: vaultwarden-admins}
   verdaccio:   {access: verdaccio-users}
 
+# The login a person may have to type for a service: read in Vault, read-only, by the service's
+# administrators' group above (security/0001 §People reading in Vault; roles/vault tasks/people.yml).
+# Paths under secret/<env>/. Only a document that holds a login and nothing else — one that also
+# holds machine-only values (a database password, an application key) is split first. The `root`
+# accounts and the break-glass documents are not here: they are the emergency kit's.
+platform_service_logins:
+  harbor: ["harbor/admin"]
+  monitoring: ["grafana/admin"]
+  nextcloud: ["nextcloud/admin"]
+  pgadmin: ["pgadmin/admin"]
+  seaweedfs: ["seaweedfs/console"]
+  vaultwarden: ["vaultwarden/admin"]
+
 # Groups that gate no single service. Named individually so a role references the name rather than
 # an index into a list.
 # Service accounts at the IdP (machines that read the directory): declared here, rendered by the

@@ -86,3 +86,28 @@ vault_oidc_group_drift: >-
      or (vault_oidc_group_now.json.data.type | default('')) != 'external'
      or (vault_oidc_group_now.json.data.policies | default([]) | sort) != [vault_admin_policy_name]
      or vault_oidc_client_mark_applied != vault_oidc_client_mark }}
+
+# --- People reading in Vault (security/0001 §People reading in Vault) -------------------------
+# One read-only policy and one external group per administrators' group that has a login to
+# read. The documents come from the inventory (platform_service_logins), the group from
+# platform_service_groups; nothing here lets a person write.
+vault_people_policy_prefix: "people-"
+vault_people_access: >-
+  {%- set acc = {} -%}
+  {%- for svc, paths in (platform_service_logins | default({})).items() -%}
+  {%- set g = (platform_service_groups[svc] | default({})).admin | default('') -%}
+  {%- if g -%}{%- set _ = acc.update({g: (acc.get(g, []) + paths) | unique | sort}) -%}{%- endif -%}
+  {%- endfor -%}
+  {{ acc | dict2items(key_name='group', value_name='paths') }}
+vault_people_logins_without_group: >-
+  {{ (platform_service_logins | default({})).keys()
+     | reject('in', platform_service_groups | dict2items | selectattr('value.admin', 'defined') | map(attribute='key') | list)
+     | list }}
+# The proof after these rights are applied: a login that carries ONE group's policy and nothing
+# else is asked what it may do — `read` on that group's documents, nothing on another document.
+# No document is read for it. The login exists for the length of the proof.
+vault_people_verify: true
+vault_people_probe_role: "people-probe"
+vault_people_probe_ttl: "60s"
+vault_people_probe_refused: "{{ platform_env }}/vault/oidc"   # a document no people policy opens
+vault_approle_mount: "approle"

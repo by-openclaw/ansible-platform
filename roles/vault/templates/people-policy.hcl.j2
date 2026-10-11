@@ -1,0 +1,22 @@
+{# Managed by Ansible role `vault` (tasks/people.yml). What the members of the group
+   `{{ vault_people_item.group }}` may READ in Vault — security/0001 §People reading in Vault. #}
+{% for p in vault_people_item.paths %}
+path "{{ vault_kv_path }}/data/{{ platform_env }}/{{ p }}" {
+  capabilities = ["read"]
+}
+path "{{ vault_kv_path }}/metadata/{{ platform_env }}/{{ p }}" {
+  capabilities = ["read"]
+}
+{% endfor %}
+{# Finding the document in the UI: the NAMES in its folder and above, never a value. #}
+{% for d in vault_people_item.paths | map('dirname') | unique | sort %}
+path "{{ vault_kv_path }}/metadata/{{ platform_env }}/{{ d }}" {
+  capabilities = ["list"]
+}
+{% endfor %}
+path "{{ vault_kv_path }}/metadata/{{ platform_env }}" {
+  capabilities = ["list"]
+}
+path "{{ vault_kv_path }}/metadata" {
+  capabilities = ["list"]
+}
