@@ -40,7 +40,17 @@
 - name: "people | Bind it"
   ansible.builtin.set_fact:
     vault_people_accessor: "{{ vault_people_auth.json.data[vault_oidc_mount ~ '/'].accessor }}"
+    vault_people_approle_accessor: "{{ vault_people_auth.json.data[vault_approle_mount ~ '/'].accessor }}"
     vault_people_done: []
+
+# Every person reads their own area; an administrator is refused the other people's. Both
+# policies and the sign-in role that hands out the person policy are converged here, in steady
+# state (tasks/oidc.yml writes the same things at genesis, from the same variables).
+- name: "people | The person and admins policies, the sign-in role"
+  ansible.builtin.include_tasks:
+    file: people_person.yml
+    apply:
+      tags: [vault, people]
 
 - name: "people | One policy and one group per administrators' group"
   ansible.builtin.include_tasks:
@@ -89,6 +99,19 @@
     - vault_people_verify | bool
     - not ansible_check_mode
 
+- name: "people | Proof: a person reads their own area and no other person's, an administrator too"
+  ansible.builtin.include_tasks:
+    file: people_verify_person.yml
+    apply:
+      tags: [vault, people]
+  loop: "{{ vault_people_probes }}"
+  loop_control:
+    loop_var: vault_people_probe
+    label: "{{ vault_people_probe.policies | join(' + ') }}"
+  when:
+    - vault_people_verify | bool
+    - not ansible_check_mode
+
 - name: "people | Summary"
   ansible.builtin.debug:
     msg: >-
@@ -96,3 +119,4 @@
       documents={{ vault_people_access | map(attribute='paths') | flatten | length }}
       changes={{ vault_people_done | length }}{{ (' (' ~ (vault_people_done | join('; ')) ~ ')') if vault_people_done else '' }}
       proved={{ (vault_people_proved | default([])) | length }}
+      person_area={{ ('own=read other=deny as ' ~ (vault_people_person_proved | join(', '))) if (vault_people_person_proved | default([])) else 'not proved in this run' }}

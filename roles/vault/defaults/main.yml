@@ -59,9 +59,12 @@ vault_audit_file_path: "/vault/logs/audit.log"
 vault_audit_file_mode: "0640"
 # The OIDC login: its mount and what the default role asks of the identity provider.
 vault_oidc_mount: "oidc"
-vault_oidc_user_claim: "sub"
+# The person's alias on the sign-in method is their USERNAME: the per-person area is named after
+# it (person-policy.hcl.j2). A person cannot change their own username at the identity provider
+# (roles/authentik pins that setting); only the inventory names people.
+vault_oidc_user_claim: "preferred_username"
 vault_oidc_groups_claim: "groups"
-vault_oidc_token_policies: ["default"]
+vault_oidc_token_policies: ["default", "{{ vault_people_person_policy }}"]
 vault_oidc_token_ttl: "1h"
 vault_oidc_scopes: ["openid", "profile", "email", "groups"]
 # Derived from what tasks/oidc.yml reads: does Vault hold what is wanted? The client secret is
@@ -111,3 +114,16 @@ vault_people_probe_role: "people-probe"
 vault_people_probe_ttl: "60s"
 vault_people_probe_refused: "{{ platform_env }}/vault/oidc"   # a document no people policy opens
 vault_approle_mount: "approle"
+# The per-person area: secret/<env>/users/<username>/… — readable by that person only.
+vault_people_area: "users"
+vault_people_person_policy: "person"
+# Its proof, for a plain person and for an administrator: an entity that exists for the length
+# of the proof, known to the sign-in method under a name nobody has and to AppRole under a proof
+# login. Each reads its own area and is refused another person's.
+vault_people_base_policies:
+  - {name: "{{ vault_people_person_policy }}", template: "person-policy.hcl.j2"}
+  - {name: "{{ vault_admin_policy_name }}", template: "admins-policy.hcl.j2"}
+vault_people_probes:
+  - {name: "people-probe-person", policies: ["{{ vault_people_person_policy }}"]}
+  - {name: "people-probe-admin", policies: ["{{ vault_people_person_policy }}", "{{ vault_admin_policy_name }}"]}
+vault_people_probe_other: "people-probe-other"
