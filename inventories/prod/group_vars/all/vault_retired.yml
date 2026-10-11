@@ -80,6 +80,14 @@ platform_vault_retired_fields:
   - path: "mailcow/admin"
     fields: [user_local_part, user_password, adm_user_local_part, adm_user_password, example_user_password, example_adm_password]
     reason: "passwords of people's mailboxes from before the identity-provider sign-in: those mailboxes have no password of their own any more (sign-in source generic-oidc); no role reads these fields"
+  # --- 2026-10-11: documents split in two — the machine-only values now live in <service>/app ---
+  - path: "netbox/admin"
+    fields: [secret_key, api_token_pepper, superuser_api_token]
+    reason: "machine-only values, read from netbox/app since the split; this document is the local administrator's login, read in Vault by the service's administrators (security/0001)"
+    same_as:
+      - {field: secret_key, path: "netbox/app", field_there: secret_key}
+      - {field: api_token_pepper, path: "netbox/app", field_there: api_token_pepper}
+      - {field: superuser_api_token, path: "netbox/app", field_there: superuser_api_token}
 
 # Brought back from the archive.
 platform_vault_restored_documents:
@@ -95,6 +103,13 @@ platform_vault_copied_documents:
   - {from: "postgres/superuser", to: "postgresql/superuser", reason: "the service's name is postgresql"}
   - {from: "postgres/replication", to: "postgresql/replication", reason: "the service's name is postgresql"}
   - {from: "postgres/patroni-api", to: "postgresql/patroni-api", reason: "the service's name is postgresql"}
+  # A document split in two (security/0001 §People reading in Vault): the local administrator's
+  # login stays at <service>/admin, which the service's administrators read; what only the machine
+  # needs moves to <service>/app (`fields`), and is retired from the first document above.
+  - from: "netbox/admin"
+    to: "netbox/app"
+    fields: [secret_key, api_token_pepper, superuser_api_token]
+    reason: "machine-only values leave the document the administrators' group reads"
 
 # What stays out of the store. playbooks/secrets-to-vault.yml never writes one of these back
 # from a file left on the controller (a restored document is a live one again).

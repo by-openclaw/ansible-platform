@@ -45,7 +45,7 @@ Three things must hold, in this order: your desk routes the platform's networks 
 | mailcow | `mail.<domain>` | the Internet | single sign-on | `mailcow-users` | — | — |
 | monitoring | `grafana.<domain>` | the office or the VPN | single sign-on | its administrators | `grafana-admins` | `secret/<env>/grafana/admin` |
 | netbird | `vpn.<domain>` | the Internet | single sign-on | `netbird-users` | `netbird-admins` | — |
-| netbox | `netbox.<domain>` | the office or the VPN | single sign-on | its administrators | `netbox-admins` | — |
+| netbox | `netbox.<domain>` | the office or the VPN | single sign-on | its administrators | `netbox-admins` | `secret/<env>/netbox/admin` |
 | nextcloud | `nextcloud.<domain>` | the Internet | single sign-on | `nextcloud-users` | `nextcloud-admins` | `secret/<env>/nextcloud/admin` |
 | pbs | `pbs.<domain>` | an administrator's desk | single sign-on | its administrators | `pbs-admins` | — |
 | pgadmin | `pgadmin.<domain>` | the office or the VPN | single sign-on | its administrators | `pgadmin-admins` | `secret/<env>/pgadmin/admin` |

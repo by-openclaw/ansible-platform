@@ -4,6 +4,10 @@
 # exist they must be equal. Nothing is generated and nothing is removed here — a consumer
 # switched to the new path finds exactly the values it had, and the old path is retired
 # separately (guarded) once nothing reads it.
+# With `fields`, only those fields are carried (a document split in two: the destination holds
+# what the source hands over, and those fields are retired from the source afterwards): they must
+# all exist in the source when the destination is written, and the comparison is on the declared
+# fields the source still holds.
 - name: "Vault tidy | Source and destination — {{ vault_tidy_item.from }} → {{ vault_tidy_item.to }}"
   ansible.builtin.uri:
     url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_env }}/{{ item }}"
@@ -20,6 +24,20 @@
   changed_when: false
   no_log: true
 
+- name: "Vault tidy | Every field to hand over is in the source — {{ vault_tidy_item.from }}"
+  ansible.builtin.assert:
+    that: vault_tidy_item.fields | difference(vault_tidy_places.results[0].json.data.data.keys() | list) | length == 0
+    fail_msg: >-
+      {{ vault_tidy_item.from }} does not hold
+      {{ vault_tidy_item.fields | difference(vault_tidy_places.results[0].json.data.data.keys() | list) | join(', ') }}
+      — nothing is written
+    quiet: true
+  no_log: true
+  when:
+    - vault_tidy_item.fields is defined
+    - vault_tidy_places.results[0].status == 200
+    - vault_tidy_places.results[1].status == 404
+
 - name: "Vault tidy | Write the destination — {{ vault_tidy_item.to }}"
   ansible.builtin.uri:
     url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_env }}/{{ vault_tidy_item.to }}"
@@ -31,7 +49,7 @@
     body:
       options:
         cas: 0   # only if the destination still does not exist
-      data: "{{ vault_tidy_places.results[0].json.data.data }}"
+      data: "{{ vault_tidy_copy_source }}"
     status_code: [200, 204]
   delegate_to: "{{ vault_tidy_host }}"
   changed_when: true
@@ -40,6 +58,11 @@
     - vault_tidy_places.results[0].status == 200
     - vault_tidy_places.results[1].status == 404
     - not ansible_check_mode
+  vars:
+    vault_tidy_copy_source: >-
+      {{ vault_tidy_places.results[0].json.data.data | dict2items
+         | selectattr('key', 'in', vault_tidy_item.fields | default(vault_tidy_places.results[0].json.data.data.keys() | list))
+         | items2dict }}
 
 - name: "Vault tidy | Read the destination — {{ vault_tidy_item.to }}"
   ansible.builtin.uri:
@@ -56,13 +79,20 @@
 
 - name: "Vault tidy | Source and destination hold the same — {{ vault_tidy_item.to }}"
   ansible.builtin.assert:
-    that: vault_tidy_back.json.data.data == vault_tidy_places.results[0].json.data.data
+    that: >-
+      (vault_tidy_back.json.data.data | dict2items | selectattr('key', 'in', vault_tidy_copy_keys) | items2dict)
+      == (vault_tidy_places.results[0].json.data.data | dict2items | selectattr('key', 'in', vault_tidy_copy_keys) | items2dict)
     fail_msg: "{{ vault_tidy_item.to }} differs from {{ vault_tidy_item.from }} — nothing is retired; settle which one is right first"
     quiet: true
   no_log: true
   when:
     - vault_tidy_places.results[0].status == 200
     - vault_tidy_back.status == 200
+  vars:
+    # every field of the source, or the declared fields the source still holds
+    vault_tidy_copy_keys: >-
+      {{ vault_tidy_places.results[0].json.data.data.keys() | list
+         | intersect(vault_tidy_item.fields | default(vault_tidy_places.results[0].json.data.data.keys() | list)) }}
 
 - name: "Vault tidy | Note — {{ vault_tidy_item.to }}"
   ansible.builtin.set_fact:
