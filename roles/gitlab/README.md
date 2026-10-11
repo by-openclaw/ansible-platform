@@ -2,7 +2,7 @@
 
 GitLab CE `gitlab_version` as a container of the official Omnibus image (`gitlab/gitlab-ce`, host network; `/etc/gitlab`, `/var/opt/gitlab` with the git-data ZFS mount, `/var/log/gitlab` mounted; the image's own accounts — `update-permissions` re-owns the data once when they differ) on `lxc-gitlab-01`. Every Omnibus command goes through `gitlab_exec` + `gitlab_container` (`group_vars/all/gitlab.yml`); scripts for `gitlab-rails runner` are staged in `gitlab_scripts_dir`, mounted read-only. SSO via Authentik OIDC, cluster Postgres (`sslmode=verify-full`), shared Redis (TLS), S3 (SeaweedFS) for artifacts/uploads/backups, Traefik edge, own mailbox `gitlab@` (Service Desk-ready via `gitlab+<key>@`).
 
-- Vault: `prod/gitlab/{db-pgsql,oidc,smtp,secrets,runner-token}`; GitLab's own secrets written post-install (`gitlab_secrets_vault_path`).
+- Vault: `prod/gitlab/{db-pgsql,oidc,smtp,secrets,admin,runner-token}`; GitLab's own secrets written post-install (`gitlab_secrets_vault_path`), the local administrator's login in its own document (`gitlab_admin_vault_path`, read in Vault by the service's administrators).
 - RBAC = `gitlab_rbac` role (group-based); demo project = `gitlab_demo`; CI templates in `files/ci-templates/` (pre-commit, security-scan).
 - Runner = `vm-gitlab-runner-01` (docker executor, **unprivileged**, Kaniko builds) → Harbor.
 - Upgrade = `playbooks/gitlab-upgrade.yml` (one rung per minor: the image tag; the container's startup reconfigure runs the migrations). A config change in a running container = `gitlab-ctl reconfigure` in place (no restart).

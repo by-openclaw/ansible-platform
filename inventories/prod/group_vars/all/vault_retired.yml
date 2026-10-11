@@ -88,6 +88,11 @@ platform_vault_retired_fields:
       - {field: secret_key, path: "netbox/app", field_there: secret_key}
       - {field: api_token_pepper, path: "netbox/app", field_there: api_token_pepper}
       - {field: superuser_api_token, path: "netbox/app", field_there: superuser_api_token}
+  - path: "gitlab/secrets"
+    fields: [initial_root_password_file]
+    reason: "the local administrator's login, read from gitlab/admin since the split; this document is the machine's (security/0001)"
+    same_as:
+      - {field: initial_root_password_file, path: "gitlab/admin", field_there: initial_root_password_file}
 
 # Brought back from the archive.
 platform_vault_restored_documents:
@@ -110,6 +115,12 @@ platform_vault_copied_documents:
     to: "netbox/app"
     fields: [secret_key, api_token_pepper, superuser_api_token]
     reason: "machine-only values leave the document the administrators' group reads"
+  # The other way round: the document is the machine's (the service's own secrets file); the
+  # local administrator's login leaves it for <service>/admin.
+  - from: "gitlab/secrets"
+    to: "gitlab/admin"
+    fields: [initial_root_password_file]
+    reason: "the local administrator's login gets its own document, read by the service's administrators"
 
 # What stays out of the store. playbooks/secrets-to-vault.yml never writes one of these back
 # from a file left on the controller (a restored document is a live one again).
