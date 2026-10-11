@@ -68,6 +68,8 @@ platform_vault_retired_documents:
     reason: "the store's older copy of the firewall seed's bootstrap values (retired by-rune fields, the factory default's root hash); the build reads the controller's file, kept right by fw-offline-cache.yml"
   - path: "backup/nfs"
     reason: "a record of an NFS export (no secret) from the first installation; nothing reads it"
+  - path: "net/lxc-break-glass"
+    reason: "the login of an earlier emergency account (oob-admin) for the containers: no host has that account, and the password matches no account (checked on the 39 hosts); the emergency password is break-glass/os"
 
 platform_vault_retired_fields:
   - path: "mailcow/admin"
@@ -93,3 +95,9 @@ platform_vault_copied_documents:
   - {from: "postgres/superuser", to: "postgresql/superuser", reason: "the service's name is postgresql"}
   - {from: "postgres/replication", to: "postgresql/replication", reason: "the service's name is postgresql"}
   - {from: "postgres/patroni-api", to: "postgresql/patroni-api", reason: "the service's name is postgresql"}
+
+# What stays out of the store. playbooks/secrets-to-vault.yml never writes one of these back
+# from a file left on the controller (a restored document is a live one again).
+platform_vault_retired_paths: >-
+  {{ platform_vault_retired_documents | map(attribute='path')
+     | difference(platform_vault_restored_documents | map(attribute='path')) | list }}
