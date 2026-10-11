@@ -1,0 +1,77 @@
+{# Managed by Ansible (role: loki). Alerts on logs. security/0001 §People reading in Vault: what
+   an administrator of Vault could do by changing a policy is detected, not prevented. The rules
+   read Vault's audit log; a refused attempt is in that log too, and counts. #}
+groups:
+  - name: vault-audit
+    interval: {{ loki_rule_interval }}
+    rules:
+      # A document of a person's area touched by anyone but that person or automation.
+      - alert: VaultPersonAreaTouchedByAnother
+        expr: |
+          sum by (who, role) (count_over_time(
+            {{ loki_vault_audit_selector }}
+              | json type="type", path="request.path", who="auth.display_name", role="auth.metadata.role_name"
+              | type="response"
+              | path=~"[^/]+/(data|metadata|subkeys|delete|undelete|destroy)/[^/]+/{{ loki_vault_people_area }}/[^/]+/.+"
+              | role!="{{ loki_vault_automation_login }}"
+              | label_format owner={% raw %}`{{ if contains (printf "/{% endraw %}{{ loki_vault_people_area }}{% raw %}/%s/" (trimPrefix "{% endraw %}{{ loki_vault_oidc_mount }}{% raw %}-" .who)) .path }}yes{{ else }}no{{ end }}`{% endraw %}
+
+              | owner="no"
+            [{{ loki_vault_window }}])) > 0
+        for: 0m
+        labels: {severity: critical}
+        annotations:
+          summary: {% raw %}"Vault: {{ $labels.who }}{{ if $labels.role }} ({{ $labels.role }}){{ end }} touched another person's area"{% endraw %}
+
+          description: "A read, a change or a refused attempt under {{ loki_vault_people_area }}/<someone else>. Each person reads their own area only (security/0001)."
+
+      # A policy written or removed by anyone but automation: the way around every right.
+      - alert: VaultPolicyChangedOutsideAutomation
+        expr: |
+          sum by (who, role, path) (count_over_time(
+            {{ loki_vault_audit_selector }}
+              | json type="type", op="request.operation", path="request.path", who="auth.display_name", role="auth.metadata.role_name"
+              | type="response"
+              | path=~"sys/(policy|policies/acl)/.+"
+              | op=~"create|update|delete"
+              | role!="{{ loki_vault_automation_login }}"
+            [{{ loki_vault_window }}])) > 0
+        for: 0m
+        labels: {severity: critical}
+        annotations:
+          summary: {% raw %}"Vault: policy {{ $labels.path }} changed by {{ $labels.who }}{{ if $labels.role }} ({{ $labels.role }}){{ end }}, not by automation"{% endraw %}
+
+          description: "Policies are written by the roles only (login {{ loki_vault_automation_login }}). A refused attempt counts."
+
+      # A root token in use, or one being generated from the unseal keys: the emergency procedure.
+      - alert: VaultRootTokenInUse
+        expr: |
+          sum (count_over_time(
+            {{ loki_vault_audit_selector }}
+              | json type="type", first_policy="auth.policies[0]"
+              | type="request"
+              | first_policy="root"
+            [{{ loki_vault_window }}])) > 0
+          or
+          sum (count_over_time(
+            {{ loki_vault_audit_selector }}
+              | json type="type", op="request.operation", path="request.path"
+              | type="request"
+              | path=~"sys/generate-root(/.*)?"
+              | op=~"create|update"
+            [{{ loki_vault_window }}])) > 0
+        for: 0m
+        labels: {severity: critical}
+        annotations:
+          summary: "Vault: a root token is in use or being generated"
+          description: "The root token is retired; a new one exists only through the emergency procedure (unseal keys)."
+
+      # The rules above see nothing if the log stops arriving.
+      - alert: VaultAuditLogSilent
+        expr: |
+          absent_over_time({{ loki_vault_audit_selector }}[{{ loki_vault_audit_silence }}])
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Vault: no audit entry reached the log store for {{ loki_vault_audit_silence }}"
+          description: "The active member writes the audit log and promtail ships it from every member (inventory: vault_cluster). Nothing arriving means the shipping or the audit device is broken."
