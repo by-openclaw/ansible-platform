@@ -1,0 +1,101 @@
+---
+# One administrators' group (vault_people_item: {group, paths}): its read policy, the external
+# group that carries it, and the mapping to the identity provider's group of the same name.
+- name: "people | {{ vault_people_item.group }} — the policy as Vault holds it"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/policies/acl/{{ vault_people_policy_prefix }}{{ vault_people_item.group }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 404]
+  register: vault_people_policy_now
+  check_mode: false  # read-only probe: must run under --check too (the next task reads its result)
+  changed_when: false
+  no_log: true
+
+- name: "people | {{ vault_people_item.group }} — write the policy (on drift)"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/policies/acl/{{ vault_people_policy_prefix }}{{ vault_people_item.group }}"
+    method: PUT
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      policy: "{{ lookup('template', 'people-policy.hcl.j2') }}"
+    status_code: [200, 204]
+  register: vault_people_policy_write
+  when: (vault_people_policy_now.json.data.policy | default('') | trim) != (lookup('template', 'people-policy.hcl.j2') | trim)
+  changed_when: true
+
+- name: "people | {{ vault_people_item.group }} — the group as Vault holds it"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/identity/group/name/{{ vault_people_item.group }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 404]
+  register: vault_people_group_now
+  check_mode: false  # read-only probe: must run under --check too (the next tasks read its result)
+  changed_when: false
+  no_log: true
+
+- name: "people | {{ vault_people_item.group }} — the external group carries the policy"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/identity/group"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      name: "{{ vault_people_item.group }}"
+      type: external
+      policies: ["{{ vault_people_policy_prefix }}{{ vault_people_item.group }}"]
+    status_code: [200, 204]
+  register: vault_people_group_write
+  when: >-
+    vault_people_group_now.status != 200
+    or (vault_people_group_now.json.data.type | default('')) != 'external'
+    or (vault_people_group_now.json.data.policies | default([]) | sort)
+       != [vault_people_policy_prefix ~ vault_people_item.group]
+  changed_when: true
+
+- name: "people | {{ vault_people_item.group }} — the group, with its identifier"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/identity/group/name/{{ vault_people_item.group }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 404]
+  register: vault_people_group_read
+  check_mode: false  # read-only probe: must run under --check too (the next task reads its result)
+  changed_when: false
+  no_log: true
+
+- name: "people | {{ vault_people_item.group }} — mapped to the identity provider's group (once)"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/identity/group-alias"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      name: "{{ vault_people_item.group }}"
+      mount_accessor: "{{ vault_people_accessor }}"
+      canonical_id: "{{ vault_people_group_read.json.data.id }}"
+    status_code: [200, 204]
+  register: vault_people_alias_write
+  when:
+    - vault_people_group_read.status == 200
+    - not (vault_people_group_read.json.data.alias | default({}))
+  changed_when: true
+
+- name: "people | {{ vault_people_item.group }} — what changed"
+  ansible.builtin.set_fact:
+    vault_people_done: >-
+      {{ vault_people_done
+         + ([vault_people_item.group ~ ': policy'] if (vault_people_policy_write is changed) else [])
+         + ([vault_people_item.group ~ ': group'] if (vault_people_group_write is changed) else [])
+         + ([vault_people_item.group ~ ': mapping'] if (vault_people_alias_write is changed) else []) }}

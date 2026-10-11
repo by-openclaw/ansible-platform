@@ -1,0 +1,98 @@
+---
+# ==============================================================================
+# vault | people — a person reads in Vault the login meant for their group.
+#
+# security/0001 §People reading in Vault: a login that automation creates and uses (a
+# service's local administrator) stays in Vault only; the service's administrators' group
+# reads it there, through single sign-on, read-only. Per group: one policy (read on the
+# declared documents, the names of their folders) and one external group that carries it,
+# mapped to the identity provider's group of the same name. The data is the inventory's
+# (platform_service_logins, platform_service_groups). Runs with the deploy login.
+# ==============================================================================
+- name: "people | Vault login (ansible-deploy AppRole)"
+  ansible.builtin.include_role:
+    name: vault_login
+    apply:
+      tags: [vault, people]   # an include's tags do not reach what it includes
+
+- name: "people | Every declared login has an administrators' group, and none is Vault's own"
+  ansible.builtin.assert:
+    that:
+      - vault_people_logins_without_group | length == 0
+      - vault_oidc_admin_group not in (vault_people_access | map(attribute='group') | list)
+    fail_msg: >-
+      platform_service_logins names a service without an `admin` group in platform_service_groups
+      ({{ vault_people_logins_without_group | join(', ') or 'none' }}), or the group that administers
+      Vault itself ({{ vault_oidc_admin_group }}), whose policy is not a people policy.
+    quiet: true
+
+- name: "people | The sign-in method's accessor"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/auth"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+  register: vault_people_auth
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  no_log: true
+
+- name: "people | Bind it"
+  ansible.builtin.set_fact:
+    vault_people_accessor: "{{ vault_people_auth.json.data[vault_oidc_mount ~ '/'].accessor }}"
+    vault_people_done: []
+
+- name: "people | One policy and one group per administrators' group"
+  ansible.builtin.include_tasks:
+    file: people_group.yml
+    apply:
+      tags: [vault, people]
+  loop: "{{ vault_people_access }}"
+  loop_control:
+    loop_var: vault_people_item
+    label: "{{ vault_people_item.group }}"
+
+- name: "people | The policies Vault holds"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/policies/acl?list=true"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+  register: vault_people_policies
+  check_mode: false  # read-only probe: must run under --check too (the next task reads its result)
+  changed_when: false
+  no_log: true
+
+- name: "people | Remove a people policy that is no longer declared"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/policies/acl/{{ item }}"
+    method: DELETE
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 204]
+  loop: >-
+    {{ vault_people_policies.json.data['keys'] | default([]) | select('match', '^' ~ vault_people_policy_prefix)
+       | difference(vault_people_access | map(attribute='group') | map('regex_replace', '^', vault_people_policy_prefix) | list) }}
+  changed_when: true
+
+- name: "people | Proof: a login with one group's policy may read its documents and nothing else"
+  ansible.builtin.include_tasks:
+    file: people_verify.yml
+    apply:
+      tags: [vault, people]
+  loop: "{{ vault_people_access }}"
+  loop_control:
+    loop_var: vault_people_item
+    label: "{{ vault_people_item.group }}"
+  when:
+    - vault_people_verify | bool
+    - not ansible_check_mode
+
+- name: "people | Summary"
+  ansible.builtin.debug:
+    msg: >-
+      VAULT_PEOPLE groups={{ vault_people_access | length }}
+      documents={{ vault_people_access | map(attribute='paths') | flatten | length }}
+      changes={{ vault_people_done | length }}{{ (' (' ~ (vault_people_done | join('; ')) ~ ')') if vault_people_done else '' }}
+      proved={{ (vault_people_proved | default([])) | length }}

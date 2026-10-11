@@ -1,0 +1,100 @@
+---
+# Proof for one group (vault_people_item): a login that carries this group's policy and nothing
+# else is asked what it may do. Vault answers with capabilities; no document is read. The login
+# exists for the length of the proof (writing and removing it is not a change of the platform).
+- name: "people | proof {{ vault_people_item.group }}"
+  block:
+    - name: "people | proof {{ vault_people_item.group }} — a login that carries only this policy"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/auth/{{ vault_approle_mount }}/role/{{ vault_people_probe_role }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        body_format: json
+        body:
+          token_policies: ["{{ vault_people_policy_prefix }}{{ vault_people_item.group }}"]
+          token_ttl: "{{ vault_people_probe_ttl }}"
+          token_max_ttl: "{{ vault_people_probe_ttl }}"
+          secret_id_ttl: "{{ vault_people_probe_ttl }}"
+          secret_id_num_uses: 1
+        status_code: [200, 204]
+      changed_when: false
+
+    - name: "people | proof {{ vault_people_item.group }} — its identifier"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/auth/{{ vault_approle_mount }}/role/{{ vault_people_probe_role }}/role-id"
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+      register: vault_people_probe_id
+      changed_when: false
+      no_log: true
+
+    - name: "people | proof {{ vault_people_item.group }} — its one-use secret"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/auth/{{ vault_approle_mount }}/role/{{ vault_people_probe_role }}/secret-id"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        status_code: [200]
+      register: vault_people_probe_secret
+      changed_when: false
+      no_log: true
+
+    - name: "people | proof {{ vault_people_item.group }} — sign in with it"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/auth/{{ vault_approle_mount }}/login"
+        method: POST
+        timeout: "{{ vault_api_timeout }}"
+        body_format: json
+        body:
+          role_id: "{{ vault_people_probe_id.json.data.role_id }}"
+          secret_id: "{{ vault_people_probe_secret.json.data.secret_id }}"
+        status_code: [200]
+      register: vault_people_probe_login
+      changed_when: false
+      no_log: true
+
+    - name: "people | proof {{ vault_people_item.group }} — what that login may do"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/sys/capabilities-self"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_people_probe_login.json.auth.client_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        body_format: json
+        body:
+          paths: "{{ vault_people_probe_own + [vault_people_probe_other] }}"
+        status_code: [200]
+      register: vault_people_probe_caps
+      changed_when: false
+      no_log: true
+
+    - name: "people | proof {{ vault_people_item.group }} — read on its documents, nothing on another"
+      ansible.builtin.assert:
+        that:
+          - vault_people_probe_own | map('extract', vault_people_probe_caps.json) | map('sort') | unique | list == [['read']]
+          - vault_people_probe_caps.json[vault_people_probe_other] == ['deny']
+        fail_msg: >-
+          the policy of {{ vault_people_item.group }} does not give what it should:
+          {{ (vault_people_probe_own + [vault_people_probe_other]) | zip((vault_people_probe_own + [vault_people_probe_other]) | map('extract', vault_people_probe_caps.json)) | map('join', ' -> ') | join(' | ') }}
+        quiet: true
+
+    - name: "people | proof {{ vault_people_item.group }} — recorded"
+      ansible.builtin.set_fact:
+        vault_people_proved: "{{ (vault_people_proved | default([])) + [vault_people_item.group] }}"
+  always:
+    - name: "people | proof {{ vault_people_item.group }} — remove the login"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/auth/{{ vault_approle_mount }}/role/{{ vault_people_probe_role }}"
+        method: DELETE
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        status_code: [200, 204, 404]
+      changed_when: false
+  vars:
+    vault_people_probe_own: "{{ vault_people_item.paths | map('regex_replace', '^', vault_kv_path ~ '/data/' ~ platform_env ~ '/') | list }}"
+    vault_people_probe_other: "{{ vault_kv_path }}/data/{{ vault_people_probe_refused }}"

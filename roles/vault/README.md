@@ -21,3 +21,19 @@ Integrated **raft** storage, TLS via the shared wildcard cert, fronted by Traefi
 
 Run: `ansible-playbook -i inventories/prod/hosts.yml playbooks/vault.yml`.
 Needs the FW DMZ→SVC `:8200` rule + Unbound overrides (opnsense catalog).
+
+## People reading in Vault (security/0001)
+
+A login that automation creates and uses stays in Vault only; the people entitled to it read
+it there, read-only, after signing in through the identity provider.
+
+- **Declared in the inventory:** `platform_service_logins` (the login document of a service) and
+  `platform_service_groups` (its `admin` group). A document that also holds machine-only values
+  is not declared: split it first. The `root` accounts and the break-glass documents are the
+  emergency kit's, not a group's.
+- **Per group:** the policy `people-<group>` (read on the documents, the names of their
+  folders), an external group of the same name carrying it, mapped to the provider's group.
+- **Run:** `ansible-playbook playbooks/vault.yml --tags people --limit <first member>` — applies
+  on a difference and proves every group: a login that carries one group's policy and nothing
+  else is asked for its capabilities (`read` on its documents, `deny` on another). No document is
+  read for the proof, and the login is removed.
