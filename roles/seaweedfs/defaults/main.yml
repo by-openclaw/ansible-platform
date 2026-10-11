@@ -85,7 +85,13 @@ seaweedfs_vault_path: "{{ platform_env }}/seaweedfs/admin"   # admin identity + 
 # pushed to Contabo (survives site loss). NOT tiering — remote is never in the
 # read/write path. Synology (tier 2) is added once SVC->NAS routing exists.
 seaweedfs_offsite_enabled: true
-seaweedfs_offsite_vault_path: "{{ platform_env }}/offsite/s3"   # Contabo replica credentials
+# The credential is the platform's ONE document for that provider (objectstore.yml); what is
+# particular to this copy — its bucket — is declared here, the endpoint and region come from
+# the same single definition. (Until 2026-10-11 a second document, offsite/s3, repeated the keys.)
+seaweedfs_offsite_vault_path: "{{ platform_external_s3.contabo.vault_path }}"   # access_key + secret_key
+seaweedfs_offsite_bucket: "seaweedfs-offsite"
+seaweedfs_offsite_endpoint: "{{ platform_external_s3.contabo.endpoint }}"
+seaweedfs_offsite_region: "{{ platform_external_s3.contabo.region }}"
 seaweedfs_offsite_filer_path: "/buckets"
 seaweedfs_offsite_is_incremental: false
 # One-time resync window for the offsite backup (e.g. "4h"): when set, the backup starts that far
