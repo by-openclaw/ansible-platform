@@ -172,6 +172,14 @@ opn_auth_users:
     disabled: false
   # Seeded identities — declared so membership + password converge after a re-seed
   # (passwords: Vault {env}/opnsense/<user>, key webgui_password; read by the playbook pre-play).
+  # root: nobody signs in with it (break-glass = oob-admin), but the account always exists and
+  # the seed left it on the product's factory default password until 2026-10-11. Its password
+  # is generated in Vault; the auth tasks replace a factory default wherever they find one.
+  - name: root
+    description: "System Administrator"
+    groups: [admins]
+    disabled: false
+    password_generate: true
   - name: oob-admin            # genesis break-glass — page-all via the oob-admins group
     description: "Break-glass OOB admin — the ONE seeded API credential (genesis for ansible opnsense_api_bootstrap); GUI password + API key hashes rendered from the seed's genesis_secret file"
     groups: [admins, oob-admins]
