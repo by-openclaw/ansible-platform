@@ -15,7 +15,7 @@ services/0005 §notifications.md) and points at everything else. Audit: [`audits
    `templates/ldap-provider.yaml.j2`; a certificate-verifying bind test on every run). The RADIUS
    outposts answer administrator logins on network devices (`roles/authentik/tasks/radius.yml`;
    infrastructure administrators only, second factor required).
-3. **Vault paths:** `secret/prod/authentik/admin` (secret key + bootstrap admin `akadmin`),
+3. **Vault paths:** `secret/prod/authentik/admin` (the bootstrap admin `akadmin` — read in Vault by the platform administrators), `secret/prod/authentik/app` (secret key, API token — machine only),
    `secret/prod/authentik/db-pgsql` (own PostgreSQL user), `secret/prod/authentik/ldap-outpost`,
    `secret/prod/authentik/radius` (shared secrets, probe password), `secret/prod/authentik/radius-outpost`,
    `secret/prod/users/<username>/sign-in` (one per person, in the person's own area — read by that person only), `secret/prod/<service>/oidc` (one per

@@ -33,7 +33,7 @@ Three things must hold, in this order: your desk routes the platform's networks 
 
 | Service | Address | Reachable from | Sign-in | Group that opens it | Its administrators | Local login, in Vault |
 |---|---|---|---|---|---|---|
-| authentik | `authentik.<domain>` | the Internet | single sign-on | — | — | — |
+| authentik | `authentik.<domain>` | the Internet | single sign-on | its administrators | `platform-admins` | `secret/<env>/authentik/admin` |
 | collab | `office.<domain>` | the Internet | — | — | — | — |
 | diagrams | `diagrams.<domain>` | the office or the VPN | single sign-on, at the door | `diagrams-users` | — | — |
 | gitlab | `gitlab.<domain>` | the office or the VPN | single sign-on | `gitlab-users` | `gitlab-admins` | `secret/<env>/gitlab/admin` |
