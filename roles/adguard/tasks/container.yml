@@ -55,7 +55,20 @@
     argv: [dig, +short, +time=2, +tries=10, "@127.0.0.1", "{{ adguard_domain }}", SOA]
   register: adguard_answer
   changed_when: false
-  failed_when: adguard_answer.rc != 0 or (adguard_answer.stdout | trim | length) == 0
+  # Right after a restart the listener comes up a moment later than the container: ask again
+  # rather than fail on the race (dig does not retry a refused connection; 2026-10-11 it lost
+  # by 0.3 s). The task fails when the answers run out.
+  until: adguard_answer.rc == 0 and (adguard_answer.stdout | trim | length) > 0
+  retries: "{{ adguard_answer_retries }}"
+  delay: "{{ adguard_answer_delay }}"
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: "container | It answered"
+  ansible.builtin.assert:
+    that: adguard_answer.rc == 0 and (adguard_answer.stdout | trim | length) > 0
+    fail_msg: "the resolver gave no answer on :53 after {{ adguard_answer_retries }} attempts"
+    quiet: true
   when: not ansible_check_mode
 
 # Only once the container answers: the native install goes. Until then it stays on

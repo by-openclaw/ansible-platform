@@ -30,6 +30,13 @@
   ansible.builtin.import_tasks: container.yml
   tags: [adguard, container]
 
+# One-time follow-up of a SHRUNK retention (never part of a normal run): empty the query log
+# through AdGuard's own API. Run with --tags querylog -e adguard_querylog_clear=true.
+- name: Empty the query log (asked for by name only)
+  ansible.builtin.import_tasks: querylog_clear.yml
+  tags: [never, querylog]
+  when: adguard_querylog_clear | bool
+
 - name: "AdGuard | Host firewall rules for the listeners (host network; when ufw is active)"
   ansible.builtin.include_role:
     name: host_firewall

@@ -1,0 +1,48 @@
+---
+# ==============================================================================
+# Role: adguard — querylog_clear.yml: empty the query log THROUGH AdGuard's own API.
+# Never part of a normal run (adguard_querylog_clear defaults to false): it is the one-time
+# follow-up when the retention is SHRUNK — AdGuard frees the space of entries outside the new
+# retention only at its next natural rotation (up to one whole interval away), which is too slow
+# for a disk that is already almost full (2026-10-11: 11.8 GB of query log on a 20 GB disk).
+#   ansible-playbook playbooks/adguard-prod.yml --tags querylog -e adguard_querylog_clear=true
+# ==============================================================================
+- name: "querylog_clear | Admin credentials (Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+    apply:
+      tags: [adguard, querylog]
+  vars:
+    vault_secret_path: "{{ adguard_admin_vault_path }}"
+
+- name: "querylog_clear | The query log files before"
+  ansible.builtin.find:
+    paths: "{{ adguard_home_dir }}/data"
+    patterns: "querylog.json*"
+  register: adguard_querylog_before
+
+- name: "querylog_clear | Empty the query log (AdGuard's own API)"
+  ansible.builtin.uri:
+    url: "http://{{ adguard_http_address | replace('0.0.0.0', '127.0.0.1') }}/control/querylog_clear"
+    method: POST
+    url_username: "{{ vault_secret_result.admin_user | default(adguard_admin_user) }}"
+    url_password: "{{ vault_secret_result.admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  changed_when: true
+  no_log: true
+  when: not ansible_check_mode
+
+- name: "querylog_clear | The query log files after"
+  ansible.builtin.find:
+    paths: "{{ adguard_home_dir }}/data"
+    patterns: "querylog.json*"
+  register: adguard_querylog_after
+  when: not ansible_check_mode
+
+- name: "querylog_clear | Report (sizes only)"
+  ansible.builtin.debug:
+    msg: >-
+      QUERYLOG_CLEAR before={{ adguard_querylog_before.files | map(attribute='size') | sum }}
+      after={{ (adguard_querylog_after.files | default([])) | map(attribute='size') | sum }}
+  when: not ansible_check_mode
