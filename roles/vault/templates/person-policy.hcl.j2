@@ -1,0 +1,23 @@
+{# Managed by Ansible role `vault` (tasks/people.yml). The per-person area — security/0001
+   §People reading in Vault: every person who signs in reads THEIR OWN area and no other one.
+   The name comes from the sign-in itself (the alias of the person on the sign-in method, which
+   is their username at the identity provider); Vault fills it in for each request. #}
+path "{{ vault_kv_path }}/data/{{ platform_env }}/{{ vault_people_area }}/{% raw %}{{identity.entity.aliases.{% endraw %}{{ vault_people_accessor }}{% raw %}.name}}{% endraw %}/*" {
+  capabilities = ["read"]
+}
+path "{{ vault_kv_path }}/metadata/{{ platform_env }}/{{ vault_people_area }}/{% raw %}{{identity.entity.aliases.{% endraw %}{{ vault_people_accessor }}{% raw %}.name}}{% endraw %}/*" {
+  capabilities = ["read", "list"]
+}
+{# Finding the area in the UI: NAMES only. #}
+path "{{ vault_kv_path }}/metadata/{{ platform_env }}/{{ vault_people_area }}/{% raw %}{{identity.entity.aliases.{% endraw %}{{ vault_people_accessor }}{% raw %}.name}}{% endraw %}" {
+  capabilities = ["list"]
+}
+path "{{ vault_kv_path }}/metadata/{{ platform_env }}/{{ vault_people_area }}" {
+  capabilities = ["list"]
+}
+path "{{ vault_kv_path }}/metadata/{{ platform_env }}" {
+  capabilities = ["list"]
+}
+path "{{ vault_kv_path }}/metadata" {
+  capabilities = ["list"]
+}

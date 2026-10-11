@@ -1,0 +1,81 @@
+---
+# The per-person area (security/0001 §People reading in Vault): the policy every signed-in
+# person carries, the administrators' policy that refuses the other people's areas, and the
+# sign-in role that names a person by their username and hands out the person policy.
+- name: "people | The person and admins policies as Vault holds them"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/policies/acl/{{ item.name }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 404]
+  loop: "{{ vault_people_base_policies }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: vault_people_base_now
+  check_mode: false  # read-only probe: must run under --check too (the next task reads its result)
+  changed_when: false
+  no_log: true
+
+- name: "people | Write them (on drift)"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/policies/acl/{{ item.item.name }}"
+    method: PUT
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      policy: "{{ lookup('template', item.item.template) }}"
+    status_code: [200, 204]
+  loop: "{{ vault_people_base_now.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  register: vault_people_base_write
+  when: (item.json.data.policy | default('') | trim) != (lookup('template', item.item.template) | trim)
+  changed_when: true
+
+- name: "people | The sign-in role as Vault holds it"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/auth/{{ vault_oidc_mount }}/role/{{ vault_oidc_default_role }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    status_code: [200, 404]
+  register: vault_people_role_now
+  check_mode: false  # read-only probe: must run under --check too (the next task reads its result)
+  changed_when: false
+  no_log: true
+
+# Only the two fields of this concern are changed; the others are sent back as Vault holds them
+# (the redirect addresses, the scopes, the lifetime are the sign-in's — tasks/oidc.yml).
+- name: "people | The sign-in role names a person by their username and hands out the person policy"
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/auth/{{ vault_oidc_mount }}/role/{{ vault_oidc_default_role }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_api_timeout }}"
+    body_format: json
+    body:
+      user_claim: "{{ vault_oidc_user_claim }}"
+      token_policies: "{{ vault_oidc_token_policies }}"
+      groups_claim: "{{ vault_people_role_now.json.data.groups_claim }}"
+      oidc_scopes: "{{ vault_people_role_now.json.data.oidc_scopes }}"
+      allowed_redirect_uris: "{{ vault_people_role_now.json.data.allowed_redirect_uris }}"
+      token_ttl: "{{ vault_people_role_now.json.data.token_ttl }}"
+    status_code: [200, 204]
+  register: vault_people_role_write
+  when:
+    - vault_people_role_now.status == 200
+    - (vault_people_role_now.json.data.user_claim | default('')) != vault_oidc_user_claim
+      or (vault_people_role_now.json.data.token_policies | default([]) | sort) != (vault_oidc_token_policies | sort)
+  changed_when: true
+
+- name: "people | What changed"
+  ansible.builtin.set_fact:
+    vault_people_done: >-
+      {{ vault_people_done
+         + (vault_people_base_write.results | selectattr('changed') | map(attribute='item.item.name')
+            | map('regex_replace', '$', ': policy') | list)
+         + (['sign-in role'] if (vault_people_role_write is changed) else []) }}
