@@ -12,7 +12,12 @@
       tags: [auth]
   vars:
     vault_secret_path: "{{ platform_env }}/opnsense/{{ item.name | replace('_', '-') }}"
-    vault_secret_init: {}
+    # A user declared with `password_generate: true` gets a password generated in Vault the
+    # first time (an account no human signs in with); the others must already have theirs.
+    vault_secret_init: >-
+      {{ {'webgui_password': lookup('community.general.random_string', length=opnsense_auth_generated_password_length | default(40), special=false),
+          '_note': 'OPNsense local account ' ~ item.name ~ ' (generated; nobody signs in with it)'}
+         if (item.password_generate | default(false) | bool) else {} }}
 
 - name: "Auth | Keep it when Vault returned one: {{ item.name }}"
   ansible.builtin.set_fact:
