@@ -16,5 +16,9 @@ One document per secret. Retires, by data, the Vault documents and fields nothin
   to its live place when it was retired by mistake or is needed again — the copy is read back
   and compared before the archived one is removed.
 
+- **Copy** (`platform_vault_copied_documents`): the first half of a rename — the document is
+  written under its new path from the old one (never generated), read back and compared. The
+  old path is retired afterwards like any other, guarded by `same_as` on the new one.
+
 Entries stay in the inventory after they have been applied: they are the record of what was
 retired and why. `playbooks/vault-tidy.yml --check` reads, compares and says what it would do.

@@ -1,0 +1,72 @@
+---
+# One document to make available under another path (first half of a rename): the destination
+# is written from the source when it does not exist yet, then read back and compared; when both
+# exist they must be equal. Nothing is generated and nothing is removed here — a consumer
+# switched to the new path finds exactly the values it had, and the old path is retired
+# separately (guarded) once nothing reads it.
+- name: "Vault tidy | Source and destination — {{ vault_tidy_item.from }} → {{ vault_tidy_item.to }}"
+  ansible.builtin.uri:
+    url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_env }}/{{ item }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_tidy_timeout }}"
+    status_code: [200, 404]
+  delegate_to: "{{ vault_tidy_host }}"
+  loop:
+    - "{{ vault_tidy_item.from }}"
+    - "{{ vault_tidy_item.to }}"
+  register: vault_tidy_places
+  check_mode: false   # read-only
+  changed_when: false
+  no_log: true
+
+- name: "Vault tidy | Write the destination — {{ vault_tidy_item.to }}"
+  ansible.builtin.uri:
+    url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_env }}/{{ vault_tidy_item.to }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_tidy_timeout }}"
+    body_format: json
+    body:
+      options:
+        cas: 0   # only if the destination still does not exist
+      data: "{{ vault_tidy_places.results[0].json.data.data }}"
+    status_code: [200, 204]
+  delegate_to: "{{ vault_tidy_host }}"
+  changed_when: true
+  no_log: true
+  when:
+    - vault_tidy_places.results[0].status == 200
+    - vault_tidy_places.results[1].status == 404
+    - not ansible_check_mode
+
+- name: "Vault tidy | Read the destination — {{ vault_tidy_item.to }}"
+  ansible.builtin.uri:
+    url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_env }}/{{ vault_tidy_item.to }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_tidy_timeout }}"
+    status_code: [200, 404]
+  delegate_to: "{{ vault_tidy_host }}"
+  register: vault_tidy_back
+  check_mode: false   # read-only
+  changed_when: false
+  no_log: true
+
+- name: "Vault tidy | Source and destination hold the same — {{ vault_tidy_item.to }}"
+  ansible.builtin.assert:
+    that: vault_tidy_back.json.data.data == vault_tidy_places.results[0].json.data.data
+    fail_msg: "{{ vault_tidy_item.to }} differs from {{ vault_tidy_item.from }} — nothing is retired; settle which one is right first"
+    quiet: true
+  no_log: true
+  when:
+    - vault_tidy_places.results[0].status == 200
+    - vault_tidy_back.status == 200
+
+- name: "Vault tidy | Note — {{ vault_tidy_item.to }}"
+  ansible.builtin.set_fact:
+    vault_tidy_done: "{{ vault_tidy_done + [('would copy ' if ansible_check_mode else 'copied ') ~ vault_tidy_item.from ~ ' → ' ~ vault_tidy_item.to ~ ' — ' ~ vault_tidy_item.reason] }}"
+  when:
+    - vault_tidy_places.results[0].status == 200
+    - vault_tidy_places.results[1].status == 404

@@ -15,6 +15,13 @@
     loop_var: vault_tidy_item
     label: "{{ vault_tidy_item.path }}"
 
+- name: "Vault tidy | Documents to make available under another path"
+  ansible.builtin.include_tasks: copy.yml
+  loop: "{{ vault_tidy_copied_documents }}"
+  loop_control:
+    loop_var: vault_tidy_item
+    label: "{{ vault_tidy_item.from }} → {{ vault_tidy_item.to }}"
+
 - name: "Vault tidy | Retired documents"
   ansible.builtin.include_tasks: document.yml
   loop: "{{ vault_tidy_retired_documents }}"
@@ -31,4 +38,4 @@
 
 - name: "Vault tidy | Summary"
   ansible.builtin.debug:
-    msg: "{{ vault_tidy_done + ['VAULT_TIDY_DONE changes=' ~ (vault_tidy_done | length) ~ ' · declared: ' ~ (vault_tidy_retired_documents | length) ~ ' document(s), ' ~ (vault_tidy_retired_fields | length) ~ ' field set(s), ' ~ (vault_tidy_restored_documents | length) ~ ' restored'] }}"
+    msg: "{{ vault_tidy_done + ['VAULT_TIDY_DONE changes=' ~ (vault_tidy_done | length) ~ ' · declared: ' ~ (vault_tidy_retired_documents | length) ~ ' document(s), ' ~ (vault_tidy_retired_fields | length) ~ ' field set(s), ' ~ (vault_tidy_restored_documents | length) ~ ' restored, ' ~ (vault_tidy_copied_documents | length) ~ ' copied'] }}"

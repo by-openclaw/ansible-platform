@@ -46,6 +46,21 @@ platform_vault_retired_documents:
     same_as:
       - {field: access_key, path: "backup/s3-contabo", field_there: access_key}
       - {field: secret_key, path: "backup/s3-contabo", field_there: secret_key}
+  # --- 2026-10-11: the database service's documents moved under its name (postgresql/) -------------
+  - path: "postgres/superuser"
+    reason: "moved to postgresql/superuser (the service's name); roles/postgresql reads the new path"
+    same_as:
+      - {field: password, path: "postgresql/superuser", field_there: password}
+  - path: "postgres/replication"
+    reason: "moved to postgresql/replication"
+    same_as:
+      - {field: password, path: "postgresql/replication", field_there: password}
+  - path: "postgres/patroni-api"
+    reason: "moved to postgresql/patroni-api"
+    same_as:
+      - {field: password, path: "postgresql/patroni-api", field_there: password}
+  - path: "postgres/admin"
+    reason: "the administrator record of an earlier, single-server installation; nothing reads it"
 
 platform_vault_retired_fields:
   - path: "mailcow/admin"
@@ -60,3 +75,11 @@ platform_vault_retired_fields:
 platform_vault_restored_documents:
   - path: "resend/by-research"
     reason: "owner, 2026-10-11: the external mail relay must keep working, it is only not used now (archived by mistake the same night)"
+
+# Renames: a document made available under another path (the old path is retired above once
+# nothing reads it). The database service is called `postgresql` everywhere — catalog, role,
+# playbook, inventory group — its documents sat under the shorter `postgres/`.
+platform_vault_copied_documents:
+  - {from: "postgres/superuser", to: "postgresql/superuser", reason: "the service's name is postgresql"}
+  - {from: "postgres/replication", to: "postgresql/replication", reason: "the service's name is postgresql"}
+  - {from: "postgres/patroni-api", to: "postgresql/patroni-api", reason: "the service's name is postgresql"}
