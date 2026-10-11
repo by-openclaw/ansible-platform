@@ -8,6 +8,13 @@
   ansible.builtin.set_fact:
     vault_tidy_done: []
 
+- name: "Vault tidy | Documents to bring back from the archive"
+  ansible.builtin.include_tasks: restore.yml
+  loop: "{{ vault_tidy_restored_documents }}"
+  loop_control:
+    loop_var: vault_tidy_item
+    label: "{{ vault_tidy_item.path }}"
+
 - name: "Vault tidy | Retired documents"
   ansible.builtin.include_tasks: document.yml
   loop: "{{ vault_tidy_retired_documents }}"
@@ -24,4 +31,4 @@
 
 - name: "Vault tidy | Summary"
   ansible.builtin.debug:
-    msg: "{{ vault_tidy_done + ['VAULT_TIDY_DONE changes=' ~ (vault_tidy_done | length) ~ ' · declared: ' ~ (vault_tidy_retired_documents | length) ~ ' document(s), ' ~ (vault_tidy_retired_fields | length) ~ ' field set(s)'] }}"
+    msg: "{{ vault_tidy_done + ['VAULT_TIDY_DONE changes=' ~ (vault_tidy_done | length) ~ ' · declared: ' ~ (vault_tidy_retired_documents | length) ~ ' document(s), ' ~ (vault_tidy_retired_fields | length) ~ ' field set(s), ' ~ (vault_tidy_restored_documents | length) ~ ' restored'] }}"

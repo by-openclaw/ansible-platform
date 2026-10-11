@@ -1,0 +1,77 @@
+---
+# One document to bring back from the archive (it was retired by mistake, or is needed again):
+# only when it is absent from its live place and present in the archive. The copy is read back
+# and compared before the archived one is removed.
+- name: "Vault tidy | Live place and archive — {{ vault_tidy_item.path }}"
+  ansible.builtin.uri:
+    url: "{{ vault_tidy_kv_url }}/data/{{ item }}"
+    headers:
+      X-Vault-Token: "{{ vault_deploy_token }}"
+    timeout: "{{ vault_tidy_timeout }}"
+    status_code: [200, 404]
+  delegate_to: "{{ vault_tidy_host }}"
+  loop:
+    - "{{ vault_tidy_env }}/{{ vault_tidy_item.path }}"
+    - "archive/{{ vault_tidy_env }}/{{ vault_tidy_item.path }}"
+  register: vault_tidy_places
+  check_mode: false   # read-only
+  changed_when: false
+  no_log: true
+
+- name: "Vault tidy | Restore — {{ vault_tidy_item.path }}"
+  when:
+    - vault_tidy_places.results[0].status == 404
+    - vault_tidy_places.results[1].status == 200
+  block:
+    - name: "Vault tidy | Write it back to its live place — {{ vault_tidy_item.path }}"
+      ansible.builtin.uri:
+        url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_env }}/{{ vault_tidy_item.path }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_tidy_timeout }}"
+        body_format: json
+        body:
+          data: "{{ vault_tidy_places.results[1].json.data.data }}"
+        status_code: [200, 204]
+      delegate_to: "{{ vault_tidy_host }}"
+      changed_when: true
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: "Vault tidy | Read it back — {{ vault_tidy_item.path }}"
+      ansible.builtin.uri:
+        url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_env }}/{{ vault_tidy_item.path }}"
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_tidy_timeout }}"
+      delegate_to: "{{ vault_tidy_host }}"
+      register: vault_tidy_back
+      changed_when: false
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: "Vault tidy | It equals the archived one — {{ vault_tidy_item.path }}"
+      ansible.builtin.assert:
+        that: vault_tidy_back.json.data.data == vault_tidy_places.results[1].json.data.data
+        fail_msg: "{{ vault_tidy_item.path }}: the restored document differs from the archived one — the archive is kept"
+        quiet: true
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: "Vault tidy | Remove the archived one — {{ vault_tidy_item.path }}"
+      ansible.builtin.uri:
+        url: "{{ vault_tidy_kv_url }}/metadata/archive/{{ vault_tidy_env }}/{{ vault_tidy_item.path }}"
+        method: DELETE
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_tidy_timeout }}"
+        status_code: [204]
+      delegate_to: "{{ vault_tidy_host }}"
+      changed_when: true
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: "Vault tidy | Note — {{ vault_tidy_item.path }}"
+      ansible.builtin.set_fact:
+        vault_tidy_done: "{{ vault_tidy_done + [('would restore ' if ansible_check_mode else 'restored ') ~ vault_tidy_item.path ~ ' — ' ~ vault_tidy_item.reason] }}"
