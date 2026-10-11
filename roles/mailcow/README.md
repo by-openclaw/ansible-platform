@@ -2,7 +2,7 @@
 
 mailcow-dockerized **2026-05c** on `vm-mailcow-01` (DMZ `10.1.2.120`, 18 containers). MX for the platform domain; **only port 25 forwarded from WAN** — client ports are VPN/internal, webmail (SOGo, Authentik SSO) via Traefik `mail.<domain>`. DKIM/SPF `-all`/DMARC `p=reject`; outbound DANE via Telenet PBR.
 
-- Managed via the mailcow **API only** (the API key in Vault `mailcow/admin`); per-service mailboxes come from the `mailbox` concern-role + `playbooks/mailboxes.yml`.
+- Managed via the mailcow **API only** (the API key in Vault `mailcow/app`); per-service mailboxes come from the `mailbox` concern-role + `playbooks/mailboxes.yml`.
 - `disable_plaintext_auth=yes`; `recipient_delimiter=+` (plus-addressing platform-wide).
 - Its own MariaDB stays bundled (appliance) — not the shared DB.
 - Upgrade = bump `mailcow_git_version` deliberately (read the release notes).

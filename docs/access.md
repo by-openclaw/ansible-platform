@@ -42,7 +42,7 @@ Three things must hold, in this order: your desk routes the platform's networks 
 | jitsi | `meet.<domain>` | the Internet | single sign-on, at the door | `jitsi-users` | — | — |
 | jumpserver | `jumpserver.<domain>` | the office or the VPN | single sign-on | `jumpserver-users` | — | — |
 | k3s | `k3s.<domain>` | an administrator's desk | single sign-on, at the door | — | — | — |
-| mailcow | `mail.<domain>` | the Internet | single sign-on | `mailcow-users` | — | — |
+| mailcow | `mail.<domain>` | the Internet | single sign-on | `mailcow-users` | `platform-admins` | `secret/<env>/mailcow/admin` |
 | monitoring | `grafana.<domain>` | the office or the VPN | single sign-on | its administrators | `grafana-admins` | `secret/<env>/grafana/admin` |
 | netbird | `vpn.<domain>` | the Internet | single sign-on | `netbird-users` | `netbird-admins` | — |
 | netbox | `netbox.<domain>` | the office or the VPN | single sign-on | its administrators | `netbox-admins` | `secret/<env>/netbox/admin` |

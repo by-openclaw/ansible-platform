@@ -200,7 +200,10 @@ mailcow_backup_on_calendar: "*-*-* 01:00:00"   # local snapshot, before the nigh
 mailcow_backup_retention_days: 7          # applied to the local staging dir AND to the S3 bucket
 
 # --- Secrets (Vault only) ---------------------------------------------------------
-mailcow_vault_path: "{{ platform_env }}/mailcow/admin"   # DBROOT/DBPASS/REDISPASS/API key (get-or-create)
+# Two documents (security/0001 §People reading in Vault): the administrator's login, which the
+# platform administrators read in Vault, and what only the machine needs.
+mailcow_vault_path: "{{ platform_env }}/mailcow/admin"   # the admin login, the postmaster mailbox, hostname, url
+mailcow_app_vault_path: "{{ platform_env }}/mailcow/app"   # machine-only: DBROOT/DBPASS/REDISPASS, API key, the admin password's hash
 
 # --- Safety gate: the live `docker compose up` only runs when explicitly enabled.
 #     Standing up a PUBLIC mail server is outward-facing → keep false until the

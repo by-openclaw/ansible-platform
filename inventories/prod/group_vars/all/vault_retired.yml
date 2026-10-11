@@ -112,6 +112,15 @@ platform_vault_retired_fields:
     same_as:
       - {field: secret_key, path: "authentik/app", field_there: secret_key}
       - {field: bootstrap_token, path: "authentik/app", field_there: bootstrap_token}
+  - path: "mailcow/admin"
+    fields: [db_password, db_root_password, redis_password, api_key, admin_password_hash]
+    reason: "machine-only values, read from mailcow/app since the split; this document is the administrator's login and the postmaster mailbox, read in Vault by the platform administrators (security/0001)"
+    same_as:
+      - {field: db_password, path: "mailcow/app", field_there: db_password}
+      - {field: db_root_password, path: "mailcow/app", field_there: db_root_password}
+      - {field: redis_password, path: "mailcow/app", field_there: redis_password}
+      - {field: api_key, path: "mailcow/app", field_there: api_key}
+      - {field: admin_password_hash, path: "mailcow/app", field_there: admin_password_hash}
 
 # Brought back from the archive.
 platform_vault_restored_documents:
@@ -140,6 +149,10 @@ platform_vault_copied_documents:
   - from: "authentik/admin"
     to: "authentik/app"
     fields: [secret_key, bootstrap_token]
+    reason: "machine-only values leave the document the administrators' group reads"
+  - from: "mailcow/admin"
+    to: "mailcow/app"
+    fields: [db_password, db_root_password, redis_password, api_key, admin_password_hash]
     reason: "machine-only values leave the document the administrators' group reads"
   # The other way round: the document is the machine's (the service's own secrets file); the
   # local administrator's login leaves it for <service>/admin.
