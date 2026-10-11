@@ -11,7 +11,9 @@
     apply:
       tags: [auth]
   vars:
-    vault_secret_path: "{{ platform_env }}/opnsense/{{ item.name | replace('_', '-') }}"
+    # A person's own account names its path (`vault_path`): the password sits in that person's
+    # area of Vault, read by them alone (security/0001). The other accounts are the firewall's.
+    vault_secret_path: "{{ item.vault_path | default(platform_env ~ '/opnsense/' ~ (item.name | replace('_', '-'))) }}"
     # A user declared with `password_generate: true` gets a password generated in Vault the
     # first time (an account no human signs in with); the others must already have theirs.
     vault_secret_init: >-
