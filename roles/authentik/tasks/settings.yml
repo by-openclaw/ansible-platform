@@ -1,0 +1,50 @@
+---
+# ==============================================================================
+# authentik | settings — the system settings the role pins (defaults: authentik_system_settings).
+# Read, compared, written only on a difference. The API runs on the instance itself.
+# ==============================================================================
+- name: "settings | As the instance holds them"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/admin/settings/"
+    headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}" }
+  register: authentik_settings_now
+  check_mode: false   # read-only GET: must run under --check too (the next tasks read its json)
+  retries: "{{ authentik_settings_retries }}"
+  delay: "{{ authentik_settings_delay }}"
+  until: authentik_settings_now.status | default(0) == 200
+  no_log: true
+
+- name: "settings | What differs from the pinned values"
+  ansible.builtin.set_fact:
+    authentik_settings_diff: >-
+      {%- set out = [] -%}
+      {%- for k, v in authentik_system_settings.items() if authentik_settings_now.json[k] | default('__absent__') != v -%}
+      {{- out.append(k) or '' -}}
+      {%- endfor -%}
+      {{ out }}
+
+- name: "settings | Every pinned setting exists on this version"
+  ansible.builtin.assert:
+    that: authentik_system_settings.keys() | reject('in', authentik_settings_now.json.keys() | list) | list | length == 0
+    fail_msg: >-
+      not a setting of this version:
+      {{ authentik_system_settings.keys() | reject('in', authentik_settings_now.json.keys() | list) | join(', ') }}
+    quiet: true
+
+- name: "settings | Write the pinned values (on a difference)"
+  ansible.builtin.uri:
+    url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/admin/settings/"
+    method: PATCH
+    headers: { Authorization: "Bearer {{ authentik_secrets.bootstrap_token }}" }
+    body_format: json
+    body: "{{ authentik_system_settings }}"
+    status_code: [200]
+  when: authentik_settings_diff | length > 0
+  changed_when: true
+  no_log: true
+
+- name: "settings | Report"
+  ansible.builtin.debug:
+    msg: >-
+      AUTHENTIK_SETTINGS pinned={{ authentik_system_settings | length }}
+      differed={{ authentik_settings_diff | join(', ') or 'none' }}
