@@ -7,6 +7,7 @@
 #   * break-glass OS password ({org})
 #   * break-glass SSH key PAIR (private + public, 0600)
 #   * PVE / OPNsense local-admin passwords (added by their passes when created)
+#   * the `root` password of the firewall and of the hypervisor (console sign-in)
 # Folder: {{ kit_dir }} (0700, files 0600). Re-runnable: copies what exists,
 # reports what is still missing. A cover sheet (no secret values) lists the
 # inventory + storage rules. AFTER printing: tell Rune -> controller copies of
@@ -36,6 +37,14 @@
       - path: "{{ platform_env }}/break-glass/opnsense"
         name: "05-opnsense-password-{{ platform_org }}.json"
         needs: [username, password]
+      # The two `root` accounts a person signs in with at a console when the network or the
+      # hypervisor's own services are down (no other account works there).
+      - path: "{{ platform_env }}/opnsense/root"
+        name: "06-opnsense-password-root.json"
+        needs: [webgui_password]
+      - path: "{{ platform_env }}/proxmox/root"
+        name: "07-pve-password-root.json"
+        needs: [password]
   tasks:
     - name: "Kit | Vault login (ansible-deploy AppRole; root fallback)"
       ansible.builtin.include_role:
@@ -116,6 +125,12 @@
       - src: "{{ kit_dir }}/05-opnsense-password-{{ platform_org }}.json"   # exported from Vault above
         name: "05-opnsense-password-{{ platform_org }}.json"
         what: "OPNsense local {{ platform_org }} WebUI password"
+      - src: "{{ kit_dir }}/06-opnsense-password-root.json"   # exported from Vault above
+        name: "06-opnsense-password-root.json"
+        what: "OPNsense root password (console, WebUI)"
+      - src: "{{ kit_dir }}/07-pve-password-root.json"   # exported from Vault above
+        name: "07-pve-password-root.json"
+        what: "hypervisor root password (console, WebUI pam realm)"
   tasks:
     - name: "Kit | Ensure the folder (0700)"
       ansible.builtin.file:
