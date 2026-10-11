@@ -85,7 +85,7 @@ def test_rule_families(name, expected):
 
 def test_an_explicit_entry_beats_a_rule():
     # db-pgsql-superuser would otherwise become superuser/db-pgsql.
-    assert resolve("db-pgsql-superuser") == "postgres/superuser"
+    assert resolve("db-pgsql-superuser") == "postgresql/superuser"
 
 
 def test_an_unknown_name_still_fails_closed():

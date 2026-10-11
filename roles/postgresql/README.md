@@ -34,8 +34,8 @@ Run: `ansible-playbook playbooks/postgresql.yml` (members one at a time, the fir
   acknowledged transaction; with no replica available the leader keeps accepting writes.
 - **TLS**: the shared wildcard certificate (`roles/tls_cert`), server TLS 1.2+, replication with
   `sslmode=verify-full`; the REST API is HTTPS, its write operations need a password.
-- **Secrets** (Vault, get-or-create): `postgres/superuser`, `postgres/replication`,
-  `postgres/patroni-api`; the etcd credential is read from `etcd/root` (owner: `roles/etcd`).
+- **Secrets** (Vault, get-or-create): `postgresql/superuser`, `postgresql/replication`,
+  `postgresql/patroni-api`; the etcd credential is read from `etcd/root` (owner: `roles/etcd`).
 - **Logins and databases** are not created here: every service's play uses `roles/postgres_db`,
   which runs on the cluster's leader. The role itself only asks that role for the replication
   login.
