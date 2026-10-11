@@ -12,5 +12,9 @@ One document per secret. Retires, by data, the Vault documents and fields nothin
   two values in memory and refuses to retire anything that differs — the last copy of a secret
   is never removed.
 
+- **Restore** (`platform_vault_restored_documents`): a document is brought back from `archive/`
+  to its live place when it was retired by mistake or is needed again — the copy is read back
+  and compared before the archived one is removed.
+
 Entries stay in the inventory after they have been applied: they are the record of what was
 retired and why. `playbooks/vault-tidy.yml --check` reads, compares and says what it would do.
