@@ -68,6 +68,19 @@ platform_vault_retired_documents:
     reason: "a record of an NFS export (no secret) from the first installation; nothing reads it"
   - path: "net/lxc-break-glass"
     reason: "the login of an earlier emergency account (oob-admin) for the containers: no host has that account, and the password matches no account (checked on the 39 hosts); the emergency password is break-glass/os"
+  # --- 2026-10-11: a person's sign-in document moved into their own area (users/<username>/sign-in) ---
+  - path: "authentik/user-yboujraf"
+    reason: "moved to users/yboujraf/sign-in (the person's own area); roles/authentik reads the new place"
+    same_as:
+      - {field: password, path: "users/yboujraf/sign-in", field_there: password}
+  - path: "authentik/user-adm-yboujraf"
+    reason: "moved to users/adm_yboujraf/sign-in (the person's own area); roles/authentik reads the new place"
+    same_as:
+      - {field: password, path: "users/adm_yboujraf/sign-in", field_there: password}
+  - path: "authentik/user-yboujraf-example"
+    reason: "moved to users/yboujraf_example/sign-in (the person's own area); roles/authentik reads the new place"
+    same_as:
+      - {field: password, path: "users/yboujraf_example/sign-in", field_there: password}
 
 platform_vault_retired_fields:
   - path: "mailcow/admin"
@@ -98,8 +111,6 @@ platform_vault_retired_fields:
 platform_vault_restored_documents:
   - path: "resend/by-research"
     reason: "owner, 2026-10-11: the external mail relay must keep working, it is only not used now (archived by mistake the same night)"
-  - path: "authentik/user-yboujraf-example"
-    reason: "archived by mistake on 2026-10-11 (#919): roles/authentik reads authentik/user-<username> for every person of the inventory (a path built from the username, which the search for readers missed) — its play failed at the secrets step until this came back"
 
 # Renames: a document made available under another path (the old path is retired above once
 # nothing reads it). The database service is called `postgresql` everywhere — catalog, role,
@@ -108,6 +119,11 @@ platform_vault_copied_documents:
   - {from: "postgres/superuser", to: "postgresql/superuser", reason: "the service's name is postgresql"}
   - {from: "postgres/replication", to: "postgresql/replication", reason: "the service's name is postgresql"}
   - {from: "postgres/patroni-api", to: "postgresql/patroni-api", reason: "the service's name is postgresql"}
+  # Personal documents move into the person's area, secret/<env>/users/<username>/ — read by
+  # that person only.
+  - {from: "authentik/user-yboujraf", to: "users/yboujraf/sign-in", reason: "a person's sign-in document moves into their own area (security/0001)"}
+  - {from: "authentik/user-adm-yboujraf", to: "users/adm_yboujraf/sign-in", reason: "a person's sign-in document moves into their own area (security/0001)"}
+  - {from: "authentik/user-yboujraf-example", to: "users/yboujraf_example/sign-in", reason: "a person's sign-in document moves into their own area (security/0001)"}
   # A document split in two (security/0001 §People reading in Vault): the local administrator's
   # login stays at <service>/admin, which the service's administrators read; what only the machine
   # needs moves to <service>/app (`fields`), and is retired from the first document above.
