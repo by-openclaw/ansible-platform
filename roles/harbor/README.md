@@ -20,7 +20,7 @@ its **own bundled Redis**, **Authentik OIDC**, TLS terminated at **Traefik**. Al
 | 3 | **Authentik OIDC app + group** | `harbor` app, `harbor-admins` | `roles/authentik/defaults/main.yml` | explicit |
 | 4 | **Postgres DB + role** | `harbor` DB (via `postgres_db`) | included by `roles/harbor/tasks/main.yml` | via role |
 | 5 | **SeaweedFS S3 bucket** | `harbor-registry` (via `seaweedfs_bucket`) | included by `roles/harbor/tasks/main.yml` | via role |
-| 6 | **Secrets** | `fabric/harbor.json` (+ db/s3/oidc/`harbor-robot-gitlab`) → Vault | `tasks/secrets.yml` + `playbooks/secrets-to-vault.yml` | via role |
+| 6 | **Secrets** | Vault `harbor/{admin, db-pgsql, s3, oidc, robot-gitlab}` | `tasks/secrets.yml` | via role |
 | 7 | **Ansible role** | install → OIDC → proxy-cache | `roles/harbor` | explicit |
 | 8 | **Traefik route** | `harbor.by-research.be` (internal-only) | included by `roles/harbor/tasks/main.yml` | via role |
 | 9 | **Split-DNS** | `lxc-harbor-01`.240 + `harbor`→Traefik | `inventories/prod/group_vars/opnsense.yml` | explicit |
@@ -36,16 +36,15 @@ its **own bundled Redis**, **Authentik OIDC**, TLS terminated at **Traefik**. Al
 
 ## Deploy order (each step idempotent)
 
-1. `playbooks/authentik.yml` — creates the `harbor` OIDC app + `harbor-admins`, writes `fabric/app-oidc-harbor.json`.
+1. `playbooks/authentik.yml` — creates the `harbor` OIDC app + `harbor-admins`, client in Vault `harbor/oidc`.
 2. Terraform `apply` `svc-harbor.tf` → guest boots; host already in inventory.
 3. `playbooks/hardening.yml -l lxc-harbor-01`.
 4. `playbooks/opnsense-unbound-overrides.yml` + the OPNsense catalog apply (split-DNS + Traefik→SVC rule).
 5. `playbooks/harbor.yml` — DB → S3 bucket → secrets → install → OIDC → proxy-cache → Traefik route.
-6. `playbooks/secrets-to-vault.yml` — mirror Harbor's new fabric secrets into Vault.
-7. `playbooks/jumpserver.yml --tags reconcile` — register the bastion asset (after #170).
-8. **GitLab tie-in** (topic 2a, done) — `roles/harbor tasks/gitlab-ci.yml` creates the
-   private `gitlab` project + scoped system robot `robot$gitlab-ci` (creds →
-   `fabric/harbor-robot-gitlab.json` → Vault); `playbooks/harbor-gitlab-ci.yml` seeds
+6. `playbooks/jumpserver.yml --tags reconcile` — register the bastion asset (after #170).
+7. **GitLab tie-in** (topic 2a, done) — `roles/harbor tasks/gitlab-ci.yml` creates the
+   private `gitlab` project + scoped system robot `robot$gitlab-ci` (creds in Vault
+   `harbor/robot-gitlab`); `playbooks/harbor-gitlab-ci.yml` seeds
    `HARBOR_HOST` / `HARBOR_ROBOT_USER` / `HARBOR_ROBOT_TOKEN` as GitLab instance CI vars.
 
 ## Using it as Docker Hub

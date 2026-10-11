@@ -1,0 +1,40 @@
+---
+# The only credential files the controller keeps (playbooks/controller-files.yml sets every
+# other file of the folder aside). Vault is the store: a file stays only when a play has to read it
+# BEFORE Vault can answer, or when a tool outside this repository still reads it. `path` is a
+# regular expression on the path inside the folder; each entry says who reads it.
+platform_controller_files_dir: "{{ lookup('env', 'HOME') }}/.openclaw/workspace/infra/secrets"
+# Whole copies of the folder left beside it by an earlier hand: set aside with the rest.
+platform_controller_files_copy_pattern: "{{ platform_controller_files_dir | basename }}.bak-*"
+# Where a file that is not declared goes — inside the folder (the workspace's repository ignores
+# the folder, not what lies beside it), nothing reads it, and it is emptied by an explicit run.
+platform_controller_files_set_aside: "_set-aside"
+platform_controller_files_kept:
+  # --- what opens Vault cannot live in Vault ------------------------------------------------
+  - {path: "vault-init\\.json", reason: "Vault's unseal keys (roles/vault, vault_login, warden)"}
+  - {path: "app-vault-approle-ansible-deploy\\.json", reason: "Ansible's own login to Vault (roles/vault_login, vault_deploy_identity)"}
+  - {path: "fabric/app-vault-ansible-controller\\.json", reason: "the controller's login for its SSH certificates (vault-approle.yml, ssh-agent.yml, key-age-report.yml)"}
+  - {path: "fabric/app-vault-approle-[a-z0-9-]+\\.json", reason: "each service's login to Vault (roles/vault_policy)"}
+  - {path: "fabric/app-oidc-vault\\.json", reason: "Vault's own sign-in client (roles/vault, oidc)"}
+  - {path: "backups/vault/.+", reason: "Vault's snapshots, the copy off the cluster (roles/vault_backup)"}
+  - {path: "print-kit/.+", reason: "the emergency kit, until it is printed and stored off the platform (breakglass-kit.yml, ssh-agent.yml)"}
+  # --- needed to reach a host at all, Vault's included --------------------------------------
+  - {path: "fabric/os-svc-ansible-(prod|test)\\.json", reason: "the automation account's password (inventory: identity.yml)"}
+  # --- a firewall is built and repaired while Vault may be out of reach behind it -----------
+  - {path: "fabric/OPNsense\\.seed-bootstrap\\.json", reason: "what a firewall is born with (fw-offline-cache.yml, the seed builder)"}
+  - {path: "fabric/app-ldap-bind\\.json", reason: "the directory bind of a firewall at birth (the seed builder)"}
+  - {path: "fabric/net-opnsense-(prod|test)-(oob-admin|svc-ansible)\\.json", reason: "a firewall's first login and its API key (fw-offline-cache.yml, roles/opnsense_api_bootstrap)"}
+  - {path: "fabric/net-opnsense-test-vm-opns-test-01\\.json", reason: "the test firewall's API key (inventories/test)"}
+  - {path: "fabric/net-isp-(telenet|telenet-test|proximus-pppoe)\\.json", reason: "the Internet lines' identities (fw-offline-cache.yml, roles/opnsense_pppoe, the seed builder)"}
+  - {path: "fabric/net-internal-domain\\.json", reason: "the internal domain of a firewall at birth (fw-offline-cache.yml)"}
+  - {path: "fabric/infra-proxmox-poc\\.json", reason: "the hypervisor's API, to build the firewall's guest (fw-offline-cache.yml, roles/opnsense_provision)"}
+  # --- read by tools outside this repository (to move to Vault with those tools) ------------
+  - {path: "fabric/infra-synology-nas\\.json", reason: "the Terraform state backup and the storage library's live tests"}
+  - {path: "shared/ci-github-rune\\.json", reason: "the controller's GitHub identity (git credential helper, shell profile)"}
+  - {path: "prod/infra-proxmox-prod\\.json", reason: "the second hypervisor's API: not under Ansible yet, not in Vault"}
+  - {path: "net-opnsense-prod-poc\\.json", reason: "read by the firewall scripts kept in scripts/ (fw_apply_direct.py, opn_oob_admin.py)"}
+  # --- not credentials ----------------------------------------------------------------------
+  - {path: "(README|NAMING-CONVENTION)\\.md", reason: "the folder's notes"}
+  - {path: "_shared/app-m365-TEMPLATE\\.json", reason: "an empty template (docs/m365-entra-integration.md)"}
+  - {path: "_stale/db-dumps/.+", reason: "the database archive of a removed service (roles/service_decommission)"}
+  - {path: "[^/]+\\.ovpn", reason: "the owner's VPN profiles"}

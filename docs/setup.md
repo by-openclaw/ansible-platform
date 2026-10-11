@@ -98,9 +98,14 @@ Vault (KV v2, mount `secret`, per-env prefix `{platform_env}/…`):
 - Service-specific readers (e.g. `roles/opnsense_api_creds`) publish the values as facts;
   nothing is printed (`no_log`), nothing lands in git.
 
-The only secrets allowed outside Vault are Vault's own bootstrap (unseal keys — kept
-off-platform) and the controller's local mirrors under `~/.openclaw/workspace/infra/secrets/`
-(0600, synced by `playbooks/secrets-to-vault.yml`, validated by `playbooks/secrets-validate.yml`).
+The only secrets allowed outside Vault are the files a play has to read before Vault can
+answer (Vault's own unseal keys and logins, the automation account's password, what a firewall
+is built from) and the few a tool outside this repository still reads. They are declared, each
+with its reader, in `inventories/prod/group_vars/all/controller_files.yml`;
+`playbooks/controller-files.yml` fails on any other file of the controller's folder
+(`-e controller_files_set_aside=true` moves it to a set-aside area, `-e controller_files_purge=true`
+empties that area). `playbooks/secrets-validate.yml` proves the
+values in Vault against the running services.
 
 ## 6. OPNsense API Authentication
 

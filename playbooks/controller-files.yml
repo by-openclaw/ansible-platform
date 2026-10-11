@@ -1,0 +1,136 @@
+---
+# ==============================================================================
+# The controller keeps only the credential files a play needs before Vault answers.
+#
+# Vault is the store. The folder of the first months (one file per credential) stayed on the
+# controller as a second, older copy of most of it. The files that remain are declared, each
+# with its reader, in the inventory (group_vars/all/controller_files.yml).
+#
+#   Check — names what is kept and FAILS on any other file (nothing is changed):
+#       ansible-playbook playbooks/controller-files.yml
+#   Set aside what is not declared (dry run with --check): each file is MOVED under
+#   <folder>/_set-aside/, with its path — nothing is lost, and a file a tool turns out to
+#   need is moved back:
+#       ansible-playbook playbooks/controller-files.yml -e controller_files_set_aside=true
+#   Empty the set-aside area, for good (the one step that cannot be undone):
+#       ansible-playbook playbooks/controller-files.yml -e controller_files_purge=true
+#
+# A file is never read here: only names are compared. Before the first run each file was
+# compared with Vault by playbooks/secrets-to-vault.yml --check and secrets-drift-report.yml.
+# ==============================================================================
+- name: "Controller | Only the declared credential files"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    controller_files_set_aside: false
+    controller_files_purge: false
+    controller_files_dir: "{{ platform_controller_files_dir }}"
+    controller_files_aside: "{{ platform_controller_files_set_aside }}"
+    controller_files_aside_dir: "{{ platform_controller_files_dir }}/{{ platform_controller_files_set_aside }}"
+    controller_files_keep_re: "^({{ platform_controller_files_kept | map(attribute='path') | join('|') }})$"
+    controller_files_aside_re: "^{{ platform_controller_files_set_aside | regex_escape }}(/|$)"
+  tasks:
+    - name: "Controller files | Every file of the folder"
+      ansible.builtin.find:
+        paths: "{{ controller_files_dir }}"
+        recurse: true
+        hidden: true
+        file_type: any
+      register: controller_files_found
+
+    - name: "Controller files | Copies of the folder beside it"
+      ansible.builtin.find:
+        paths: "{{ controller_files_dir | dirname }}"
+        patterns: "{{ platform_controller_files_copy_pattern }}"
+        file_type: directory
+      register: controller_files_copies
+
+    - name: "Controller files | Kept, not declared, already set aside"
+      ansible.builtin.set_fact:
+        controller_files_kept: "{{ _files | select('match', controller_files_keep_re) | list }}"
+        controller_files_other: "{{ _files | reject('match', controller_files_keep_re) | list }}"
+        controller_files_dead_dirs: "{{ _dirs | difference(_alive_dirs) | sort(reverse=true) }}"
+        controller_files_aside_count: "{{ _all | select('match', controller_files_aside_re) | list | length }}"
+      vars:
+        _prefix: "^{{ controller_files_dir | regex_escape }}/"
+        _all: >-
+          {{ controller_files_found.files | rejectattr('isdir') | map(attribute='path')
+             | map('regex_replace', _prefix, '') | sort }}
+        _files: "{{ _all | reject('match', controller_files_aside_re) | list }}"
+        _dirs: >-
+          {{ controller_files_found.files | selectattr('isdir') | map(attribute='path')
+             | map('regex_replace', _prefix, '') | reject('match', controller_files_aside_re) | sort }}
+        _kept_dirs: "{{ _files | select('match', controller_files_keep_re) | map('dirname') | unique | list }}"
+        _alive_dirs: "{{ (_kept_dirs + (_kept_dirs | map('dirname') | list)) | unique | reject('eq', '') | list }}"
+
+    - name: "Controller files | State"
+      ansible.builtin.debug:
+        msg:
+          - >-
+            CONTROLLER_FILES kept={{ controller_files_kept | length }}
+            not_declared={{ controller_files_other | length }}
+            copies_of_the_folder={{ controller_files_copies.files | length }}
+            set_aside={{ controller_files_aside_count }}
+          - "kept: {{ controller_files_kept | join(', ') }}"
+          - "not declared: {{ controller_files_other | join(', ') or 'none' }}"
+          - "copies of the folder: {{ controller_files_copies.files | map(attribute='path') | map('basename') | join(', ') or 'none' }}"
+
+    # Moved, never deleted: one plain `mv` per file (same disk: a rename), the path kept under
+    # the set-aside area. A directory left without a file is removed with `rmdir`, which refuses
+    # a directory that is not empty.
+    - name: "Controller files | Set aside what is not declared"
+      when: controller_files_set_aside | bool
+      block:
+        - name: "Controller files | The set-aside area"
+          ansible.builtin.file:
+            path: "{{ controller_files_aside_dir }}/{{ item }}"
+            state: directory
+            mode: "0700"
+          loop: "{{ ([''] + ['_copies'] + (controller_files_other | map('dirname') | unique | reject('eq', '') | list)) | sort }}"
+
+        - name: "Controller files | Set aside the copies of the folder"
+          ansible.builtin.command:
+            argv: [mv, "{{ item }}", "{{ controller_files_aside_dir }}/_copies/{{ item | basename }}"]
+            removes: "{{ item }}"
+            creates: "{{ controller_files_aside_dir }}/_copies/{{ item | basename }}"
+          loop: "{{ controller_files_copies.files | map(attribute='path') | list }}"
+          loop_control:
+            label: "{{ item | basename }}"
+
+        - name: "Controller files | Set aside the files"
+          ansible.builtin.command:
+            argv: [mv, "{{ controller_files_dir }}/{{ item }}", "{{ controller_files_aside_dir }}/{{ item }}"]
+            removes: "{{ controller_files_dir }}/{{ item }}"
+          loop: "{{ controller_files_other }}"
+
+        - name: "Controller files | Remove the directories left empty"
+          ansible.builtin.command:
+            argv: [rmdir, "{{ controller_files_dir }}/{{ item }}"]
+            removes: "{{ controller_files_dir }}/{{ item }}"
+          loop: "{{ controller_files_dead_dirs }}"
+
+    # The one step that cannot be undone: asked for by name, never part of another run.
+    - name: "Controller files | Empty the set-aside area"
+      ansible.builtin.file:
+        path: "{{ controller_files_aside_dir }}"
+        state: absent
+      when:
+        - controller_files_purge | bool
+        - not (controller_files_set_aside | bool)
+
+    - name: "Controller files | The folder holds only what is declared"
+      ansible.builtin.assert:
+        that:
+          - controller_files_other | length == 0
+          - controller_files_copies.files | length == 0
+        fail_msg: >-
+          {{ controller_files_other | length }} file(s) of {{ controller_files_dir }} are not declared in
+          platform_controller_files_kept (and {{ controller_files_copies.files | length }} copy(ies) of the folder
+          exist): put the credential in Vault, or declare the file with its reader; then
+          `-e controller_files_set_aside=true`.
+        success_msg: >-
+          only declared files: {{ controller_files_kept | length }}; set aside, waiting for
+          `-e controller_files_purge=true`: {{ controller_files_aside_count }}
+      when: not (controller_files_set_aside | bool)
