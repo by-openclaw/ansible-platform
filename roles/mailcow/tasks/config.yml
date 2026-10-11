@@ -9,15 +9,26 @@
 # playbook never computes hashes inline.
 # ==============================================================================
 
-- name: "config | Mailcow secrets (Vault, read)"
+- name: "config | The administrator's login document (Vault, read)"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
     vault_secret_path: "{{ mailcow_vault_path }}"
 
-- name: "config | Bind them"
+- name: "config | Keep it"
   ansible.builtin.set_fact:
-    mailcow_sec: "{{ vault_secret_result }}"
+    mailcow_sec_login: "{{ vault_secret_result }}"
+  no_log: true
+
+- name: "config | Mailcow machine-only secrets (Vault, read)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ mailcow_app_vault_path }}"
+
+- name: "config | Bind both (the tasks below read one map)"
+  ansible.builtin.set_fact:
+    mailcow_sec: "{{ mailcow_sec_login | combine(vault_secret_result) }}"
   no_log: true
 
 # Bootstrap ONLY postmaster@: RFC 2142, the catch-all target, and needed before the
