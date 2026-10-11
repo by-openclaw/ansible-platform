@@ -61,6 +61,13 @@ platform_vault_retired_documents:
       - {field: password, path: "postgresql/patroni-api", field_there: password}
   - path: "postgres/admin"
     reason: "the administrator record of an earlier, single-server installation; nothing reads it"
+  # --- 2026-10-11: audit pass — every document checked against every local repository -------------
+  - path: "vault/login-yboujraf"
+    reason: "an old sign-in token of the secrets store itself; the store refuses it (expired); nothing reads the document"
+  - path: "opnsense/seed-bootstrap"
+    reason: "the store's older copy of the firewall seed's bootstrap values (retired by-rune fields, the factory default's root hash); the build reads the controller's file, kept right by fw-offline-cache.yml"
+  - path: "backup/nfs"
+    reason: "a record of an NFS export (no secret) from the first installation; nothing reads it"
 
 platform_vault_retired_fields:
   - path: "mailcow/admin"
