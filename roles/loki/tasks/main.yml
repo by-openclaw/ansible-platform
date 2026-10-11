@@ -55,6 +55,39 @@
   no_log: true   # contains S3 secret key
   register: loki_config_file
 
+# Who may use the mail server's master user: the addresses those hosts really have (a guest
+# also talks from an address it gave itself), and the mail stack's own internal networks.
+- name: "Loki | Addresses of the hosts that may use the mail master user"
+  ansible.builtin.setup:
+    filter: [ansible_all_ipv4_addresses, ansible_all_ipv6_addresses]
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  loop: "{{ loki_mail_master_hosts }}"
+  when: loki_ruler_enabled | bool and loki_mail_master_alert | bool
+
+- name: "Loki | The mail stack's internal networks (two lines of its configuration)"
+  ansible.builtin.command:
+    argv: [grep, -E, "^IPV[46]_NETWORK=", "{{ loki_mail_conf }}"]
+  delegate_to: "{{ loki_mail_host }}"
+  register: loki_mail_networks
+  changed_when: false
+  check_mode: false   # read-only: must run under --check too (the rule file reads its result)
+  when: loki_ruler_enabled | bool and loki_mail_master_alert | bool
+
+# Each source as a pattern for the rule: an exact address, or everything inside a network.
+- name: "Loki | The sources a master sign-in may come from"
+  ansible.builtin.set_fact:
+    loki_mail_master_sources: >-
+      {{ (loki_mail_master_hosts | map('extract', hostvars, 'ansible_all_ipv4_addresses') | flatten
+          + loki_mail_master_hosts | map('extract', hostvars, 'ansible_all_ipv6_addresses') | flatten)
+         | reject('match', '^fe80:') | map('regex_escape') | list
+         + (loki_mail_networks.stdout_lines | default([]) | select('match', '^IPV4_NETWORK=')
+            | map('regex_replace', '^IPV4_NETWORK=', '') | map('regex_escape') | map('regex_replace', '$', '\\..*') | list)
+         + (loki_mail_networks.stdout_lines | default([]) | select('match', '^IPV6_NETWORK=')
+            | map('regex_replace', '^IPV6_NETWORK=', '') | map('regex_replace', '::?/[0-9]+$', ':')
+            | map('regex_escape') | map('regex_replace', '$', '.*') | list) }}
+  when: loki_ruler_enabled | bool and loki_mail_master_alert | bool
+
 # Read by the ruler once a minute: a change needs no restart.
 - name: "Loki | Alert rules on logs ({{ loki_rules_dir }}/{{ loki_rules_tenant }})"
   ansible.builtin.template:

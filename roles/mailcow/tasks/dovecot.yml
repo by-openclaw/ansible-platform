@@ -1,0 +1,48 @@
+---
+# ==============================================================================
+# Role: mailcow — Dovecot settings of ours, in the file mailcow reads last
+# (data/conf/dovecot/extra.conf). Dovecot reads its WHOLE configuration again at a reload: a
+# file it cannot parse would refuse every sign-in, so the file is parsed first and taken back
+# when it does not parse. A reload keeps the open sessions; nothing is restarted.
+# ==============================================================================
+- name: "dovecot | Our settings (extra.conf)"
+  ansible.builtin.template:
+    src: dovecot-extra.conf.j2
+    dest: "{{ mailcow_dovecot_extra_conf }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: mailcow_dovecot_extra
+
+- name: "dovecot | Parse, reload, check"
+  when: not ansible_check_mode   # under --check the file was not written: nothing to parse
+  block:
+    - name: "dovecot | The configuration parses with it"
+      community.docker.docker_container_exec:
+        container: "{{ mailcow_dovecot_container }}"
+        argv: [doveconf, -h, login_log_format_elements]
+      register: mailcow_dovecot_parse
+      changed_when: false
+      failed_when: false
+
+    - name: "dovecot | Take the file back when the configuration does not parse"
+      ansible.builtin.file:
+        path: "{{ mailcow_dovecot_extra_conf }}"
+        state: absent
+      when: mailcow_dovecot_parse.rc != 0 or (mailcow_dovecot_parse.stdout | trim) != mailcow_dovecot_login_log_format
+
+    - name: "dovecot | It parses and holds our value"
+      ansible.builtin.assert:
+        that:
+          - mailcow_dovecot_parse.rc == 0
+          - (mailcow_dovecot_parse.stdout | trim) == mailcow_dovecot_login_log_format
+        fail_msg: >-
+          Dovecot does not accept {{ mailcow_dovecot_extra_conf }} (the file was taken back, nothing
+          was reloaded): {{ (mailcow_dovecot_parse.stderr | default('')) | truncate(400) }}
+        quiet: true
+
+    - name: "dovecot | Reload (open sessions stay; new sign-ins are logged with the new line)"
+      community.docker.docker_container_exec:
+        container: "{{ mailcow_dovecot_container }}"
+        argv: [doveadm, reload]
+      when: mailcow_dovecot_extra is changed

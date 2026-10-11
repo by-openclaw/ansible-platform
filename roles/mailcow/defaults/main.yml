@@ -223,3 +223,12 @@ mailcow_host_smtp_holder: "docker-proxy"
 # The keys of mailcow.conf that define the Compose network: a change of one of them makes Compose
 # recreate the network (tasks/install.yml stops the stack first).
 mailcow_network_keys_regex: '^(?:ENABLE_IPV6|IPV4_NETWORK|IPV6_NETWORK)=.*$'
+
+# --- Dovecot: who authenticated (the master user is visible in the log) ----------------------
+# The sign-in line names the account that authenticated beside the mailbox. For a sign-in made
+# with the master user the two differ — user=<mailbox> auth_user=<master> — so every use of it
+# shows in the log, and roles/loki alerts on one that does not come from Nextcloud. The setting
+# goes in the file mailcow reads last (its supported place for overrides); a reload, no restart.
+mailcow_dovecot_container: "mailcowdockerized-dovecot-mailcow-1"
+mailcow_dovecot_extra_conf: "{{ mailcow_install_dir }}/data/conf/dovecot/extra.conf"
+mailcow_dovecot_login_log_format: "user=<%u> auth_user=<%{auth_user}> method=%m rip=%r lip=%l mpid=%e %c %k"

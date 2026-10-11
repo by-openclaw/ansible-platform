@@ -75,3 +75,27 @@ groups:
         annotations:
           summary: "Vault: no audit entry reached the log store for {{ loki_vault_audit_silence }}"
           description: "The active member writes the audit log and promtail ships it from every member (inventory: vault_cluster). Nothing arriving means the shipping or the audit device is broken."
+{% if loki_mail_master_alert | default(false) | bool %}
+
+  - name: mail-master-user
+    interval: {{ loki_rule_interval }}
+    rules:
+      # The mail server's master user opens any mailbox. A sign-in with it from a host that is
+      # not one of its declared users is somebody holding that password.
+      - alert: MailMasterUserUsedFromElsewhere
+        expr: |
+          sum by (master, rip) (count_over_time(
+            {{ loki_mail_selector }}
+              |~ "-login: Login: "
+              | regexp {% raw %}`auth_user=<(?P<master>[^>]*)>.* rip=(?P<rip>[^ ,]+)`{% endraw %}
+
+              | master=~`.+@{{ loki_mail_master_domain | regex_escape }}`
+              | rip!~`{{ loki_mail_master_sources | default([]) | join('|') }}`
+            [{{ loki_mail_window }}])) > 0
+        for: 0m
+        labels: {severity: critical}
+        annotations:
+          summary: {% raw %}"Mail: the master user {{ $labels.master }} signed in from {{ $labels.rip }}"{% endraw %}
+
+          description: "The master user opens any mailbox. It is used by Nextcloud's Mail app and by the mail stack itself; this sign-in came from neither."
+{% endif %}

@@ -24,7 +24,19 @@ VARS = {
     "loki_vault_window": "5m",
     "loki_vault_audit_silence": "26h",
 }
-RULES = yaml.safe_load(jinja2.Environment().from_string(TEMPLATE).render(**VARS))["groups"][0]["rules"]  # noqa: S701
+
+
+def _env():
+    """Plain Jinja with the two Ansible filters the template uses."""
+    import re
+
+    env = jinja2.Environment()  # noqa: S701 — a rule file, not HTML
+    env.filters["bool"] = lambda v: str(v).lower() in ("true", "yes", "1")
+    env.filters["regex_escape"] = re.escape
+    return env
+
+
+RULES = yaml.safe_load(_env().from_string(TEMPLATE).render(**VARS))["groups"][0]["rules"]
 
 
 def test_every_rule_is_complete():
@@ -59,3 +71,32 @@ def test_what_the_alert_says_names_who_did_it():
 
 def test_the_silence_window_is_longer_than_a_day():
     assert "absent_over_time" in RULES[3]["expr"] and "[26h]" in RULES[3]["expr"]
+
+
+# --- the mail server's master user ---------------------------------------------------------------
+MAIL_VARS = dict(
+    VARS,
+    loki_mail_master_alert=True,
+    loki_mail_selector='{container="dovecot"}',
+    loki_mail_master_domain="mailcow.local",
+    loki_mail_master_sources=[r"10\.0\.0\.7", r"fd00:1::7", r"172\.22\.1\..*"],
+    loki_mail_window="5m",
+)
+
+
+def test_the_master_user_rule_is_there_only_when_asked():
+    plain = yaml.safe_load(_env().from_string(TEMPLATE).render(**VARS))["groups"]
+    assert [g["name"] for g in plain] == ["vault-audit"]
+    both = yaml.safe_load(_env().from_string(TEMPLATE).render(**MAIL_VARS))["groups"]
+    assert [g["name"] for g in both] == ["vault-audit", "mail-master-user"]
+
+
+def test_the_master_user_rule_names_who_and_from_where_and_spares_the_declared_sources():
+    rule = yaml.safe_load(_env().from_string(TEMPLATE).render(**MAIL_VARS))["groups"][1]["rules"][0]
+    assert rule["alert"] == "MailMasterUserUsedFromElsewhere" and rule["labels"]["severity"] == "critical"
+    expr = rule["expr"]
+    assert "auth_user=<(?P<master>[^>]*)>" in expr and "rip=(?P<rip>[^ ,]+)" in expr
+    assert "master=~`.+@mailcow\\.local`" in expr
+    assert "rip!~`10\\.0\\.0\\.7|fd00:1::7|172\\.22\\.1\\..*`" in expr
+    assert "$labels.master" in rule["annotations"]["summary"] and "$labels.rip" in rule["annotations"]["summary"]
+    assert expr.count("(") == expr.count(")") and expr.count("{") == expr.count("}")
