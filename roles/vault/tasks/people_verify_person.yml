@@ -135,7 +135,7 @@
         timeout: "{{ vault_api_timeout }}"
         body_format: json
         body:
-          paths: ["{{ vault_people_probe_own }}", "{{ vault_people_probe_else }}"]
+          paths: "{{ [vault_people_probe_own, vault_people_probe_else] + vault_people_probe.read + vault_people_probe.deny }}"
         status_code: [200]
       register: vault_people_probe_caps
       changed_when: false
@@ -157,10 +157,15 @@
         that:
           - vault_people_probe_caps.json[vault_people_probe_own] | sort == ['read']
           - vault_people_probe_caps.json[vault_people_probe_else] == ['deny']
+          # a service's administrator login: read by a member of its group, refused to anyone else
+          - vault_people_probe.read | map('extract', vault_people_probe_caps.json) | map('sort') | unique | list in [[], [['read']]]
+          - vault_people_probe.deny | map('extract', vault_people_probe_caps.json) | unique | list in [[], [['deny']]]
         fail_msg: >-
           the per-person area does not behave as decided for {{ vault_people_probe.policies | join(' + ') }}:
           own -> {{ vault_people_probe_caps.json[vault_people_probe_own] }},
-          another person's -> {{ vault_people_probe_caps.json[vault_people_probe_else] }}
+          another person's -> {{ vault_people_probe_caps.json[vault_people_probe_else] }},
+          service logins of its groups -> {{ vault_people_probe.read | map('extract', vault_people_probe_caps.json) | unique | list }},
+          other service logins -> {{ vault_people_probe.deny | map('extract', vault_people_probe_caps.json) | unique | list }}
         quiet: true
 
     - name: "people | person proof {{ vault_people_probe.name }} — recorded"

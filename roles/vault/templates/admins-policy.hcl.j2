@@ -9,3 +9,11 @@ path "*" {
 path "{{ vault_kv_path }}/+/{{ platform_env }}/{{ vault_people_area }}/*" {
   capabilities = ["deny"]
 }
+{# A service's administrator login is read by that service's administrators' group only — an
+   administrator of Vault who is not in the group is refused it. The group's own policy
+   (people-policy.hcl.j2) names the exact path, which wins over this refusal for its members. #}
+{% for p in vault_people_access | map(attribute='paths') | flatten | unique | sort %}
+path "{{ vault_kv_path }}/+/{{ platform_env }}/{{ p }}" {
+  capabilities = ["deny"]
+}
+{% endfor %}

@@ -128,7 +128,26 @@ vault_people_person_policy: "person"
 vault_people_base_policies:
   - {name: "{{ vault_people_person_policy }}", template: "person-policy.hcl.j2"}
   - {name: "{{ vault_admin_policy_name }}", template: "admins-policy.hcl.j2"}
+# A service's administrator login is read by its administrators' group only: a plain person and
+# an administrator of Vault are refused every one of them (`deny`); an administrator of Vault who
+# IS in a service's group reads that service's login and no other (`read`, `deny`).
+vault_people_login_paths: >-
+  {{ vault_people_access | map(attribute='paths') | flatten | unique | sort
+     | map('regex_replace', '^', vault_kv_path ~ '/data/' ~ platform_env ~ '/') | list }}
+vault_people_first: "{{ vault_people_access | first | default({'group': '', 'paths': []}) }}"
+vault_people_first_paths: >-
+  {{ vault_people_first.paths | map('regex_replace', '^', vault_kv_path ~ '/data/' ~ platform_env ~ '/') | list }}
 vault_people_probes:
-  - {name: "people-probe-person", policies: ["{{ vault_people_person_policy }}"]}
-  - {name: "people-probe-admin", policies: ["{{ vault_people_person_policy }}", "{{ vault_admin_policy_name }}"]}
+  - name: "people-probe-person"
+    policies: ["{{ vault_people_person_policy }}"]
+    read: []
+    deny: "{{ vault_people_login_paths }}"
+  - name: "people-probe-admin"
+    policies: ["{{ vault_people_person_policy }}", "{{ vault_admin_policy_name }}"]
+    read: []
+    deny: "{{ vault_people_login_paths }}"
+  - name: "people-probe-svc-admin"
+    policies: ["{{ vault_people_person_policy }}", "{{ vault_admin_policy_name }}", "{{ vault_people_policy_prefix }}{{ vault_people_first.group }}"]
+    read: "{{ vault_people_first_paths }}"
+    deny: "{{ vault_people_login_paths | difference(vault_people_first_paths) }}"
 vault_people_probe_other: "people-probe-other"
