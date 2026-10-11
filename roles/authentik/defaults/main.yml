@@ -89,13 +89,15 @@ authentik_service_accounts: "{{ platform_service_accounts | default([]) }}"
 # *-admins groups and is the Authentik superuser; admin things are managed only from
 # it. Break-glass beyond these: Authentik akadmin (bootstrap) + each app's local admin.
 # Every person in platform_people (group_vars/all/people.yml) is an Authentik user; the
-# user secret sits at {env}/authentik/user-<username, _ as -> (a convention, not a list).
+# person's sign-in document sits in their own area in Vault, {env}/users/<username>/sign-in (a
+# convention, not a list): the person reads it there, nobody else does (security/0001 §People
+# reading in Vault). Until 2026-10-11 it sat at {env}/authentik/user-<username, _ as ->.
 # People are added, renamed or disabled in people.yml only — never here.
 authentik_users: >-
   {%- set out = [] -%}
   {%- for p in platform_people -%}
     {%- set _ = out.append({'username': p.username,
-                            'vault_path': platform_env ~ '/authentik/user-' ~ (p.username | replace('_', '-'))}) -%}
+                            'vault_path': platform_env ~ '/' ~ (platform_vault_people_area | default('users')) ~ '/' ~ p.username ~ '/sign-in'}) -%}
   {%- endfor -%}
   {{ out }}
 

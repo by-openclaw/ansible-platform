@@ -18,7 +18,7 @@ services/0005 §notifications.md) and points at everything else. Audit: [`audits
 3. **Vault paths:** `secret/prod/authentik/admin` (secret key + bootstrap admin `akadmin`),
    `secret/prod/authentik/db-pgsql` (own PostgreSQL user), `secret/prod/authentik/ldap-outpost`,
    `secret/prod/authentik/radius` (shared secrets, probe password), `secret/prod/authentik/radius-outpost`,
-   `secret/prod/authentik/user-<username>` (one per person), `secret/prod/<service>/oidc` (one per
+   `secret/prod/users/<username>/sign-in` (one per person, in the person's own area — read by that person only), `secret/prod/<service>/oidc` (one per
    OIDC client, minted by this role), `secret/prod/mail/authentik` (mailbox).
 4. **Ansible adapter + vars:** `roles/authentik` (blueprints rendered from
    `templates/identity.yaml.j2`, `oidc-app.yaml.j2`, `proxy-apps.yaml.j2`); vars =
