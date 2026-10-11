@@ -116,6 +116,7 @@
       ansible.builtin.file:
         path: "{{ controller_files_aside_dir }}"
         state: absent
+      register: controller_files_purged
       when:
         - controller_files_purge | bool
         - not (controller_files_set_aside | bool)
@@ -131,6 +132,10 @@
           exist): put the credential in Vault, or declare the file with its reader; then
           `-e controller_files_set_aside=true`.
         success_msg: >-
-          only declared files: {{ controller_files_kept | length }}; set aside, waiting for
-          `-e controller_files_purge=true`: {{ controller_files_aside_count }}
+          only declared files: {{ controller_files_kept | length }};
+          {{ ('the set-aside area ' ~ ('would be' if ansible_check_mode else 'was') ~ ' emptied by this run ('
+              ~ controller_files_aside_count ~ ' file(s))')
+             if (controller_files_purged is changed)
+             else ('nothing is set aside' if (controller_files_aside_count | int == 0)
+                   else (controller_files_aside_count ~ ' file(s) set aside, waiting for `-e controller_files_purge=true`')) }}
       when: not (controller_files_set_aside | bool)
