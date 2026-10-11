@@ -1,0 +1,179 @@
+---
+# Proof of the per-person area, for one kind of person (vault_people_probe: {name, policies}).
+# An entity that exists for the length of the proof is known to the sign-in method under the name
+# of a person who does not exist, and to AppRole under a proof login that carries the policies of
+# that kind of person. It signs in and Vault is asked what the token may do: read in its own area,
+# nothing in another person's. No document is read; everything is removed whatever the outcome.
+# (An entity has one name per sign-in method: each kind of person is its own entity.)
+- name: "people | person proof — {{ vault_people_probe.name }}"
+  block:
+    - name: "people | person proof {{ vault_people_probe.name }} — the entity"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/identity/entity"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        body_format: json
+        body:
+          name: "{{ vault_people_probe.name }}"
+        status_code: [200, 204]
+      changed_when: false
+
+    - name: "people | person proof {{ vault_people_probe.name }} — its identifier"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/identity/entity/name/{{ vault_people_probe.name }}"
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+      register: vault_people_probe_entity
+      changed_when: false
+      no_log: true
+
+    - name: "people | person proof {{ vault_people_probe.name }} — a login that carries {{ vault_people_probe.policies | join(' + ') }}"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/auth/{{ vault_approle_mount }}/role/{{ vault_people_probe.name }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        body_format: json
+        body:
+          token_policies: "{{ vault_people_probe.policies }}"
+          token_ttl: "{{ vault_people_probe_ttl }}"
+          token_max_ttl: "{{ vault_people_probe_ttl }}"
+          secret_id_ttl: "{{ vault_people_probe_ttl }}"
+          secret_id_num_uses: 1
+        status_code: [200, 204]
+      changed_when: false
+
+    - name: "people | person proof {{ vault_people_probe.name }} — the login's identifier"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/auth/{{ vault_approle_mount }}/role/{{ vault_people_probe.name }}/role-id"
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+      register: vault_people_probe_id
+      changed_when: false
+      no_log: true
+
+    - name: "people | person proof {{ vault_people_probe.name }} — the entity's name on the sign-in method"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/identity/entity-alias"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        body_format: json
+        body:
+          name: "{{ vault_people_probe.name }}"
+          canonical_id: "{{ vault_people_probe_entity.json.data.id }}"
+          mount_accessor: "{{ vault_people_accessor }}"
+        status_code: [200, 204]
+      changed_when: false
+
+    - name: "people | person proof {{ vault_people_probe.name }} — the entity's name for the proof login"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/identity/entity-alias"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        body_format: json
+        body:
+          name: "{{ vault_people_probe_id.json.data.role_id }}"
+          canonical_id: "{{ vault_people_probe_entity.json.data.id }}"
+          mount_accessor: "{{ vault_people_approle_accessor }}"
+        status_code: [200, 204]
+      changed_when: false
+      no_log: true
+
+    - name: "people | person proof {{ vault_people_probe.name }} — a one-use secret"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/auth/{{ vault_approle_mount }}/role/{{ vault_people_probe.name }}/secret-id"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        status_code: [200]
+      register: vault_people_probe_secret
+      changed_when: false
+      no_log: true
+
+    - name: "people | person proof {{ vault_people_probe.name }} — sign in"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/auth/{{ vault_approle_mount }}/login"
+        method: POST
+        timeout: "{{ vault_api_timeout }}"
+        body_format: json
+        body:
+          role_id: "{{ vault_people_probe_id.json.data.role_id }}"
+          secret_id: "{{ vault_people_probe_secret.json.data.secret_id }}"
+        status_code: [200]
+      register: vault_people_probe_token
+      changed_when: false
+      no_log: true
+
+    - name: "people | person proof {{ vault_people_probe.name }} — what it may do in its own area and in another person's"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/sys/capabilities-self"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_people_probe_token.json.auth.client_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        body_format: json
+        body:
+          paths: ["{{ vault_people_probe_own }}", "{{ vault_people_probe_else }}"]
+        status_code: [200]
+      register: vault_people_probe_caps
+      changed_when: false
+      no_log: true
+
+    - name: "people | person proof {{ vault_people_probe.name }} — the token is given back"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/auth/token/revoke-self"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_people_probe_token.json.auth.client_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        status_code: [200, 204]
+      changed_when: false
+      no_log: true
+
+    - name: "people | person proof {{ vault_people_probe.name }} — own area: read, nothing more; another person's: refused"
+      ansible.builtin.assert:
+        that:
+          - vault_people_probe_caps.json[vault_people_probe_own] | sort == ['read']
+          - vault_people_probe_caps.json[vault_people_probe_else] == ['deny']
+        fail_msg: >-
+          the per-person area does not behave as decided for {{ vault_people_probe.policies | join(' + ') }}:
+          own -> {{ vault_people_probe_caps.json[vault_people_probe_own] }},
+          another person's -> {{ vault_people_probe_caps.json[vault_people_probe_else] }}
+        quiet: true
+
+    - name: "people | person proof {{ vault_people_probe.name }} — recorded"
+      ansible.builtin.set_fact:
+        vault_people_person_proved: "{{ (vault_people_person_proved | default([])) + [vault_people_probe.policies | join('+')] }}"
+  always:
+    - name: "people | person proof {{ vault_people_probe.name }} — remove the proof login"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/auth/{{ vault_approle_mount }}/role/{{ vault_people_probe.name }}"
+        method: DELETE
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        status_code: [200, 204, 404]
+      changed_when: false
+
+    - name: "people | person proof {{ vault_people_probe.name }} — remove the entity (and its names)"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/identity/entity/name/{{ vault_people_probe.name }}"
+        method: DELETE
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        status_code: [200, 204, 404]
+      changed_when: false
+  vars:
+    vault_people_probe_own: "{{ vault_kv_path }}/data/{{ platform_env }}/{{ vault_people_area }}/{{ vault_people_probe.name }}/any"
+    vault_people_probe_else: "{{ vault_kv_path }}/data/{{ platform_env }}/{{ vault_people_area }}/{{ vault_people_probe_other }}/any"

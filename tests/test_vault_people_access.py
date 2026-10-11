@@ -82,3 +82,56 @@ def test_the_proof_reads_no_document_and_removes_its_login():
     assert not any("/data/" in u for u in urls), "the proof must ask for capabilities, not read a document"
     assert any(u.endswith("/sys/capabilities-self") for u in urls)
     assert block["always"][0]["ansible.builtin.uri"]["method"] == "DELETE"
+
+
+# --- the per-person area ------------------------------------------------------------------------
+ACCESSOR = "auth_oidc_0000"
+SELF = "{{identity.entity.aliases." + ACCESSOR + ".name}}"
+
+
+def _render(name: str) -> list[tuple[str, list[str]]]:
+    env = jinja2.Environment(trim_blocks=True)  # noqa: S701 — a policy text, not HTML
+    text = env.from_string((ROOT / "roles" / "vault" / "templates" / name).read_text()).render(
+        vault_kv_path="secret", platform_env="prod", vault_people_area="users", vault_people_accessor=ACCESSOR
+    )
+    rules = re.findall(r'path "([^"]+)" \{\s*capabilities = \[([^\]]*)\]', text)
+    return [(p, [c.strip().strip('"') for c in caps.split(",")]) for p, caps in rules]
+
+
+def test_a_person_reads_their_own_area_named_by_their_sign_in():
+    rules = dict(_render("person-policy.hcl.j2"))
+    assert rules[f"secret/data/prod/users/{SELF}/*"] == ["read"]
+    assert rules[f"secret/metadata/prod/users/{SELF}/*"] == ["read", "list"]
+    for path, caps in rules.items():
+        assert not set(caps) & {"create", "update", "delete", "patch", "sudo"}, path
+        if "/data/" in path:
+            assert SELF in path, f"a value outside the person's own area: {path}"
+        elif SELF not in path:
+            assert caps == ["list"], f"outside the own area only names may be listed: {path}"
+
+
+def test_an_administrator_is_refused_the_other_peoples_areas():
+    rules = dict(_render("admins-policy.hcl.j2"))
+    assert rules["secret/+/prod/users/*"] == ["deny"]
+    # the person's own path has no wildcard before its end: Vault prefers it to the refusal
+    own = f"secret/data/prod/users/{SELF}/*"
+    assert own.index("*") > "secret/+/prod/users/*".index("+")
+
+
+def test_the_person_proof_cleans_up_and_gives_its_token_back():
+    block = yaml.safe_load((TASKS / "people_verify_person.yml").read_text())[0]
+    urls = [t["ansible.builtin.uri"]["url"] for t in block["block"] if "ansible.builtin.uri" in t]
+    assert any(u.endswith("/auth/token/revoke-self") for u in urls)
+    assert any(u.endswith("/sys/capabilities-self") for u in urls)
+    removed = [t["ansible.builtin.uri"] for t in block["always"]]
+    assert all(u["method"] == "DELETE" for u in removed) and len(removed) == 2
+    probe_paths = [block["vars"]["vault_people_probe_own"], block["vars"]["vault_people_probe_else"]]
+    assert all("/data/" in p for p in probe_paths)   # asked about, never read
+    assert not any("/data/" in u for u in urls)
+
+
+def test_both_kinds_of_person_are_proved():
+    defaults = yaml.safe_load((ROOT / "roles" / "vault" / "defaults" / "main.yml").read_text())
+    probes = defaults["vault_people_probes"]
+    assert len({p["name"] for p in probes}) == 2, "one entity per kind of person (one name per sign-in method)"
+    assert [len(p["policies"]) for p in probes] == [1, 2]

@@ -3,3 +3,9 @@
 path "*" {
   capabilities = ["create", "read", "update", "delete", "list", "sudo"]
 }
+{# security/0001 §People reading in Vault: an administrator does not read another person's
+   area. A person's own, longer path (person-policy.hcl.j2) wins over this one for them. An
+   administrator can rewrite this policy: that is detected (audit log), not prevented. #}
+path "{{ vault_kv_path }}/+/{{ platform_env }}/{{ vault_people_area }}/*" {
+  capabilities = ["deny"]
+}
