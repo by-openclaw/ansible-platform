@@ -137,6 +137,30 @@
       - { app: onlyoffice, key: jwt_header, value: "Authorization" }
   no_log: true
 
+# The connector stores its LAST verification failure (settings_error) and hides the editor for
+# everybody while it is set — it re-verifies only when an admin saves the settings page. A
+# transient edge failure therefore outlives its cause (2026-10-11: the editor was gone for
+# everyone while the document server answered fine). When the document server's healthcheck
+# answers from this host, the stored error is cleared.
+- name: "collab | The document server answers from here"
+  ansible.builtin.uri:
+    url: "https://{{ nextcloud_onlyoffice_fqdn }}/healthcheck"
+    return_content: true
+  register: nextcloud_oo_health
+  check_mode: false   # read-only probe
+  changed_when: false
+  failed_when: false
+  when: (nextcloud_collab_cfg_now.onlyoffice.settings_error | default('')) | length > 0
+
+- name: "collab | Clear the stored verification error (the document server answers)"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ config:app:delete onlyoffice settings_error
+  changed_when: true
+  when:
+    - (nextcloud_collab_cfg_now.onlyoffice.settings_error | default('')) | length > 0
+    - nextcloud_oo_health.status | default(0) == 200
+    - (nextcloud_oo_health.content | default('')) is search('true')
+
 - name: "collab | Apply the app settings (only on drift)"
   ansible.builtin.command:
     cmd: docker exec -u www-data nextcloud php occ config:app:set {{ item.app }} {{ item.key }} --value={{ item.value | quote }}
