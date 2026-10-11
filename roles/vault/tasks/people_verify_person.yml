@@ -43,7 +43,7 @@
           token_ttl: "{{ vault_people_probe_ttl }}"
           token_max_ttl: "{{ vault_people_probe_ttl }}"
           secret_id_ttl: "{{ vault_people_probe_ttl }}"
-          secret_id_num_uses: 1
+          secret_id_num_uses: "{{ vault_people_probe_tries }}"
         status_code: [200, 204]
       changed_when: false
 
@@ -109,10 +109,22 @@
         body:
           role_id: "{{ vault_people_probe_id.json.data.role_id }}"
           secret_id: "{{ vault_people_probe_secret.json.data.secret_id }}"
-        status_code: [200]
+        status_code: [200, 400]
       register: vault_people_probe_token
+      until: vault_people_probe_token.status == 200
+      retries: "{{ vault_people_probe_tries }}"
+      delay: "{{ vault_people_probe_delay }}"
+      failed_when: false   # the next task says why, in Vault's own words (they hold no secret)
       changed_when: false
       no_log: true
+
+    - name: "people | person proof {{ vault_people_probe.name }} — the proof login was let in"
+      ansible.builtin.assert:
+        that: vault_people_probe_token.status == 200
+        fail_msg: >-
+          Vault refused the proof login {{ vault_people_probe_tries }} times:
+          {{ vault_people_probe_token.json.errors | default(['no reason given']) | join('; ') }}
+        quiet: true
 
     - name: "people | person proof {{ vault_people_probe.name }} — what it may do in its own area and in another person's"
       ansible.builtin.uri:
