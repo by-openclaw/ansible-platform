@@ -70,3 +70,13 @@ through `by-rune@10.6.239.196`.
 - `AdGuardHome.yaml` is rendered at `schema_version: 28` (current AdGuard Home).
 - bcrypt generation uses the `bcrypt` Python module on the **controller**
   (rounds 10), matching the bash script.
+
+## Query log
+
+The archive of the query log is **Loki** (promtail file job `adguard_querylog`, audit class =
+90 d, stored in the S3 bucket behind Loki); the file on the resolver keeps 7 days
+(`adguard_querylog_retention`, inventory). When that retention is ever shrunk again, AdGuard
+frees the old entries only at its next natural rotation — up to one whole interval away — so the
+role carries the one-time follow-up, through AdGuard's own API:
+
+    ansible-playbook playbooks/adguard-prod.yml --tags querylog -e adguard_querylog_clear=true
