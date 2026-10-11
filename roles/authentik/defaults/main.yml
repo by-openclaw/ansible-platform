@@ -238,3 +238,13 @@ authentik_radius_probe_password_length: 60
 authentik_radius_outpost_vault_path: "{{ platform_env }}/authentik/radius-outpost"
 # The user the server and worker run as in their image: owner of the blueprint that carries secrets.
 authentik_container_uid: 1000
+
+# --- System settings pinned by the role (tasks/settings.yml) ---------------------------------
+# A person cannot rename their own account or change its e-mail: the per-person area in Vault is
+# named after the username (roles/vault, person policy) and a mailbox after the e-mail. The
+# inventory (people.yml) is the only place a person is named.
+authentik_system_settings:
+  default_user_change_username: false
+  default_user_change_email: false
+authentik_settings_retries: 20   # the API right after a start
+authentik_settings_delay: 5

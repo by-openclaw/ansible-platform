@@ -44,6 +44,13 @@
     - inventory_hostname == authentik_first_member
   tags: [authentik, ldap, ldap-bind]
 
+# What a person may change on their own account: pinned, because other services name things
+# after it (the per-person area in Vault after the username, a mailbox after the e-mail).
+- name: System settings pinned by the role
+  ansible.builtin.import_tasks: settings.yml
+  tags: [authentik, settings, sso]
+  when: inventory_hostname == authentik_first_member
+
 - name: Provision per-service OIDC blueprints (SSO)
   ansible.builtin.import_tasks: blueprints.yml
   tags: [authentik, blueprints, sso]
