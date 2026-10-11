@@ -26,6 +26,11 @@
       - { file: "net-isp-telenet.json", path: "{{ platform_env }}/net/isp-telenet" }
       - { file: "net-internal-domain.json", path: "{{ platform_env }}/net/internal-domain" }
       - { file: "infra-proxmox-poc.json", path: "{{ platform_env }}/proxmox/admin" }                                  # PVE API (VM build)
+    # The seed's bootstrap file: the hashes and keys a rebuilt firewall is born with.
+    fw_offline_bootstrap_file: "OPNsense.seed-bootstrap.json"
+    fw_offline_root_vault_path: "{{ platform_env }}/opnsense/root"   # the password roles/opnsense (auth) converges
+    fw_offline_bootstrap_vault_path: "{{ platform_env }}/opnsense/seed-bootstrap"
+    fw_offline_root_hash_default_cost: 11
   tasks:
     # Mid-rebuild Vault is expected to be down: skip, do not fail the firewall run.
     - name: "Offline copies | Is Vault reachable?"
@@ -68,6 +73,61 @@
           delegate_to: localhost
           become: false
           no_log: true
+
+    # root is born with the hash this file carries. It must be the hash of the password the
+    # secrets store holds for root — until 2026-10-11 it was the hash of the product's factory
+    # default, so every rebuild started with a root anyone could sign in as. The stored hash is
+    # checked with its own salt (nothing is sent anywhere); it is rewritten, with a dated backup,
+    # only when it does not verify.
+    - name: "Offline copies | The seed's root hash is the Vault password's"
+      when:
+        - not (fw_offline_probe.failed | default(false) | bool)
+        - platform_env == 'prod'
+      block:
+        - name: "Offline copies | root's password (Vault)"
+          ansible.builtin.include_role:
+            name: vault_secret
+          vars:
+            vault_secret_path: "{{ fw_offline_root_vault_path }}"
+            vault_secret_optional: true   # pragma: allowlist secret
+
+        - name: "Offline copies | The seed's bootstrap file, and whether its root hash verifies"
+          ansible.builtin.set_fact:
+            fw_offline_root_ok: >-
+              {{ (_h | length == 60) and _h.startswith('$2')
+                 and ((_pw | password_hash('bcrypt', salt=_h[7:29], rounds=(_h[4:6] | int), ident=_h[1:3])) == _h) }}
+            fw_offline_root_known: "{{ _pw | length > 0 and (_doc.fields | default({})) | length > 0 }}"
+            fw_offline_root_cost: "{{ (_h[4:6] | int) if (_h | length == 60 and _h.startswith('$2')) else fw_offline_root_hash_default_cost }}"
+          vars:
+            _pw: "{{ vault_secret_result.webgui_password | default('') }}"
+            _doc: "{{ lookup('file', fw_offline_dir ~ '/' ~ fw_offline_bootstrap_file, errors='ignore') | default('{}', true) | from_json }}"
+            _h: "{{ (_doc.fields | default({})).root_password_hash | default('') | string }}"
+          no_log: true
+
+        - name: "Offline copies | Rewrite the seed's root hash (dated backup kept)"
+          ansible.builtin.copy:
+            dest: "{{ fw_offline_dir }}/{{ fw_offline_bootstrap_file }}"
+            content: "{{ _doc | combine({'fields': _doc.fields | combine({'root_password_hash': _new})}) | to_nice_json }}\n"  # pragma: allowlist secret
+            mode: "0600"
+            backup: true
+          vars:
+            _doc: "{{ lookup('file', fw_offline_dir ~ '/' ~ fw_offline_bootstrap_file) | from_json }}"
+            _new: "{{ vault_secret_result.webgui_password | password_hash('bcrypt', rounds=(fw_offline_root_cost | int), ident='2y') }}"
+          when:
+            - fw_offline_root_known | bool
+            - not (fw_offline_root_ok | bool)
+          delegate_to: localhost
+          become: false
+          no_log: true
+          register: fw_offline_root_rewrite
+
+        - name: "Offline copies | The seed's root hash"
+          ansible.builtin.debug:
+            msg: >-
+              {{ 'root password or bootstrap file absent — nothing compared'
+                 if not (fw_offline_root_known | bool)
+                 else ('verifies against the Vault password — unchanged' if (fw_offline_root_ok | bool)
+                       else ('did NOT verify against the Vault password — ' ~ ('would be rewritten' if ansible_check_mode else 'rewritten'))) }}
 
     - name: "Offline copies | Vault unreachable — copies left as they are"
       ansible.builtin.debug:
