@@ -5,8 +5,9 @@
 # Vault is the store of record. A firewall rebuild usually runs with Vault
 # unreachable (it sits behind the firewall being rebuilt), so the build reads
 # these files as its fallback. They are copies, never a second source: every run
-# while Vault answers rewrites a file whose fields differ from Vault (the previous
-# file is kept as a dated backup — archive, never delete). Keys outside `fields`
+# while Vault answers rewrites a file whose fields differ from Vault (no copy of the
+# previous file is left on the controller: Vault's version history holds the former
+# values). Keys outside `fields`
 # (_meta, notes of provenance) are preserved.
 #
 # The PPPoE file is not here: roles/opnsense_pppoe refreshes it in its own format.
@@ -55,12 +56,11 @@
           vars:
             vault_secret_paths: "{{ fw_offline_copies | map(attribute='path') | list }}"
 
-        - name: "Offline copies | Rewrite each copy whose fields differ from Vault (dated backup kept)"
+        - name: "Offline copies | Rewrite each copy whose fields differ from Vault"
           ansible.builtin.copy:
             dest: "{{ fw_offline_dir }}/{{ item.file }}"
             content: "{{ _doc | combine({'fields': vault_secret_results[item.path]}) | to_nice_json }}\n"
             mode: "0600"
-            backup: true
           vars:
             _doc: "{{ lookup('file', fw_offline_dir ~ '/' ~ item.file, errors='ignore') | default('{}', true) | from_json }}"
           when: >-
@@ -76,7 +76,7 @@
     # root is born with the hash this file carries. It must be the hash of the password the
     # secrets store holds for root — until 2026-10-11 it was the hash of the product's factory
     # default, so every rebuild started with a root anyone could sign in as. The stored hash is
-    # checked with its own salt (nothing is sent anywhere); it is rewritten, with a dated backup,
+    # checked with its own salt (nothing is sent anywhere); it is rewritten
     # only when it does not verify.
     - name: "Offline copies | The seed's root hash is the Vault password's"
       when:
@@ -103,12 +103,11 @@
             _h: "{{ (_doc.fields | default({})).root_password_hash | default('') | string }}"
           no_log: true
 
-        - name: "Offline copies | Rewrite the seed's root hash (dated backup kept)"
+        - name: "Offline copies | Rewrite the seed's root hash"
           ansible.builtin.copy:
             dest: "{{ fw_offline_dir }}/{{ fw_offline_bootstrap_file }}"
             content: "{{ _doc | combine({'fields': _doc.fields | combine({'root_password_hash': _new})}) | to_nice_json }}\n"  # pragma: allowlist secret
             mode: "0600"
-            backup: true
           vars:
             _doc: "{{ lookup('file', fw_offline_dir ~ '/' ~ fw_offline_bootstrap_file) | from_json }}"
             _new: "{{ vault_secret_result.webgui_password | password_hash('bcrypt', rounds=(fw_offline_root_cost | int), ident='2y') }}"

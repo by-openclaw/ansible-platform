@@ -19,7 +19,7 @@ Class **A**: sqlite (machines/bouncers) in PBS; decisions are ephemeral. Full ma
 ## Runbook
 
 - Health: `docker exec crowdsec cscli machines list` (all validated, fresh heartbeats), `… cscli bouncers list` (recent `last_pull`), `… cscli decisions list`; `docker logs crowdsec`.
-- Common: bouncer not pulling → API key mismatch (`fabric/app-crowdsec-bouncer-*.json`).
+- Common: bouncer not pulling → API key mismatch (Vault `crowdsec/bouncer-*`).
 
 ## Suricata feed (services/0010 §1)
 
