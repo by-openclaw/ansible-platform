@@ -367,9 +367,10 @@
   no_log: true
   tags: [gitlab, gitlab-dr]
 
-# One optional read of the whole stored document: a kv put replaces the WHOLE
-# document, and GitLab deletes /etc/gitlab/initial_root_password ~24h after install,
-# so a field that can no longer be re-read locally must be carried over (#572).
+# The two stored documents, read once: GitLab deletes /etc/gitlab/initial_root_password ~24h
+# after install, so a root password that can no longer be re-read locally is carried over from
+# what Vault holds (#572). Two documents (security/0001 §People reading in Vault): the machine's
+# secrets, and the local administrator's login that the service's administrators read in Vault.
 - name: "GitLab | The currently stored DR document (roles/vault_secret, optional)"
   ansible.builtin.include_role:
     name: vault_secret
@@ -380,15 +381,34 @@
     vault_secret_optional: true
   tags: [gitlab, gitlab-dr]
 
-- name: "GitLab | Desired DR document (the live secrets + whichever root password still exists)"
+- name: "GitLab | Keep it"
   ansible.builtin.set_fact:
     gitlab_vault_stored: "{{ vault_secret_result | default({}) }}"
+  no_log: true
+  tags: [gitlab, gitlab-dr]
+
+- name: "GitLab | The currently stored administrator login (roles/vault_secret, optional)"
+  ansible.builtin.include_role:
+    name: vault_secret
+    apply:
+      tags: [gitlab, gitlab-dr]
+  vars:
+    vault_secret_path: "{{ gitlab_admin_vault_path }}"
+    vault_secret_optional: true
+  tags: [gitlab, gitlab-dr]
+
+- name: "GitLab | Desired documents (the live secrets; whichever root password still exists)"
+  ansible.builtin.set_fact:
+    gitlab_admin_stored: "{{ vault_secret_result | default({}) }}"
     gitlab_dr_desired:
       gitlab_secrets: "{{ gitlab_secrets_raw.content | b64decode | from_json }}"
+    gitlab_admin_desired:
+      user: "{{ gitlab_admin_user }}"
       initial_root_password_file: >-
         {{ (gitlab_initial_root_raw.content | default('') | b64decode)
            if ((gitlab_initial_root_raw.content | default('') | b64decode) | length > 0)
-           else (vault_secret_result.initial_root_password_file | default('')) }}
+           else (vault_secret_result.initial_root_password_file
+                 | default(gitlab_vault_stored.initial_root_password_file | default(''))) }}
   no_log: true
   tags: [gitlab, gitlab-dr]
 
@@ -401,7 +421,21 @@
     vault_secret_path: "{{ gitlab_secrets_vault_path }}"
     vault_secret_init: "{{ gitlab_dr_desired }}"
     vault_secret_force_fields: "{{ gitlab_dr_desired }}"
-  when: (gitlab_vault_stored | to_json(sort_keys=true)) != (gitlab_dr_desired | to_json(sort_keys=true))
+  when: (gitlab_vault_stored.gitlab_secrets | default({}) | to_json(sort_keys=true)) != (gitlab_dr_desired.gitlab_secrets | to_json(sort_keys=true))
+  tags: [gitlab, gitlab-dr]
+
+- name: "GitLab | Write the administrator's login to Vault ({{ gitlab_admin_vault_path }}) — only when it differs"
+  ansible.builtin.include_role:
+    name: vault_secret
+    apply:
+      tags: [gitlab, gitlab-dr]
+  vars:
+    vault_secret_path: "{{ gitlab_admin_vault_path }}"
+    vault_secret_init: "{{ gitlab_admin_desired }}"
+    vault_secret_force_fields: "{{ gitlab_admin_desired }}"
+  when: >-
+    (gitlab_admin_stored | dict2items | selectattr('key', 'in', gitlab_admin_desired.keys() | list) | items2dict | to_json(sort_keys=true))
+    != (gitlab_admin_desired | to_json(sort_keys=true))
   tags: [gitlab, gitlab-dr]
 
 # --- Nightly backup → SeaweedFS gitlab-backups (pure gitlab command, no .sh) ---

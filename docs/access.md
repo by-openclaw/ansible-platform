@@ -36,7 +36,7 @@ Three things must hold, in this order: your desk routes the platform's networks 
 | authentik | `authentik.<domain>` | the Internet | single sign-on | — | — | — |
 | collab | `office.<domain>` | the Internet | — | — | — | — |
 | diagrams | `diagrams.<domain>` | the office or the VPN | single sign-on, at the door | `diagrams-users` | — | — |
-| gitlab | `gitlab.<domain>` | the office or the VPN | single sign-on | `gitlab-users` | `gitlab-admins` | — |
+| gitlab | `gitlab.<domain>` | the office or the VPN | single sign-on | `gitlab-users` | `gitlab-admins` | `secret/<env>/gitlab/admin` |
 | grc | `grc.<domain>` | the office or the VPN | single sign-on | `grc-users` | `grc-admins` | — |
 | harbor | `harbor.<domain>` | the office or the VPN | single sign-on | `harbor-users` | `harbor-admins` | `secret/<env>/harbor/admin` |
 | jitsi | `meet.<domain>` | the Internet | single sign-on, at the door | `jitsi-users` | — | — |
