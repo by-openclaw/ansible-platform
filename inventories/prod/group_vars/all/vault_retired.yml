@@ -93,3 +93,9 @@ platform_vault_copied_documents:
   - {from: "postgres/superuser", to: "postgresql/superuser", reason: "the service's name is postgresql"}
   - {from: "postgres/replication", to: "postgresql/replication", reason: "the service's name is postgresql"}
   - {from: "postgres/patroni-api", to: "postgresql/patroni-api", reason: "the service's name is postgresql"}
+
+# What stays out of the store. playbooks/secrets-to-vault.yml never writes one of these back
+# from a file left on the controller (a restored document is a live one again).
+platform_vault_retired_paths: >-
+  {{ platform_vault_retired_documents | map(attribute='path')
+     | difference(platform_vault_restored_documents | map(attribute='path')) | list }}
