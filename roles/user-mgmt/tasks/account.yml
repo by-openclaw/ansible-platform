@@ -33,16 +33,18 @@
         groups: "{{ (acct.groups | default([])) + ([user_mgmt_docker_group] if ((acct.docker | default(false)) and um_dockerd.rc == 0) else []) }}"
         append: false
         shell: "{{ acct.shell | default('/bin/bash') }}"
-        password: "{{ (um_acct_hash_converged if acct.password_rounds is defined else (um_acct_pw | password_hash('sha512'))) if (acct.password | default(false)) else omit }}"  # pragma: allowlist secret
-        update_password: "{{ 'always' if acct.password_rounds is defined else 'on_create' }}"  # pragma: allowlist secret
+        password: "{{ um_acct_hash_converged if (acct.password | default(false)) else omit }}"  # pragma: allowlist secret
+        update_password: always  # pragma: allowlist secret
         create_home: true
         state: present
       vars:
-        # An account that declares password_rounds has its stored hash CONVERGED: the same
-        # password (Vault), the declared cost, and a salt derived from the host and the account
-        # (a salt is not a secret — it is stored beside the hash; deriving it makes the hash the
-        # same at every run, so the module writes only when it differs). The others keep a hash
-        # made once, at creation.
+        # The stored hash of every password account is CONVERGED: the password Vault holds, the
+        # cost (the account's password_rounds, else the role's), and a salt derived from the host
+        # and the account (a salt is not a secret — it is stored beside the hash; deriving it
+        # makes the hash the same at every run, so the module writes only when it differs).
+        # Until 2026-10-11 only the automation account was converged and the others kept the hash
+        # of their creation: on five hosts the emergency account had another password than the
+        # one in Vault — the documented emergency password did not work there.
         um_acct_hash_converged: >-
           {{ um_acct_pw | default('') | password_hash('sha512',
                (inventory_hostname ~ ':' ~ acct.name) | hash('sha256') | truncate(user_mgmt_salt_length, true, ''),
