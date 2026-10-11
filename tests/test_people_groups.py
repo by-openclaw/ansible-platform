@@ -44,3 +44,10 @@ def test_an_administrator_of_a_service_can_sign_in_to_it():
 def test_every_service_login_has_an_administrators_group_to_read_it():
     for service in IDENTITY["platform_service_logins"]:
         assert "admin" in SERVICE_GROUPS[service], service
+
+
+def test_the_identity_providers_administrators_are_the_platform_administrators():
+    """The map names the group literally (no template in it): it must be the one group."""
+    for service in ("authentik",):
+        if service in SERVICE_GROUPS and "admin" in SERVICE_GROUPS[service]:
+            assert SERVICE_GROUPS[service]["admin"] == IDENTITY["platform_admins_group"]
