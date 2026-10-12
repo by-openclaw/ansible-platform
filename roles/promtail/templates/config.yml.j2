@@ -85,6 +85,17 @@ scrape_configs:
           audit: "true"
           __path__: {{ promtail_vault_audit_log }}
 {% endif %}
+{% if promtail_ship_aide %}
+  - job_name: aide
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: aide
+          host: {{ inventory_hostname }}
+          env: {{ promtail_env_label }}
+          audit: "true"
+          __path__: "{{ promtail_aide_glob }}"
+{% endif %}
   - job_name: auditd
     static_configs:
       - targets: [localhost]
