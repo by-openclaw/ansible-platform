@@ -153,7 +153,13 @@
   no_log: true
   when: inventory_hostname == authentik_first_member   # the users live in the shared database: once
 
-- name: "blueprints | Set user passwords (initial; rotate after first login)"
+# The FIRST password only (owner, 2026-10-11, option B): a person owns their password after it —
+# they change it in Authentik, recovery goes through the recovery flow, and no run ever puts an
+# old one back (until 2026-10-11 every full run re-applied Vault's copy, so a password changed in
+# the UI silently reverted at the next run). "Never set" is the provider's own record
+# (password_change_date is null): a rebuilt instance gets initial passwords again, an existing
+# account is never touched. Vault's users/<name>/sign-in copy is the INITIAL password only.
+- name: "blueprints | Set the first password (never re-applied: the person owns it after)"
   ansible.builtin.uri:
     url: "http://{{ authentik_listen_ip }}:{{ authentik_host_port }}/api/v3/core/users/{{ item.0.json.results[0].pk }}/set_password/"
     method: POST
@@ -167,4 +173,6 @@
   loop_control:
     label: "{{ item.1.username }}"
   no_log: true
-  when: inventory_hostname == authentik_first_member
+  when:
+    - inventory_hostname == authentik_first_member
+    - item.0.json.results[0].password_change_date is none
