@@ -62,7 +62,7 @@
     create: true
     mode: "0644"
 
-- name: "Baseline | AIDE reports go to the alert mailbox, and only when something changed"
+- name: "Baseline | AIDE keeps its report in its log, and mails nobody"
   ansible.builtin.lineinfile:
     path: /etc/default/aide
     regexp: "^#?\\s*{{ item.key }}="
@@ -70,13 +70,17 @@
     create: true
     mode: "0644"
   loop:
-    - { key: MAILTO, value: "{{ hardening_email_alert_dest }}" }
-    - { key: QUIETREPORTS, value: "yes" }
+    # SILENTREPORTS: the report goes to /var/log/aide/ only (shipped to the log store by
+    # promtail, audit class) — until 2026-10-11 every host mailed its daily diff to the alert
+    # mailbox: ~40 mails a day that nobody could read (the owner's words). A check that cannot
+    # RUN still alerts through the failed-unit alert, and the reports are queried in one place.
+    - { key: SILENTREPORTS, value: "yes" }
     # Report each change once: the next day's baseline includes it. With "no" the
-    # baseline never moved and every host mailed the same, growing diff every day —
-    # alert fatigue that hides the change that matters.
+    # baseline never moved and every host logged the same, growing diff every day —
+    # noise that hides the change that matters.
     - { key: COPYNEWDB, value: "yes" }
   loop_control: { label: "{{ item.key }}" }
+  tags: [hardening, baseline, aide]
 
 # Where the relay template owns main.cf the banner is in the template; a second
 # writer here made every run change main.cf twice (the template dropped the line,

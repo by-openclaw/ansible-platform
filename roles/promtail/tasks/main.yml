@@ -58,7 +58,7 @@
     update_cache: true
     cache_valid_time: 3600
   register: promtail_acl_pkg
-  when: promtail_acl_dirs | length > 0 or promtail_acl_traverse | length > 0
+  when: promtail_acl_dirs | length > 0 or promtail_acl_traverse | length > 0 or promtail_ship_aide | bool
 
 # A log inside a Docker volume sits under /var/lib/docker (0710): the tree ACL below never reaches
 # that parent, so promtail could open nothing. Traverse only (x), on the named directory only.
@@ -115,6 +115,30 @@
     name: promtail
     groups: [systemd-journal, adm]
     append: true
+  notify: Restart promtail
+
+# The AIDE report directory is root-only; savelog keeps its files 0640 root:root. Read through
+# an ACL (default included: every dated report a later run writes inherits it). Only where the
+# directory exists — AIDE comes with the hardening baseline.
+- name: "Promtail | The AIDE report directory (where is it?)"
+  ansible.builtin.stat:
+    path: /var/log/aide
+  register: promtail_aide_dir
+  when: promtail_ship_aide | bool
+
+- name: "Promtail | Read access on the AIDE reports (ACL, current + default)"
+  ansible.posix.acl:
+    path: /var/log/aide
+    entity: promtail
+    etype: user
+    permissions: rX
+    recursive: "{{ not item }}"
+    default: "{{ item }}"
+    state: present
+  loop: [false, true]
+  when:
+    - promtail_ship_aide | bool
+    - promtail_aide_dir.stat.exists | default(false)
   notify: Restart promtail
 
 - name: "Promtail | Render config"
