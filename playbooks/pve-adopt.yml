@@ -43,7 +43,7 @@
         name: "{{ item.name }}"
         groups: "{{ item.group }}"
         ansible_host: "{{ vault_secret_result.host }}"
-        ansible_port: "{{ vault_secret_result.ssh_port | default(22) }}"
+        ansible_port: "{{ ([vault_secret_result.ssh_port | default(''), vault_secret_result.ssh | default(''), '22'] | map('string') | select('match', '^[0-9]+$') | first) }}"
         ansible_user: root
         ansible_password: "{{ item.password | default(omit) }}"
         ansible_become: false
@@ -88,13 +88,69 @@
             key: "{{ lookup('file', pve_adopt_keys_dir ~ '/' ~ item) }}"
           loop: "{{ pve_adopt_key_files }}"
 
-- name: "Adopt | Keys proven, password sign-in off"
+- name: "Adopt | Keys proven, the node named, password sign-in off"
   hosts: pve_adopt_keyed
   gather_facts: true
   become: false
+  vars:
+    # naming/0001 §4.1: physical nodes are br-pmox-NN; 01 and 02 are reserved for the two
+    # existing nodes' renames. Empty = keep the factory name.
+    pve_adopt_hostname: "br-pmox-03"
   tasks:
     - name: "Adopt | A key-only sign-in works (nothing is changed before this holds)"
       ansible.builtin.ping:
+
+    # The rename converges from any state (the hostname module refreshes ansible_hostname the
+    # moment it runs, so no later step may compare against it — 2026-10-12, the first run's
+    # /etc/hosts fix and reboot skipped themselves that way). The reboot happens only while the
+    # node is EMPTY: a Proxmox node with guests must not be renamed this way.
+    - name: "Adopt | The node's target name"
+      ansible.builtin.set_fact:
+        pve_adopt_target: "{{ pve_adopt_hostname if pve_adopt_hostname | length > 0 else ansible_hostname }}"
+
+    - name: "Adopt | The name"
+      ansible.builtin.hostname:
+        name: "{{ pve_adopt_target }}"
+
+    - name: "Adopt | The name resolves to the node's own address (Proxmox requires it)"
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: "^{{ ansible_host | regex_escape }}\\s"
+        line: "{{ ansible_host }} {{ pve_adopt_target }}.{{ ansible_domain | default('localdomain', true) }} {{ pve_adopt_target }}"
+
+    - name: "Adopt | Does the cluster filesystem already serve the new name?"
+      ansible.builtin.stat:
+        path: "/etc/pve/nodes/{{ pve_adopt_target }}"
+      register: pve_adopt_nodedir_now
+
+    - name: "Adopt | Reboot once for the rename (empty, fresh node only)"
+      when: not pve_adopt_nodedir_now.stat.exists
+      block:
+        - name: "Adopt | The node is empty (no guest references any name)"
+          ansible.builtin.find:
+            paths: /etc/pve/nodes
+            patterns: "*.conf"
+            recurse: true
+          register: pve_adopt_guests
+
+        - name: "Adopt | Nothing to break"
+          ansible.builtin.assert:
+            that: pve_adopt_guests.matched == 0
+            fail_msg: "guests exist on this node — a rename-by-reboot is not for it; nothing was rebooted"
+            quiet: true
+
+        - name: "Adopt | Reboot (the cluster filesystem mounts the new name)"
+          ansible.builtin.reboot:
+            reboot_timeout: 600
+
+        - name: "Adopt | Facts again, under the new name"
+          ansible.builtin.setup:
+
+    - name: "Adopt | The cluster filesystem serves the node under its name"
+      ansible.builtin.stat:
+        path: "/etc/pve/nodes/{{ pve_adopt_target }}"
+      register: pve_adopt_nodedir
+      failed_when: not pve_adopt_nodedir.stat.exists
 
     - name: "Adopt | Root signs in with keys only from now on"
       ansible.builtin.lineinfile:
@@ -112,18 +168,24 @@
 
     - name: "Adopt | What the node is (for the inventory PR and the BoM)"
       ansible.builtin.command:
-        argv: [zpool, list, -H, -o, name,size,health]
-      register: pve_adopt_pools
+        argv: "{{ item }}"
+      loop:
+        - [zpool, list, -H, -o, name,size,health,ashift]
+        - [zpool, status, -L]
+        - [lscpu]
+        - [pvesm, status]
+        - [pveversion]
+      register: pve_adopt_hw
       changed_when: false
       failed_when: false
 
     - name: "Adopt | Report"
       ansible.builtin.debug:
-        msg: >-
-          PVE_ADOPT {{ pve_adopt_version.stdout | default('pve') }} ·
-          {{ ansible_processor_vcpus | default('?') }} vcpus ·
-          {{ (ansible_memtotal_mb | default(0) / 1024) | round | int }} GiB RAM ·
-          pools: {{ pve_adopt_pools.stdout_lines | default(['?']) | join(' | ') }} ·
-          keys in, root password sign-in off — next: the inventory PR, then hardening/pve_host
-      vars:
-        pve_adopt_version: "{{ hostvars['pve-adopt-password'].pve_adopt_version | default({}) }}"
+        msg:
+          - "PVE_ADOPT name={{ ansible_hostname }} {{ pve_adopt_hw.results[4].stdout | default('pve') }}"
+          - "cpu: {{ ansible_processor_count | default('?') }} socket(s) × {{ ansible_processor_cores | default('?') }} cores ({{ ansible_processor_vcpus | default('?') }} threads) · {{ pve_adopt_hw.results[2].stdout_lines | default([]) | select('search', 'NUMA') | join(' · ') }}"
+          - "memory: {{ (ansible_memtotal_mb | default(0) / 1024) | round | int }} GiB"
+          - "pools: {{ pve_adopt_hw.results[0].stdout_lines | default(['?']) | join(' | ') }}"
+          - "layout: {{ pve_adopt_hw.results[1].stdout_lines | default([]) | map('trim') | select('match', '^(mirror|raidz|[a-z]+[0-9]|NAME|  )') | list | join(' / ') | truncate(400, true, '…') }}"
+          - "storage: {{ pve_adopt_hw.results[3].stdout_lines | default([]) | join(' | ') }}"
+          - "keys in, root SSH key-only (web UI password stays) — next: the inventory PR, then hardening/pve_host"
