@@ -1,0 +1,54 @@
+---
+# --- the platform route (route.exe: the in-box tool as one argv command; the guest sits
+# --- on the OOB /20 and reaches the 10.1.0.0/16 services via the firewall's OOB leg) ----
+- name: "Win guest | Routes today"
+  ansible.windows.win_command:
+    argv: [route.exe, print, "-4"]
+  register: windows_guest_routes_now
+  changed_when: false
+  check_mode: false
+
+- name: "Win guest | The platform route, persistent (only when absent)"
+  ansible.windows.win_command:
+    argv: [route.exe, -p, add,
+           "{{ item.destination | ansible.utils.ipaddr('network') }}",
+           mask, "{{ item.destination | ansible.utils.ipaddr('netmask') }}",
+           "{{ item.gateway }}"]
+  loop: "{{ windows_guest_routes }}"
+  loop_control:
+    label: "{{ item.destination }} via {{ item.gateway }}"
+  when: windows_guest_routes_now.stdout is not search(item.destination | ansible.utils.ipaddr('network') | regex_escape)
+  changed_when: true
+
+- name: "Win guest | The route carries the platform resolver (DNS answers through it)"
+  ansible.windows.win_command:
+    argv: [nslookup.exe, "{{ windows_guest_dns_probe_name }}"]
+  register: windows_guest_dns
+  changed_when: false
+  check_mode: false
+
+# --- the local Administrator password: Vault-held, get-or-create ------------------------
+- name: "Win guest | The administrator password (Vault, created on first contact)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ windows_guest_admin_vault_path }}"
+    vault_secret_init:
+      password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"   # pragma: allowlist secret
+    vault_secret_metadata_put:
+      origin: "roles/windows_guest (local Administrator of {{ inventory_hostname }})"
+
+- name: "Win guest | The account carries Vault's password (module payload, never argv)"
+  ansible.windows.win_user:
+    name: Administrator
+    password: "{{ vault_secret_result.password }}"
+    password_never_expires: true
+    state: present
+  no_log: true
+
+- name: "Win guest | Report"
+  ansible.builtin.debug:
+    msg: >-
+      WIN_GUEST {{ inventory_hostname }} ready: route to
+      {{ windows_guest_routes | map(attribute='destination') | join(', ') }},
+      resolver answers, administrator password in Vault ({{ windows_guest_admin_vault_path }})
