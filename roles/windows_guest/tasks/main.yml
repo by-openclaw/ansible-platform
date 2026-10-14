@@ -28,6 +28,92 @@
   check_mode: false
 
 
+# --- time: the firewall's NTP, manual peers only ----------------------------------------
+- name: "Win guest | Time service configuration today"
+  ansible.windows.win_command:
+    argv: [w32tm.exe, /query, /configuration]
+  register: windows_guest_w32tm
+  changed_when: false
+  check_mode: false
+
+- name: "Win guest | The platform's time source (only on drift)"
+  ansible.windows.win_command:
+    argv: [w32tm.exe, /config, "/manualpeerlist:{{ windows_guest_ntp_servers | join(' ') }}", /syncfromflags:manual, /update]
+  register: windows_guest_w32tm_set
+  when: windows_guest_w32tm.stdout is not search('NtpServer:\s*' ~ (windows_guest_ntp_servers | join(' ') | regex_escape))
+  changed_when: true
+
+- name: "Win guest | w32time starts with the system"
+  ansible.windows.win_service:
+    name: w32time
+    start_mode: auto
+    state: started
+
+- name: "Win guest | Resync after a change"
+  ansible.windows.win_command:
+    argv: [w32tm.exe, /resync, /nowait]
+  when: windows_guest_w32tm_set is changed
+  changed_when: true
+
+# --- power: a VM never sleeps -----------------------------------------------------------
+- name: "Win guest | Power scheme today"
+  ansible.windows.win_command:
+    argv: [powercfg.exe, /getactivescheme]
+  register: windows_guest_power
+  changed_when: false
+  check_mode: false
+
+- name: "Win guest | High performance (only on drift)"
+  ansible.windows.win_command:
+    argv: [powercfg.exe, /setactive, "{{ windows_guest_power_scheme }}"]
+  when: windows_guest_power.stdout is not search(windows_guest_power_scheme)
+  changed_when: true
+
+- name: "Win guest | No standby, no display timeout on AC (registry of the scheme)"
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes\{{ windows_guest_power_scheme }}\{{ item.sub }}\{{ item.setting }}'
+    name: ACSettingIndex
+    data: 0
+    type: dword
+  loop:
+    - { sub: 238c9fa8-0aad-41ed-83f4-97be242c8f20, setting: 29f6c1db-86da-48c5-9fdb-f2b67b1f44da, label: standby }
+    - { sub: 7516b95f-f776-4464-8c53-06167f40cc99, setting: 3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e, label: display }
+  loop_control:
+    label: "{{ item.label }}"
+
+- name: "Win guest | Is there a hiberfil.sys?"
+  ansible.windows.win_stat:
+    path: C:\hiberfil.sys
+  register: windows_guest_hiberfil
+
+- name: "Win guest | Hibernation off (frees a RAM-sized file)"
+  ansible.windows.win_command:
+    argv: [powercfg.exe, /hibernate, off]
+  when: windows_guest_hiberfil.stat.exists
+  changed_when: true
+
+# --- footprint: the shared feature/service lists, converged ------------------------------
+- name: "Win guest | Optional features present on this edition"
+  ansible.windows.win_command:
+    argv: [Dism.exe, /Online, /Get-Features, /Format:Table]
+  register: windows_guest_features
+  changed_when: false
+  check_mode: false
+
+- name: "Win guest | Platform-removed optional features absent"
+  ansible.windows.win_optional_feature:
+    name: "{{ windows_guest_removed_features | select('in', windows_guest_features.stdout) | list }}"
+    state: absent
+  when: windows_guest_removed_features | select('in', windows_guest_features.stdout) | list | length > 0
+
+- name: "Win guest | Platform-disabled services stay disabled"
+  ansible.windows.win_service:
+    name: "{{ item }}"
+    start_mode: disabled
+    state: stopped
+  loop: "{{ windows_guest_disabled_services }}"
+  failed_when: false   # a service absent from this edition is nothing to disable
+
 # --- the owner's working session: RDP (noVNC has no clipboard and fights the layout) ----
 - name: "Win guest | RDP allowed (registry switch)"
   ansible.windows.win_regedit:

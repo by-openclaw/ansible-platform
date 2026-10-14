@@ -1,0 +1,20 @@
+---
+# ==============================================================================
+# Windows guests — the values both roles share (roles/windows_template bakes them
+# into the image, roles/windows_guest reconciles them on running guests). One
+# source, like deployment.yml for the Linux side.
+# ==============================================================================
+# Optional features removed from the image (footprint + CIS: no legacy engines).
+# A name absent from a given edition is skipped, never an error.
+platform_windows_removed_features:
+  - MicrosoftWindowsPowerShellV2Root     # PowerShell 2.0 engine: no script logging, CIS removes it
+  - MicrosoftWindowsPowerShellV2
+  - Printing-XPSServices-Features
+  - Printing-PrintToPDFServices-Features
+  - WindowsMediaPlayer
+  - SMB1Protocol
+  - TelnetClient
+  - TFTP
+
+# Services an app/database host never needs — off in the image and kept off.
+platform_windows_disabled_services: [Spooler, WSearch, DiagTrack, MapsBroker]

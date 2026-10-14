@@ -74,48 +74,68 @@
         <Password><Value>{{ windows_template_admin_password }}</Value><PlainText>true</PlainText></Password>
       </AutoLogon>
       <FirstLogonCommands>
+        {% set ns = namespace(n=0) %}
         {# The answer ISO's drive letter is not fixed: each command locates it by its label. #}
         <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Order>1</Order>
+          {% set ns.n = ns.n + 1 %}<Order>{{ ns.n }}</Order>
           <Description>QEMU guest agent</Description>
           <CommandLine>cmd /c for %d in (D E F G) do if exist %d:\setup\qemu-ga.msi msiexec /i %d:\setup\qemu-ga.msi /qn /norestart</CommandLine>
         </SynchronousCommand>
         <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Order>2</Order>
+          {% set ns.n = ns.n + 1 %}<Order>{{ ns.n }}</Order>
           <Description>virtio drivers (the full set, for the devices the clones add)</Description>
           <CommandLine>cmd /c for %d in (D E F G) do if exist %d:\setup\virtio-win-gt-x64.msi msiexec /i %d:\setup\virtio-win-gt-x64.msi /qn /norestart</CommandLine>
         </SynchronousCommand>
         <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Order>3</Order>
+          {% set ns.n = ns.n + 1 %}<Order>{{ ns.n }}</Order>
           <Description>cloudbase-init (cloud-init for Windows)</Description>
           <CommandLine>cmd /c for %d in (D E F G) do if exist %d:\setup\CloudbaseInitSetup.msi msiexec /i %d:\setup\CloudbaseInitSetup.msi /qn /norestart RUN_SERVICE_AS_LOCAL_SYSTEM=1</CommandLine>
         </SynchronousCommand>
         <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Order>4</Order>
+          {% set ns.n = ns.n + 1 %}<Order>{{ ns.n }}</Order>
           <Description>cloudbase-init reads the Proxmox cloud-init drive</Description>
           <CommandLine>cmd /c for %d in (D E F G) do if exist %d:\setup\cloudbase-init.conf copy /y %d:\setup\cloudbase-init.conf "C:\Program Files\Cloudbase Solutions\Cloudbase-Init\conf\cloudbase-init.conf"</CommandLine>
         </SynchronousCommand>
         {# Ansible's door: Server 2025 ships OpenSSH in-box with the service off. On in the
            template; each clone's cloud-init injects the platform's public key. #}
         <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Order>5</Order>
+          {% set ns.n = ns.n + 1 %}<Order>{{ ns.n }}</Order>
           <Description>the in-box OpenSSH server starts with the system</Description>
           <CommandLine>cmd /c sc config sshd start= auto</CommandLine>
         </SynchronousCommand>
         <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Order>6</Order>
+          {% set ns.n = ns.n + 1 %}<Order>{{ ns.n }}</Order>
           <Description>and its firewall door exists</Description>
           <CommandLine>netsh advfirewall firewall add rule name=OpenSSH-In dir=in action=allow protocol=TCP localport=22</CommandLine>
         </SynchronousCommand>
         {# Footprint (owner 2026-10-14): services an app or database host never needs, off in
            the template itself; the component store compacted — smaller clones, less idle RAM. #}
         <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Order>7</Order>
+          {% set ns.n = ns.n + 1 %}<Order>{{ ns.n }}</Order>
           <Description>services an app/database host never needs, off</Description>
           <CommandLine>cmd /c for %s in ({{ windows_template_disabled_services | join(' ') }}) do sc config %s start= disabled</CommandLine>
         </SynchronousCommand>
+        {# Optional features the platform never wants (one DISM call each; an absent feature
+           just fails its own call, the sequence continues) and the power profile of a VM. #}
+        {% for f in windows_template_removed_features %}
         <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Order>8</Order>
+          {% set ns.n = ns.n + 1 %}<Order>{{ ns.n }}</Order>
+          <Description>optional feature removed: {{ f }}</Description>
+          <CommandLine>Dism.exe /Online /Disable-Feature /FeatureName:{{ f }} /Remove /NoRestart /Quiet</CommandLine>
+        </SynchronousCommand>
+        {% endfor %}
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          {% set ns.n = ns.n + 1 %}<Order>{{ ns.n }}</Order>
+          <Description>hibernation off (no hiberfil.sys sized to the RAM)</Description>
+          <CommandLine>powercfg /hibernate off</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          {% set ns.n = ns.n + 1 %}<Order>{{ ns.n }}</Order>
+          <Description>High performance, never sleeps or blanks</Description>
+          <CommandLine>cmd /c powercfg /setactive {{ windows_template_power_scheme }} &amp; powercfg /change standby-timeout-ac 0 &amp; powercfg /change monitor-timeout-ac 0</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          {% set ns.n = ns.n + 1 %}<Order>{{ ns.n }}</Order>
           <Description>component store compacted (disk footprint)</Description>
           <CommandLine>Dism.exe /Online /Cleanup-Image /StartComponentCleanup /ResetBase</CommandLine>
         </SynchronousCommand>
@@ -123,12 +143,12 @@
            instead (seen on the first build's console, 2026-10-14): the file is copied to a
            space-free path first and referenced without quotes. #}
         <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Order>9</Order>
+          {% set ns.n = ns.n + 1 %}<Order>{{ ns.n }}</Order>
           <Description>the generalisation answer file, at a space-free path</Description>
           <CommandLine>cmd /c copy /y "C:\Program Files\Cloudbase Solutions\Cloudbase-Init\conf\Unattend.xml" C:\Windows\cb-unattend.xml</CommandLine>
         </SynchronousCommand>
         <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Order>10</Order>
+          {% set ns.n = ns.n + 1 %}<Order>{{ ns.n }}</Order>
           <Description>generalise and power off — the next boot is a clone's first boot</Description>
           <CommandLine>C:\Windows\System32\Sysprep\sysprep.exe /generalize /oobe /shutdown /unattend:C:\Windows\cb-unattend.xml</CommandLine>
         </SynchronousCommand>
