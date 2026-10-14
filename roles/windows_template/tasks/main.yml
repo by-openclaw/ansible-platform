@@ -1,0 +1,240 @@
+---
+# ==============================================================================
+# Role: windows_template — see defaults/main.yml for the pipeline. Everything runs on the node;
+# qm is Proxmox's own CLI, one plain command per task (infra/0010 §2).
+# ==============================================================================
+- name: "Win tpl | Is the template already there?"
+  ansible.builtin.command:
+    argv: [qm, config, "{{ windows_template_vmid }}"]
+  register: windows_template_existing
+  changed_when: false
+  failed_when: false
+
+- name: "Win tpl | Nothing to do (the template exists and no rebuild was asked for)"
+  ansible.builtin.set_fact:
+    windows_template_done: >-
+      {{ windows_template_existing.rc == 0 and (windows_template_existing.stdout is search('template: 1'))
+         and not (windows_template_rebuild | bool) }}
+
+- name: "Win tpl | A half-built VM or an old template is replaced only when asked by name"
+  ansible.builtin.assert:
+    that: windows_template_existing.rc != 0 or windows_template_done or (windows_template_rebuild | bool)
+    fail_msg: >-
+      vmid {{ windows_template_vmid }} exists and is not a finished template — a half-finished
+      build. Inspect it, or re-run with -e windows_template_rebuild=true to replace it.
+    quiet: true
+
+- name: "Win tpl | No clone depends on what a rebuild would remove"
+  ansible.builtin.command:
+    argv: [qm, listclones, "{{ windows_template_vmid }}"]
+  register: windows_template_clones
+  changed_when: false
+  failed_when: false
+  when: windows_template_existing.rc == 0 and not windows_template_done
+
+- name: "Win tpl | Stop the leftover before it is removed (asked by name)"
+  ansible.builtin.command:
+    argv: [qm, stop, "{{ windows_template_vmid }}"]
+  when:
+    - windows_template_existing.rc == 0
+    - not windows_template_done
+    - windows_template_rebuild | bool
+    - (windows_template_clones.stdout_lines | default([]) | length) == 0
+  changed_when: true
+  failed_when: false
+
+- name: "Win tpl | Remove it (asked by name; nothing depends on it)"
+  ansible.builtin.command:
+    argv: [qm, destroy, "{{ windows_template_vmid }}", --purge, "1"]
+  when:
+    - windows_template_existing.rc == 0
+    - not windows_template_done
+    - windows_template_rebuild | bool
+    - (windows_template_clones.stdout_lines | default([]) | length) == 0
+  changed_when: true
+
+- name: "Win tpl | Build"
+  when: not windows_template_done
+  block:
+    - name: "Win tpl | The build administrator's password (Vault, get-or-create)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ windows_template_admin_vault_path }}"
+        vault_secret_init:
+          username: "Administrator"
+          password: "{{ lookup('community.general.random_string', length=24, special=false) }}"
+          _note: "build-time administrator of the Windows templates (roles/windows_template); every clone's own password is set by its cloud-init"
+
+    - name: "Win tpl | Bind it"
+      ansible.builtin.set_fact:
+        windows_template_admin_password: "{{ vault_secret_result.password }}"
+      no_log: true
+
+    - name: "Win tpl | Tooling for the answer ISO (ISO authoring + ISO extraction)"
+      ansible.builtin.apt:
+        name: [xorriso, libarchive-tools]
+        state: present
+
+    - name: "Win tpl | A clean work area (root-only: the answer file carries a password)"
+      ansible.builtin.file:
+        path: "{{ windows_template_work_dir }}/{{ windows_template_name }}/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      loop: ["", "mnt", "iso", "iso/$WinPEDriver$", "iso/setup"]
+
+    # Everything on the virtio ISO below the top-level architecture directories is HARD LINKS
+    # into them (bsdtar on any subset fails on the missing link targets): the ISO is mounted
+    # read-only instead, and the copies resolve the links.
+    - name: "Win tpl | The virtio ISO, mounted read-only"
+      ansible.posix.mount:
+        src: "{{ windows_template_iso_storage_dir }}/{{ windows_template_virtio_iso }}"
+        path: "{{ windows_template_work_dir }}/{{ windows_template_name }}/mnt"
+        fstype: iso9660
+        opts: loop,ro
+        state: ephemeral
+
+    - name: "Win tpl | Each driver set under $WinPEDriver$ (Setup loads it from any attached drive)"
+      ansible.builtin.copy:
+        src: "{{ windows_template_work_dir }}/{{ windows_template_name }}/mnt/{{ item }}/"
+        dest: "{{ windows_template_work_dir }}/{{ windows_template_name }}/iso/$WinPEDriver$/{{ item | dirname | dirname }}/"
+        remote_src: true
+        mode: preserve
+      loop: "{{ windows_template_virtio_dirs }}"
+
+    - name: "Win tpl | The two installers onto the answer ISO"
+      ansible.builtin.copy:
+        src: "{{ windows_template_work_dir }}/{{ windows_template_name }}/mnt/{{ item.src }}"
+        dest: "{{ windows_template_work_dir }}/{{ windows_template_name }}/iso/setup/{{ item.name }}"
+        remote_src: true
+        mode: "0644"
+      loop:
+        - {src: "{{ windows_template_guest_agent_msi }}", name: "qemu-ga.msi"}
+        - {src: "{{ windows_template_virtio_agent_msi }}", name: "virtio-win-gt-x64.msi"}
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: "Win tpl | The virtio ISO, unmounted"
+      ansible.posix.mount:
+        path: "{{ windows_template_work_dir }}/{{ windows_template_name }}/mnt"
+        state: unmounted
+
+    - name: "Win tpl | cloudbase-init's installer (pinned URL, fetched once)"
+      ansible.builtin.get_url:
+        url: "{{ windows_template_cloudbase_url }}"
+        dest: "{{ windows_template_work_dir }}/{{ windows_template_name }}/iso/setup/CloudbaseInitSetup.msi"
+        mode: "0644"
+        timeout: 120
+
+    - name: "Win tpl | The answer file and the clones' cloud-init configuration"
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ windows_template_work_dir }}/{{ windows_template_name }}/iso/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0600"
+      loop:
+        - {src: autounattend.xml.j2, dest: autounattend.xml}
+        - {src: cloudbase-init.conf.j2, dest: setup/cloudbase-init.conf}
+      loop_control:
+        label: "{{ item.dest }}"
+      no_log: true
+
+    - name: "Win tpl | Pack the answer ISO"
+      ansible.builtin.command:
+        argv: [xorriso, -as, mkisofs, -J, -R, -V, ANSWER,
+               -o, "{{ windows_template_iso_storage_dir }}/answer-{{ windows_template_name }}.iso",
+               "{{ windows_template_work_dir }}/{{ windows_template_name }}/iso"]
+      changed_when: true
+
+    - name: "Win tpl | The build VM (UEFI, virtio-scsi, NIC link down, both ISOs attached)"
+      ansible.builtin.command:
+        argv: [qm, create, "{{ windows_template_vmid }}",
+               --name, "{{ windows_template_name }}-build",
+               --machine, q35, --bios, ovmf, --ostype, win11,
+               --efidisk0, "{{ windows_template_storage }}:1,efitype=4m,pre-enrolled-keys=1",
+               --scsihw, virtio-scsi-single,
+               --scsi0, "{{ windows_template_storage }}:{{ windows_template_disk_gb }},iothread=1,discard=on",
+               --ide0, "local:iso/{{ windows_template_iso }},media=cdrom",
+               --ide1, "local:iso/answer-{{ windows_template_name }}.iso,media=cdrom",
+               --cpu, "{{ windows_template_cpu }}", --sockets, "1", --cores, "{{ windows_template_build_cores }}",
+               --numa, "1", --memory, "{{ windows_template_build_memory_mb }}", --balloon, "0",
+               --net0, "virtio,bridge={{ windows_template_bridge }},link_down=1",
+               --agent, enabled=1,
+               --boot, order=ide0;scsi0]
+      when: windows_template_existing.rc != 0 or (windows_template_rebuild | bool)
+      changed_when: true
+
+    - name: "Win tpl | Start the install"
+      ansible.builtin.command:
+        argv: [qm, start, "{{ windows_template_vmid }}"]
+      changed_when: true
+
+    # The Windows boot CD waits for a keypress on a FRESH disk only, inside the first ~15 s;
+    # the presses STOP before Setup's screen can exist — a later Enter lands on Setup's only
+    # button (Cancel) and opens its quit dialog (seen live on the first build, 2026-10-13).
+    # On the install's own reboots the same prompt times out and the disk boots: nothing to
+    # press then.
+    - name: "Win tpl | Press the any-key the boot CD waits for (first seconds only)"
+      ansible.builtin.command:
+        argv: [qm, sendkey, "{{ windows_template_vmid }}", ret]
+      loop: "{{ range(0, 9) | list }}"
+      loop_control:
+        label: "attempt {{ item }}"
+        pause: 2
+      changed_when: false
+      failed_when: false
+
+    - name: "Win tpl | Wait for the whole pipeline: install, first logon, sysprep, power-off"
+      ansible.builtin.command:
+        argv: [qm, status, "{{ windows_template_vmid }}"]
+      register: windows_template_status
+      until: windows_template_status.stdout is search('stopped')
+      retries: "{{ windows_template_install_retries }}"
+      delay: "{{ windows_template_install_delay }}"
+      changed_when: false
+
+    - name: "Win tpl | Detach the build media, attach the clones' cloud-init drive"
+      ansible.builtin.command:
+        argv: [qm, set, "{{ windows_template_vmid }}",
+               --delete, "ide0,ide1",
+               --ide2, "{{ windows_template_storage }}:cloudinit",
+               --citype, configdrive2,
+               --boot, order=scsi0]
+      changed_when: true
+
+    - name: "Win tpl | The answer ISO leaves the node (it carries the build password)"
+      ansible.builtin.file:
+        path: "{{ windows_template_iso_storage_dir }}/answer-{{ windows_template_name }}.iso"
+        state: absent
+
+    - name: "Win tpl | And so does the rendered work area"
+      ansible.builtin.file:
+        path: "{{ windows_template_work_dir }}/{{ windows_template_name }}"
+        state: absent
+
+    - name: "Win tpl | Drop the -build suffix"
+      ansible.builtin.command:
+        argv: [qm, set, "{{ windows_template_vmid }}", --name, "{{ windows_template_name }}"]
+      changed_when: true
+
+    - name: "Win tpl | Freeze it as the template"
+      ansible.builtin.command:
+        argv: [qm, template, "{{ windows_template_vmid }}"]
+      changed_when: true
+
+- name: "Win tpl | Report"
+  ansible.builtin.command:
+    argv: [qm, config, "{{ windows_template_vmid }}"]
+  register: windows_template_final
+  changed_when: false
+
+- name: "Win tpl | The template stands"
+  ansible.builtin.assert:
+    that:
+      - "windows_template_final.stdout is search('template: 1')"
+      - "windows_template_final.stdout is search('ide2')"
+    fail_msg: "vmid {{ windows_template_vmid }} is not a finished template"
+    success_msg: "WIN_TEMPLATE {{ windows_template_name }} vmid={{ windows_template_vmid }} ready (cloud-init drive attached)"
