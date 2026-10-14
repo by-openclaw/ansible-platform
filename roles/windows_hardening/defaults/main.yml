@@ -1,0 +1,210 @@
+---
+# ==============================================================================
+# Windows hardening — CIS Benchmark Level 1 (Windows Server 2025 / Windows 11),
+# the owner's approved baseline (2026-10-14, table row #5). The Linux `hardening`
+# role's sibling: every control is DATA below, reconciled by modules (idempotent,
+# drift-corrected on every run), nothing clicked, no script. Applied to running
+# guests by playbooks/windows-guests.yml; the template inherits it at the end of
+# the walk (one rebuild).
+#
+# Deliberate deviations from CIS L1, each with its why:
+#   - 2.3.1.x rename/disable the built-in Administrator: KEPT as-is for now — it is the
+#     platform's automation identity (key-only SSH, Vault-rotated password, RDP only via
+#     the jump server). Moving automation to the OOB account and renaming is a later step.
+#   - 18.x Windows Update policy: owned by the updates wave (row #10), not here.
+#   - NetBIOS-over-TCP per interface: handled with the firewall concern (row #6).
+# ==============================================================================
+
+# --- 1. Account policies (secedit SystemAccess) -----------------------------------------
+windows_hardening_security_policy:
+  "System Access":   # secedit's own INI section name (with the space)
+    PasswordHistorySize: 24          # 1.1.1
+    MaximumPasswordAge: 365          # 1.1.2
+    MinimumPasswordAge: 1            # 1.1.3
+    MinimumPasswordLength: 14        # 1.1.4
+    PasswordComplexity: 1            # 1.1.5
+    ClearTextPassword: 0             # 1.1.7
+    LockoutDuration: 15              # 1.2.1
+    LockoutBadCount: 5               # 1.2.2
+    ResetLockoutCount: 15            # 1.2.4
+    AllowAdministratorLockout: 1     # 1.2.3 (2022+)
+    EnableGuestAccount: 0            # 2.3.1.2
+    LSAAnonymousNameLookup: 0        # 2.3.10.1
+
+# --- 2. Advanced audit policy (auditpol) — CIS 17.x --------------------------------------
+windows_hardening_audit_policies:
+  - { subcategory: "Credential Validation",               audit_type: [success, failure] }
+  - { subcategory: "Security Group Management",           audit_type: [success] }
+  - { subcategory: "User Account Management",             audit_type: [success, failure] }
+  - { subcategory: "Plug and Play Events",                audit_type: [success] }
+  - { subcategory: "Process Creation",                    audit_type: [success] }
+  - { subcategory: "Account Lockout",                     audit_type: [failure] }
+  - { subcategory: "Group Membership",                    audit_type: [success] }
+  - { subcategory: "Logoff",                              audit_type: [success] }
+  - { subcategory: "Logon",                               audit_type: [success, failure] }
+  - { subcategory: "Other Logon/Logoff Events",           audit_type: [success, failure] }
+  - { subcategory: "Special Logon",                       audit_type: [success] }
+  - { subcategory: "Detailed File Share",                 audit_type: [failure] }
+  - { subcategory: "File Share",                          audit_type: [success, failure] }
+  - { subcategory: "Other Object Access Events",          audit_type: [success, failure] }
+  - { subcategory: "Removable Storage",                   audit_type: [success, failure] }
+  - { subcategory: "Audit Policy Change",                 audit_type: [success] }
+  - { subcategory: "Authentication Policy Change",        audit_type: [success] }
+  - { subcategory: "Authorization Policy Change",         audit_type: [success] }
+  - { subcategory: "MPSSVC Rule-Level Policy Change",     audit_type: [success, failure] }
+  - { subcategory: "Other Policy Change Events",          audit_type: [failure] }
+  - { subcategory: "Sensitive Privilege Use",             audit_type: [success, failure] }
+  - { subcategory: "IPsec Driver",                        audit_type: [success, failure] }
+  - { subcategory: "Other System Events",                 audit_type: [success, failure] }
+  - { subcategory: "Security State Change",               audit_type: [success] }
+  - { subcategory: "Security System Extension",          audit_type: [success] }
+  - { subcategory: "System Integrity",                    audit_type: [success, failure] }
+
+# --- 3. User rights assignment — CIS 2.2.x (the standalone-server subset) ----------------
+windows_hardening_user_rights:
+  - { name: SeNetworkLogonRight,                 users: [Administrators, "Authenticated Users"] }   # 2.2.2
+  - { name: SeDenyNetworkLogonRight,             users: [Guests] }                                   # 2.2.21
+  - { name: SeDenyBatchLogonRight,               users: [Guests] }                                   # 2.2.22
+  - { name: SeDenyServiceLogonRight,             users: [Guests] }                                   # 2.2.23
+  - { name: SeDenyInteractiveLogonRight,         users: [Guests] }                                   # 2.2.24
+  - { name: SeDenyRemoteInteractiveLogonRight,   users: [Guests] }                                   # 2.2.25
+  - { name: SeRemoteInteractiveLogonRight,       users: [Administrators, "Remote Desktop Users"] }   # 2.2.4
+  - { name: SeInteractiveLogonRight,             users: [Administrators, "Remote Desktop Users"] }   # 2.2.3 (RDP users may also use the console)
+  - { name: SeRemoteShutdownPrivilege,           users: [Administrators] }                           # 2.2.33
+  - { name: SeShutdownPrivilege,                 users: [Administrators] }                           # 2.2.35
+  - { name: SeTakeOwnershipPrivilege,            users: [Administrators] }                           # 2.2.36
+  - { name: SeDebugPrivilege,                    users: [Administrators] }                           # 2.2.20
+  - { name: SeLoadDriverPrivilege,               users: [Administrators] }                           # 2.2.27
+  - { name: SeBackupPrivilege,                   users: [Administrators] }                           # 2.2.10
+  - { name: SeRestorePrivilege,                  users: [Administrators] }                           # 2.2.34
+  - { name: SeSystemtimePrivilege,               users: [Administrators, "LOCAL SERVICE"] }          # 2.2.11
+  - { name: SeTcbPrivilege,                      users: [] }                                         # 2.2.5 (no one)
+  - { name: SeCreateTokenPrivilege,              users: [] }                                         # 2.2.15
+  - { name: SeEnableDelegationPrivilege,         users: [] }                                         # 2.2.26
+
+# --- 4. Registry controls — CIS 2.3.x security options + 18.x administrative templates ---
+# Each row: path, name, data, type. Grouped by intent; the CIS id in the trailing comment.
+windows_hardening_registry:
+  # Credentials / LSA
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa', name: RunAsPPL, data: 1, type: dword }                      # 18.4.x LSA protection
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa', name: LimitBlankPasswordUse, data: 1, type: dword }         # 2.3.1.3
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa', name: NoLMHash, data: 1, type: dword }                      # 2.3.11.5
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa', name: LmCompatibilityLevel, data: 5, type: dword }          # 2.3.11.7 NTLMv2 only
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa', name: RestrictAnonymous, data: 1, type: dword }             # 2.3.10.3
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa', name: RestrictAnonymousSAM, data: 1, type: dword }          # 2.3.10.2
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa', name: EveryoneIncludesAnonymous, data: 0, type: dword }     # 2.3.10.5
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa', name: SCENoApplyLegacyAuditPolicy, data: 1, type: dword }   # 2.3.2.1
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa', name: DisableDomainCreds, data: 1, type: dword }            # 2.3.10.4
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0', name: NTLMMinClientSec, data: 537395200, type: dword }   # 2.3.11.9
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0', name: NTLMMinServerSec, data: 537395200, type: dword }   # 2.3.11.10
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest', name: UseLogonCredential, data: 0, type: dword }  # 18.4.x
+  # SMB client + server
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters', name: RequireSecuritySignature, data: 1, type: dword }   # 2.3.9.2
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters', name: EnableSecuritySignature, data: 1, type: dword }    # 2.3.9.3
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters', name: RestrictNullSessAccess, data: 1, type: dword }     # 2.3.10.9
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters', name: AutoDisconnect, data: 15, type: dword }            # 2.3.9.1
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters', name: SMBServerNameHardeningLevel, data: 1, type: dword }  # 2.3.9.5
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters', name: RequireSecuritySignature, data: 1, type: dword }   # 2.3.8.1
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters', name: EnableSecuritySignature, data: 1, type: dword }    # 2.3.8.2
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters', name: EnablePlainTextPassword, data: 0, type: dword }    # 2.3.8.3
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\LanmanWorkstation', name: AllowInsecureGuestAuth, data: 0, type: dword }          # 18.6.8.1
+  # UAC
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', name: EnableLUA, data: 1, type: dword }                     # 2.3.17.6
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', name: ConsentPromptBehaviorAdmin, data: 2, type: dword }    # 2.3.17.2
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', name: ConsentPromptBehaviorUser, data: 0, type: dword }     # 2.3.17.3
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', name: PromptOnSecureDesktop, data: 1, type: dword }         # 2.3.17.7
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', name: EnableInstallerDetection, data: 1, type: dword }      # 2.3.17.4
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', name: FilterAdministratorToken, data: 1, type: dword }      # 2.3.17.1
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', name: EnableVirtualization, data: 1, type: dword }          # 2.3.17.8
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', name: EnableSecureUIAPaths, data: 1, type: dword }          # 2.3.17.5
+  # Interactive logon
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', name: DontDisplayLastUserName, data: 1, type: dword }       # 2.3.7.1
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', name: InactivityTimeoutSecs, data: 900, type: dword }      # 2.3.7.3
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', name: DisableCAD, data: 0, type: dword }                   # 2.3.7.2
+  # AutoRun / AutoPlay
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer', name: NoAutorun, data: 1, type: dword }                  # 18.10.7.2
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer', name: NoDriveTypeAutoRun, data: 255, type: dword }       # 18.10.7.3
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer', name: NoAutoplayfornonVolume, data: 1, type: dword }     # 18.10.7.1
+  # PowerShell logging (SOC visibility, feeds Loki/Wazuh)
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging', name: EnableScriptBlockLogging, data: 1, type: dword }   # 18.10.87.1
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ModuleLogging', name: EnableModuleLogging, data: 1, type: dword }
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ModuleLogging\ModuleNames', name: '*', data: '*', type: string }
+  # Defender: PUA, cloud protection, SmartScreen, ASR (L1 set)
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender', name: PUAProtection, data: 1, type: dword }                            # 18.10.43.x
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Spynet', name: SpynetReporting, data: 2, type: dword }
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection', name: DisableRealtimeMonitoring, data: 0, type: dword }
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection', name: DisableBehaviorMonitoring, data: 0, type: dword }
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Scan', name: DisableRemovableDriveScanning, data: 0, type: dword }
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Scan', name: DisableEmailScanning, data: 0, type: dword }
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\ASR', name: ExploitGuard_ASR_Rules, data: 1, type: dword }
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System', name: EnableSmartScreen, data: 1, type: dword }                           # 18.10.76.2.1
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System', name: ShellSmartScreenLevel, data: Block, type: string }
+  # Remote Desktop host (the owner's session comes through here): secure defaults
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services', name: fPromptForPassword, data: 1, type: dword }            # 18.10.57.3.9.2
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services', name: fEncryptRPCTraffic, data: 1, type: dword }            # 18.10.57.3.9.3
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services', name: MinEncryptionLevel, data: 3, type: dword }            # 18.10.57.3.9.5
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services', name: DisablePasswordSaving, data: 1, type: dword }         # 18.10.57.2.2
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services', name: fDisableCdm, data: 1, type: dword }                   # 18.10.57.3.3.3 (drive redirection off; clipboard stays)
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services', name: UserAuthentication, data: 1, type: dword }            # NLA required
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services', name: fAllowToGetHelp, data: 0, type: dword }               # 18.10.57.3.2 remote assistance off
+  # WinRM: off (SSH is the door) + no basic/unencrypted even if ever started
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client', name: AllowBasic, data: 0, type: dword }                            # 18.10.89.1.1
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client', name: AllowUnencryptedTraffic, data: 0, type: dword }               # 18.10.89.1.2
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client', name: AllowDigest, data: 0, type: dword }                           # 18.10.89.1.3
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service', name: AllowBasic, data: 0, type: dword }                           # 18.10.89.2.1
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service', name: AllowUnencryptedTraffic, data: 0, type: dword }              # 18.10.89.2.3
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service', name: DisableRunAs, data: 1, type: dword }                         # 18.10.89.2.4
+  # Network stack
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters', name: DisableIPSourceRouting, data: 2, type: dword }               # 18.5.3
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters', name: DisableIPSourceRouting, data: 2, type: dword }              # 18.5.2
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters', name: EnableICMPRedirect, data: 0, type: dword }                   # 18.5.4
+  - { path: 'HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters', name: NoNameReleaseOnDemand, data: 1, type: dword }                # 18.5.9
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient', name: EnableMulticast, data: 0, type: dword }                        # 18.6.4.1 LLMNR off
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections', name: NC_AllowNetBridge_NLA, data: 0, type: dword }          # 18.6.11.2
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections', name: NC_ShowSharedAccessUI, data: 0, type: dword }           # 18.6.11.3
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WcmSvc\GroupPolicy', name: fMinimizeConnections, data: 3, type: dword }            # 18.6.21.1
+  # Event log sizes (CIS 18.10.25.x) — the SOC's buffer before Loki ships them
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\EventLog\Security', name: MaxSize, data: 196608, type: dword }
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\EventLog\Security', name: Retention, data: '0', type: string }
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\EventLog\Application', name: MaxSize, data: 32768, type: dword }
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\EventLog\System', name: MaxSize, data: 32768, type: dword }
+  # Process creation auditing with the command line (feeds detection)
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit', name: ProcessCreationIncludeCmdLine_Enabled, data: 1, type: dword }   # 18.9.3.1
+  # Structured exception handling / DEP, no print driver installs by non-admins, etc.
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint', name: RestrictDriverInstallationToAdministrators, data: 1, type: dword }   # 18.7.x
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer', name: AlwaysInstallElevated, data: 0, type: dword }                     # 18.10.90.2
+  - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer', name: EnableUserControl, data: 0, type: dword }                         # 18.10.90.1
+
+# Defender ASR rules, CIS L1 set (rule GUID: 1 = block). Kept apart from the registry list
+# because they live under one key as name=value pairs.
+windows_hardening_asr_rules:
+  BE9BA2D9-53EA-4CDC-84E5-9B1EEEE46550: 1   # executable content from email/webmail
+  D4F940AB-401B-4EFC-AADC-AD5F3C50688A: 1   # Office child processes
+  3B576869-A4EC-4529-8536-B80A7769E899: 1   # Office executable content
+  75668C1F-73B5-4CF0-BB93-3ECF5CB7CC84: 1   # Office code injection
+  D3E037E1-3EB8-44C8-A917-57927947596D: 1   # JS/VBS launching downloaded executables
+  5BEB7EFE-FD9A-4556-801D-275E5FFC04CC: 1   # obfuscated scripts
+  92E97FA1-2EDF-4476-BDD6-9DD0B4DDDC7B: 1   # Win32 API calls from Office macros
+  B2B3F03D-6A65-4F7B-A9C7-1C7EF74A9BA4: 1   # untrusted/unsigned USB executables
+  26190899-1602-49E8-8B27-EB1D0A1CE869: 1   # Office communication app child processes
+  7674BA52-37EB-4A4F-A9A1-F0F9A1619A2C: 1   # Adobe Reader child processes
+  E6DB77E5-3DF2-4CF1-B95A-636979351E5B: 1   # persistence via WMI subscription
+  9E6C4E1F-7D60-472F-BA1A-A39EF669E4B2: 1   # credential stealing from LSASS
+  D1E49AAC-8F56-4280-B9BA-993A6D77406C: 1   # process creation via PsExec/WMI
+  56A863A9-875E-4185-98A7-B882C64B5CE5: 1   # abuse of exploited vulnerable signed drivers
+
+# --- 5. Services CIS L1 wants off on a server (the footprint list covers the rest) -------
+windows_hardening_disabled_services:
+  - RemoteRegistry     # 5.x
+  - SSDPSRV            # UPnP discovery
+  - upnphost
+  - lfsvc              # geolocation
+  - RemoteAccess       # routing and remote access
+  - SharedAccess       # internet connection sharing
+  - WinRM              # SSH is the door
+  - XblAuthManager     # absent on Server: tolerated
+  - XblGameSave
+  - XboxNetApiSvc
+  - WMPNetworkSvc
+  - PushToInstall
+  - RetailDemo
