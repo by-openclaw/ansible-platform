@@ -1,0 +1,53 @@
+---
+# ==============================================================================
+# Role: windows_template — build a Windows VM TEMPLATE on a Proxmox node, unattended.
+#
+# Pipeline (all on the node, nothing by hand): render the product's answer file + the
+# cloud-init-for-Windows (cloudbase-init) configuration → pack them, the virtio drivers and the
+# two installer packages onto one answer ISO → create a build VM (UEFI, virtio-scsi, NIC with
+# the LINK DOWN: drivers install, nothing is exposed) → Windows installs itself, installs the
+# guest agent and cloudbase-init at first logon, generalises (sysprep) and powers off → the
+# build media are detached, the cloud-init drive attached, and the VM becomes the template.
+#
+# The owner provides the ISO (here: Microsoft's 180-day evaluation, their 2026-10-13 choice);
+# license keys come later through a role task (slmgr/DISM), supported eval→Standard, no rebuild.
+# ==============================================================================
+windows_template_name: "tpl-ws2025-std-gui"
+windows_template_vmid: 9100
+windows_template_iso: "ws2025-eval-en-us.iso"      # in the node's ISO storage
+windows_template_virtio_iso: "virtio-win.iso"      # same storage
+# The evaluation media's image index 2 = Standard with Desktop Experience (the GUI the owner
+# asked for); the index is positional on the media, steadier than the localized image name.
+windows_template_image_index: 2
+
+windows_template_iso_storage_dir: /var/lib/vz/template/iso
+windows_template_work_dir: /var/lib/vz/template/winbuild
+windows_template_storage: local-zfs
+windows_template_disk_gb: 80
+windows_template_build_memory_mb: 8192
+windows_template_build_cores: 6
+# cpu=host has panicked multi-core VMs on this hardware generation: the fleet's safe model.
+windows_template_cpu: "x86-64-v2-AES"
+windows_template_bridge: vmbr0                      # link_down=1 throughout the build
+
+# The build administrator (the answer file needs one; per-VM passwords come from the clone's
+# cloud-init). Get-or-create in Vault; never printed.
+windows_template_admin_vault_path: "{{ platform_env }}/windows/build-admin"
+
+# The two packages installed at first logon, fetched once onto the node (pinned URLs).
+windows_template_cloudbase_url: "https://cloudbase.it/downloads/CloudbaseInitSetup_Stable_x64.msi"
+# Driver directories lifted from the virtio ISO into the answer ISO's $WinPEDriver$ (WinPE loads
+# them from any attached drive) + the guest agent installer from the same ISO.
+windows_template_virtio_dirs: [vioscsi/2k25/amd64, viostor/2k25/amd64, NetKVM/2k25/amd64, Balloon/2k25/amd64]
+windows_template_virtio_agent_msi: "virtio-win-gt-x64.msi"
+windows_template_guest_agent_msi: "guest-agent/qemu-ga-x86_64.msi"
+
+# The unattended install + first-logon phase, measured in qm status polls.
+windows_template_install_retries: 100               # × delay = the cap (100 min)
+windows_template_install_delay: 60
+# Footprint (owner 2026-10-14: "small footprint on the memory and disk"): services no app or
+# database host needs, disabled in the template itself. Defender and the firewall stay.
+windows_template_disabled_services: [Spooler, WSearch, DiagTrack, MapsBroker]
+# Replace the existing VM OR TEMPLATE at this vmid when asked by name (a template is a build
+# artifact: rebuilt, never edited).
+windows_template_rebuild: false

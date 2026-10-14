@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+{# Managed by Ansible (roles/windows_template). The product's own answer-file format
+   (unattend.xml): Windows Setup reads it from the attached answer ISO. The storage/network
+   drivers sit in \$WinPEDriver$\ on the same ISO (Setup loads that directory from any attached
+   drive). The first-logon commands are the answer file's own mechanism; they install the guest
+   agent and cloudbase-init from this ISO, then generalise and power off. #}
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"> {# pragma: allowlist secret — Microsoft's public assembly token, the same on every Windows #}
+      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"> {# pragma: allowlist secret — Microsoft's public assembly token, the same on every Windows #}
+      <DiskConfiguration>
+        <Disk wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>260</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>{{ windows_template_image_index }}</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>
+        </OSImage>
+      </ImageInstall>
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <FullName>{{ platform_org }}</FullName>
+        <Organization>{{ platform_org }}</Organization>
+      </UserData>
+    </component>
+  </settings>
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"> {# pragma: allowlist secret — Microsoft's public assembly token, the same on every Windows #}
+      <ComputerName>*</ComputerName>
+      <TimeZone>UTC</TimeZone>
+    </component>
+  </settings>
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"> {# pragma: allowlist secret — Microsoft's public assembly token, the same on every Windows #}
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <ProtectYourPC>3</ProtectYourPC>
+      </OOBE>
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>{{ windows_template_admin_password }}</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Username>Administrator</Username>
+        <Password><Value>{{ windows_template_admin_password }}</Value><PlainText>true</PlainText></Password>
+      </AutoLogon>
+      <FirstLogonCommands>
+        {# The answer ISO's drive letter is not fixed: each command locates it by its label. #}
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>1</Order>
+          <Description>QEMU guest agent</Description>
+          <CommandLine>cmd /c for %d in (D E F G) do if exist %d:\setup\qemu-ga.msi msiexec /i %d:\setup\qemu-ga.msi /qn /norestart</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>2</Order>
+          <Description>virtio drivers (the full set, for the devices the clones add)</Description>
+          <CommandLine>cmd /c for %d in (D E F G) do if exist %d:\setup\virtio-win-gt-x64.msi msiexec /i %d:\setup\virtio-win-gt-x64.msi /qn /norestart</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>3</Order>
+          <Description>cloudbase-init (cloud-init for Windows)</Description>
+          <CommandLine>cmd /c for %d in (D E F G) do if exist %d:\setup\CloudbaseInitSetup.msi msiexec /i %d:\setup\CloudbaseInitSetup.msi /qn /norestart RUN_SERVICE_AS_LOCAL_SYSTEM=1</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>4</Order>
+          <Description>cloudbase-init reads the Proxmox cloud-init drive</Description>
+          <CommandLine>cmd /c for %d in (D E F G) do if exist %d:\setup\cloudbase-init.conf copy /y %d:\setup\cloudbase-init.conf "C:\Program Files\Cloudbase Solutions\Cloudbase-Init\conf\cloudbase-init.conf"</CommandLine>
+        </SynchronousCommand>
+        {# Ansible's door: Server 2025 ships OpenSSH in-box with the service off. On in the
+           template; each clone's cloud-init injects the platform's public key. #}
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>5</Order>
+          <Description>the in-box OpenSSH server starts with the system</Description>
+          <CommandLine>cmd /c sc config sshd start= auto</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>6</Order>
+          <Description>and its firewall door exists</Description>
+          <CommandLine>netsh advfirewall firewall add rule name=OpenSSH-In dir=in action=allow protocol=TCP localport=22</CommandLine>
+        </SynchronousCommand>
+        {# Footprint (owner 2026-10-14): services an app or database host never needs, off in
+           the template itself; the component store compacted — smaller clones, less idle RAM. #}
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>7</Order>
+          <Description>services an app/database host never needs, off</Description>
+          <CommandLine>cmd /c for %s in ({{ windows_template_disabled_services | join(' ') }}) do sc config %s start= disabled</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>8</Order>
+          <Description>component store compacted (disk footprint)</Description>
+          <CommandLine>Dism.exe /Online /Cleanup-Image /StartComponentCleanup /ResetBase</CommandLine>
+        </SynchronousCommand>
+        {# sysprep splits /unattend: at the quoted path's space and shows its usage dialog
+           instead (seen on the first build's console, 2026-10-14): the file is copied to a
+           space-free path first and referenced without quotes. #}
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>9</Order>
+          <Description>the generalisation answer file, at a space-free path</Description>
+          <CommandLine>cmd /c copy /y "C:\Program Files\Cloudbase Solutions\Cloudbase-Init\conf\Unattend.xml" C:\Windows\cb-unattend.xml</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>10</Order>
+          <Description>generalise and power off — the next boot is a clone's first boot</Description>
+          <CommandLine>C:\Windows\System32\Sysprep\sysprep.exe /generalize /oobe /shutdown /unattend:C:\Windows\cb-unattend.xml</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+</unattend>

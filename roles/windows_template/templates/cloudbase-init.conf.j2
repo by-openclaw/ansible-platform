@@ -1,0 +1,17 @@
+# Managed by Ansible (roles/windows_template): cloudbase-init on every clone reads the Proxmox
+# cloud-init drive (configdrive) — hostname, the administrator's password, static addresses.
+[DEFAULT]
+username=Administrator
+groups=Administrators
+inject_user_password=true  # pragma: allowlist secret — a boolean: the clone takes its password from its cloud-init drive
+first_logon_behaviour=no
+rename_admin_user=false
+config_drive_types=vfat,iso
+config_drive_locations=cdrom,hdd,partition
+metadata_services=cloudbaseinit.metadata.services.configdrive.ConfigDriveService
+plugins=cloudbaseinit.plugins.common.mtu.MTUPlugin,cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin,cloudbaseinit.plugins.common.setuserpassword.SetUserPasswordPlugin,cloudbaseinit.plugins.common.networkconfig.NetworkConfigPlugin,cloudbaseinit.plugins.common.sshpublickeys.SetUserSSHPublicKeysPlugin,cloudbaseinit.plugins.common.userdata.UserDataPlugin,cloudbaseinit.plugins.windows.extendvolumes.ExtendVolumesPlugin
+allow_reboot=false
+stop_service_on_exit=false
+check_latest_version=false
+logdir=C:\ProgramData\cloudbase-init\
+logfile=cloudbase-init.log
