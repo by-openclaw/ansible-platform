@@ -16,8 +16,25 @@ TPL = (ROOT / "roles" / "windows_template" / "templates" / "autounattend.xml.j2"
 def _render():
     env = jinja2.Environment()  # noqa: S701 — an answer file, not HTML
     return env.from_string(TPL).render(
-        windows_template_image_index=2, platform_org="example", windows_template_admin_password="x" * 24
+        windows_template_image_index=2, platform_org="example", windows_template_admin_password="x" * 24,
+        windows_template_removed_features=["FeatureA", "FeatureB"], windows_template_disabled_services=["Svc"],
+        windows_template_power_scheme="scheme-guid",
+        windows_template_input_locale="080c:00000813", windows_template_system_locale="fr-BE",
+        windows_template_user_locale="fr-BE", windows_template_ui_language="en-US",
+        windows_template_timezone="Romance Standard Time",
     )
+
+
+def test_first_logon_orders_are_a_dense_sequence():
+    # the Order counter must cover the data-driven commands (features, power) and stay
+    # 1..N without gaps or duplicates — Windows runs FirstLogonCommands by Order
+    root = ET.fromstring(_render())
+    flc = [e for e in root.iter() if e.tag.endswith("FirstLogonCommands")][0]
+    orders = [int(o.text) for o in flc.iter() if o.tag.endswith("Order")]
+    assert orders == list(range(1, len(orders) + 1)), orders
+    text = _render()
+    assert "FeatureName:FeatureA" in text and "FeatureName:FeatureB" in text
+    assert text.index("FeatureName:FeatureA") < text.index("/StartComponentCleanup") < text.index("sysprep.exe")
 
 
 def test_it_parses_and_installs_the_gui_standard_image():

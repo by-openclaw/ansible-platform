@@ -59,7 +59,12 @@ windows_template_install_retries: 100               # × delay = the cap (100 mi
 windows_template_install_delay: 60
 # Footprint (owner 2026-10-14: "small footprint on the memory and disk"): services no app or
 # database host needs, disabled in the template itself. Defender and the firewall stay.
-windows_template_disabled_services: [Spooler, WSearch, DiagTrack, MapsBroker]
+windows_template_disabled_services: "{{ platform_windows_disabled_services | default(['Spooler', 'WSearch', 'DiagTrack', 'MapsBroker']) }}"
+windows_template_removed_features: "{{ platform_windows_removed_features | default([]) }}"
+# A VM never power-saves: hibernation off (no hiberfil.sys the size of the RAM — 32 GB
+# per clone), the High performance scheme, no monitor/standby timeouts.
+windows_template_power_scheme: "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"   # High performance (Microsoft's fixed GUID)
+
 # Replace the existing VM OR TEMPLATE at this vmid when asked by name (a template is a build
 # artifact: rebuilt, never edited).
 windows_template_rebuild: false
