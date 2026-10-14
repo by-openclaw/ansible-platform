@@ -6,7 +6,11 @@ groups=Administrators
 # The clone takes its password from its cloud-init drive. NOTHING may follow the value:
 # oslo.config does not strip inline comments — "true  # ..." fails the boolean parse and
 # the service dies on start (exit 1067) before it even opens its log (seen live 2026-10-14).
-inject_user_password=true{# pragma: allowlist secret — a boolean, and this Jinja comment never renders #}
+# A boolean option name, no secret. Nothing Jinja may share the value's line: Ansible
+# templates with trim_blocks, and an inline {# comment #} eats the newline — the next
+# option gets GLUED onto the value (2026-10-14, second broken template from this line).
+# pragma: allowlist nextline secret
+inject_user_password=true
 first_logon_behaviour=no
 rename_admin_user=false
 config_drive_types=vfat,iso
