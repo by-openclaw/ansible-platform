@@ -14,6 +14,8 @@
 #   another NODE (its own token, minted by pve-host identity): point all three —
 #   -e tf_env=dev -e tf_node=br-pmox-03 -e tf_token_vault_path=dev/proxmox/tokens/svc-rune-terraform
 #   (that doc's fields are tokenid/secret: -e tf_token_id_is_full=true)
+#   replace resources in place (new template, rebuilt guest): -e '{"tf_taint": ["module.x.resource.y"]}'
+#   — the next plan+apply recreates exactly those.
 #
 # Read the plan before applying: a plan that touches a guest's `initialization`,
 # `network` or `disk` restarts that guest (2026-09-18).
@@ -102,6 +104,7 @@
     tf_node: "{{ groups['proxmox_nodes'] | first }}"                          # the node the provider talks to
     tf_token_vault_path: "{{ platform_proxmox_env }}/proxmox/admin"           # legacy doc: terraform_token_id/_secret
     tf_token_id_is_full: false   # true = the doc is a pve-host minted token (fields tokenid/secret)
+    tf_taint: []                 # resource addresses to mark for replacement before the plan
   tasks:
     - name: "Terraform | The Proxmox API token (Vault)"
       ansible.builtin.include_role:
@@ -118,6 +121,14 @@
                if (tf_token_id_is_full | bool)
                else (vault_secret_result.terraform_token_id ~ '=' ~ vault_secret_result.terraform_token_secret) }}
       no_log: true
+
+    # State-only operation (no API call); loud when the address is not in the state.
+    - name: "Terraform | Mark for replacement (taint)"
+      ansible.builtin.command:
+        argv: [terraform, "-chdir={{ tf_dir }}", taint, "{{ item }}"]
+      loop: "{{ tf_taint }}"
+      when: not ansible_check_mode
+      changed_when: true
 
     - name: "Terraform | Plan"
       community.general.terraform:
