@@ -24,6 +24,15 @@
 # create: the asset has no account of that name · rekey: the mark differs · privileged: the flag
 # differs · stale: an account the catalog no longer declares for a managed asset (it cannot log
 # in anyway: the connect dialog must offer only what works).
+# Password accounts (Windows RDP assets): one break-glass password per tier, read once
+# with its KV version — the version is the account's mark (rekey when Vault rotated it).
+- name: "JumpServer accounts | The break-glass password of each Windows tier (Vault)"
+  ansible.builtin.include_tasks: api_accounts_password.yml
+  loop: "{{ jumpserver_assets | selectattr('secret_type', 'defined') | selectattr('secret_type', 'equalto', 'password') | map(attribute='tier') | unique | list }}"
+  loop_control:
+    loop_var: jumpserver_tier
+    label: "{{ jumpserver_tier }}"
+
 - name: "JumpServer accounts | Plan"
   ansible.builtin.set_fact:
     jumpserver_accounts_plan: >-
@@ -40,11 +49,14 @@
         {%- set acct = mine | selectattr('username', 'equalto', user) | first | default({}) -%}
         {%- if host_id | length > 0 -%}
           {%- if acct | length == 0 -%}
-            {%- set _ = create.append({'asset': a.name, 'asset_id': host_id, 'username': user, 'privileged': priv}) -%}
+            {%- set _ = create.append({'asset': a.name, 'asset_id': host_id, 'username': user, 'privileged': priv,
+                                       'secret_type': a.secret_type | default(jumpserver_account_secret_type), 'tier': a.tier | default('')}) -%}
           {%- else -%}
             {%- set _ = kept.append(acct.id) -%}
-            {%- if (acct.comment | default('')) != jumpserver_key_mark -%}
-              {%- set _ = rekey.append({'asset': a.name, 'id': acct.id}) -%}
+            {%- set mark = jumpserver_password_marks.get(a.tier | default(''), '') if (a.secret_type | default(jumpserver_account_secret_type)) == 'password' else jumpserver_key_mark -%}
+            {%- if (acct.comment | default('')) != mark -%}
+              {%- set _ = rekey.append({'asset': a.name, 'id': acct.id,
+                                        'secret_type': a.secret_type | default(jumpserver_account_secret_type), 'tier': a.tier | default('')}) -%}
             {%- endif -%}
             {%- if (acct.privileged | bool) != priv -%}
               {%- set _ = privileged.append({'asset': a.name, 'id': acct.id, 'privileged': priv}) -%}
@@ -67,11 +79,11 @@
       asset: "{{ item.asset_id }}"
       username: "{{ item.username }}"
       name: "{{ item.username }}"
-      secret_type: "{{ jumpserver_account_secret_type }}"
-      secret: "{{ jumpserver_asset_key_b64 | b64decode }}"
-      passphrase: "{{ jumpserver_asset_key_passphrase }}"
+      secret_type: "{{ item.secret_type }}"
+      secret: "{{ jumpserver_passwords[item.tier] if item.secret_type == 'password' else (jumpserver_asset_key_b64 | b64decode) }}"   # pragma: allowlist secret
+      passphrase: "{{ omit if item.secret_type == 'password' else jumpserver_asset_key_passphrase }}"   # pragma: allowlist secret
       privileged: "{{ item.privileged }}"
-      comment: "{{ jumpserver_key_mark }}"
+      comment: "{{ jumpserver_password_marks[item.tier] if item.secret_type == 'password' else jumpserver_key_mark }}"   # pragma: allowlist secret
     status_code: [201]
   loop: "{{ jumpserver_accounts_plan.create }}"
   loop_control:
@@ -87,10 +99,10 @@
     headers: "{{ jumpserver_api_headers }}"
     body_format: json
     body:
-      secret_type: "{{ jumpserver_account_secret_type }}"
-      secret: "{{ jumpserver_asset_key_b64 | b64decode }}"
-      passphrase: "{{ jumpserver_asset_key_passphrase }}"
-      comment: "{{ jumpserver_key_mark }}"
+      secret_type: "{{ item.secret_type }}"
+      secret: "{{ jumpserver_passwords[item.tier] if item.secret_type == 'password' else (jumpserver_asset_key_b64 | b64decode) }}"   # pragma: allowlist secret
+      passphrase: "{{ omit if item.secret_type == 'password' else jumpserver_asset_key_passphrase }}"   # pragma: allowlist secret
+      comment: "{{ jumpserver_password_marks[item.tier] if item.secret_type == 'password' else jumpserver_key_mark }}"   # pragma: allowlist secret
     status_code: [200]
   loop: "{{ jumpserver_accounts_plan.rekey }}"
   loop_control:
