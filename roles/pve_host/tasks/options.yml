@@ -30,3 +30,22 @@
     (pve_host_opts_now.email_from | default('')) != pve_host_email_from
     or (pve_host_opts_now.keyboard | default('')) != pve_host_keyboard
   changed_when: true
+
+# --- the local dir storage's declared content set ----------------------------------------
+# A fresh node ships `local` without the snippets content type; the bpg Terraform provider
+# uploads cloud-init user-data snippets there over SSH (vm-linux vendor-data, vm-windows).
+- name: "PVE host | The local dir storage today: {{ pve_host_local_storage }}"
+  ansible.builtin.command:
+    argv: [pvesh, get, "/storage/{{ pve_host_local_storage }}", --output-format, json]
+  register: pve_host_local_storage_now
+  changed_when: false
+  check_mode: false
+
+- name: "PVE host | Its declared content set (only on drift)"
+  ansible.builtin.command:
+    argv: [pvesm, set, "{{ pve_host_local_storage }}",
+           --content, "{{ pve_host_local_storage_content | sort | join(',') }}"]
+  when: >-
+    ((pve_host_local_storage_now.stdout | from_json).content | split(',') | map('trim') | sort | list)
+    != (pve_host_local_storage_content | sort | list)
+  changed_when: true
