@@ -1,0 +1,43 @@
+---
+- name: "Win updates | What is pending (search only)"
+  ansible.windows.win_updates:
+    category_names: "{{ windows_updates_categories }}"
+    state: searched
+  register: windows_updates_pending
+
+- name: "Win updates | Pending"
+  ansible.builtin.debug:
+    msg: "WIN_UPDATES {{ inventory_hostname }}: {{ windows_updates_pending.found_update_count }} pending{{ '' if (updates_apply | default(false) | bool) else ' (plan only: -e updates_apply=true applies)' }}"
+
+- name: "Win updates | Apply, reboot when Windows asks, come back (one host at a time: the wave's serial)"
+  ansible.windows.win_updates:
+    category_names: "{{ windows_updates_categories }}"
+    state: installed
+    reboot: true
+    reboot_timeout: "{{ windows_updates_reboot_timeout }}"
+  register: windows_updates_applied
+  when: updates_apply | default(false) | bool
+
+- name: "Win updates | The platform's services came back the way they went in"
+  ansible.windows.win_service_info:
+    name: "{{ item }}"
+  loop: "{{ windows_updates_services_must_return }}"
+  register: windows_updates_services
+  when: updates_apply | default(false) | bool
+
+- name: "Win updates | Every present service is running"
+  ansible.builtin.assert:
+    that: >-
+      windows_updates_services.results
+      | selectattr('services', 'defined') | map(attribute='services') | flatten
+      | rejectattr('state', 'equalto', 'started') | list | length == 0
+    fail_msg: "a platform service did not come back after the updates on {{ inventory_hostname }} — the wave stops here"
+    quiet: true
+  when: updates_apply | default(false) | bool
+
+- name: "Win updates | Report"
+  ansible.builtin.debug:
+    msg: >-
+      WIN_UPDATES {{ inventory_hostname }}: {{ windows_updates_applied.installed_update_count | default(0) }} installed,
+      rebooted={{ windows_updates_applied.reboot_required | default(false) }}
+  when: updates_apply | default(false) | bool
