@@ -1,0 +1,27 @@
+---
+# Root-only guest options. PVE refuses `affinity` from ANY API token ("only root can
+# set 'affinity' config", HTTP 500) — Terraform's vm-windows module carries the NUMA
+# memory bind (numa0 hostnodes/policy=bind) and THIS task, running as root on the
+# node, completes the pin with the matching vCPU affinity. Affinity lands in the VM
+# config and takes effect at (next) start — run it while the clone is stopped, or
+# restart the guest after a change.
+- name: "PVE host | The declared guests' config"
+  ansible.builtin.command:
+    argv: [qm, config, "{{ item.key }}"]
+  loop: "{{ pve_host_guest_affinity | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: pve_host_guest_cfg
+  changed_when: false
+  check_mode: false
+
+- name: "PVE host | vCPU affinity set (only on drift)"
+  ansible.builtin.command:
+    argv: [qm, set, "{{ item.item.key }}", --affinity, "{{ item.item.value }}"]
+  loop: "{{ pve_host_guest_cfg.results }}"
+  loop_control:
+    label: "{{ item.item.key }} -> {{ item.item.value }}"
+  when: >-
+    (item.stdout_lines | select('match', '^affinity:') | first | default('')
+     | regex_replace('^affinity:\s*', '')) != (item.item.value | string)
+  changed_when: true

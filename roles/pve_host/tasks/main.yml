@@ -24,6 +24,11 @@
   ansible.builtin.import_tasks: routes.yml
   tags: [pve_host, routes]
 
+- name: "PVE host | Guest vCPU affinity (root-only option, completes the Terraform NUMA bind)"
+  ansible.builtin.import_tasks: guest_pinning.yml
+  when: pve_host_guest_affinity | length > 0
+  tags: [pve_host, guests]
+
 - name: "PVE host | Cold-start sequence of the guests"
   ansible.builtin.import_tasks: boot_order.yml
   when: pve_host_boot_order | length > 0
