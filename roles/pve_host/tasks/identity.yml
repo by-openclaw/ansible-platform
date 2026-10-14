@@ -1,4 +1,11 @@
 ---
+# --- root's automation keys (Terraform's snippet uploads ride root SSH) -----------------
+- name: "PVE host | Root's declared automation keys present"
+  ansible.posix.authorized_key:
+    user: root
+    key: "{{ lookup('file', pve_host_root_keys_dir ~ '/' ~ item) }}"
+  loop: "{{ pve_host_root_key_files }}"
+
 # --- local admin (<org>@pam) -----------------------------------------------------------
 - name: "PVE host | Users today"
   ansible.builtin.command:
