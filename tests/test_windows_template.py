@@ -37,6 +37,23 @@ def test_the_build_ends_generalised_and_off():
     assert text.index("qemu-ga.msi") < text.index("CloudbaseInitSetup.msi") < text.index("sysprep.exe")
 
 
+def _render_conf():
+    # Ansible's templating runs with trim_blocks=True (and the platform's lstrip default):
+    # render EXACTLY like that, or a passing test hides a glued-lines template (an inline
+    # Jinja comment ate the newline after a value — two broken templates, 2026-10-14).
+    conf_tpl = (ROOT / "roles" / "windows_template" / "templates" / "cloudbase-init.conf.j2").read_text()
+    return jinja2.Environment(trim_blocks=True).from_string(conf_tpl).render()
+
+
+def test_cloudbase_conf_every_line_is_whole():
+    for line in _render_conf().splitlines():
+        assert line == "" or line.startswith(("#", "[")) or line.count("=") >= 1, line
+    # the glued-lines regression: each known option sits alone on its line
+    lines = _render_conf().splitlines()
+    assert "inject_user_password=true" in lines  # pragma: allowlist secret — a boolean option name
+    assert "first_logon_behaviour=no" in lines
+
+
 def test_cloudbase_conf_values_carry_no_inline_comments():
     # oslo.config keeps everything after '=' as the value: an inline "# comment" breaks
     # the boolean parse and cloudbase-init dies on start (exit 1067, no log) — seen live
@@ -44,8 +61,7 @@ def test_cloudbase_conf_values_carry_no_inline_comments():
     import configparser
     import io
 
-    conf_tpl = (ROOT / "roles" / "windows_template" / "templates" / "cloudbase-init.conf.j2").read_text()
-    text = jinja2.Environment().from_string(conf_tpl).render()
+    text = _render_conf()
     parser = configparser.ConfigParser(comment_prefixes=("#",), inline_comment_prefixes=None)
     parser.read_string(text)
     for key, value in parser["DEFAULT"].items():
@@ -56,7 +72,6 @@ def test_cloudbase_conf_values_carry_no_inline_comments():
 def test_cloudbase_conf_logdir_exists_in_the_image():
     # oslo_log opens logdir/logfile before anything else; a dir nothing creates kills
     # the service on start (exit 1067). The MSI ships its own log dir — use that one.
-    conf_tpl = (ROOT / "roles" / "windows_template" / "templates" / "cloudbase-init.conf.j2").read_text()
-    text = jinja2.Environment().from_string(conf_tpl).render()
+    text = _render_conf()
     logdir = [line for line in text.splitlines() if line.startswith("logdir=")][0]
     assert logdir == "logdir=C:\\Program Files\\Cloudbase Solutions\\Cloudbase-Init\\log\\"
