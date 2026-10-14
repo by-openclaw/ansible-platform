@@ -1,0 +1,24 @@
+---
+# ==============================================================================
+# Windows guest baseline (dev tier, WS2025 clones on br-pmox-03).
+# The clone arrives from the template with: static IP + DNS (cloudbase), hostname,
+# the automation key in administrators_authorized_keys, sshd running. This role
+# adds what the configdrive cannot carry:
+#   - the platform route: the guests sit on the OOB /20; the internal 10.1.0.0/16
+#     (Vault, AdGuard DNS, Loki) routes via the firewall's OOB leg, same as the node.
+#   - the local Administrator password: Vault-held (get-or-create, never printed,
+#     never on a command line - ansible.windows.win_user carries it in the module
+#     payload over SSH).
+# ==============================================================================
+windows_guest_env: "{{ env | default(platform_env) }}"
+
+# One doc per guest: <env>/windows/<host>/administrator {password}
+windows_guest_admin_vault_path: "{{ windows_guest_env }}/windows/{{ inventory_hostname }}/administrator"
+
+# The platform LAN, via the firewall's OOB leg (inventory values, no literals here).
+windows_guest_routes:
+  - destination: "{{ platform_internal_cidr4 }}"
+    gateway: "{{ hostvars[groups['opnsense'] | first].ansible_host }}"
+
+# The liveness proof of the route: the platform resolver answers through it.
+windows_guest_dns_probe_name: "vault.{{ platform_domain }}"
