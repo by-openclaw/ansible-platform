@@ -1,0 +1,41 @@
+---
+# ==============================================================================
+# Windows logging + monitoring agents — rows #8/#9 of the walk, the Linux trio's
+# siblings: Wazuh agent (FIM = AIDE, vulnerability detection, CIS SCA = the audit
+# instrument), Grafana Alloy (event log -> Loki, replaces promtail), windows_exporter
+# (node_exporter's sibling; the pacemaker `up == 0` rule covers it like every job).
+# Installers are pinned and fetched through the platform proxy — the guest's only
+# egress (roles/windows_firewall). Enrolment secrets travel in module payloads, never
+# on a command line.
+# ==============================================================================
+windows_logging_env: "{{ env | default(platform_env) }}"
+windows_logging_proxy_url: "http://{{ hostvars[groups['pkgcache'] | first].ansible_host }}:{{ pkgcache_acng_port | default(3142) }}"
+windows_logging_download_dir: 'C:\ProgramData\platform\installers'
+
+# --- Wazuh agent (follows roles/wazuh `wazuh_version`, like roles/wazuh_agent) -----------
+windows_logging_wazuh_version: "4.14.8-1"
+windows_logging_wazuh_msi_url: "https://packages.wazuh.com/4.x/windows/wazuh-agent-{{ windows_logging_wazuh_version }}.msi"
+windows_logging_wazuh_manager: "{{ hostvars[groups['wazuh'] | first].ansible_host }}"
+windows_logging_wazuh_group: windows
+windows_logging_wazuh_vault_enrol: "{{ platform_env }}/wazuh/agent-enrol"   # the manager's tier (roles/wazuh)
+windows_logging_wazuh_dir: 'C:\Program Files (x86)\ossec-agent'
+
+# --- windows_exporter (prometheus-community) ---------------------------------------------
+windows_logging_exporter_version: "0.31.3"
+windows_logging_exporter_msi_url: "https://github.com/prometheus-community/windows_exporter/releases/download/v{{ windows_logging_exporter_version }}/windows_exporter-{{ windows_logging_exporter_version }}-amd64.msi"
+windows_logging_exporter_port: 9182
+windows_logging_exporter_collectors: "cpu,cs,logical_disk,memory,net,os,service,system,tcp"
+
+# --- Grafana Alloy: event log -> Loki --------------------------------------------------
+windows_logging_alloy_version: "1.11.2"
+windows_logging_alloy_zip_url: "https://github.com/grafana/alloy/releases/download/v{{ windows_logging_alloy_version }}/alloy-installer-windows-amd64.exe.zip"
+windows_logging_alloy_config_dir: 'C:\ProgramData\GrafanaLabs\Alloy'
+windows_logging_loki_url: "http://{{ hostvars[groups['monitoring'] | first].ansible_host }}:3100/loki/api/v1/push"
+# Channels shipped, with the label each carries (job=windows_eventlog, like job=journal on Linux).
+windows_logging_channels:
+  - { name: application, channel: "Application" }
+  - { name: system,      channel: "System" }
+  - { name: security,    channel: "Security" }
+  - { name: powershell,  channel: "Microsoft-Windows-PowerShell/Operational" }
+  - { name: sshd,        channel: "OpenSSH/Operational" }
+  - { name: defender,    channel: "Microsoft-Windows-Windows Defender/Operational" }

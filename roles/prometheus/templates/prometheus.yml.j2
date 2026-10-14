@@ -56,6 +56,14 @@ scrape_configs:
           instance: "{{ h }}"
 {% endfor %}
 
+  - job_name: windows
+{{ keep_only('windows') }}    static_configs:
+{% for h in groups['windows_guests'] | default([]) | sort %}
+      - targets: ['{{ hostvars[h].ansible_host }}:{{ prometheus_windows_exporter_port }}']
+        labels:
+          instance: "{{ h }}"
+{% endfor %}
+
   - job_name: cadvisor
     scrape_interval: 30s
 {{ keep_only('cadvisor') }}    static_configs:

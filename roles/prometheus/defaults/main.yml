@@ -27,6 +27,7 @@ prometheus_scrape_interval: "30s"
 prometheus_cluster_label: "{{ platform_company }}-{{ prometheus_cluster_site }}"
 prometheus_cluster_site: "poc"
 prometheus_node_exporter_port: 9100
+prometheus_windows_exporter_port: 9182   # windows_exporter on the Windows guests (roles/windows_logging)
 # Inventory groups whose hosts run node-exporter (scraped on :9100). Deduped.
 prometheus_node_groups:
   - cluster
@@ -51,6 +52,15 @@ prometheus_app_metrics: "{{ platform_services | selectattr('metrics_port', 'defi
 # name) and drops everything else at scrape time; a job not named keeps what it scrapes.
 # A rule or a dashboard that needs another family adds it here in the same change.
 prometheus_keep:
+  # The Windows guests' pacemaker (roles/windows_logging): the node list's siblings only.
+  windows:
+    - "windows_(os|cs|exporter_build)_info"
+    - "windows_system_system_up_time"
+    - "windows_cpu_time_total"
+    - "windows_os_(physical_memory_free_bytes|virtual_memory_free_bytes)"
+    - "windows_cs_physical_memory_bytes"
+    - "windows_logical_disk_(free|size)_bytes"
+    - "windows_net_bytes_(received|sent)_total"
   node:
     - "node_(uname|os|exporter_build)_info"
     - "node_(boot_time|time)_seconds"
