@@ -3,6 +3,15 @@
 # Build a Windows template on a Proxmox node (roles/windows_template — the pipeline is in the
 # role's defaults). Canary-style target like identity-baseline: name the node explicitly.
 #   ansible-playbook playbooks/windows-template.yml -e target=<node>
+#
+# One template per OS type (the owner's rule), same role, per-OS vars. The second one:
+#   tiny Win11 = IoT Enterprise LTSC eval (the smallest client edition; single image, index 1):
+#   ansible-playbook playbooks/windows-template.yml -e target=br-pmox-03
+#     -e windows_template_name=tpl-win11-iot-ltsc -e windows_template_vmid=9101
+#     -e windows_template_iso=win11-iot-ltsc-eval-en-us.iso -e windows_template_image_index=1
+#     -e windows_template_tpm=true -e windows_template_disk_gb=60
+#     -e '{"windows_template_virtio_dirs": ["vioscsi/w11/amd64", "viostor/w11/amd64",
+#          "NetKVM/w11/amd64", "Balloon/w11/amd64"]}'   # the virtio ISO's dirs are per-OS
 # ==============================================================================
 - name: "Windows template"
   hosts: "{{ target | default('none') }}"

@@ -151,19 +151,25 @@
 
     - name: "Win tpl | The build VM (UEFI, virtio-scsi, NIC link down, both ISOs attached)"
       ansible.builtin.command:
-        argv: [qm, create, "{{ windows_template_vmid }}",
-               --name, "{{ windows_template_name }}-build",
-               --machine, q35, --bios, ovmf, --ostype, win11,
-               --efidisk0, "{{ windows_template_storage }}:1,efitype=4m,pre-enrolled-keys=1",
-               --scsihw, virtio-scsi-single,
-               --scsi0, "{{ windows_template_storage }}:{{ windows_template_disk_gb }},iothread=1,discard=on",
-               --ide0, "local:iso/{{ windows_template_iso }},media=cdrom",
-               --ide1, "local:iso/answer-{{ windows_template_name }}.iso,media=cdrom",
-               --cpu, "{{ windows_template_cpu }}", --sockets, "1", --cores, "{{ windows_template_build_cores }}",
-               --numa, "1", --memory, "{{ windows_template_build_memory_mb }}", --balloon, "0",
-               --net0, "virtio,bridge={{ windows_template_bridge }},link_down=1",
-               --agent, enabled=1,
-               --boot, order=ide0;scsi0]
+        # One Jinja list so the optional vTPM (Win11-class media checks for TPM 2.0)
+        # can join the argv; everything else is the same call as always.
+        argv: >-
+          {{ ['qm', 'create', windows_template_vmid | string,
+              '--name', windows_template_name ~ '-build',
+              '--machine', 'q35', '--bios', 'ovmf', '--ostype', 'win11',
+              '--efidisk0', windows_template_storage ~ ':1,efitype=4m,pre-enrolled-keys=1']
+             + (['--tpmstate0', windows_template_storage ~ ':1,version=v2.0']
+                if (windows_template_tpm | bool) else [])
+             + ['--scsihw', 'virtio-scsi-single',
+                '--scsi0', windows_template_storage ~ ':' ~ windows_template_disk_gb ~ ',iothread=1,discard=on',
+                '--ide0', 'local:iso/' ~ windows_template_iso ~ ',media=cdrom',
+                '--ide1', 'local:iso/answer-' ~ windows_template_name ~ '.iso,media=cdrom',
+                '--cpu', windows_template_cpu, '--sockets', '1',
+                '--cores', windows_template_build_cores | string,
+                '--numa', '1', '--memory', windows_template_build_memory_mb | string, '--balloon', '0',
+                '--net0', 'virtio,bridge=' ~ windows_template_bridge ~ ',link_down=1',
+                '--agent', 'enabled=1',
+                '--boot', 'order=ide0;scsi0'] }}
       when: windows_template_existing.rc != 0 or (windows_template_rebuild | bool)
       changed_when: true
 
