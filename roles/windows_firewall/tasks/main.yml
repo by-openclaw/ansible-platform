@@ -1,0 +1,63 @@
+---
+# Order matters once: the platform's rules exist BEFORE the default actions flip to block,
+# so the Ansible SSH session (stateful) and the next one are never cut.
+- name: "Win firewall | The platform's rules (exact, per application)"
+  community.windows.win_firewall_rule:
+    name: "{{ item.name }}"
+    direction: "{{ item.direction }}"
+    action: "{{ item.action }}"
+    protocol: "{{ item.protocol }}"
+    localport: "{{ item.localport | default(omit) }}"
+    remoteport: "{{ item.remoteport | default(omit) }}"
+    remoteip: "{{ item.remoteip | default(omit) }}"
+    program: "{{ item.program | default(omit) }}"
+    service: "{{ item.service | default(omit) }}"
+    icmp_type_code: "{{ item.icmp_type_code | default(omit) }}"
+    profiles: "{{ windows_firewall_profiles | map('lower') | list }}"
+    enabled: true
+    state: present
+  loop: "{{ windows_firewall_rules }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: "Win firewall | All profiles on, inbound AND outbound default block"
+  ansible.windows.win_firewall:
+    profiles: "{{ windows_firewall_profiles }}"
+    state: enabled
+    inbound_action: block
+    outbound_action: block
+
+- name: "Win firewall | Dropped and allowed connections logged (policy, per profile)"
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\{{ item.0 }}Profile\Logging'
+    name: "{{ item.1.name }}"
+    data: "{{ item.1.data }}"
+    type: "{{ item.1.type }}"
+  loop: "{{ windows_firewall_profiles | product(_wf_logging) | list }}"
+  loop_control:
+    label: "{{ item.0 }}/{{ item.1.name }}"
+  vars:
+    _wf_logging:
+      - { name: LogFileSize, data: "{{ windows_firewall_log_size_kb }}", type: dword }
+      - { name: LogDroppedPackets, data: 1, type: dword }
+      - { name: LogSuccessfulConnections, data: 1, type: dword }
+
+- name: "Win firewall | WinHTTP proxy today"
+  ansible.windows.win_command:
+    argv: [netsh.exe, winhttp, show, proxy]
+  register: windows_firewall_winhttp
+  changed_when: false
+  check_mode: false
+
+- name: "Win firewall | Internet egress through the platform proxy only (only on drift)"
+  ansible.windows.win_command:
+    argv: [netsh.exe, winhttp, set, proxy, "proxy-server={{ windows_firewall_winhttp_proxy }}", "bypass-list={{ windows_firewall_winhttp_bypass }}"]
+  when: windows_firewall_winhttp.stdout is not search(windows_firewall_winhttp_proxy | regex_escape)
+  changed_when: true
+
+- name: "Win firewall | Report"
+  ansible.builtin.debug:
+    msg: >-
+      WIN_FIREWALL {{ inventory_hostname }}: {{ windows_firewall_rules | selectattr('direction', 'equalto', 'in') | list | length }} inbound +
+      {{ windows_firewall_rules | selectattr('direction', 'equalto', 'out') | list | length }} outbound rules, both defaults block,
+      logging on, egress via {{ windows_firewall_winhttp_proxy }}
