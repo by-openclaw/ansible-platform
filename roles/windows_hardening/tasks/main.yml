@@ -1,0 +1,70 @@
+---
+# Every control is a module call over declared data (defaults/main.yml). Idempotent:
+# a converged guest reports changed=0.
+- name: "Win hardening | Account policies (secedit SystemAccess)"
+  community.windows.win_security_policy:
+    section: "{{ item.0.key }}"
+    key: "{{ item.1.key }}"
+    value: "{{ item.1.value }}"
+  loop: "{{ _wh_secpol_pairs }}"
+  loop_control:
+    label: "{{ item.0.key }}/{{ item.1.key }}={{ item.1.value }}"
+  vars:
+    _wh_secpol_pairs: >-
+      {%- set out = [] -%}
+      {%- for section, kv in windows_hardening_security_policy.items() -%}
+        {%- for k, v in kv.items() -%}{%- set _ = out.append([{'key': section}, {'key': k, 'value': v}]) -%}{%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: "Win hardening | Advanced audit policy (auditpol)"
+  ansible.windows.win_audit_policy_system:
+    subcategory: "{{ item.subcategory }}"
+    audit_type: "{{ item.audit_type }}"
+  loop: "{{ windows_hardening_audit_policies }}"
+  loop_control:
+    label: "{{ item.subcategory }}: {{ item.audit_type | join('+') }}"
+
+- name: "Win hardening | User rights assignment (exact set)"
+  ansible.windows.win_user_right:
+    name: "{{ item.name }}"
+    users: "{{ item.users }}"
+    action: set
+  loop: "{{ windows_hardening_user_rights }}"
+  loop_control:
+    label: "{{ item.name }} = {{ item.users | join(', ') }}"
+
+- name: "Win hardening | Security options + administrative templates (registry)"
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: "{{ item.type }}"
+  loop: "{{ windows_hardening_registry }}"
+  loop_control:
+    label: "{{ item.path | regex_replace('^HKLM:\\\\\\\\', '') | regex_replace('^.*\\\\\\\\', '') }}\\{{ item.name }}={{ item.data }}"
+
+- name: "Win hardening | Defender attack surface reduction rules (block)"
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\ASR\Rules'
+    name: "{{ item.key }}"
+    data: "{{ item.value | string }}"
+    type: string
+  loop: "{{ windows_hardening_asr_rules | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: "Win hardening | Services CIS wants off (absent on this edition = nothing to do)"
+  ansible.windows.win_service:
+    name: "{{ item }}"
+    start_mode: disabled
+    state: stopped
+  loop: "{{ windows_hardening_disabled_services }}"
+  failed_when: false
+
+- name: "Win hardening | Report"
+  ansible.builtin.debug:
+    msg: >-
+      WIN_HARDENING {{ inventory_hostname }}: CIS L1 — {{ windows_hardening_registry | length }} registry controls,
+      {{ windows_hardening_audit_policies | length }} audit subcategories, {{ windows_hardening_user_rights | length }} user rights,
+      {{ windows_hardening_asr_rules | length }} ASR rules, {{ windows_hardening_disabled_services | length }} services off
