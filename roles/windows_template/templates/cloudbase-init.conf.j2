@@ -3,15 +3,26 @@
 [DEFAULT]
 username=Administrator
 groups=Administrators
-inject_user_password=true  # pragma: allowlist secret — a boolean: the clone takes its password from its cloud-init drive
+# The clone takes its password from its cloud-init drive. NOTHING may follow the value:
+# oslo.config does not strip inline comments — "true  # ..." fails the boolean parse and
+# the service dies on start (exit 1067) before it even opens its log (seen live 2026-10-14).
+inject_user_password=true{# pragma: allowlist secret — a boolean, and this Jinja comment never renders #}
 first_logon_behaviour=no
 rename_admin_user=false
 config_drive_types=vfat,iso
 config_drive_locations=cdrom,hdd,partition
 metadata_services=cloudbaseinit.metadata.services.configdrive.ConfigDriveService
-plugins=cloudbaseinit.plugins.common.mtu.MTUPlugin,cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin,cloudbaseinit.plugins.common.setuserpassword.SetUserPasswordPlugin,cloudbaseinit.plugins.common.networkconfig.NetworkConfigPlugin,cloudbaseinit.plugins.common.sshpublickeys.SetUserSSHPublicKeysPlugin,cloudbaseinit.plugins.common.userdata.UserDataPlugin,cloudbaseinit.plugins.windows.extendvolumes.ExtendVolumesPlugin
-allow_reboot=false
+# No SetUserSSHPublicKeysPlugin: it writes the PROFILE's authorized_keys, which Windows
+# sshd ignores for Administrators (and it crashes while the admin has never logged on,
+# profile-less). The key lands in administrators_authorized_keys via the clone's
+# user-data script (modules/vm-windows) — the file sshd actually reads for admins.
+plugins=cloudbaseinit.plugins.common.mtu.MTUPlugin,cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin,cloudbaseinit.plugins.common.setuserpassword.SetUserPasswordPlugin,cloudbaseinit.plugins.common.networkconfig.NetworkConfigPlugin,cloudbaseinit.plugins.common.userdata.UserDataPlugin,cloudbaseinit.plugins.windows.extendvolumes.ExtendVolumesPlugin
+# SetHostName applies at a reboot: allow cloudbase its one reboot so a clone's first
+# boot ends with the right name (it was pending forever with false, seen 2026-10-14).
+allow_reboot=true
 stop_service_on_exit=false
 check_latest_version=false
-logdir=C:\ProgramData\cloudbase-init\
+# The MSI creates this log dir; a logdir that does not exist kills the service on start
+# (oslo_log opens its file before anything else — exit 1067, no trace, seen 2026-10-14).
+logdir=C:\Program Files\Cloudbase Solutions\Cloudbase-Init\log\
 logfile=cloudbase-init.log
