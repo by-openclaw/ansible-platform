@@ -1,0 +1,72 @@
+---
+# ==============================================================================
+# Windows Defender Firewall as declared data — the owner's rule (2026-10-14, row #6):
+# a rule per application, default-DENY inbound AND outbound, every open port declared.
+# The OPNsense catalog's sibling inside the guest: reconciled by modules, drift-corrected,
+# never clicked. Endpoints come from the inventory (the hosts' own entries), no literals.
+#
+# What the guest may talk to, and nothing else:
+#   DNS  → the provisioned resolver           NTP  → the firewall's OOB leg
+#   Loki → the monitoring host (Alloy, row #8) Wazuh → the Wazuh manager (row #8)
+#   HTTP/S → the platform proxy only (apt-cacher-ng tunnels HTTPS): Windows Update,
+#            Defender signatures, installers — the WinHTTP proxy points there
+# Who may talk to the guest:
+#   SSH (Ansible) from the management ranges; RDP from the jump server + management
+#   ranges; windows_exporter scrape (row #9) from the monitoring host; ICMP echo from
+#   management. Everything else: dropped and logged.
+# ==============================================================================
+windows_firewall_mgmt_cidrs: "{{ platform_mgmt_cidrs }}"
+windows_firewall_jumpserver: "{{ hostvars[groups['jumpserver'] | first].ansible_host }}"
+windows_firewall_monitoring: "{{ hostvars[groups['monitoring'] | first].ansible_host }}"
+windows_firewall_wazuh: "{{ hostvars[groups['wazuh'] | first].ansible_host }}"
+windows_firewall_proxy_host: "{{ hostvars[groups['pkgcache'] | first].ansible_host }}"
+windows_firewall_proxy_port: "{{ pkgcache_acng_port | default(3142) }}"
+windows_firewall_ntp_servers: "{{ [hostvars[groups['opnsense'] | first].ansible_host] }}"
+windows_firewall_resolvers: "{{ platform_windows_resolvers }}"
+windows_firewall_platform_cidr: "{{ platform_internal_cidr4 }}"
+
+# Every rule the guest carries. Names are the platform's (prefix so drift is visible);
+# `service` binds a rule to the Windows service inside svchost where a program path is
+# too broad (RDP, time, DNS client, Windows Update).
+windows_firewall_rules:
+  # --- inbound -------------------------------------------------------------------------
+  - { name: "PLATFORM-In-SSH",      direction: in,  action: allow, protocol: tcp, localport: "22",
+      program: '%SystemRoot%\System32\OpenSSH\sshd.exe', remoteip: "{{ windows_firewall_mgmt_cidrs }}" }
+  - { name: "PLATFORM-In-RDP",      direction: in,  action: allow, protocol: tcp, localport: "3389",
+      service: TermService, remoteip: "{{ [windows_firewall_jumpserver] + windows_firewall_mgmt_cidrs }}" }
+  - { name: "PLATFORM-In-Exporter", direction: in,  action: allow, protocol: tcp, localport: "9182",
+      remoteip: ["{{ windows_firewall_monitoring }}"] }
+  - { name: "PLATFORM-In-ICMPv4",   direction: in,  action: allow, protocol: icmpv4, icmp_type_code: { "8": "*" },
+      remoteip: "{{ windows_firewall_mgmt_cidrs + [windows_firewall_platform_cidr] }}" }
+  # --- outbound ------------------------------------------------------------------------
+  - { name: "PLATFORM-Out-DNS",     direction: out, action: allow, protocol: udp, remoteport: "53",
+      service: Dnscache, remoteip: "{{ windows_firewall_resolvers }}" }
+  - { name: "PLATFORM-Out-DNS-TCP", direction: out, action: allow, protocol: tcp, remoteport: "53",
+      service: Dnscache, remoteip: "{{ windows_firewall_resolvers }}" }
+  - { name: "PLATFORM-Out-NTP",     direction: out, action: allow, protocol: udp, remoteport: "123",
+      service: W32Time, remoteip: "{{ windows_firewall_ntp_servers }}" }
+  - { name: "PLATFORM-Out-Loki",    direction: out, action: allow, protocol: tcp, remoteport: "3100",
+      remoteip: ["{{ windows_firewall_monitoring }}"] }
+  - { name: "PLATFORM-Out-Wazuh",   direction: out, action: allow, protocol: tcp, remoteport: "1514,1515",
+      remoteip: ["{{ windows_firewall_wazuh }}"] }
+  - { name: "PLATFORM-Out-Proxy",   direction: out, action: allow, protocol: tcp, remoteport: "{{ windows_firewall_proxy_port }}",
+      remoteip: ["{{ windows_firewall_proxy_host }}"] }
+  - { name: "PLATFORM-Out-ICMPv4",  direction: out, action: allow, protocol: icmpv4, icmp_type_code: { "8": "*" },
+      remoteip: "{{ windows_firewall_mgmt_cidrs + [windows_firewall_platform_cidr] }}" }
+
+# Profiles: all on, both default actions block, dropped AND allowed connections logged
+# (CIS 9.x: 16 MB per profile log).
+windows_firewall_profiles: [Domain, Private, Public]
+windows_firewall_log_size_kb: 16384
+
+# Internet egress is the proxy or nothing: the system WinHTTP proxy (Windows Update,
+# Defender, msiexec, PowerShell) with the platform networks bypassed.
+windows_firewall_winhttp_proxy: "{{ windows_firewall_proxy_host }}:{{ windows_firewall_proxy_port }}"
+# WinHTTP bypass takes wildcards, not prefixes: a /9–/23 collapses to its first two
+# octets (10.1.0.0/16 -> 10.1.*, 10.6.224.0/20 -> 10.6.*), a /24 to three. Over-bypassing
+# inside the platform is harmless: "direct" there still meets the firewall's rules.
+windows_firewall_winhttp_bypass: >-
+  <local>;{{ ([windows_firewall_platform_cidr] + windows_firewall_mgmt_cidrs)
+             | map('regex_replace', '^(\d+\.\d+)\.\d+\.\d+/(?:9|1\d|2[0-3])$', '\1.*')
+             | map('regex_replace', '^(\d+\.\d+\.\d+)\.\d+/24$', '\1.*')
+             | unique | join(';') }}
