@@ -69,17 +69,26 @@
   when: windows_guest_power.stdout is not search(windows_guest_power_scheme)
   changed_when: true
 
-- name: "Win guest | No standby, no display timeout on AC (registry of the scheme)"
-  ansible.windows.win_regedit:
-    path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes\{{ windows_guest_power_scheme }}\{{ item.sub }}\{{ item.setting }}'
-    name: ACSettingIndex
-    data: 0
-    type: dword
-  loop:
-    - { sub: 238c9fa8-0aad-41ed-83f4-97be242c8f20, setting: 29f6c1db-86da-48c5-9fdb-f2b67b1f44da, label: standby }
-    - { sub: 7516b95f-f776-4464-8c53-06167f40cc99, setting: 3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e, label: display }
+# The scheme's registry keys are system-protected (win_regedit cannot create them —
+# seen live 2026-10-14): powercfg is the only writer. Query first, set on drift.
+- name: "Win guest | AC timeouts today (standby, display)"
+  ansible.windows.win_command:
+    argv: [powercfg.exe, /query, "{{ windows_guest_power_scheme }}", "{{ item.sub }}", "{{ item.setting }}"]
+  loop: "{{ windows_guest_power_timeouts }}"
   loop_control:
     label: "{{ item.label }}"
+  register: windows_guest_timeouts
+  changed_when: false
+  check_mode: false
+
+- name: "Win guest | No standby, no display timeout on AC (only on drift)"
+  ansible.windows.win_command:
+    argv: [powercfg.exe, /change, "{{ item.item.change }}", "0"]
+  loop: "{{ windows_guest_timeouts.results }}"
+  loop_control:
+    label: "{{ item.item.label }}"
+  when: item.stdout is not search('Current AC Power Setting Index:\s*0x00000000')
+  changed_when: true
 
 - name: "Win guest | Is there a hiberfil.sys?"
   ansible.windows.win_stat:
@@ -153,9 +162,40 @@
     state: present
   no_log: true
 
+# --- the OOB / break-glass local admin (identity/0004 §1): <org>, local, Vault-held -------
+- name: "Win guest | The break-glass password of this tier (Vault, created on first contact)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ windows_guest_oob_vault_path }}"
+    vault_secret_init:
+      password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"   # pragma: allowlist secret
+    vault_secret_metadata_put:
+      origin: "break-glass OS account of the {{ windows_guest_env }} tier (roles/user-mgmt + roles/windows_guest)"
+
+- name: "Win guest | The OOB admin account: {{ windows_guest_oob_user }} (local, Administrators)"
+  ansible.windows.win_user:
+    name: "{{ windows_guest_oob_user }}"
+    fullname: "{{ windows_guest_oob_user }}"
+    description: "Local break-glass admin - always local, never the IdP (identity/0004)"
+    password: "{{ vault_secret_result.password }}"
+    password_never_expires: true
+    user_cannot_change_password: false
+    groups: [Administrators]
+    groups_action: add
+    state: present
+  no_log: true
+
+- name: "Win guest | Its public key opens the SSH door too"
+  community.windows.win_lineinfile:
+    path: "{{ windows_guest_admin_keys_file }}"
+    line: "{{ lookup('ansible.builtin.file', windows_guest_oob_pubkey_file) | trim }}"
+    state: present
+    newline: unix
+
 - name: "Win guest | Report"
   ansible.builtin.debug:
     msg: >-
       WIN_GUEST {{ inventory_hostname }} ready: route to
       {{ windows_guest_routes | map(attribute='destination') | join(', ') }},
-      resolver answers, administrator password in Vault ({{ windows_guest_admin_vault_path }})
+      resolver answers, administrator password in Vault ({{ windows_guest_admin_vault_path }}), OOB admin {{ windows_guest_oob_user }} ({{ windows_guest_oob_vault_path }})
