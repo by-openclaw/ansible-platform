@@ -67,9 +67,40 @@
     state: present
   no_log: true
 
+# --- the OOB / break-glass local admin (identity/0004 §1): <org>, local, Vault-held -------
+- name: "Win guest | The break-glass password of this tier (Vault, created on first contact)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ windows_guest_oob_vault_path }}"
+    vault_secret_init:
+      password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"   # pragma: allowlist secret
+    vault_secret_metadata_put:
+      origin: "break-glass OS account of the {{ windows_guest_env }} tier (roles/user-mgmt + roles/windows_guest)"
+
+- name: "Win guest | The OOB admin account: {{ windows_guest_oob_user }} (local, Administrators)"
+  ansible.windows.win_user:
+    name: "{{ windows_guest_oob_user }}"
+    fullname: "{{ windows_guest_oob_user }}"
+    description: "Local break-glass admin - always local, never the IdP (identity/0004)"
+    password: "{{ vault_secret_result.password }}"
+    password_never_expires: true
+    user_cannot_change_password: false
+    groups: [Administrators]
+    groups_action: add
+    state: present
+  no_log: true
+
+- name: "Win guest | Its public key opens the SSH door too"
+  community.windows.win_lineinfile:
+    path: "{{ windows_guest_admin_keys_file }}"
+    line: "{{ lookup('ansible.builtin.file', windows_guest_oob_pubkey_file) | trim }}"
+    state: present
+    newline: unix
+
 - name: "Win guest | Report"
   ansible.builtin.debug:
     msg: >-
       WIN_GUEST {{ inventory_hostname }} ready: route to
       {{ windows_guest_routes | map(attribute='destination') | join(', ') }},
-      resolver answers, administrator password in Vault ({{ windows_guest_admin_vault_path }})
+      resolver answers, administrator password in Vault ({{ windows_guest_admin_vault_path }}), OOB admin {{ windows_guest_oob_user }} ({{ windows_guest_oob_vault_path }})
