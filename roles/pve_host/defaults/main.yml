@@ -113,9 +113,12 @@ pve_host_oidc_issuer: "https://authentik.{{ pve_host_domain }}/application/o/{{ 
 pve_host_oidc_scopes: "openid profile email groups"
 pve_host_oidc_admin_group: "{{ platform_service_groups.proxmox.admin }}"      # Authentik group; PVE stores it as <group>-<realm>
 pve_host_oidc_add_only_options: ['username-claim']   # accepted by "realm add" but not by "realm modify" (PVE 9)
-pve_host_acls:
+pve_host_oidc_enabled: true    # off = local admin only: no realm, no Authentik-group ACL (owner: pve.dev stays out of Authentik)
+pve_host_acls_local:
   - { path: "/", role: Administrator, kind: user, ugid: "{{ pve_host_local_admin }}@pam" }
+pve_host_acls_oidc:
   - { path: "/", role: Administrator, kind: group, ugid: "{{ pve_host_oidc_admin_group }}-{{ pve_host_oidc_realm }}" }
+pve_host_acls: "{{ pve_host_acls_local + (pve_host_acls_oidc if (pve_host_oidc_enabled | bool) else []) }}"
 
 # --- Automation identities (identity/0002: every identity declared, reconciled, least privilege) --
 # Custom roles with their exact privilege set (created or corrected on drift).
