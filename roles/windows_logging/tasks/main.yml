@@ -39,6 +39,53 @@
         dest: "{{ windows_logging_wazuh_dir }}\\authd.pass"
       no_log: true
 
+    - name: "Win logging | The manager API's user (Vault)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ windows_logging_wazuh_api_vault }}"
+
+    - name: "Win logging | A manager API token (on the manager, loopback)"
+      ansible.builtin.uri:
+        url: "{{ windows_logging_wazuh_api_url }}/security/user/authenticate"
+        method: POST
+        url_username: "{{ windows_logging_wazuh_api_user }}"
+        url_password: "{{ vault_secret_result.password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: [200]
+      delegate_to: "{{ groups['wazuh'] | first }}"
+      register: windows_logging_wazuh_token
+      no_log: true
+
+    - name: "Win logging | Agents the manager holds under this name"
+      ansible.builtin.uri:
+        url: "{{ windows_logging_wazuh_api_url }}/agents?name={{ inventory_hostname }}&select=id,status"
+        headers:
+          Authorization: "Bearer {{ windows_logging_wazuh_token.json.data.token }}"
+        validate_certs: false
+        status_code: [200]
+      delegate_to: "{{ groups['wazuh'] | first }}"
+      register: windows_logging_wazuh_same_name
+      no_log: true
+
+    - name: "Win logging | The predecessor's agents (not active) leave the manager"
+      ansible.builtin.uri:
+        url: "{{ windows_logging_wazuh_api_url }}/agents?agents_list={{ windows_logging_wazuh_stale | join(',') }}&status=disconnected,never_connected,pending&older_than=0s&purge=true"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ windows_logging_wazuh_token.json.data.token }}"
+        validate_certs: false
+        status_code: [200]
+      delegate_to: "{{ groups['wazuh'] | first }}"
+      vars:
+        windows_logging_wazuh_stale: >-
+          {{ windows_logging_wazuh_same_name.json.data.affected_items | default([])
+             | rejectattr('status', 'equalto', 'active') | map(attribute='id') | list }}
+      when: windows_logging_wazuh_stale | length > 0
+      changed_when: true
+      no_log: true
+
     - name: "Win logging | agent-auth against the manager"
       ansible.windows.win_command:
         argv: ["{{ windows_logging_wazuh_dir }}\\agent-auth.exe", -m, "{{ windows_logging_wazuh_manager }}", -G, "{{ windows_logging_wazuh_group }}"]
