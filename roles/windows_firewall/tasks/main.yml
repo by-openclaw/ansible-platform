@@ -9,7 +9,9 @@
     protocol: "{{ item.protocol }}"
     localport: "{{ item.localport | default(omit) }}"
     remoteport: "{{ item.remoteport | default(omit) }}"
-    remoteip: "{{ item.remoteip | default(omit) }}"
+    # A YAML list here fails the module's COM call ("Value does not fall within the
+    # expected range", every rule, 2026-10-15); the comma-joined string is what works.
+    remoteip: "{{ (item.remoteip | join(',')) if item.remoteip is defined else omit }}"
     program: "{{ item.program | default(omit) }}"
     service: "{{ item.service | default(omit) }}"
     icmp_type_code: "{{ item.icmp_type_code | default(omit) }}"

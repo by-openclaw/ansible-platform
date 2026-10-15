@@ -1,0 +1,53 @@
+---
+# ==============================================================================
+# Rotate the local Administrator password of Windows guests (row #7 of the Windows
+# walk; the LAPS-equivalent of a standalone guest, SEC-09 rotation machinery).
+# Order, like db-password-rotate: mint -> set on the guest (module payload over key
+# SSH, never argv) -> Vault (versioned: the previous value stays in the KV history).
+# The OOB break-glass account (<org>) is NOT rotated here: it is the tier-wide
+# break-glass doc, rotated with the Linux one.
+#
+#   ansible-playbook playbooks/windows-admin-rotate.yml [-e target=vm-winapp-01]
+# ==============================================================================
+- name: "Windows guests | rotate the local Administrator password"
+  hosts: "{{ target | default('windows_guests') }}"
+  gather_facts: false
+  vars:
+    rotate_vault_path: "{{ env | default(platform_env) }}/windows/{{ inventory_hostname }}/administrator"
+  tasks:
+    - name: "Rotate | Mint (24 chars, letters + digits — Windows complexity satisfied)"
+      ansible.builtin.set_fact:
+        rotate_new: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+      no_log: true
+
+    - name: "Rotate | The guest takes it (key SSH session, untouched by the change)"
+      ansible.windows.win_user:
+        name: Administrator
+        password: "{{ rotate_new }}"   # pragma: allowlist secret
+        password_never_expires: true
+        state: present
+      no_log: true
+
+    - name: "Rotate | Vault holds it (new KV version; the old one stays in history)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ rotate_vault_path }}"
+        vault_secret_init:
+          password: "{{ rotate_new }}"   # pragma: allowlist secret
+        vault_secret_force_fields:
+          password: "{{ rotate_new }}"   # pragma: allowlist secret
+        vault_secret_metadata_put:
+          rotated: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime }}"
+          origin: "playbooks/windows-admin-rotate.yml"
+
+    - name: "Rotate | Vault read-back matches the guest"
+      ansible.builtin.assert:
+        that: vault_secret_result.password == rotate_new   # pragma: allowlist secret
+        fail_msg: "Vault does not hold the password just set on {{ inventory_hostname }} — the guest's Administrator password is now ONLY in this run's memory; set it again by hand from the KV history"
+        quiet: true
+      no_log: true
+
+    - name: "Rotate | Report"
+      ansible.builtin.debug:
+        msg: "WIN_ROTATE {{ inventory_hostname }}: Administrator rotated, Vault {{ rotate_vault_path }} version advanced"

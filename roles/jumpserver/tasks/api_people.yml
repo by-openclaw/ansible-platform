@@ -78,6 +78,48 @@
       or jumpserver_group_id not in (jumpserver_owner.groups | map(attribute='id') | list)
     - not ansible_check_mode
 
+- name: "JumpServer people | The users group, if it exists"
+  ansible.builtin.set_fact:
+    jumpserver_users_group_now: "{{ jumpserver_people.results[1].json.results | selectattr('name', 'equalto', jumpserver_users_group) | first | default({}) }}"
+    jumpserver_daily_owner: "{{ jumpserver_people.results[0].json.results | selectattr('username', 'equalto', jumpserver_users_daily_username) | first | default({}) }}"
+
+- name: "JumpServer people | The bastion's users group"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/users/groups/"
+    method: POST
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      name: "{{ jumpserver_users_group }}"
+    status_code: [201]
+  register: jumpserver_users_group_created
+  changed_when: true
+  when:
+    - jumpserver_users_group_now | length == 0
+    - not ansible_check_mode
+
+- name: "JumpServer people | The users group's id"
+  ansible.builtin.set_fact:
+    jumpserver_users_group_id: "{{ jumpserver_users_group_created.json.id | default(jumpserver_users_group_now.id | default('')) }}"
+
+# The daily identity exists on the bastion only after its first Authentik sign-in: joined
+# when present, nothing to do before.
+- name: "JumpServer people | The owner's daily identity is a member of the users group"
+  ansible.builtin.uri:
+    url: "{{ jumpserver_api_url }}/users/users/{{ jumpserver_daily_owner.id }}/"
+    method: PATCH
+    headers: "{{ jumpserver_api_headers }}"
+    body_format: json
+    body:
+      groups: "{{ (jumpserver_daily_owner.groups | map(attribute='id') | list + [jumpserver_users_group_id]) | unique }}"
+    status_code: [200]
+  changed_when: true
+  when:
+    - jumpserver_daily_owner | length > 0
+    - jumpserver_users_group_id | length > 0
+    - jumpserver_users_group_id not in (jumpserver_daily_owner.groups | map(attribute='id') | list)
+    - not ansible_check_mode
+
 - name: "JumpServer people | Note the changes"
   ansible.builtin.set_fact:
     jumpserver_changes: >-

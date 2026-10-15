@@ -152,7 +152,17 @@ jumpserver_asset_groups:
   IPAM:          [netbox]
   Platform:      [warden]
   Hypervisor:    [proxmox_nodes]
+  Windows:       [windows_guests]   # RDP assets (rows #12-14 of the Windows walk, 2026-10-14)
 jumpserver_asset_default_node: "Other"
+
+# Windows guests are RDP assets reached as the same break-glass identity (<org>, local
+# Administrators member created by roles/windows_guest) — with the tier's break-glass
+# PASSWORD (Vault <tier>/break-glass/os, the doc the Linux hosts of that tier share)
+# instead of the SSH key. A host is a Windows asset when its inventory shell is PowerShell.
+jumpserver_windows_groups: [windows_guests]
+jumpserver_windows_protocol: rdp
+jumpserver_windows_port: 3389
+jumpserver_windows_secret_type: "password"   # pragma: allowlist secret
 
 # The bastion does not register itself.
 jumpserver_asset_exclude: ["{{ inventory_hostname }}"]
@@ -161,7 +171,7 @@ jumpserver_asset_exclude: ["{{ inventory_hostname }}"]
 # from the bastion both are reached as the break-glass admin, same key, same port as every
 # other host. Shell access here is audited — firewall config stays API-managed.
 # One entry per host: the first node of the map that names one of its groups, else the default.
-jumpserver_assets: >-
+jumpserver_assets: >-   # pragma: allowlist secret
   {%- set out = [] -%}
   {%- set seen = [] -%}
   {%- for node, grps in jumpserver_asset_groups.items() -%}
@@ -169,9 +179,27 @@ jumpserver_assets: >-
       {%- for h in groups.get(g, []) -%}
         {%- if h not in jumpserver_asset_exclude and h not in seen -%}
           {%- set _ = seen.append(h) -%}
+          {%- if hostvars[h].ansible_shell_type | default('') == 'powershell' -%}
+          {%- set tier = hostvars[h].env | default(platform_env) -%}
+          {%- set _ = out.append({'name': h,
+                                  'address': hostvars[h].ansible_host,
+                                  'node': node,
+                                  'platform': 'Windows',
+                                  'protocol': jumpserver_windows_protocol,
+                                  'port': jumpserver_windows_port,
+                                  'accounts': [{'username': jumpserver_asset_default_account,
+                                                'secret_type': jumpserver_windows_secret_type,
+                                                'vault_path': tier ~ '/break-glass/os',
+                                                'privileged': false},
+                                               {'username': jumpserver_asset_default_account ~ '-user',
+                                                'secret_type': jumpserver_windows_secret_type,
+                                                'vault_path': tier ~ '/break-glass/os-user',
+                                                'privileged': false}]}) -%}
+          {%- else -%}
           {%- set _ = out.append({'name': h,
                                   'address': hostvars[h].ansible_host,
                                   'node': node}) -%}
+          {%- endif -%}
         {%- endif -%}
       {%- endfor -%}
     {%- endfor -%}
@@ -221,3 +249,16 @@ jumpserver_email_subject_prefix: "[JumpServer] "
 # The login test: the bastion logs in to every asset itself; it is asked, then awaited.
 jumpserver_verify_retries: 40
 jumpserver_verify_delay: 5
+
+# Filled per Vault path by tasks/api_accounts_password.yml; empty when no password account exists.
+jumpserver_passwords: {}
+jumpserver_password_marks: {}
+
+# The users-level session (owner 2026-10-14, "as user"): the bastion's second group and its
+# permission — the Windows assets' <org>-user account only. The owner's daily identity joins
+# the group once it exists on the bastion (created by its first Authentik sign-in).
+jumpserver_users_group: "bastion-users"
+jumpserver_users_permission_name: "bastion-users-windows"
+jumpserver_users_permission_accounts: ["{{ jumpserver_asset_default_account }}-user"]
+jumpserver_users_daily_username: >-
+  {{ (platform_people | selectattr('platform_owner', 'defined') | selectattr('platform_owner') | first).username }}
