@@ -61,7 +61,7 @@ windows_firewall_log_size_kb: 16384
 
 # Internet egress is the proxy or nothing: the system WinHTTP proxy (Windows Update,
 # Defender, msiexec, PowerShell) with the platform networks bypassed.
-windows_firewall_winhttp_proxy: "{{ windows_firewall_proxy_host }}:{{ windows_firewall_proxy_port }}"
+windows_firewall_winhttp_proxy: "{{ platform_windows_proxy | default(windows_firewall_proxy_host ~ ':' ~ windows_firewall_proxy_port) }}"
 # WinHTTP bypass takes wildcards, not prefixes: a /9–/23 collapses to its first two
 # octets (10.1.0.0/16 -> 10.1.*, 10.6.224.0/20 -> 10.6.*), a /24 to three. Over-bypassing
 # inside the platform is harmless: "direct" there still meets the firewall's rules.

@@ -150,6 +150,17 @@
   when: windows_guest_rdp_fw_now.results | map(attribute='stdout') | select('search', 'Enabled:\s+No') | list | length > 0
   changed_when: true
 
+# --- session defaults: no Server Manager at logon, the platform proxy for user sessions ---
+- name: "Win guest | Session defaults (registry, reconciled)"
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: "{{ item.type }}"
+  loop: "{{ windows_guest_session_registry }}"
+  loop_control:
+    label: "{{ item.name }}={{ item.data }}"
+
 # --- the platform timezone, also on guests cloned before the template carried it --------
 - name: "Win guest | Brussels time"
   ansible.windows.win_timezone:
