@@ -50,7 +50,7 @@
   ansible.builtin.set_fact:
     pve_host_backup_signal_storages: >-
       {{ ((pve_host_backup_signal_jobs.stdout | from_json | map(attribute='storage') | list)
-          + [pve_host_nfs_backup_job.storage]) | unique | sort }}
+          + ([pve_host_nfs_backup_job.storage] if (pve_host_nfs_backup_enabled | bool) else [])) | unique | sort }}
 
 # One `pvesh get …/content` per target storage, so the play is told which ones.
 - name: "PVE host | Backup signal settings"
