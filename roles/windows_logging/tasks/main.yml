@@ -70,11 +70,25 @@
     creates_service: windows_exporter
     state: present
 
-- name: "Win logging | windows_exporter running with the system"
+# The MSI freezes its arguments into the service at install: the service's command line is
+# the declared state and converges on drift (an installed exporter follows a collector change).
+- name: "Win logging | windows_exporter runs the declared collectors (service command line)"
   ansible.windows.win_service:
     name: windows_exporter
+    path: '"{{ windows_logging_exporter_dir }}\windows_exporter.exe" --config.file="{{ windows_logging_exporter_dir }}\config.yaml" --collectors.enabled {{ windows_logging_exporter_collectors }} --web.listen-address=:{{ windows_logging_exporter_port }}'
     start_mode: auto
-    state: started
+  register: windows_logging_exporter_svc
+
+- name: "Win logging | windows_exporter running with the system (restarted on a command-line change)"
+  ansible.windows.win_service:
+    name: windows_exporter
+    state: "{{ 'restarted' if windows_logging_exporter_svc is changed else 'started' }}"
+
+# A dead collector kills the service AFTER a successful start: the metrics port must answer.
+- name: "Win logging | windows_exporter answers on its port"
+  community.windows.win_wait_for:
+    port: "{{ windows_logging_exporter_port }}"
+    timeout: 30
 
 # --- Grafana Alloy -----------------------------------------------------------------------
 - name: "Win logging | Alloy installer archive (pinned, via the platform proxy)"

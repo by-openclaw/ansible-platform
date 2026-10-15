@@ -24,7 +24,10 @@ windows_logging_wazuh_dir: 'C:\Program Files (x86)\ossec-agent'
 windows_logging_exporter_version: "0.31.3"
 windows_logging_exporter_msi_url: "https://github.com/prometheus-community/windows_exporter/releases/download/v{{ windows_logging_exporter_version }}/windows_exporter-{{ windows_logging_exporter_version }}-amd64.msi"
 windows_logging_exporter_port: 9182
-windows_logging_exporter_collectors: "cpu,cs,logical_disk,memory,net,os,service,system,tcp"
+# 0.31 dropped the `cs` collector (its hostname/memory facts live in `os`/`memory`): an unknown
+# name kills the service at start ("unknown collector cs", seen 2026-10-15).
+windows_logging_exporter_collectors: "cpu,logical_disk,memory,net,os,service,system,tcp"
+windows_logging_exporter_dir: 'C:\Program Files\windows_exporter'
 
 # --- Grafana Alloy: event log -> Loki --------------------------------------------------
 windows_logging_alloy_version: "1.11.2"
