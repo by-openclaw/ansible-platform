@@ -61,7 +61,14 @@
               {{ (windows_golden_resources.stdout | from_json) | selectattr('name', 'equalto', windows_golden_base)
                  | selectattr('template', 'defined') | map(attribute='vmid') | first }}
 
-        - name: "Golden | A previous golden template goes (rebuild)"
+        - name: "Golden | A previous golden build still running goes down first (rebuild)"
+          ansible.builtin.command:
+            argv: [qm, stop, "{{ windows_golden_vmid }}"]
+          when: windows_golden_existing.rc == 0
+          failed_when: false
+          changed_when: true
+
+        - name: "Golden | A previous golden template or build goes (rebuild)"
           ansible.builtin.command:
             argv: [qm, destroy, "{{ windows_golden_vmid }}", --purge]
           when: windows_golden_existing.rc == 0
@@ -133,6 +140,10 @@
             ansible_shell_type: powershell
             ansible_become: false
             ansible_ssh_private_key_file: "{{ windows_golden_ssh_key }}"
+            # A transient build host at a DHCP address: its host key is throwaway, and a stale key
+            # for that address in the controller's known_hosts must never block it (OpenSSH refuses
+            # a CHANGED key even with StrictHostKeyChecking=no — seen on the first run, 2026-10-15).
+            ansible_ssh_common_args: "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
             env: "{{ windows_golden_env }}"
             windows_golden_node: "{{ inventory_hostname }}"
             windows_golden_vmid: "{{ windows_golden_vmid }}"
