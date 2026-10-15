@@ -29,20 +29,30 @@
     inbound_action: block
     outbound_action: block
 
-- name: "Win firewall | Dropped and allowed connections logged (policy, per profile)"
-  ansible.windows.win_regedit:
-    path: 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\{{ item.0 }}Profile\Logging'
-    name: "{{ item.1.name }}"
-    data: "{{ item.1.data }}"
-    type: "{{ item.1.type }}"
-  loop: "{{ windows_firewall_profiles | product(_wf_logging) | list }}"
+# netsh writes the EFFECTIVE store (the policy registry keys only reach it after a policy
+# refresh and never showed in `netsh advfirewall show`, seen 2026-10-15): query, set on drift.
+- name: "Win firewall | Logging settings today"
+  ansible.windows.win_command:
+    argv: [netsh.exe, advfirewall, show, allprofiles, logging]
+  register: windows_firewall_logging_now
+  changed_when: false
+  check_mode: false
+
+- name: "Win firewall | Dropped and allowed connections logged, {{ windows_firewall_log_size_kb }} KB per profile (only on drift)"
+  ansible.windows.win_command:
+    argv: [netsh.exe, advfirewall, set, allprofiles, logging, "{{ item.key }}", "{{ item.value }}"]
+  loop:
+    - { key: droppedconnections, value: enable }
+    - { key: allowedconnections, value: enable }
+    - { key: maxfilesize, value: "{{ windows_firewall_log_size_kb }}" }
   loop_control:
-    label: "{{ item.0 }}/{{ item.1.name }}"
-  vars:
-    _wf_logging:
-      - { name: LogFileSize, data: "{{ windows_firewall_log_size_kb }}", type: dword }
-      - { name: LogDroppedPackets, data: 1, type: dword }
-      - { name: LogSuccessfulConnections, data: 1, type: dword }
+    label: "{{ item.key }}={{ item.value }}"
+  when: >-
+    (windows_firewall_logging_now.stdout | regex_findall({'droppedconnections': 'LogDroppedConnections\\s+(\\S+)',
+                                                           'allowedconnections': 'LogAllowedConnections\\s+(\\S+)',
+                                                           'maxfilesize': 'MaxFileSize\\s+(\\S+)'}[item.key])
+     | map('lower') | unique | list) != [item.value | string | lower]
+  changed_when: true
 
 - name: "Win firewall | WinHTTP proxy today"
   ansible.windows.win_command:
