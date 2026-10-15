@@ -133,17 +133,21 @@
 
 # `set rule … enable=Yes` answers "Updated N rule(s)" even when nothing changed: query first,
 # set only when a rule of the group is still disabled (idempotence, seen on every run).
-- name: "Win guest | RDP firewall group today"
+# `show rule` filters by name only (group= is a `set rule` filter — "'group' is not a valid
+# argument", 2026-10-15): the group's rules are queried by name, one call each.
+- name: "Win guest | RDP firewall rules today"
   ansible.windows.win_command:
-    argv: [netsh.exe, advfirewall, firewall, show, rule, group=remote desktop]
+    argv: [netsh.exe, advfirewall, firewall, show, rule, "name={{ item }}"]
+  loop: "{{ windows_guest_rdp_rules }}"
   register: windows_guest_rdp_fw_now
   changed_when: false
+  failed_when: false   # a rule absent on this edition is reported, not fatal
   check_mode: false
 
-- name: "Win guest | RDP firewall group open (only on drift)"
+- name: "Win guest | RDP firewall group open (only when a rule is still disabled)"
   ansible.windows.win_command:
     argv: [netsh.exe, advfirewall, firewall, set, rule, group=remote desktop, new, enable=Yes]
-  when: windows_guest_rdp_fw_now.stdout is search('Enabled:\s+No')
+  when: windows_guest_rdp_fw_now.results | map(attribute='stdout') | select('search', 'Enabled:\s+No') | list | length > 0
   changed_when: true
 
 # --- the platform timezone, also on guests cloned before the template carried it --------
