@@ -144,8 +144,25 @@
   changed_when: true
   no_log: true
 
-# The custom metadata of the document becomes exactly this map (Vault stores strings).
-- name: "Vault secret | Write custom metadata (audit trail)"
+# The custom metadata of the document becomes exactly this map (Vault stores strings):
+# read what it holds, write only on drift — an unconditional POST reported `changed` on
+# every converged run of every consumer that stamps metadata (seen 2026-10-15).
+- name: "Vault secret | Custom metadata today (when a write is declared)"
+  ansible.builtin.uri:
+    url: "{{ vault_secret_api_url }}/v1/{{ vault_secret_mount }}/metadata/{{ vault_secret_path }}"
+    headers:
+      X-Vault-Token: "{{ vault_secret_token }}"
+    timeout: "{{ vault_secret_api_timeout }}"
+    status_code: "{{ vault_secret_read_statuses }}"
+  delegate_to: "{{ vault_secret_host }}"
+  register: vault_secret_meta_before_put
+  changed_when: false
+  failed_when: false
+  check_mode: false   # read-only
+  no_log: true
+  when: vault_secret_metadata_put | default({}) | length > 0
+
+- name: "Vault secret | Write custom metadata (audit trail, only on drift)"
   ansible.builtin.uri:
     url: "{{ vault_secret_api_url }}/v1/{{ vault_secret_mount }}/metadata/{{ vault_secret_path }}"
     method: POST
@@ -159,8 +176,12 @@
   delegate_to: "{{ vault_secret_host }}"
   changed_when: true
   no_log: true
+  vars:
+    vault_secret_meta_want: "{{ dict(vault_secret_metadata_put.keys() | map('string') | zip(vault_secret_metadata_put.values() | map('string'))) }}"
+    vault_secret_meta_have: "{{ (vault_secret_meta_before_put.json.data.custom_metadata | default({}, true)) if (vault_secret_meta_before_put.status | default(-1)) == 200 else {} }}"
   when:
     - vault_secret_metadata_put | default({}) | length > 0
+    - vault_secret_meta_want != vault_secret_meta_have
     - not ansible_check_mode
 
 - name: "Vault secret | Publish the secret fields as `vault_secret_result`"
