@@ -26,6 +26,14 @@ windows_guest_dns_probe_name: "vault.{{ platform_domain }}"
 # Windows' name for Europe/Brussels (CET/CEST), like the Linux guests' timezone.
 windows_guest_timezone: "Romance Standard Time"
 
+# --- the OOB / break-glass local admin (identity/0004 §1) --------------------------------
+# The same account as on every Linux host and PVE node: `<org>`, always local, never the
+# IdP, password Vault-held per tier (same doc as the Linux break-glass of that tier),
+# the org's public key in administrators_authorized_keys for key SSH.
+windows_guest_oob_user: "{{ platform_org }}"
+windows_guest_oob_vault_path: "{{ windows_guest_env }}/break-glass/os"
+windows_guest_oob_pubkey_file: "{{ playbook_dir }}/../roles/user-mgmt/files/keys/id_ed25519_{{ platform_org }}.pub"
+windows_guest_admin_keys_file: 'C:\ProgramData\ssh\administrators_authorized_keys'
 # The platform's time source: the firewall serves NTP on every zone and the OOB plane
 # (roles/opnsense chrony); the Linux guests use their gateway the same way. Manual
 # peers only — no time.windows.com.
@@ -36,3 +44,7 @@ windows_guest_ntp_servers:
 windows_guest_removed_features: "{{ platform_windows_removed_features | default([]) }}"
 windows_guest_disabled_services: "{{ platform_windows_disabled_services | default([]) }}"
 windows_guest_power_scheme: "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"   # High performance
+# powercfg's fixed GUIDs: sub-group / setting, and the /change alias of each
+windows_guest_power_timeouts:
+  - { label: standby, sub: 238c9fa8-0aad-41ed-83f4-97be242c8f20, setting: 29f6c1db-86da-48c5-9fdb-f2b67b1f44da, change: standby-timeout-ac }
+  - { label: display, sub: 7516b95f-f776-4464-8c53-06167f40cc99, setting: 3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e, change: monitor-timeout-ac }
