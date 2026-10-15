@@ -1,10 +1,30 @@
 ---
 # --- root's automation keys (Terraform's snippet uploads ride root SSH) -----------------
-- name: "PVE host | Root's declared automation keys present"
+- name: "PVE host | Root's declared automation keys present (in pve-cluster's file)"
   ansible.posix.authorized_key:
     user: root
+    path: "{{ pve_host_root_keys_path }}"
+    manage_dir: false
     key: "{{ lookup('file', pve_host_root_keys_dir ~ '/' ~ item) }}"
   loop: "{{ pve_host_root_key_files }}"
+
+- name: "PVE host | Root's retired keys absent from it"
+  ansible.posix.authorized_key:
+    user: root
+    path: "{{ pve_host_root_keys_path }}"
+    manage_dir: false
+    key: "{{ lookup('file', item) }}"
+    state: absent
+  loop: "{{ lookup('ansible.builtin.fileglob', pve_host_root_keys_retired_dir ~ '/*.pub', wantlist=true) | sort }}"
+  loop_control:
+    label: "{{ item | basename }}"
+
+- name: "PVE host | root's authorized_keys is the symlink pve-cluster made to that file"
+  ansible.builtin.file:
+    src: "{{ pve_host_root_keys_path }}"
+    dest: /root/.ssh/authorized_keys
+    state: link
+    force: true
 
 # --- local admin (<org>@pam) -----------------------------------------------------------
 - name: "PVE host | Users today"

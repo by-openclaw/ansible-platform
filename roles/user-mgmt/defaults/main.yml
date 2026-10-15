@@ -79,6 +79,15 @@ user_mgmt_accounts:
     docker: false
     state: present
 
+# --- root's authorized_keys (identity/0004 §5: root never signs in over SSH) -------------
+# Declared and EXCLUSIVE on every guest (tasks/root_keys.yml): the file holds exactly this
+# list — empty, since sshd-hardening sets PermitRootLogin no and the keys Terraform seeds at
+# first boot (standard_ssh_keys) are a build input, not a standing grant. Not on the Proxmox
+# nodes: root@pam is the node's administrator there, its keys are roles/pve_host's
+# (pve_host_root_key_files).
+user_mgmt_root_keys: []
+user_mgmt_root_keys_managed: "{{ 'proxmox_nodes' not in group_names }}"
+
 # --- Foreign account PURGE (identity/0004 exception) --------------------------
 # The disable-never-delete rule (account.yml, state:absent) protects MANAGED
 # identities for the audit trail. FOREIGN accounts that were never part of the

@@ -209,12 +209,32 @@
     state: present
   no_log: true
 
-- name: "Win guest | Its public key opens the SSH door too"
-  community.windows.win_lineinfile:
+# --- administrators_authorized_keys: exactly the declared keys ------------------------------
+- name: "Win guest | The declared administrator keys ({{ windows_guest_admin_key_files | length }} files + {{ windows_guest_admin_keys_extra | length }} from the inventory)"
+  ansible.builtin.set_fact:
+    windows_guest_admin_keys: >-
+      {{ (lookup('ansible.builtin.file', *(windows_guest_admin_key_files | map('regex_replace', '^', windows_guest_keys_dir ~ '/') | list), wantlist=true)
+          + windows_guest_admin_keys_extra) | map('trim') | reject('eq', '') | list }}
+
+- name: "Win guest | administrators_authorized_keys holds exactly those keys"
+  ansible.windows.win_copy:
+    content: "{% for k in windows_guest_admin_keys %}{{ k }}\n{% endfor %}"
+    dest: "{{ windows_guest_admin_keys_file }}"
+
+- name: "Win guest | That file inherits nothing"
+  ansible.windows.win_acl_inheritance:
     path: "{{ windows_guest_admin_keys_file }}"
-    line: "{{ lookup('ansible.builtin.file', windows_guest_oob_pubkey_file) | trim }}"
+    state: absent
+    reorganize: false
+
+- name: "Win guest | That file: Administrators and SYSTEM only"
+  ansible.windows.win_acl:
+    path: "{{ windows_guest_admin_keys_file }}"
+    user: "{{ item }}"
+    rights: FullControl
+    type: allow
     state: present
-    newline: unix
+  loop: "{{ windows_guest_admin_keys_owners }}"
 
 # --- the "as user" account: <org>-user, Remote Desktop Users, Vault-held ---------------------
 - name: "Win guest | The user-session password of this tier (Vault, created on first contact)"

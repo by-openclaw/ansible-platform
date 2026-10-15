@@ -61,6 +61,10 @@
     loop_var: acct
     label: "{{ acct.name }} ({{ acct.state }})"
 
+- name: "User-mgmt | root's authorized_keys as declared (exclusive, not on the Proxmox nodes)"
+  ansible.builtin.import_tasks: root_keys.yml
+  when: user_mgmt_root_keys_managed | bool
+
 - name: "User-mgmt | Purge foreign accounts (delete, not disable)"
   ansible.builtin.import_tasks: purge.yml
   when: user_mgmt_purge_accounts | default([]) | length > 0

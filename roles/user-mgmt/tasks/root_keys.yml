@@ -1,0 +1,25 @@
+---
+# root's authorized_keys as declared data — identity/0004 §5: root never signs in over SSH
+# (sshd-hardening: PermitRootLogin no). The keys Terraform seeds at first boot
+# (standard_ssh_keys) are a build input, not a grant that outlives the build: the file holds
+# exactly user_mgmt_root_keys (empty by default). Not on the Proxmox nodes — root@pam is the
+# node's administrator there and roles/pve_host owns its keys.
+- name: "User-mgmt | root's .ssh"
+  ansible.builtin.file:
+    path: /root/.ssh
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: "User-mgmt | root's authorized_keys holds exactly the declared keys ({{ user_mgmt_root_keys | length }})"
+  ansible.builtin.copy:
+    content: |
+      # roles/user-mgmt (ansible-platform): root signs in over SSH nowhere (identity/0004 §5) — declared keys only
+      {% for k in user_mgmt_root_keys %}
+      {{ k }}
+      {% endfor %}
+    dest: /root/.ssh/authorized_keys
+    owner: root
+    group: root
+    mode: "0600"

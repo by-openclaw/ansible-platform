@@ -14,6 +14,8 @@
 #       ansible-playbook playbooks/controller-files.yml -e controller_files_set_aside=true
 #   Empty the set-aside area, for good (the one step that cannot be undone):
 #       ansible-playbook playbooks/controller-files.yml -e controller_files_purge=true
+#   The same three steps for the controller's SSH key files (~/.ssh, platform_controller_keys_kept):
+#       … -e controller_files_area=keys
 #
 # A file is never read here: only names are compared. Before the first run each file was
 # compared with Vault by playbooks/secrets-to-vault.yml --check and secrets-drift-report.yml.
@@ -26,10 +28,14 @@
   vars:
     controller_files_set_aside: false
     controller_files_purge: false
-    controller_files_dir: "{{ platform_controller_files_dir }}"
+    controller_files_area: secrets     # or keys: the SSH key files of ~/.ssh
+    controller_files_areas:
+      secrets: {dir: "{{ platform_controller_files_dir }}", kept: "{{ platform_controller_files_kept }}"}
+      keys: {dir: "{{ platform_controller_keys_dir }}", kept: "{{ platform_controller_keys_kept }}"}
+    controller_files_dir: "{{ controller_files_areas[controller_files_area].dir }}"
     controller_files_aside: "{{ platform_controller_files_set_aside }}"
-    controller_files_aside_dir: "{{ platform_controller_files_dir }}/{{ platform_controller_files_set_aside }}"
-    controller_files_keep_re: "^({{ platform_controller_files_kept | map(attribute='path') | join('|') }})$"
+    controller_files_aside_dir: "{{ controller_files_dir }}/{{ platform_controller_files_set_aside }}"
+    controller_files_keep_re: "^({{ controller_files_areas[controller_files_area].kept | map(attribute='path') | join('|') }})$"
     controller_files_aside_re: "^{{ platform_controller_files_set_aside | regex_escape }}(/|$)"
   tasks:
     - name: "Controller files | Every file of the folder"
@@ -127,8 +133,8 @@
           - controller_files_other | length == 0
           - controller_files_copies.files | length == 0
         fail_msg: >-
-          {{ controller_files_other | length }} file(s) of {{ controller_files_dir }} are not declared in
-          platform_controller_files_kept (and {{ controller_files_copies.files | length }} copy(ies) of the folder
+          {{ controller_files_other | length }} file(s) of {{ controller_files_dir }} are not declared for
+          the {{ controller_files_area }} area (and {{ controller_files_copies.files | length }} copy(ies) of the folder
           exist): put the credential in Vault, or declare the file with its reader; then
           `-e controller_files_set_aside=true`.
         success_msg: >-
