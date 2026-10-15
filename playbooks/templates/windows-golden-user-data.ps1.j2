@@ -1,0 +1,13 @@
+#ps1
+# cloud-init user-data of the golden build (playbooks/windows-golden.yml): the build admin key
+# where Windows sshd reads it for administrators. Same shape as the Terraform module's.
+$ErrorActionPreference = 'Stop'
+$keys = @'
+{{ windows_golden_pubkey | trim }}
+'@
+$d = Join-Path $env:ProgramData 'ssh'
+New-Item -ItemType Directory -Force -Path $d | Out-Null
+$p = Join-Path $d 'administrators_authorized_keys'
+Set-Content -Path $p -Value $keys -Encoding ascii
+icacls.exe $p /inheritance:r /grant 'Administrators:F' /grant 'SYSTEM:F' | Out-Null
+if (-not (Test-Path $p)) { exit 1 }
