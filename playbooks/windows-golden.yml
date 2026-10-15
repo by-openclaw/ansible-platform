@@ -40,9 +40,12 @@
       failed_when: false
       check_mode: false
 
-    - name: "Golden | Skip or replace"
+    # Three states of the declared vmid: absent (build), a finished template (nothing to do),
+    # or a built clone sysprep has powered off but no freeze followed (a re-run freezes it).
+    - name: "Golden | Skip, freeze, or replace"
       ansible.builtin.set_fact:
         windows_golden_build: "{{ windows_golden_existing.rc != 0 or (windows_golden_rebuild | bool) }}"
+        windows_golden_is_template: "{{ windows_golden_existing.rc == 0 and (windows_golden_existing.stdout is search('template: 1')) }}"
 
     - name: "Golden | The base template's vmid"
       ansible.builtin.command:
@@ -241,18 +244,27 @@
   become: true
   gather_facts: false
   vars:
-    windows_golden_name: "{{ hostvars[groups['windows_golden'][0]].windows_golden_name | default('tpl-ws2025-std-gui-gold') }}"
-    windows_golden_vmid: "{{ hostvars[groups['windows_golden'][0]].windows_golden_vmid | default(9110) }}"
+    windows_golden_name: "tpl-ws2025-std-gui-gold"
+    windows_golden_vmid: 9110
+    windows_golden_bridge: vmbr0
+    windows_golden_sysprep_retries: 180      # 45 min: generalize walks every servicing module (>10 min seen)
   tasks:
-    - name: "Golden | Wait for the power-off"
+    - name: "Golden | Is it a template already?"
+      ansible.builtin.command:
+        argv: [qm, config, "{{ windows_golden_vmid }}"]
+      register: windows_golden_cfg
+      changed_when: false
+      check_mode: false
+
+    - name: "Golden | Wait for sysprep's power-off"
       ansible.builtin.command:
         argv: [qm, status, "{{ windows_golden_vmid }}"]
       register: windows_golden_status
       until: windows_golden_status.stdout is search('stopped')
-      retries: 40
+      retries: "{{ windows_golden_sysprep_retries }}"
       delay: 15
       changed_when: false
-      when: groups['windows_golden'] | default([]) | length > 0
+      when: "windows_golden_cfg.stdout is not search('template: 1')"
 
     - name: "Golden | Freeze as the golden template (in place; the base's vmid stays the clean build)"
       ansible.builtin.command:
@@ -263,7 +275,7 @@
       loop_control:
         label: "{{ item[1] }}"
       changed_when: true
-      when: groups['windows_golden'] | default([]) | length > 0
+      when: "windows_golden_cfg.stdout is not search('template: 1')"
 
     - name: "Golden | The user-data snippet leaves the node"
       ansible.builtin.file:
