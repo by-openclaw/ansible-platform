@@ -1,0 +1,245 @@
+---
+# ==============================================================================
+# The GOLDEN Windows template — the owner's deliverable (2026-10-14): "tpl with min
+# footprint and high level of security". The base template (roles/windows_template,
+# unattended install) is cloned once, the clone gets the platform's full guest baseline
+# through the SAME roles every running guest gets (windows_guest, windows_hardening,
+# windows_firewall, windows_logging), is scrubbed of everything per-host, generalised
+# by sysprep and frozen as a second template. Terraform clones the golden one; a
+# clone's first boot then only has to apply what is per-host (name, address, keys,
+# passwords, enrolment) — minutes, not a role walk.
+#
+#   ansible-playbook playbooks/windows-golden.yml -e target=br-pmox-03
+#     [-e windows_golden_rebuild=true]      # replace an existing golden template
+#     [-e windows_golden_base=tpl-win11-pro -e windows_golden_name=tpl-win11-pro-gold -e windows_golden_vmid=9111]
+# The golden template keeps the base template's vmid untouched (9100 stays the clean build).
+#
+# Nothing here is a script: qm/pvesh argv on the node, modules on the guest; the
+# golden VM joins the play through add_host with the guests' own connection model
+# (key SSH as Administrator, PowerShell shell).
+# ==============================================================================
+- name: "Windows golden | clone the base template, bring the guest up"
+  hosts: "{{ target | default('none') }}"
+  become: true
+  gather_facts: false
+  vars:
+    windows_golden_base: "tpl-ws2025-std-gui"
+    windows_golden_name: "tpl-ws2025-std-gui-gold"
+    windows_golden_vmid: 9110                 # built in place: the clone IS the golden template
+    windows_golden_rebuild: false
+    windows_golden_bridge: vmbr0              # link UP: the baseline reaches Vault/Loki/Wazuh through the proxy
+    windows_golden_env: dev
+    windows_golden_boot_retries: 60           # 20 min for first boot + cloudbase + rename reboot
+    windows_golden_ssh_key: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_rune_nopass"
+  tasks:
+    - name: "Golden | Does the golden template exist already?"
+      ansible.builtin.command:
+        argv: [qm, config, "{{ windows_golden_vmid }}"]
+      register: windows_golden_existing
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: "Golden | Skip or replace"
+      ansible.builtin.set_fact:
+        windows_golden_build: "{{ windows_golden_existing.rc != 0 or (windows_golden_rebuild | bool) }}"
+
+    - name: "Golden | The base template's vmid"
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+      register: windows_golden_resources
+      changed_when: false
+      check_mode: false
+      when: windows_golden_build | bool
+
+    - name: "Golden | Build block"
+      when: windows_golden_build | bool
+      block:
+        - name: "Golden | Base vmid resolved"
+          ansible.builtin.set_fact:
+            windows_golden_base_vmid: >-
+              {{ (windows_golden_resources.stdout | from_json) | selectattr('name', 'equalto', windows_golden_base)
+                 | selectattr('template', 'defined') | map(attribute='vmid') | first }}
+
+        - name: "Golden | A previous golden template goes (rebuild)"
+          ansible.builtin.command:
+            argv: [qm, destroy, "{{ windows_golden_vmid }}", --purge]
+          when: windows_golden_existing.rc == 0
+          changed_when: true
+
+        - name: "Golden | Full clone of the base template"
+          ansible.builtin.command:
+            argv: [qm, clone, "{{ windows_golden_base_vmid }}", "{{ windows_golden_vmid }}",
+                   --full, "1", --name, "{{ windows_golden_name }}-build"]
+          changed_when: true
+
+        # The clone boots like any clone: cloud-init drive present (inherited), NIC up; without
+        # user-data it keeps the template's Administrator (the build password from Vault) —
+        # the key door is opened by the template itself (sshd auto + firewall door).
+        # qm reads the public key from a file ON THE NODE: the controller's key lands there for
+        # the one call and leaves again below.
+        - name: "Golden | The build admin public key, on the node for qm"
+          ansible.builtin.copy:
+            src: "{{ windows_golden_ssh_key }}.pub"
+            dest: "/var/lib/vz/snippets/golden-admin-{{ windows_golden_vmid }}.pub"
+            mode: "0600"
+
+        - name: "Golden | NIC up, DHCP on the bridge, the build admin key through cloud-init"
+          ansible.builtin.command:
+            argv: [qm, set, "{{ windows_golden_vmid }}",
+                   --net0, "virtio,bridge={{ windows_golden_bridge }}",
+                   --ipconfig0, "ip=dhcp",
+                   --sshkeys, "/var/lib/vz/snippets/golden-admin-{{ windows_golden_vmid }}.pub"]
+          changed_when: true
+
+        - name: "Golden | The key file leaves the node"
+          ansible.builtin.file:
+            path: "/var/lib/vz/snippets/golden-admin-{{ windows_golden_vmid }}.pub"
+            state: absent
+
+        - name: "Golden | Start it"
+          ansible.builtin.command:
+            argv: [qm, start, "{{ windows_golden_vmid }}"]
+          changed_when: true
+
+        - name: "Golden | Wait for the guest agent and an address"
+          ansible.builtin.command:
+            argv: [qm, guest, cmd, "{{ windows_golden_vmid }}", network-get-interfaces]
+          register: windows_golden_ifaces
+          until: >-
+            windows_golden_ifaces.rc == 0
+            and (windows_golden_ifaces.stdout | from_json | map(attribute='ip-addresses') | flatten
+                 | selectattr('ip-address-type', 'equalto', 'ipv4') | map(attribute='ip-address')
+                 | reject('match', '^(127\.|169\.254\.)') | list | length > 0)
+          retries: "{{ windows_golden_boot_retries }}"
+          delay: 20
+          changed_when: false
+          failed_when: false
+
+        - name: "Golden | Its address"
+          ansible.builtin.set_fact:
+            windows_golden_ip: >-
+              {{ windows_golden_ifaces.stdout | from_json | map(attribute='ip-addresses') | flatten
+                 | selectattr('ip-address-type', 'equalto', 'ipv4') | map(attribute='ip-address')
+                 | reject('match', '^(127\.|169\.254\.)') | first }}
+
+        - name: "Golden | The clone joins the play as a Windows guest"
+          ansible.builtin.add_host:
+            name: "{{ windows_golden_name }}-build"
+            groups: [windows_golden]
+            ansible_host: "{{ windows_golden_ip }}"
+            ansible_user: Administrator
+            ansible_port: 22
+            ansible_shell_type: powershell
+            ansible_become: false
+            ansible_ssh_private_key_file: "{{ windows_golden_ssh_key }}"
+            env: "{{ windows_golden_env }}"
+            windows_golden_node: "{{ inventory_hostname }}"
+            windows_golden_vmid: "{{ windows_golden_vmid }}"
+            windows_golden_name: "{{ windows_golden_name }}"
+          changed_when: false
+
+        - name: "Golden | The SSH door answers"
+          ansible.builtin.wait_for:
+            host: "{{ windows_golden_ip }}"
+            port: 22
+            timeout: 600
+          delegate_to: localhost
+          become: false
+
+- name: "Windows golden | the platform's full baseline on the clone"
+  hosts: windows_golden
+  gather_facts: false
+  vars:
+    # The baseline writes per-host secrets for the GOLDEN build to a throwaway doc, never to a
+    # real guest's path; the first boot of each clone sets its own (roles/windows_guest).
+    windows_guest_admin_vault_path: "{{ env }}/windows/golden-build/administrator"
+  roles:
+    - windows_guest
+    - windows_hardening
+    - windows_firewall
+    - windows_logging
+
+- name: "Windows golden | scrub what is per-host, generalise, freeze"
+  hosts: windows_golden
+  gather_facts: false
+  tasks:
+    # Wazuh enrolment is per host (client.keys = this clone's identity on the manager): removed,
+    # every clone enrols itself at first contact. The agent stays installed and configured.
+    - name: "Golden | Wazuh agent stopped for the scrub"
+      ansible.windows.win_service:
+        name: WazuhSvc
+        state: stopped
+
+    - name: "Golden | The golden build's enrolment leaves the image"
+      ansible.windows.win_file:
+        path: 'C:\Program Files (x86)\ossec-agent\client.keys'
+        state: absent
+
+    - name: "Golden | Alloy bookmarks (positions of THIS clone's logs) leave the image"
+      ansible.windows.win_file:
+        path: 'C:\ProgramData\GrafanaLabs\Alloy\bookmarks'
+        state: absent
+
+    - name: "Golden | The installer cache leaves the image (footprint)"
+      ansible.windows.win_file:
+        path: 'C:\ProgramData\platform\installers'
+        state: absent
+
+    - name: "Golden | The admin key file leaves the image (each clone gets its own from cloud-init)"
+      ansible.windows.win_file:
+        path: 'C:\ProgramData\ssh\administrators_authorized_keys'
+        state: absent
+
+    # sysprep generalises (new SID, hostname, cloudbase re-armed by its own unattend) and powers
+    # off; the session ends with it — the task's failure is the expected outcome.
+    - name: "Golden | sysprep /generalize /oobe /shutdown"
+      ansible.windows.win_command:
+        argv: ['C:\Windows\System32\Sysprep\sysprep.exe', /generalize, /oobe, /shutdown, '/unattend:C:\Windows\cb-unattend.xml']
+      async: 60
+      poll: 0
+      changed_when: true
+      failed_when: false
+
+- name: "Windows golden | freeze on the node"
+  hosts: "{{ target | default('none') }}"
+  become: true
+  gather_facts: false
+  vars:
+    windows_golden_name: "{{ hostvars[groups['windows_golden'][0]].windows_golden_name | default('tpl-ws2025-std-gui-gold') }}"
+    windows_golden_vmid: "{{ hostvars[groups['windows_golden'][0]].windows_golden_vmid | default(9110) }}"
+  tasks:
+    - name: "Golden | Wait for the power-off"
+      ansible.builtin.command:
+        argv: [qm, status, "{{ windows_golden_vmid }}"]
+      register: windows_golden_status
+      until: windows_golden_status.stdout is search('stopped')
+      retries: 40
+      delay: 15
+      changed_when: false
+      when: groups['windows_golden'] | default([]) | length > 0
+
+    - name: "Golden | Freeze as the golden template (in place; the base's vmid stays the clean build)"
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop:
+        - [qm, set, "{{ windows_golden_vmid }}", --name, "{{ windows_golden_name }}", --net0, "virtio,bridge={{ windows_golden_bridge | default('vmbr0') }},link_down=1", --delete, sshkeys,ipconfig0]
+        - [qm, template, "{{ windows_golden_vmid }}"]
+      loop_control:
+        label: "{{ item[1] }}"
+      changed_when: true
+      when: groups['windows_golden'] | default([]) | length > 0
+
+    - name: "Golden | Report"
+      ansible.builtin.command:
+        argv: [qm, config, "{{ windows_golden_vmid }}"]
+      register: windows_golden_final
+      changed_when: false
+
+    - name: "Golden | The golden template stands"
+      ansible.builtin.assert:
+        that:
+          - "windows_golden_final.stdout is search('template: 1')"
+          - "windows_golden_final.stdout is search('name: ' ~ windows_golden_name)"
+        fail_msg: "vmid {{ windows_golden_vmid }} is not the finished golden template"
+        success_msg: "WIN_GOLDEN {{ windows_golden_name }} vmid={{ windows_golden_vmid }} ready (baseline + hardening + firewall + agents baked)"
