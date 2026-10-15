@@ -36,7 +36,7 @@ windows_firewall_rules:
       service: TermService, remoteip: "{{ [windows_firewall_jumpserver] + windows_firewall_mgmt_cidrs }}" }
   - { name: "PLATFORM-In-Exporter", direction: in,  action: allow, protocol: tcp, localport: "9182",
       remoteip: ["{{ windows_firewall_monitoring }}"] }
-  - { name: "PLATFORM-In-ICMPv4",   direction: in,  action: allow, protocol: icmpv4, icmp_type_code: { "8": "*" },
+  - { name: "PLATFORM-In-ICMPv4",   direction: in,  action: allow, protocol: icmpv4, icmp_type_code: ["8:*"],
       remoteip: "{{ windows_firewall_mgmt_cidrs + [windows_firewall_platform_cidr] }}" }
   # --- outbound ------------------------------------------------------------------------
   - { name: "PLATFORM-Out-DNS",     direction: out, action: allow, protocol: udp, remoteport: "53",
@@ -51,7 +51,7 @@ windows_firewall_rules:
       remoteip: ["{{ windows_firewall_wazuh }}"] }
   - { name: "PLATFORM-Out-Proxy",   direction: out, action: allow, protocol: tcp, remoteport: "{{ windows_firewall_proxy_port }}",
       remoteip: ["{{ windows_firewall_proxy_host }}"] }
-  - { name: "PLATFORM-Out-ICMPv4",  direction: out, action: allow, protocol: icmpv4, icmp_type_code: { "8": "*" },
+  - { name: "PLATFORM-Out-ICMPv4",  direction: out, action: allow, protocol: icmpv4, icmp_type_code: ["8:*"],
       remoteip: "{{ windows_firewall_mgmt_cidrs + [windows_firewall_platform_cidr] }}" }
 
 # Profiles: all on, both default actions block, dropped AND allowed connections logged
