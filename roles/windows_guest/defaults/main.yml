@@ -70,6 +70,6 @@ windows_guest_rdp_rules:
 windows_guest_session_registry:
   - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Server\ServerManager', name: DoNotOpenAtLogon, data: 1, type: dword }
   - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\Internet Settings', name: ProxySettingsPerUser, data: 0, type: dword }
-  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings', name: ProxyEnable, data: 1, type: dword }
+  - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings', name: ProxyEnable, data: "{{ 0 if (platform_windows_egress_open | default(false) | bool) else 1 }}", type: dword }
   - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings', name: ProxyServer, data: "{{ platform_windows_proxy }}", type: string }
   - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings', name: ProxyOverride, data: "{{ platform_windows_proxy_bypass }}", type: string }

@@ -22,12 +22,12 @@
   loop_control:
     label: "{{ item.name }}"
 
-- name: "Win firewall | All profiles on, inbound AND outbound default block"
+- name: "Win firewall | All profiles on, inbound block, outbound {{ windows_firewall_outbound_action }} (declared posture)"
   ansible.windows.win_firewall:
     profiles: "{{ windows_firewall_profiles }}"
     state: enabled
     inbound_action: block
-    outbound_action: block
+    outbound_action: "{{ windows_firewall_outbound_action }}"
 
 # netsh writes the EFFECTIVE store (the policy registry keys only reach it after a policy
 # refresh and never showed in `netsh advfirewall show`, seen 2026-10-15): query, set on drift.
@@ -64,12 +64,23 @@
 - name: "Win firewall | Internet egress through the platform proxy only (only on drift)"
   ansible.windows.win_command:
     argv: [netsh.exe, winhttp, set, proxy, "proxy-server={{ windows_firewall_winhttp_proxy }}", "bypass-list={{ windows_firewall_winhttp_bypass }}"]
-  when: windows_firewall_winhttp.stdout is not search(windows_firewall_winhttp_proxy | regex_escape)
+  when:
+    - not (windows_firewall_egress_open | bool)
+    - windows_firewall_winhttp.stdout is not search(windows_firewall_winhttp_proxy | regex_escape)
+  changed_when: true
+
+- name: "Win firewall | Direct system egress while the posture is open (only on drift)"
+  ansible.windows.win_command:
+    argv: [netsh.exe, winhttp, reset, proxy]
+  when:
+    - windows_firewall_egress_open | bool
+    - windows_firewall_winhttp.stdout is not search('Direct access')
   changed_when: true
 
 - name: "Win firewall | Report"
   ansible.builtin.debug:
     msg: >-
       WIN_FIREWALL {{ inventory_hostname }}: {{ windows_firewall_rules | selectattr('direction', 'equalto', 'in') | list | length }} inbound +
-      {{ windows_firewall_rules | selectattr('direction', 'equalto', 'out') | list | length }} outbound rules, both defaults block,
-      logging on, egress via {{ windows_firewall_winhttp_proxy }}
+      {{ windows_firewall_rules | selectattr('direction', 'equalto', 'out') | list | length }} outbound rules, inbound block,
+      outbound {{ windows_firewall_outbound_action }}, logging on,
+      egress {{ 'direct (declared open posture)' if (windows_firewall_egress_open | bool) else 'via ' ~ windows_firewall_winhttp_proxy }}
