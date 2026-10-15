@@ -229,6 +229,17 @@
         path: 'C:\ProgramData\ssh\administrators_authorized_keys'
         state: absent
 
+    # The base build's /generalize already spent the evaluation image's re-arm: a second one is
+    # refused (sysprep 0xc004d307 "maximum re-arms exceeded", run #3, 2026-10-15). SkipRearm is
+    # Microsoft's switch for exactly this — generalise without touching the licensing state;
+    # the clones keep whatever re-arm the image has left, and a product key clears it anyway.
+    - name: "Golden | sysprep keeps the licensing state (SkipRearm)"
+      ansible.windows.win_regedit:
+        path: 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform'
+        name: SkipRearm
+        data: 1
+        type: dword
+
     # sysprep generalises (new SID, hostname, cloudbase re-armed by its own unattend) and powers
     # off; the session ends with it — the task's failure is the expected outcome.
     - name: "Golden | sysprep /generalize /oobe /shutdown"
