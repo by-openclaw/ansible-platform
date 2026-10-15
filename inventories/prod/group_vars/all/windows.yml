@@ -28,3 +28,12 @@ platform_windows_resolvers:
 # user sessions (WinINET: browsers, installers) alike — the guests' only way out.
 platform_windows_proxy: "{{ hostvars[groups['pkgcache'] | first].ansible_host }}:{{ pkgcache_acng_port | default(3142) }}"
 platform_windows_proxy_bypass: "<local>;10.*"
+
+# --- egress posture of the Windows guests (owner 2026-10-15) ------------------------------
+# The platform's hosts have had open internet since the beginning; the Windows guests were
+# the first with a locked egress (default-deny outbound, the package cache as the only door)
+# and that broke their work (no plain HTTP, CRL/OCSP checks failing, portals unreachable).
+# Until the egress proxy + the "internet by request" portal exist (services/0012), the
+# Windows guests get the SAME posture as every other host: outbound open, direct, logged,
+# inbound still denied. One flag, one PR to flip back when the service lands.
+platform_windows_egress_open: true

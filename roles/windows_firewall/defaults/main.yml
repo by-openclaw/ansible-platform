@@ -57,6 +57,11 @@ windows_firewall_rules:
 # Profiles: all on, both default actions block, dropped AND allowed connections logged
 # (CIS 9.x: 16 MB per profile log).
 windows_firewall_profiles: [Domain, Private, Public]
+# Outbound posture: block (the service model) or open (the platform's current posture,
+# group_vars/all/windows.yml `platform_windows_egress_open`, owner 2026-10-15). Open means
+# direct egress — no WinHTTP/WinINET proxy either, so nothing routes through the package cache.
+windows_firewall_egress_open: "{{ platform_windows_egress_open | default(false) }}"
+windows_firewall_outbound_action: "{{ 'allow' if (windows_firewall_egress_open | bool) else 'block' }}"
 windows_firewall_log_size_kb: 16384
 
 # Internet egress is the proxy or nothing: the system WinHTTP proxy (Windows Update,
