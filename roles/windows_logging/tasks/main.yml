@@ -1,0 +1,122 @@
+---
+- name: "Win logging | Installer cache dir"
+  ansible.windows.win_file:
+    path: "{{ windows_logging_download_dir }}"
+    state: directory
+
+# --- Wazuh agent -------------------------------------------------------------------------
+- name: "Win logging | Wazuh agent installer (pinned, via the platform proxy)"
+  ansible.windows.win_get_url:
+    url: "{{ windows_logging_wazuh_msi_url }}"
+    dest: "{{ windows_logging_download_dir }}\\wazuh-agent-{{ windows_logging_wazuh_version }}.msi"
+    proxy_url: "{{ windows_logging_proxy_url }}"
+    force: false
+
+- name: "Win logging | Wazuh agent installed (manager + group on the installer line: not secrets)"
+  ansible.windows.win_package:
+    path: "{{ windows_logging_download_dir }}\\wazuh-agent-{{ windows_logging_wazuh_version }}.msi"
+    arguments: "WAZUH_MANAGER={{ windows_logging_wazuh_manager }} WAZUH_AGENT_GROUP={{ windows_logging_wazuh_group }} WAZUH_REGISTRATION_SERVER={{ windows_logging_wazuh_manager }}"
+    creates_service: WazuhSvc
+    state: present
+
+- name: "Win logging | Enrolled already? (client.keys carries the agent's key)"
+  ansible.windows.win_stat:
+    path: "{{ windows_logging_wazuh_dir }}\\client.keys"
+  register: windows_logging_client_keys
+
+- name: "Win logging | Enrol (once): the password from Vault, in a file the agent reads, never argv"
+  when: not windows_logging_client_keys.stat.exists or windows_logging_client_keys.stat.size == 0
+  block:
+    - name: "Win logging | Enrolment password (Vault)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ windows_logging_wazuh_vault_enrol }}"
+
+    - name: "Win logging | authd.pass"
+      ansible.windows.win_copy:
+        content: "{{ vault_secret_result.password }}"
+        dest: "{{ windows_logging_wazuh_dir }}\\authd.pass"
+      no_log: true
+
+    - name: "Win logging | agent-auth against the manager"
+      ansible.windows.win_command:
+        argv: ["{{ windows_logging_wazuh_dir }}\\agent-auth.exe", -m, "{{ windows_logging_wazuh_manager }}", -G, "{{ windows_logging_wazuh_group }}"]
+      changed_when: true
+
+    - name: "Win logging | The password file leaves the guest"
+      ansible.windows.win_file:
+        path: "{{ windows_logging_wazuh_dir }}\\authd.pass"
+        state: absent
+
+- name: "Win logging | Wazuh agent running with the system"
+  ansible.windows.win_service:
+    name: WazuhSvc
+    start_mode: auto
+    state: started
+
+# --- windows_exporter ---------------------------------------------------------------------
+- name: "Win logging | windows_exporter installer (pinned, via the platform proxy)"
+  ansible.windows.win_get_url:
+    url: "{{ windows_logging_exporter_msi_url }}"
+    dest: "{{ windows_logging_download_dir }}\\windows_exporter-{{ windows_logging_exporter_version }}.msi"
+    proxy_url: "{{ windows_logging_proxy_url }}"
+    force: false
+
+- name: "Win logging | windows_exporter installed (collectors + port on the installer line)"
+  ansible.windows.win_package:
+    path: "{{ windows_logging_download_dir }}\\windows_exporter-{{ windows_logging_exporter_version }}.msi"
+    arguments: "ENABLED_COLLECTORS={{ windows_logging_exporter_collectors }} LISTEN_PORT={{ windows_logging_exporter_port }}"
+    creates_service: windows_exporter
+    state: present
+
+- name: "Win logging | windows_exporter running with the system"
+  ansible.windows.win_service:
+    name: windows_exporter
+    start_mode: auto
+    state: started
+
+# --- Grafana Alloy -----------------------------------------------------------------------
+- name: "Win logging | Alloy installer archive (pinned, via the platform proxy)"
+  ansible.windows.win_get_url:
+    url: "{{ windows_logging_alloy_zip_url }}"
+    dest: "{{ windows_logging_download_dir }}\\alloy-{{ windows_logging_alloy_version }}.zip"
+    proxy_url: "{{ windows_logging_proxy_url }}"
+    force: false
+
+- name: "Win logging | Alloy installer unpacked"
+  community.windows.win_unzip:
+    src: "{{ windows_logging_download_dir }}\\alloy-{{ windows_logging_alloy_version }}.zip"
+    dest: "{{ windows_logging_download_dir }}\\alloy-{{ windows_logging_alloy_version }}"
+    creates: "{{ windows_logging_download_dir }}\\alloy-{{ windows_logging_alloy_version }}\\alloy-installer-windows-amd64.exe"
+
+- name: "Win logging | Alloy config dirs"
+  ansible.windows.win_file:
+    path: "{{ windows_logging_alloy_config_dir }}\\bookmarks"
+    state: directory
+
+- name: "Win logging | Alloy config (event log channels -> Loki)"
+  ansible.windows.win_template:
+    src: config.alloy.j2
+    dest: "{{ windows_logging_alloy_config_dir }}\\config.alloy"
+  register: windows_logging_alloy_conf
+
+- name: "Win logging | Alloy installed (silent, our config, no phone-home)"
+  ansible.windows.win_package:
+    path: "{{ windows_logging_download_dir }}\\alloy-{{ windows_logging_alloy_version }}\\alloy-installer-windows-amd64.exe"
+    arguments: "/S /CONFIG={{ windows_logging_alloy_config_dir }}\\config.alloy /DISABLEREPORTING=yes /DISABLEPROFILING=yes"
+    creates_service: Alloy
+    state: present
+
+- name: "Win logging | Alloy running with the system (restarted on a config change)"
+  ansible.windows.win_service:
+    name: Alloy
+    start_mode: auto
+    state: "{{ 'restarted' if windows_logging_alloy_conf is changed else 'started' }}"
+
+- name: "Win logging | Report"
+  ansible.builtin.debug:
+    msg: >-
+      WIN_LOGGING {{ inventory_hostname }}: wazuh-agent {{ windows_logging_wazuh_version }} -> {{ windows_logging_wazuh_manager }},
+      windows_exporter :{{ windows_logging_exporter_port }}, alloy {{ windows_logging_alloy_version }} -> {{ windows_logging_loki_url }}
+      ({{ windows_logging_channels | length }} channels)

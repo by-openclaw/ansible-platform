@@ -1,0 +1,24 @@
+// Managed by Ansible (roles/windows_logging). Event log channels -> Loki, labelled like
+// the Linux promtail jobs: job, host, env (+ channel).
+{% for c in windows_logging_channels %}
+loki.source.windowsevent "{{ c.name }}" {
+  eventlog_name          = "{{ c.channel }}"
+  bookmark_path          = "{{ windows_logging_alloy_config_dir | replace('\\', '\\\\') }}\\bookmarks\\{{ c.name }}.xml"
+  use_incoming_timestamp = true
+  labels                 = { job = "windows_eventlog", channel = "{{ c.channel }}" }
+  forward_to             = [loki.process.platform.receiver]
+}
+{% endfor %}
+
+loki.process "platform" {
+  stage.static_labels {
+    values = { host = "{{ inventory_hostname }}", env = "{{ windows_logging_env }}" }
+  }
+  forward_to = [loki.write.platform.receiver]
+}
+
+loki.write "platform" {
+  endpoint {
+    url = "{{ windows_logging_loki_url }}"
+  }
+}
