@@ -26,13 +26,18 @@
 # in anyway: the connect dialog must offer only what works).
 # Password accounts (Windows RDP assets): one break-glass password per tier, read once
 # with its KV version — the version is the account's mark (rekey when Vault rotated it).
-- name: "JumpServer accounts | The break-glass password of each Windows tier (Vault)"
+- name: "JumpServer accounts | Each password account's Vault doc, read once with its KV version"
   ansible.builtin.include_tasks: api_accounts_password.yml
-  loop: "{{ jumpserver_assets | selectattr('secret_type', 'defined') | selectattr('secret_type', 'equalto', 'password') | map(attribute='tier') | unique | list }}"
+  loop: >-
+    {{ jumpserver_assets | selectattr('accounts', 'defined') | map(attribute='accounts') | flatten
+       | selectattr('secret_type', 'equalto', 'password') | map(attribute='vault_path') | unique | list }}
   loop_control:
-    loop_var: jumpserver_tier
-    label: "{{ jumpserver_tier }}"
+    loop_var: jumpserver_pw_path
+    label: "{{ jumpserver_pw_path }}"
 
+# Per asset, the DECLARED account list (Linux: the one break-glass key account; Windows: the
+# <org> admin and the <org>-user session, both passwords). create: not there · rekey: the mark
+# differs · privileged: the flag · stale: an account the catalog does not declare.
 - name: "JumpServer accounts | Plan"
   ansible.builtin.set_fact:
     jumpserver_accounts_plan: >-
@@ -43,26 +48,31 @@
       {%- set kept = [] -%}
       {%- for a in jumpserver_assets -%}
         {%- set host_id = jumpserver_host_ids.get(a.name, '') -%}
-        {%- set user = a.account | default(jumpserver_asset_default_account) -%}
-        {%- set priv = (a.privileged | default(jumpserver_asset_default_privileged)) | bool -%}
+        {%- set declared = a.accounts | default([{'username': a.account | default(jumpserver_asset_default_account),
+                                                  'secret_type': jumpserver_account_secret_type,
+                                                  'vault_path': '',
+                                                  'privileged': a.privileged | default(jumpserver_asset_default_privileged)}]) -%}
         {%- set mine = jumpserver_accounts_read.json.results | selectattr('asset.id', 'equalto', host_id) | list -%}
-        {%- set acct = mine | selectattr('username', 'equalto', user) | first | default({}) -%}
         {%- if host_id | length > 0 -%}
-          {%- if acct | length == 0 -%}
-            {%- set _ = create.append({'asset': a.name, 'asset_id': host_id, 'username': user, 'privileged': priv,
-                                       'secret_type': a.secret_type | default(jumpserver_account_secret_type), 'tier': a.tier | default('')}) -%}
-          {%- else -%}
-            {%- set _ = kept.append(acct.id) -%}
-            {%- set mark = jumpserver_password_marks.get(a.tier | default(''), '') if (a.secret_type | default(jumpserver_account_secret_type)) == 'password' else jumpserver_key_mark -%}
-            {%- if (acct.comment | default('')) != mark -%}
-              {%- set _ = rekey.append({'asset': a.name, 'id': acct.id,
-                                        'secret_type': a.secret_type | default(jumpserver_account_secret_type), 'tier': a.tier | default('')}) -%}
+          {%- for d in declared -%}
+            {%- set priv = d.privileged | bool -%}
+            {%- set mark = jumpserver_password_marks.get(d.vault_path, '') if d.secret_type == 'password' else jumpserver_key_mark -%}
+            {%- set acct = mine | selectattr('username', 'equalto', d.username) | first | default({}) -%}
+            {%- if acct | length == 0 -%}
+              {%- set _ = create.append({'asset': a.name, 'asset_id': host_id, 'username': d.username, 'privileged': priv,
+                                         'secret_type': d.secret_type, 'vault_path': d.vault_path}) -%}
+            {%- else -%}
+              {%- set _ = kept.append(acct.id) -%}
+              {%- if (acct.comment | default('')) != mark -%}
+                {%- set _ = rekey.append({'asset': a.name, 'id': acct.id, 'username': d.username,
+                                          'secret_type': d.secret_type, 'vault_path': d.vault_path}) -%}
+              {%- endif -%}
+              {%- if (acct.privileged | bool) != priv -%}
+                {%- set _ = privileged.append({'asset': a.name, 'id': acct.id, 'privileged': priv}) -%}
+              {%- endif -%}
             {%- endif -%}
-            {%- if (acct.privileged | bool) != priv -%}
-              {%- set _ = privileged.append({'asset': a.name, 'id': acct.id, 'privileged': priv}) -%}
-            {%- endif -%}
-          {%- endif -%}
-          {%- for s in mine | rejectattr('username', 'equalto', user) -%}
+          {%- endfor -%}
+          {%- for s in mine | rejectattr('username', 'in', declared | map(attribute='username') | list) -%}
             {%- set _ = stale.append({'asset': a.name, 'id': s.id, 'username': s.username}) -%}
           {%- endfor -%}
         {%- endif -%}
@@ -80,10 +90,10 @@
       username: "{{ item.username }}"
       name: "{{ item.username }}"
       secret_type: "{{ item.secret_type }}"
-      secret: "{{ jumpserver_passwords[item.tier] if item.secret_type == 'password' else (jumpserver_asset_key_b64 | b64decode) }}"   # pragma: allowlist secret
+      secret: "{{ jumpserver_passwords[item.vault_path] if item.secret_type == 'password' else (jumpserver_asset_key_b64 | b64decode) }}"   # pragma: allowlist secret
       passphrase: "{{ omit if item.secret_type == 'password' else jumpserver_asset_key_passphrase }}"   # pragma: allowlist secret
       privileged: "{{ item.privileged }}"
-      comment: "{{ jumpserver_password_marks[item.tier] if item.secret_type == 'password' else jumpserver_key_mark }}"   # pragma: allowlist secret
+      comment: "{{ jumpserver_password_marks[item.vault_path] if item.secret_type == 'password' else jumpserver_key_mark }}"   # pragma: allowlist secret
     status_code: [201]
   loop: "{{ jumpserver_accounts_plan.create }}"
   loop_control:
@@ -100,9 +110,9 @@
     body_format: json
     body:
       secret_type: "{{ item.secret_type }}"
-      secret: "{{ jumpserver_passwords[item.tier] if item.secret_type == 'password' else (jumpserver_asset_key_b64 | b64decode) }}"   # pragma: allowlist secret
+      secret: "{{ jumpserver_passwords[item.vault_path] if item.secret_type == 'password' else (jumpserver_asset_key_b64 | b64decode) }}"   # pragma: allowlist secret
       passphrase: "{{ omit if item.secret_type == 'password' else jumpserver_asset_key_passphrase }}"   # pragma: allowlist secret
-      comment: "{{ jumpserver_password_marks[item.tier] if item.secret_type == 'password' else jumpserver_key_mark }}"   # pragma: allowlist secret
+      comment: "{{ jumpserver_password_marks[item.vault_path] if item.secret_type == 'password' else jumpserver_key_mark }}"   # pragma: allowlist secret
     status_code: [200]
   loop: "{{ jumpserver_accounts_plan.rekey }}"
   loop_control:

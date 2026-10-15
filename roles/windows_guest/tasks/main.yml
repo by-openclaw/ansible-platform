@@ -193,9 +193,32 @@
     state: present
     newline: unix
 
+# --- the "as user" account: <org>-user, Remote Desktop Users, Vault-held ---------------------
+- name: "Win guest | The user-session password of this tier (Vault, created on first contact)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ windows_guest_user_vault_path }}"
+    vault_secret_init:
+      password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"   # pragma: allowlist secret
+    vault_secret_metadata_put:
+      origin: "user-session account of the {{ windows_guest_env }} tier (roles/windows_guest)"
+
+- name: "Win guest | The user account: {{ windows_guest_user_account }} (local, Remote Desktop Users)"
+  ansible.windows.win_user:
+    name: "{{ windows_guest_user_account }}"
+    fullname: "{{ windows_guest_user_account }}"
+    description: "User session through the bastion - never an administrator"
+    password: "{{ vault_secret_result.password }}"
+    password_never_expires: true
+    groups: ["Remote Desktop Users"]
+    groups_action: replace
+    state: present
+  no_log: true
+
 - name: "Win guest | Report"
   ansible.builtin.debug:
     msg: >-
       WIN_GUEST {{ inventory_hostname }} ready: route to
       {{ windows_guest_routes | map(attribute='destination') | join(', ') }},
-      resolver answers, administrator password in Vault ({{ windows_guest_admin_vault_path }}), OOB admin {{ windows_guest_oob_user }} ({{ windows_guest_oob_vault_path }})
+      resolver answers, administrator password in Vault ({{ windows_guest_admin_vault_path }}), OOB admin {{ windows_guest_oob_user }} ({{ windows_guest_oob_vault_path }}), user {{ windows_guest_user_account }} ({{ windows_guest_user_vault_path }})

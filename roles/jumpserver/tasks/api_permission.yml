@@ -1,83 +1,31 @@
 ---
-# One permission: the bastion's administrators group reaches every asset, with every account.
-# It names the nodes the assets live in — NOT the root of the tree (a grant on the root makes
-# the product's workbench show an empty tree) — and every asset directly (the workbench's flat
-# list reads direct grants). A new host is therefore added to it at the run that registers it.
-- name: "JumpServer permission | As the bastion has it"
+# The bastion's asset permissions, declared: the administrators' (every node, every asset,
+# every account) and the users' (the Windows assets' <org>-user session only), each
+# reconciled by tasks/api_permission_one.yml.
+- name: "JumpServer permission | As the bastion has them"
   ansible.builtin.uri:
     url: "{{ jumpserver_api_url }}/perms/asset-permissions/?limit={{ jumpserver_api_page_size }}"
     headers: "{{ jumpserver_api_headers }}"
   register: jumpserver_perms_read
   check_mode: false   # read-only
 
-- name: "JumpServer permission | Its detail (groups, nodes, assets)"
-  ansible.builtin.uri:
-    url: "{{ jumpserver_api_url }}/perms/asset-permissions/{{ item.id }}/"
-    headers: "{{ jumpserver_api_headers }}"
-  loop: "{{ jumpserver_perms_read.json.results | selectattr('name', 'equalto', jumpserver_permission_name) | list }}"
+- name: "JumpServer permission | What each must hold"
+  ansible.builtin.set_fact:
+    jumpserver_permissions:
+      - name: "{{ jumpserver_permission_name }}"
+        group_id: "{{ jumpserver_group_id }}"
+        accounts: "{{ jumpserver_permission_accounts }}"
+        node_ids: "{{ jumpserver_assets | map(attribute='node') | unique | map('extract', jumpserver_node_ids) | list }}"
+        asset_ids: "{{ jumpserver_host_ids.values() | list }}"
+      - name: "{{ jumpserver_users_permission_name }}"
+        group_id: "{{ jumpserver_users_group_id | default('') }}"
+        accounts: "{{ jumpserver_users_permission_accounts }}"
+        node_ids: "{{ jumpserver_assets | selectattr('platform', 'defined') | selectattr('platform', 'equalto', 'Windows') | map(attribute='node') | unique | map('extract', jumpserver_node_ids) | list }}"
+        asset_ids: "{{ jumpserver_assets | selectattr('platform', 'defined') | selectattr('platform', 'equalto', 'Windows') | map(attribute='name') | map('extract', jumpserver_host_ids) | list }}"
+
+- name: "JumpServer permission | Each one"
+  ansible.builtin.include_tasks: api_permission_one.yml
+  loop: "{{ jumpserver_permissions | selectattr('asset_ids', 'defined') | rejectattr('asset_ids', 'equalto', []) | list }}"
   loop_control:
-    label: "{{ item.name }}"
-  register: jumpserver_perm_detail
-  check_mode: false   # read-only
-
-- name: "JumpServer permission | What it must hold"
-  ansible.builtin.set_fact:
-    jumpserver_perm_now: "{{ (jumpserver_perm_detail.results | map(attribute='json') | first) | default({}) }}"
-    jumpserver_perm_nodes_used: "{{ jumpserver_assets | map(attribute='node') | unique | map('extract', jumpserver_node_ids) | list }}"
-    jumpserver_perm_assets_all: "{{ jumpserver_host_ids.values() | list }}"
-
-- name: "JumpServer permission | Create it"
-  ansible.builtin.uri:
-    url: "{{ jumpserver_api_url }}/perms/asset-permissions/"
-    method: POST
-    headers: "{{ jumpserver_api_headers }}"
-    body_format: json
-    body:
-      name: "{{ jumpserver_permission_name }}"
-      user_groups: ["{{ jumpserver_group_id }}"]
-      nodes: "{{ jumpserver_perm_nodes_used }}"
-      assets: "{{ jumpserver_perm_assets_all }}"
-      accounts: "{{ jumpserver_permission_accounts }}"
-      protocols: "{{ jumpserver_permission_protocols }}"
-      actions: "{{ jumpserver_permission_actions }}"
-      is_active: true
-    status_code: [201]
-  changed_when: true
-  when:
-    - jumpserver_perm_now | length == 0
-    - not ansible_check_mode
-
-- name: "JumpServer permission | What differs"
-  ansible.builtin.set_fact:
-    jumpserver_perm_want:
-      user_groups: "{{ ((jumpserver_perm_now.user_groups | default([]) | map(attribute='id') | list) + [jumpserver_group_id]) | unique | sort }}"
-      nodes: "{{ ((jumpserver_perm_now.nodes | default([]) | map(attribute='id') | list | difference([jumpserver_root_node.id])) + jumpserver_perm_nodes_used) | unique | sort }}"
-      assets: "{{ jumpserver_perm_assets_all | unique | sort }}"
-    jumpserver_perm_has:
-      user_groups: "{{ jumpserver_perm_now.user_groups | default([]) | map(attribute='id') | list | sort }}"
-      nodes: "{{ jumpserver_perm_now.nodes | default([]) | map(attribute='id') | list | sort }}"
-      assets: "{{ jumpserver_perm_now.assets | default([]) | map(attribute='id') | list | sort }}"
-
-- name: "JumpServer permission | Bring it to that"
-  ansible.builtin.uri:
-    url: "{{ jumpserver_api_url }}/perms/asset-permissions/{{ jumpserver_perm_now.id }}/"
-    method: PATCH
-    headers: "{{ jumpserver_api_headers }}"
-    body_format: json
-    body: "{{ jumpserver_perm_want }}"
-    status_code: [200]
-  changed_when: true
-  when:
-    - jumpserver_perm_now | length > 0
-    - jumpserver_perm_want != jumpserver_perm_has
-    - not ansible_check_mode
-
-- name: "JumpServer permission | Note the changes"
-  ansible.builtin.set_fact:
-    jumpserver_changes: >-
-      {{ jumpserver_changes
-         + (['permission ' ~ jumpserver_permission_name ~ ' created'] if jumpserver_perm_now | length == 0 else [])
-         + (['permission ' ~ jumpserver_permission_name ~ ' updated: groups ' ~ (jumpserver_perm_has.user_groups | length) ~ '→' ~ (jumpserver_perm_want.user_groups | length)
-             ~ ', nodes ' ~ (jumpserver_perm_has.nodes | length) ~ '→' ~ (jumpserver_perm_want.nodes | length)
-             ~ ', assets ' ~ (jumpserver_perm_has.assets | length) ~ '→' ~ (jumpserver_perm_want.assets | length)]
-            if (jumpserver_perm_now | length > 0 and jumpserver_perm_want != jumpserver_perm_has) else []) }}
+    loop_var: jumpserver_perm
+    label: "{{ jumpserver_perm.name }}"

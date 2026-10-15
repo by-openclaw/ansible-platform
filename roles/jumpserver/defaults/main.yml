@@ -163,7 +163,6 @@ jumpserver_windows_groups: [windows_guests]
 jumpserver_windows_protocol: rdp
 jumpserver_windows_port: 3389
 jumpserver_windows_secret_type: "password"   # pragma: allowlist secret
-jumpserver_windows_password_vault_path: "{{ '%s/break-glass/os' }}"   # % the asset host's tier
 
 # The bastion does not register itself.
 jumpserver_asset_exclude: ["{{ inventory_hostname }}"]
@@ -181,15 +180,21 @@ jumpserver_assets: >-   # pragma: allowlist secret
         {%- if h not in jumpserver_asset_exclude and h not in seen -%}
           {%- set _ = seen.append(h) -%}
           {%- if hostvars[h].ansible_shell_type | default('') == 'powershell' -%}
+          {%- set tier = hostvars[h].env | default(platform_env) -%}
           {%- set _ = out.append({'name': h,
                                   'address': hostvars[h].ansible_host,
                                   'node': node,
                                   'platform': 'Windows',
                                   'protocol': jumpserver_windows_protocol,
                                   'port': jumpserver_windows_port,
-                                  'secret_type': jumpserver_windows_secret_type,
-                                  'tier': hostvars[h].env | default(platform_env),
-                                  'privileged': false}) -%}
+                                  'accounts': [{'username': jumpserver_asset_default_account,
+                                                'secret_type': jumpserver_windows_secret_type,
+                                                'vault_path': tier ~ '/break-glass/os',
+                                                'privileged': false},
+                                               {'username': jumpserver_asset_default_account ~ '-user',
+                                                'secret_type': jumpserver_windows_secret_type,
+                                                'vault_path': tier ~ '/break-glass/os-user',
+                                                'privileged': false}]}) -%}
           {%- else -%}
           {%- set _ = out.append({'name': h,
                                   'address': hostvars[h].ansible_host,
@@ -245,6 +250,15 @@ jumpserver_email_subject_prefix: "[JumpServer] "
 jumpserver_verify_retries: 40
 jumpserver_verify_delay: 5
 
-# Filled per tier by tasks/api_accounts_password.yml; empty when no Windows asset exists.
+# Filled per Vault path by tasks/api_accounts_password.yml; empty when no password account exists.
 jumpserver_passwords: {}
 jumpserver_password_marks: {}
+
+# The users-level session (owner 2026-10-14, "as user"): the bastion's second group and its
+# permission — the Windows assets' <org>-user account only. The owner's daily identity joins
+# the group once it exists on the bastion (created by its first Authentik sign-in).
+jumpserver_users_group: "bastion-users"
+jumpserver_users_permission_name: "bastion-users-windows"
+jumpserver_users_permission_accounts: ["{{ jumpserver_asset_default_account }}-user"]
+jumpserver_users_daily_username: >-
+  {{ (platform_people | selectattr('platform_owner', 'defined') | selectattr('platform_owner') | first).username }}
