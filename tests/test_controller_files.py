@@ -121,3 +121,28 @@ def test_the_closing_message_says_what_this_run_did():
     assert "would be emptied" in _closing_message(True, 196, check=True)
     assert _closing_message(False, 0) == "only declared files: 56; nothing is set aside"
     assert "12 file(s) set aside, waiting for" in _closing_message(False, 12)
+
+
+# --- the SSH key files of ~/.ssh (controller_files_area=keys) ---------------------------------
+KEYS_KEPT = DATA["platform_controller_keys_kept"]
+KEYS_RE = re.compile("^(" + "|".join(e["path"].replace("{{ platform_org }}", "by-research") for e in KEYS_KEPT) + ")$")
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["id_ed25519_svc-ansible-prod", "id_ed25519_svc-ansible-prod.pub", "id_ed25519_svc-rune-prod", "id_ed25519_by-research.pub",
+     "id_ed25519_rune_automation", "id_ed25519_rune_nopass.pub", "id_ed25519_opnsense", "config", "known_hosts", "known_hosts.old",
+     "authorized_keys", "rune-agent.sock"],
+)
+def test_an_identity_the_inventory_names_is_kept(name):
+    assert KEYS_RE.match(name)
+
+
+@pytest.mark.parametrize("name", ["id_ed25519", "id_ed25519.pub", "id_ed25519_rune", "id_ed25519_rune.pub", "id_ed25519_by-systems", "id_rsa", "anything"])
+def test_a_retired_or_unknown_key_is_not_kept(name):
+    assert not KEYS_RE.match(name)
+
+
+def test_the_play_knows_both_areas():
+    assert set(PLAY["vars"]["controller_files_areas"]) == {"secrets", "keys"}
+    assert PLAY["vars"]["controller_files_area"] == "secrets"

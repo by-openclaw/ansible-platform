@@ -38,3 +38,15 @@ platform_controller_files_kept:
   - {path: "_shared/app-m365-TEMPLATE\\.json", reason: "an empty template (docs/m365-entra-integration.md)"}
   - {path: "_stale/db-dumps/.+", reason: "the database archive of a removed service (roles/service_decommission)"}
   - {path: "[^/]+\\.ovpn", reason: "the owner's VPN profiles"}
+
+# --- the controller's SSH key files (~/.ssh): one file per identity the inventory names -------
+# Checked and set aside by the same play (-e controller_files_area=keys). Only names are read.
+platform_controller_keys_dir: "{{ lookup('env', 'HOME') }}/.ssh"
+platform_controller_keys_kept:
+  - {path: "id_ed25519_svc-ansible-prod(\\.pub)?", reason: "the automation account's key (ansible.cfg, ssh-agent.yml; Vault svc-ansible/ssh-key)"}
+  - {path: "id_ed25519_svc-rune-prod(\\.pub)?", reason: "Rune's interactive account's key (ssh-agent.yml; Vault svc-rune/ssh-key)"}
+  - {path: "id_ed25519_{{ platform_org }}(\\.pub)?", reason: "the org break-glass key (ssh-agent.yml bootstrap, breakglass-kit.yml; Vault break-glass/ssh-key)"}
+  - {path: "id_ed25519_rune_automation(\\.pub)?", reason: "root on the Proxmox nodes (identity.yml platform_pve_root_key; roles/pve_host, roles/pbs, Terraform snippet uploads)"}
+  - {path: "id_ed25519_rune_nopass(\\.pub)?", reason: "the Windows guests' connection key (inventory windows_guests; roles/windows_guest declares its public half)"}
+  - {path: "id_ed25519_opnsense(\\.pub)?", reason: "root SSH on the firewalls (identity.yml platform_fw_ssh_key: roles/crowdsec_fw_bouncer, roles/opnsense_pppoe)"}
+  - {path: "(config|known_hosts(\\.old)?|authorized_keys|rune-agent\\.sock)", reason: "the SSH client's own files and the agent socket (ssh-agent.yml)"}
