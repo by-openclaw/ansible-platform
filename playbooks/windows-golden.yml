@@ -277,16 +277,27 @@
       changed_when: false
       when: "windows_golden_cfg.stdout is not search('template: 1')"
 
+    # Two calls, each converging on drift: the config (name, NIC link down, the build's
+    # cloud-init references gone — a YAML flow list splits "a,b" into two items, so the
+    # --delete value is a quoted string) and the freeze itself. A template whose config still
+    # carries the build's name or snippet (a previous run's set failed) is converged too.
+    - name: "Golden | The template's config: final name, NIC link down, build cloud-init gone"
+      ansible.builtin.command:
+        argv: [qm, set, "{{ windows_golden_vmid }}",
+               --name, "{{ windows_golden_name }}",
+               --net0, "virtio,bridge={{ windows_golden_bridge }},link_down=1",
+               --delete, "cicustom,ipconfig0"]
+      when: >-
+        windows_golden_cfg.stdout is not search('name: ' ~ windows_golden_name ~ '$', multiline=True)
+        or windows_golden_cfg.stdout is search('cicustom')
+        or windows_golden_cfg.stdout is not search('link_down=1')
+      changed_when: true
+
     - name: "Golden | Freeze as the golden template (in place; the base's vmid stays the clean build)"
       ansible.builtin.command:
-        argv: "{{ item }}"
-      loop:
-        - [qm, set, "{{ windows_golden_vmid }}", --name, "{{ windows_golden_name }}", --net0, "virtio,bridge={{ windows_golden_bridge | default('vmbr0') }},link_down=1", --delete, cicustom,ipconfig0]
-        - [qm, template, "{{ windows_golden_vmid }}"]
-      loop_control:
-        label: "{{ item[1] }}"
-      changed_when: true
+        argv: [qm, template, "{{ windows_golden_vmid }}"]
       when: "windows_golden_cfg.stdout is not search('template: 1')"
+      changed_when: true
 
     - name: "Golden | The user-data snippet leaves the node"
       ansible.builtin.file:
