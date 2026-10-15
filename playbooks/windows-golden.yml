@@ -83,26 +83,27 @@
         # The clone boots like any clone: cloud-init drive present (inherited), NIC up; without
         # user-data it keeps the template's Administrator (the build password from Vault) —
         # the key door is opened by the template itself (sshd auto + firewall door).
-        # qm reads the public key from a file ON THE NODE: the controller's key lands there for
-        # the one call and leaves again below.
-        - name: "Golden | The build admin public key, on the node for qm"
-          ansible.builtin.copy:
-            src: "{{ windows_golden_ssh_key }}.pub"
-            dest: "/var/lib/vz/snippets/golden-admin-{{ windows_golden_vmid }}.pub"
-            mode: "0600"
+        # The admin key must land in administrators_authorized_keys (Windows sshd ignores a
+        # profile's authorized_keys for administrators; the template carries no profile-keys
+        # plugin): the same user-data mechanism the Terraform clones use, as a snippet on the
+        # node for the one build.
+        - name: "Golden | The build admin public key"
+          ansible.builtin.set_fact:
+            windows_golden_pubkey: "{{ lookup('ansible.builtin.file', windows_golden_ssh_key ~ '.pub') }}"
 
-        - name: "Golden | NIC up, DHCP on the bridge, the build admin key through cloud-init"
+        - name: "Golden | Its user-data snippet on the node"
+          ansible.builtin.template:
+            src: templates/windows-golden-user-data.ps1.j2
+            dest: "/var/lib/vz/snippets/golden-{{ windows_golden_vmid }}-user-data.ps1"
+            mode: "0640"
+
+        - name: "Golden | NIC up, DHCP on the bridge, the user-data through the cloud-init drive"
           ansible.builtin.command:
             argv: [qm, set, "{{ windows_golden_vmid }}",
                    --net0, "virtio,bridge={{ windows_golden_bridge }}",
                    --ipconfig0, "ip=dhcp",
-                   --sshkeys, "/var/lib/vz/snippets/golden-admin-{{ windows_golden_vmid }}.pub"]
+                   --cicustom, "user=local:snippets/golden-{{ windows_golden_vmid }}-user-data.ps1"]
           changed_when: true
-
-        - name: "Golden | The key file leaves the node"
-          ansible.builtin.file:
-            path: "/var/lib/vz/snippets/golden-admin-{{ windows_golden_vmid }}.pub"
-            state: absent
 
         - name: "Golden | Start it"
           ansible.builtin.command:
@@ -155,6 +156,29 @@
             host: "{{ windows_golden_ip }}"
             port: 22
             timeout: 600
+          delegate_to: localhost
+          become: false
+
+        # A clone's first boot reboots once after its OOBE/cloudbase pass — the door opens
+        # BEFORE that reboot (seen on the second run: "Connection reset", 2026-10-15). Ride it
+        # out: if the port closes within the settle window the reboot is under way; either way
+        # the door must be open again before the clone joins the play.
+        - name: "Golden | If the first-boot reboot comes, let it (port closes)"
+          ansible.builtin.wait_for:
+            host: "{{ windows_golden_ip }}"
+            port: 22
+            state: stopped
+            timeout: 300
+          delegate_to: localhost
+          become: false
+          failed_when: false
+
+        - name: "Golden | The SSH door answers again, and stays answered"
+          ansible.builtin.wait_for:
+            host: "{{ windows_golden_ip }}"
+            port: 22
+            timeout: 600
+            delay: 30
           delegate_to: localhost
           become: false
 
@@ -234,12 +258,17 @@
       ansible.builtin.command:
         argv: "{{ item }}"
       loop:
-        - [qm, set, "{{ windows_golden_vmid }}", --name, "{{ windows_golden_name }}", --net0, "virtio,bridge={{ windows_golden_bridge | default('vmbr0') }},link_down=1", --delete, sshkeys,ipconfig0]
+        - [qm, set, "{{ windows_golden_vmid }}", --name, "{{ windows_golden_name }}", --net0, "virtio,bridge={{ windows_golden_bridge | default('vmbr0') }},link_down=1", --delete, cicustom,ipconfig0]
         - [qm, template, "{{ windows_golden_vmid }}"]
       loop_control:
         label: "{{ item[1] }}"
       changed_when: true
       when: groups['windows_golden'] | default([]) | length > 0
+
+    - name: "Golden | The user-data snippet leaves the node"
+      ansible.builtin.file:
+        path: "/var/lib/vz/snippets/golden-{{ windows_golden_vmid }}-user-data.ps1"
+        state: absent
 
     - name: "Golden | Report"
       ansible.builtin.command:
