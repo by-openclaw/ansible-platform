@@ -1,20 +1,25 @@
 ---
 # --- root's automation keys (Terraform's snippet uploads ride root SSH) -----------------
+# pve-cluster's file lives on pmxcfs (/etc/pve, FUSE): no rename/chmod there, so the atomic
+# write every file module does by default fails with EPERM (2026-10-16, both nodes) — the
+# in-place write (unsafe_writes) is the documented fallback for such filesystems. A key is
+# matched by type + material, never by its comment.
 - name: "PVE host | Root's declared automation keys present (in pve-cluster's file)"
-  ansible.posix.authorized_key:
-    user: root
+  ansible.builtin.lineinfile:
     path: "{{ pve_host_root_keys_path }}"
-    manage_dir: false
-    key: "{{ lookup('file', pve_host_root_keys_dir ~ '/' ~ item) }}"
+    regexp: "^{{ (lookup('file', pve_host_root_keys_dir ~ '/' ~ item) | trim).split(' ')[0:2] | join(' ') | regex_escape }}( |$)"
+    line: "{{ lookup('file', pve_host_root_keys_dir ~ '/' ~ item) | trim }}"
+    state: present
+    create: false
+    unsafe_writes: true
   loop: "{{ pve_host_root_key_files }}"
 
 - name: "PVE host | Root's retired keys absent from it"
-  ansible.posix.authorized_key:
-    user: root
+  ansible.builtin.lineinfile:
     path: "{{ pve_host_root_keys_path }}"
-    manage_dir: false
-    key: "{{ lookup('file', item) }}"
+    regexp: "^{{ (lookup('file', item) | trim).split(' ')[0:2] | join(' ') | regex_escape }}( |$)"
     state: absent
+    unsafe_writes: true
   loop: "{{ lookup('ansible.builtin.fileglob', pve_host_root_keys_retired_dir ~ '/*.pub', wantlist=true) | sort }}"
   loop_control:
     label: "{{ item | basename }}"
