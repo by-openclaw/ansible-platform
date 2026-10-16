@@ -14,7 +14,7 @@
   vars_files:
     - ../roles/vault/defaults/main.yml
   vars:
-    key_age_services: [svc-ansible, svc-rune, break-glass]
+    key_age_services: [svc-ansible, svc-rune, break-glass, proxmox, windows, opnsense]   # the last three: escrowed as they are (keys-rotate.yml header)
     key_age_warn_days: 335
     key_age_max_days: 365
     approle_secret_file: "{{ (vault_secret_dir | expanduser) }}/fabric/app-vault-ansible-controller.json"
@@ -48,6 +48,7 @@
           {{ (key_age_rows | default([])) + [{
                'service': item.item,
                'created': (item.json.data.data.created | default('MISSING')) if item.status == 200 else 'MISSING',
+               'passphrase_protected': (item.json.data.data.passphrase_protected | default(true) | bool) if item.status == 200 else true,
                'age_days': (((ansible_date_time.epoch | int) -
                              ((item.json.data.data.created + ' 00:00:00') | to_datetime).strftime('%s') | int) // 86400)
                             if (item.status == 200 and item.json.data.data.created is defined) else -1 }] }}
@@ -60,7 +61,7 @@
         msg: >-
           {{ item.service }}: created={{ item.created }} age={{ item.age_days }}d
           {{ 'ROTATE NOW (>=365)' if item.age_days >= key_age_max_days
-             else ('renewal window (>=335)' if item.age_days >= key_age_warn_days else 'ok') }}
+             else ('renewal window (>=335)' if item.age_days >= key_age_warn_days else 'ok') }}{{ '' if item.passphrase_protected else ' — NO PASSPHRASE (identity/0004 §2: rotate to a protected key)' }}
       loop: "{{ key_age_rows }}"
       loop_control: { label: "{{ item.service }}" }
 
