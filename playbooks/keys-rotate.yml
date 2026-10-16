@@ -9,6 +9,13 @@
 # the local pair, re-run). If the Vault write fails after generation, delete
 # the local pair and re-run (the passphrase exists only in that run's memory).
 #
+# Escrow (owner's go 2026-10-16, "escrow the 3"): a key that exists on the controller but has
+# no Vault document yet is stored AS IT IS — the hypervisors' root key, the Windows guests'
+# connection key, the firewalls' root key, all three from April 2026 and without a passphrase.
+# Their document says so (passphrase_protected: false) and carries the file's own date as
+# `created`, so the 365-day rule counts from the real birth. Giving them a passphrase is a
+# rotation (every acceptor must follow): a later step, not this play's doing.
+#
 #   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/keys-rotate.yml
 # ==============================================================================
 - name: "Generate rotated keys (controller)"
@@ -21,6 +28,11 @@
       - { name: "svc-ansible-{{ platform_env }}", vault_svc: "svc-ansible" }
       - { name: "svc-rune-{{ platform_env }}", vault_svc: "svc-rune" }
       - { name: "{{ platform_org }}", vault_svc: "break-glass" }
+      # The automation's remaining keys (identity.yml platform_pve_root_key / platform_fw_ssh_key,
+      # inventory windows_guests): escrowed as they are, see the header.
+      - { name: "rune_automation", vault_svc: "proxmox" }      # root on the Proxmox nodes
+      - { name: "rune_nopass", vault_svc: "windows" }          # Administrator on the Windows guests
+      - { name: "opnsense", vault_svc: "opnsense" }            # root on the firewalls
   tasks:
     - name: "Keys | Stat existing key files"
       ansible.builtin.stat:
@@ -62,10 +74,36 @@
       ansible.builtin.include_role:
         name: vault_login
 
-    - name: "Keys | Store passphrase + metadata + key backup per rotated key"
+    - name: "Keys | Which keys have no Vault document yet (escrow candidates)"
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/{{ vault_kv_path }}/data/{{ platform_env }}/{{ item.item.vault_svc }}/ssh-key"
+        headers:
+          X-Vault-Token: "{{ vault_deploy_token }}"
+        timeout: "{{ vault_api_timeout }}"
+        status_code: [200, 404]
+      loop: "{{ hostvars['localhost'].keys_stat.results }}"
+      loop_control: { label: "{{ item.item.name }}" }
+      register: keystore_probe
+      check_mode: false  # read-only probe: must run under --check too (the next task reads it)
+      changed_when: false
+      no_log: true   # a 200 carries the key document
+
+    - name: "Keys | Names to escrow: on the controller, absent from Vault"
+      ansible.builtin.set_fact:
+        keystore_missing: >-
+          {{ keystore_probe.results | selectattr('status', 'eq', 404)
+             | map(attribute='item.item.name') | list }}
+
+    - name: "Keys | Store passphrase + metadata + key backup (rotated this run, or escrowed)"
       ansible.builtin.include_tasks: tasks/vault_key_store_one.yml
       loop: "{{ hostvars['localhost'].keys_stat.results }}"
       loop_control:
         loop_var: keyres
         label: "{{ keyres.item.name }}"
-      when: not keyres.stat.exists
+      when: (not keyres.stat.exists) or (keyres.item.name in keystore_missing)
+
+    - name: "Keys | What this run stored"
+      ansible.builtin.debug:
+        msg: >-
+          KEYS_STORE rotated={{ hostvars['localhost'].keys_stat.results | rejectattr('stat.exists') | map(attribute='item.name') | list | join(',') or 'none' }}
+          escrowed={{ keystore_missing | join(',') or 'none' }}

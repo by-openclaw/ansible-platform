@@ -1,6 +1,8 @@
 ---
-# Store ONE rotated key's passphrase (+created metadata for the 365-day rule)
-# and the private/public pair backup into Vault. loop_var: keyres.
+# Store ONE key's passphrase (+created metadata for the 365-day rule) and the
+# private/public pair backup into Vault. loop_var: keyres. A key rotated this run has a
+# passphrase in memory and is born today; a key escrowed as it is (keys-rotate.yml header)
+# has what its file has — `passphrase_protected` says which, `created` is the file's date.
 # Vault's HTTP API on the node: the token and the documents travel in the module call.
 - name: "Keystore | Slurp the pair — {{ keyres.item.name }}"
   ansible.builtin.slurp:
@@ -19,11 +21,22 @@
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
+- name: "Keystore | Does the private key open without a passphrase? — {{ keyres.item.name }}"
+  ansible.builtin.command:
+    argv: [ssh-keygen, -y, -P, "", -f, "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_{{ keyres.item.name }}"]
+  delegate_to: localhost
+  become: false
+  register: keystore_nopass
+  check_mode: false  # read-only probe
+  changed_when: false
+  failed_when: false   # rc 0 = no passphrase; anything else = protected
+  no_log: true
 - name: "Keystore | Write ssh-passphrase (+rotation metadata) — {{ keyres.item.name }}"
   vars:
     keystore_pass_doc:
-      passphrase: "{{ hostvars['localhost'].keys_pass[keyres.item.name] }}"  # pragma: allowlist secret
-      created: "{{ '%Y-%m-%d' | strftime }}"
+      passphrase: "{{ (hostvars['localhost'].keys_pass | default({}))[keyres.item.name] | default('') }}"  # pragma: allowlist secret
+      passphrase_protected: "{{ keystore_nopass.rc != 0 }}"
+      created: "{{ ('%Y-%m-%d' | strftime(keyres.stat.mtime | int)) if keyres.stat.exists else ('%Y-%m-%d' | strftime) }}"
       fingerprint: "{{ keystore_fp.stdout.split(' ')[1] }}"
       key_file: "id_ed25519_{{ keyres.item.name }}"
   ansible.builtin.uri:
