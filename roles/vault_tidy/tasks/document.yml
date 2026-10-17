@@ -2,7 +2,7 @@
 # One retired document: read it, check its values still live at their owners, archive it.
 - name: "Vault tidy | Read the document — {{ vault_tidy_item.path }}"
   ansible.builtin.uri:
-    url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_env }}/{{ vault_tidy_item.path }}"
+    url: "{{ vault_tidy_kv_url }}/data/{{ vault_tidy_item.tier | default(vault_tidy_env) }}/{{ vault_tidy_item.path }}"
     headers:
       X-Vault-Token: "{{ vault_deploy_token }}"
     timeout: "{{ vault_tidy_timeout }}"
@@ -29,7 +29,7 @@
         name: service_decommission
         tasks_from: vault_archive_one
       vars:
-        decommission_secret: "{{ vault_tidy_env }}/{{ vault_tidy_item.path }}"
+        decommission_secret: "{{ vault_tidy_item.tier | default(vault_tidy_env) }}/{{ vault_tidy_item.path }}"
 
     - name: "Vault tidy | Note — {{ vault_tidy_item.path }}"
       ansible.builtin.set_fact:

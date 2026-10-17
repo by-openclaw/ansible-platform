@@ -88,8 +88,23 @@ platform_vault_retired_documents:
   # --- 2026-10-15: the owner's personal GitHub token (owner: "purge keys not used") ----------------
   - path: "ci/github-yboujraf"
     reason: "a legacy personal token nothing reads: the platform acts on GitHub as its automation account only (ci/github-rune); its owner revokes it on GitHub"
+  # --- 2026-10-17: the second agent identity is retired (owner: "svc-opus must be removed") ------
+  - path: "ci/github-opus"
+    reason: "GitHub token of the retired agent account; the account is no longer a member of the organisation, its token is revoked by that account's owner"
+  - path: "discord/webhook-opus"
+    reason: "Discord webhook of the retired agent; no channel declares it (roles/discord_guild) and nothing posts through it"
+  - path: "proxmox/tokens/svc-opus-audit"
+    tier: dev
+    reason: "the retired agent's read-only token on the dev hypervisor; the account is deleted there (roles/pve_host pve_host_retired_accounts)"
 
 platform_vault_retired_fields:
+  # --- 2026-10-17: the second agent identity is retired ---------------------------------------------
+  - path: "synology/admin"
+    fields: [svc_opus_username, svc_opus_password]
+    reason: "the retired agent's account on the NAS; the account itself is removed on the NAS by the owner (the NAS is not under Ansible)"
+  - path: "proxmox/admin"
+    fields: [audit_token_id, audit_token_secret]
+    reason: "the retired agent's read-only token on the live hypervisor; nothing reads these fields and the account is deleted (roles/pve_host)"
   - path: "mailcow/admin"
     fields: [gitlab_password, jumpserver_password, alerts_password]
     reason: "copies of three service mailbox passwords, each owned by mail/<service>; no role reads them here"

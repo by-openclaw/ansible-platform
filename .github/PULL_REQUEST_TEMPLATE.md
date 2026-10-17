@@ -41,8 +41,6 @@ Closes #
 
 ## Review
 
-- [ ] Label `review:opus` added
-- [ ] Opus reviewed and approved (label: `opus:approved`)
 - [ ] @yboujraf approved
 
 <!--
