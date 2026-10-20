@@ -96,6 +96,11 @@ platform_vault_retired_documents:
   - path: "proxmox/tokens/svc-opus-audit"
     tier: dev
     reason: "the retired agent's read-only token on the dev hypervisor; the account is deleted there (roles/pve_host pve_host_retired_accounts)"
+  # --- 2026-10-20: the PVE->PBS encryption key is one document per node now (roles/pbs) ---------
+  - path: "pbs/encryption-key"
+    reason: "shared by two nodes with different keys, it held whichever node wrote last; each node's key now lives under pbs/<node>/encryption-key (every version of this document stays in its history)"
+    same_as:
+      - {field: encryption_key, path: "pbs/srv-proxmox-poc-01/encryption-key", field_there: encryption_key}
 
 platform_vault_retired_fields:
   # --- 2026-10-17: the second agent identity is retired ---------------------------------------------
