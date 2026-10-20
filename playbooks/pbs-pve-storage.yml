@@ -39,6 +39,7 @@
       changed_when: r_acl.rc == 0
       when: >-
         (r_acl_list.stdout | from_json
+         | selectattr('path', 'equalto', '/datastore/' ~ pbs_datastore_name)
          | selectattr('ugid', 'equalto', pbs_pve_backup_user)
          | selectattr('roleid', 'equalto', 'DatastoreBackup') | list | length) == 0
       failed_when:
@@ -106,6 +107,7 @@
       changed_when: r_tokacl.rc == 0
       when: >-
         (r_acl_list.stdout | from_json
+         | selectattr('path', 'equalto', '/datastore/' ~ pbs_datastore_name)
          | selectattr('ugid', 'equalto', pbs_pve_backup_user + '!' + pbs_pve_backup_token)
          | selectattr('roleid', 'equalto', 'DatastoreBackup') | list | length) == 0
       failed_when:
