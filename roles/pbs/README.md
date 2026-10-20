@@ -1,6 +1,6 @@
 # role: pbs (Proxmox Backup Server)
 
-PBS **4.2.5** on `vm-pbs-01` (SVC `10.1.3.222`), S3-backed datastore on SeaweedFS. Second nightly copy (01:30) alongside the NFS vzdump. Backup identity `svc-pbs-backup-prod@pbs!pve` (DatastoreBackup only); **client-side encryption**, key custodied in Vault `prod/pbs/encryption-key`.
+PBS **4.2.5** on `vm-pbs-01` (SVC `10.1.3.222`), S3-backed datastore off-site on the provider (infra/0008, 2026-10-20). Second nightly copy (01:30) alongside the NFS vzdump. Backup identity `svc-pbs-backup-prod@pbs!pve` (DatastoreBackup only); **client-side encryption**, key custodied in Vault `prod/pbs/encryption-key`.
 
 - `playbooks/pbs-pve-storage.yml` wires PVE: user/token/ACL, storage (converges creds on drift), the job, PBS self-exclusion, `freeze-fs-on-backup=0` for OPNsense.
 - Jobs (declared in `pbs_jobs`, converged — not create-only): `prune` daily (keep 3/14/8/6), `verify` daily at 21:00 UTC (new snapshots within a day, re-verify after 30d), GC daily. Notifications: root@pam's address = `platform_alert_email` (built-in mail-to-root target; failures and job results). Authentik OIDC realm for the UI.

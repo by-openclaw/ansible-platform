@@ -121,7 +121,10 @@ pbs_backup_notes: "PBS off-site copy (object store) — alongside the NAS archiv
 # Client-side encryption: the key is generated + stored in Vault; PVE encrypts
 # before upload. Losing the key = unrecoverable backups -> Vault is the store.
 pbs_encryption_enabled: true
-pbs_encryption_vault_path: "{{ platform_env }}/pbs/encryption-key"
+# ONE document per node: each node has its own key, and a shared document flip-flopped between the
+# two nodes' keys on every run (five versions by 2026-10-20 — history kept both, the current value
+# was whichever node ran last). Per-node material sits under the node (security/0001 #77 shape).
+pbs_encryption_vault_path: "{{ platform_env }}/pbs/{{ inventory_hostname }}/encryption-key"
 
 # Retention — infra/0008 decision 7, LOCKED 2026-10-20 (the off-site history): 14 daily, 8 weekly,
 # 12 monthly; keep-last 1 so the newest snapshot of a group always survives a prune.
