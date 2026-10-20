@@ -250,6 +250,16 @@
       register: r_set
       changed_when: r_set is not skipped
 
+    # The datastore a storage points at: set on drift (the datastore moved off-site, infra/0008 2026-10-20).
+    - name: "PVE-wire | The storage points at the declared datastore"
+      ansible.builtin.command:
+        argv: [pvesm, set, "{{ pbs_pve_storage_id }}", "--datastore", "{{ pbs_datastore_name }}"]
+      when:
+        - pbs_pve_storage_id in r_pvesm.stdout
+        - ((r_storage_now.stdout | default('{}', true) | from_json).datastore | default('')) != pbs_datastore_name
+      register: r_set_ds
+      changed_when: r_set_ds is not skipped
+
     - name: "PVE-wire | Stat the storage encryption key"
       ansible.builtin.stat:
         path: "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc"

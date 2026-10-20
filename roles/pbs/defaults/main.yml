@@ -15,22 +15,30 @@ pbs_fqdn: "{{ platform_service_fqdns.pbs }}"
 pbs_repo_key_url: "https://enterprise.proxmox.com/debian/proxmox-release-trixie.gpg"
 pbs_repo_line: "deb [signed-by=/usr/share/keyrings/proxmox-archive-keyring.gpg] http://download.proxmox.com/debian/pbs trixie pbs-no-subscription"
 
-# --- SeaweedFS S3 datastore ---------------------------------------------------
-# PBS S3 always speaks HTTPS -> reach SeaweedFS via the Traefik HTTPS route
-# (real LE wildcard cert PBS trusts). Direct :8333 is plain HTTP and unusable.
-pbs_s3_endpoint_id: "seaweedfs"
-pbs_s3_endpoint_host: "{{ platform_service_fqdns.seaweedfs }}"
-pbs_s3_endpoint_port: 443
-pbs_s3_path_style: true
-pbs_s3_bucket: "pbs-datastore"
-pbs_s3_identity: "pbs"                                   # SeaweedFS scoped S3 user
-pbs_s3_vault_path: "{{ platform_env }}/pbs/s3"   # minted by seaweedfs_bucket (Vault mode)
+# --- The S3 datastore: OFF-SITE, on the provider directly (infra/0008 amended 2026-10-20) ------
+# The datastore IS the off-site copy: PBS 4 S3 backend, a local cache on this guest, the guests'
+# client-side encryption key in Vault. The platform's own S3 (SeaweedFS) is not a backup
+# destination any more — until 2026-10-20 the datastore sat there (on the hypervisor's pool) and
+# was mirrored to the provider: the same bytes twice on site, and the pool filled (#1004).
+pbs_s3_provider: contabo                                                   # a key of platform_external_s3
+pbs_s3_endpoint_id: "{{ pbs_s3_provider }}"
+pbs_s3_endpoint_host: "{{ platform_external_s3[pbs_s3_provider].host }}"
+pbs_s3_region: "{{ platform_external_s3[pbs_s3_provider].region | default('') }}"
+pbs_s3_path_style: "{{ platform_external_s3[pbs_s3_provider].path_style | default(true) }}"
+pbs_s3_provider_quirks: "{{ platform_external_s3[pbs_s3_provider].pbs_quirks | default([]) }}"   # PBS --provider-quirks
+pbs_s3_bucket: "pbs-datastore"                                             # on the provider; created by the role
+pbs_s3_vault_path: "{{ platform_external_s3[pbs_s3_provider].vault_path }}"   # access_key + secret_key
 
-# The declared Proxmox Backup Server release (package proxmox-backup-server). The role does not
-# upgrade; the ladder playbooks/pbs-upgrade.yml (roles/apt_release_ladder) moves the server.
+# --- Migration from the on-site datastore (one-off; both vars go to '' once it is retired) ------
+# A local sync job pulls every snapshot of the old datastore into the new one (chunks travel once,
+# deduplicated); playbooks/pbs-datastore-migrate.yml runs it. The old datastore stays untouched
+# until the owner's go to retire it.
+pbs_datastore_migrate_from: "pbs-datastore"
+pbs_datastore_migrate_job: "migrate-pbs-datastore"
+
 pbs_version: "4.2.7-1"   # 2026-09-29 (4.2 line)
-pbs_datastore_name: "pbs-datastore"
-pbs_datastore_cache_path: "/var/lib/proxmox-backup/s3-cache/pbs-datastore"  # local cache/metadata for the S3-backed datastore
+pbs_datastore_name: "pbs-s3"                 # naming/0001 §4.1: {content}-{backend}, site- and tier-free
+pbs_datastore_cache_path: "/var/lib/proxmox-backup/s3-cache/{{ pbs_datastore_name }}"  # local cache/metadata for the S3-backed datastore
 # Schedules run on the PBS clock (UTC). The backup job itself is PVE-side (CEST),
 # see pbs_backup_schedule below.
 pbs_gc_schedule: "daily"                    # 00:00 UTC
@@ -106,17 +114,18 @@ pbs_no_fsfreeze_vms:
   # The VM name the prod firewall has carried since the 26.7 cutover (VMID 196). It is a
   # Proxmox guest name, not an inventory host, so there is nothing to derive it from.
   - "{{ groups['opnsense'] | first }}-new"
-pbs_backup_notes: "PBS S3 copy (SeaweedFS) — 2nd copy alongside NFS. {{ '{{' }} guestname {{ '}}' }} (VMID {{ '{{' }} vmid {{ '}}' }})"
+pbs_backup_notes: "PBS off-site copy (object store) — alongside the NAS archive. {{ '{{' }} guestname {{ '}}' }} (VMID {{ '{{' }} vmid {{ '}}' }})"
 # Client-side encryption: the key is generated + stored in Vault; PVE encrypts
 # before upload. Losing the key = unrecoverable backups -> Vault is the store.
 pbs_encryption_enabled: true
 pbs_encryption_vault_path: "{{ platform_env }}/pbs/encryption-key"
 
-# Retention (infra/0008 — no explicit numbers in the ADR; platform defaults)
-pbs_keep_last: 3
+# Retention — infra/0008 decision 7, LOCKED 2026-10-20 (the off-site history): 14 daily, 8 weekly,
+# 12 monthly; keep-last 1 so the newest snapshot of a group always survives a prune.
+pbs_keep_last: 1
 pbs_keep_daily: 14
 pbs_keep_weekly: 8
-pbs_keep_monthly: 6
+pbs_keep_monthly: 12
 pbs_reverify_days: 30
 
 # The two datastore jobs, declared once; tasks/jobs.yml makes the live jobs match
@@ -127,6 +136,7 @@ pbs_jobs:
     id: prune
     legacy: [prune-daily]
     settings:
+      store: "{{ pbs_datastore_name }}"   # part of the comparison: a job follows the datastore it is declared for
       schedule: "{{ pbs_prune_schedule }}"
       keep-last: "{{ pbs_keep_last }}"
       keep-daily: "{{ pbs_keep_daily }}"
@@ -136,6 +146,7 @@ pbs_jobs:
     id: verify
     legacy: [verify-weekly]
     settings:
+      store: "{{ pbs_datastore_name }}"
       schedule: "{{ pbs_verify_schedule }}"
       ignore-verified: true
       outdated-after: "{{ pbs_reverify_days }}"

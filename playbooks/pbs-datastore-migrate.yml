@@ -1,0 +1,42 @@
+---
+# ==============================================================================
+# One-off: run the migration sync job that pulls the on-site datastore's snapshots into the
+# off-site one (roles/pbs declares the job; infra/0008 amended 2026-10-20). The run is detached:
+# it takes as long as the first upload takes. Progress: `proxmox-backup-manager task list` on the
+# PBS guest, or the PBS UI. Re-runnable: a sync only transfers what the target lacks.
+#
+#   Run: ansible-playbook -i inventories/prod/hosts.yml playbooks/pbs-datastore-migrate.yml
+# ==============================================================================
+- name: "PBS | Migrate the on-site datastore's history into the off-site one"
+  hosts: pbs
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../roles/pbs/defaults/main.yml
+  tasks:
+    - name: "Migrate | Nothing to migrate when the source is retired"
+      ansible.builtin.meta: end_play
+      when: pbs_datastore_migrate_from | length == 0
+
+    - name: "Migrate | The sync job exists"
+      ansible.builtin.command: "proxmox-backup-manager sync-job list --output-format json"
+      register: mig_jobs
+      changed_when: false
+      failed_when: pbs_datastore_migrate_job not in (mig_jobs.stdout | from_json | map(attribute='id') | list)
+
+    - name: "Migrate | Already running?"
+      ansible.builtin.command: "proxmox-backup-manager task list --running --output-format json"
+      register: mig_running
+      changed_when: false
+
+    - name: "Migrate | Run the sync job (detached)"
+      ansible.builtin.command:
+        argv: [proxmox-backup-manager, sync-job, run, "{{ pbs_datastore_migrate_job }}"]
+      async: 172800
+      poll: 0
+      when: (mig_running.stdout | from_json | selectattr('worker_type', 'equalto', 'syncjob') | list | length) == 0
+      changed_when: true
+
+    - name: "Migrate | Report"
+      ansible.builtin.debug:
+        msg: "PBS_MIGRATE job={{ pbs_datastore_migrate_job }} {{ pbs_datastore_migrate_from }} → {{ pbs_datastore_name }}: {{ 'already running' if (mig_running.stdout | from_json | selectattr('worker_type', 'equalto', 'syncjob') | list | length) > 0 else 'started' }}"

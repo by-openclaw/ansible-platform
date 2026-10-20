@@ -23,7 +23,6 @@
   ansible.builtin.command:
     argv: >-
       {{ ['proxmox-backup-manager', item.key ~ '-job', _present | ternary('update', 'create'), item.value.id]
-         + ([] if _present else ['--store', pbs_datastore_name])
          + (_keys | map('regex_replace', '^', '--') | zip(_want) | flatten) }}
   loop: "{{ pbs_jobs | dict2items }}"
   loop_control:
