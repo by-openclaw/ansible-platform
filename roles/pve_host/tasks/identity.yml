@@ -92,26 +92,15 @@
   changed_when: true
 
 # `pveum user delete` leaves the ACL lines of the user's tokens in user.cfg ("ignore invalid acl
-# token …" on every pveum/pvesm call). They are read from the file and removed by name.
-- name: "PVE host | The user configuration as the node holds it"
-  ansible.builtin.slurp:
-    src: /etc/pve/user.cfg
-  register: pve_host_user_cfg
-  when: pve_host_retired_accounts | default([]) | length > 0
-
-- name: "PVE host | ACL lines of the retired accounts removed"
-  ansible.builtin.command:
-    argv: >-
-      {{ ['pveum', 'acl', 'delete', item.split(':')[2], '--roles', item.split(':')[4]]
-         + (['--tokens', item.split(':')[3]] if ('!' in item.split(':')[3]) else ['--users', item.split(':')[3]]) }}
-  loop: >-
-    {{ (pve_host_user_cfg.content | default('') | b64decode).splitlines()
-       | select('match', '^acl:')
-       | select('search', '^acl:[^:]*:[^:]*:(' ~ (pve_host_retired_accounts | default([]) | map('regex_escape') | join('|')) ~ ')(!|:)') | list }}
-  loop_control:
-    label: "{{ item.split(':')[3] }} {{ item.split(':')[4] }} on {{ item.split(':')[2] }}"
-  when: pve_host_retired_accounts | default([]) | length > 0
-  changed_when: true
+# token …" on every pveum/pvesm call), and `pveum acl delete` refuses them ("no such user"). The
+# lines go from the file itself: user.cfg sits on pmxcfs (no atomic rename there — in-place write).
+- name: "PVE host | ACL lines of the retired accounts removed from user.cfg"
+  ansible.builtin.lineinfile:
+    path: /etc/pve/user.cfg
+    regexp: "^acl:[^:]*:[^:]*:{{ item | regex_escape }}(!|:)"
+    state: absent
+    unsafe_writes: true
+  loop: "{{ pve_host_retired_accounts | default([]) }}"
 
 - name: "PVE host | Tokens today, per service account"
   ansible.builtin.command:
