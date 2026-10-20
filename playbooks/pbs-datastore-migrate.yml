@@ -24,19 +24,24 @@
       changed_when: false
       failed_when: pbs_datastore_migrate_job not in (mig_jobs.stdout | from_json | map(attribute='id') | list)
 
+    # `task list` has no "running" filter: every task of the last 200, a running one has no endtime.
     - name: "Migrate | Already running?"
-      ansible.builtin.command: "proxmox-backup-manager task list --running --output-format json"
-      register: mig_running
+      ansible.builtin.command: "proxmox-backup-manager task list --all true --limit 200 --output-format json"
+      register: mig_tasks
       changed_when: false
+
+    - name: "Migrate | The running sync tasks"
+      ansible.builtin.set_fact:
+        mig_running_sync: "{{ mig_tasks.stdout | from_json | selectattr('worker_type', 'equalto', 'syncjob') | rejectattr('endtime', 'defined') | list }}"
 
     - name: "Migrate | Run the sync job (detached)"
       ansible.builtin.command:
         argv: [proxmox-backup-manager, sync-job, run, "{{ pbs_datastore_migrate_job }}"]
       async: 172800
       poll: 0
-      when: (mig_running.stdout | from_json | selectattr('worker_type', 'equalto', 'syncjob') | list | length) == 0
+      when: mig_running_sync | length == 0
       changed_when: true
 
     - name: "Migrate | Report"
       ansible.builtin.debug:
-        msg: "PBS_MIGRATE job={{ pbs_datastore_migrate_job }} {{ pbs_datastore_migrate_from }} → {{ pbs_datastore_name }}: {{ 'already running' if (mig_running.stdout | from_json | selectattr('worker_type', 'equalto', 'syncjob') | list | length) > 0 else 'started' }}"
+        msg: "PBS_MIGRATE job={{ pbs_datastore_migrate_job }} {{ pbs_datastore_migrate_from }} → {{ pbs_datastore_name }}: {{ 'already running' if (mig_running_sync | length > 0) else 'started' }}"
