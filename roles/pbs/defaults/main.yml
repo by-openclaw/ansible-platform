@@ -90,7 +90,10 @@ pbs_traefik_backend_url: "https://{{ pbs_node_fqdn if pbs_console_cert | bool el
 # --- PVE storage wiring + 2nd backup job (delegated to the node) --------------
 pbs_pve_node: "{{ groups['proxmox_nodes'] | first }}"
 pbs_pve_node_ssh: "{{ hostvars[groups['proxmox_nodes'] | first].ansible_host }}"          # node OOB, root SSH (id_ed25519_rune_automation)
-pbs_pve_storage_id: "pbs"                 # PVE storage entry name
+pbs_pve_storage_id: "pbs-s3"              # PVE storage entry: {content}-{backend} (naming/0001 §4.1); a storage's
+                                          # datastore is FIXED at creation, so a moved datastore means a new id
+pbs_pve_storage_previous: "pbs"           # the entry of the on-site datastore: its job moves, its key is reused,
+                                          # the entry itself retires with that datastore ('' once gone)
 pbs_pve_backup_user: "svc-pbs-backup-prod@pbs"   # naming/0002 §3 (renamed 2026-09-01; was pve-backup@pbs)
 pbs_pve_backup_token: "pve"               # API token name -> pve-backup@pbs!pve
 # Where the minted token lives. Vault, not a controller file: the file used to be
