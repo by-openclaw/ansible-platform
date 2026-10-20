@@ -250,40 +250,34 @@
       register: r_set
       changed_when: r_set is not skipped
 
-    # The datastore a storage points at: set on drift (the datastore moved off-site, infra/0008 2026-10-20).
-    - name: "PVE-wire | The storage points at the declared datastore"
-      ansible.builtin.command:
-        argv: [pvesm, set, "{{ pbs_pve_storage_id }}", "--datastore", "{{ pbs_datastore_name }}"]
-      when:
-        - pbs_pve_storage_id in r_pvesm.stdout
-        - ((r_storage_now.stdout | default('{}', true) | from_json).datastore | default('')) != pbs_datastore_name
-      register: r_set_ds
-      changed_when: r_set_ds is not skipped
+    # A storage's datastore cannot be changed (`pvesm set` knows no --datastore): the declared id
+    # must point where it was created. A moved datastore gets a new storage id (pbs_pve_storage_id).
+    - name: "PVE-wire | The storage points at the declared datastore (fixed at creation)"
+      ansible.builtin.assert:
+        that: ((r_storage_now.stdout | default('{}', true) | from_json).datastore | default(pbs_datastore_name)) == pbs_datastore_name
+        fail_msg: >-
+          storage {{ pbs_pve_storage_id }} points at datastore
+          {{ (r_storage_now.stdout | default('{}', true) | from_json).datastore | default('?') }}, declared {{ pbs_datastore_name }}:
+          a datastore is fixed at creation — declare a new storage id for the new datastore.
+        quiet: true
+      when: pbs_pve_storage_id in r_pvesm.stdout
 
+    # --- the client-side encryption key: ONE key for every PBS storage of the node ----------------
+    # The chunks synced from the previous datastore are encrypted with the previous storage's key:
+    # a new storage must carry the same key or that history cannot be restored through it.
+    # Order: the previous storage's key file, else Vault's copy, else a fresh key (first ever).
     - name: "PVE-wire | Stat the storage encryption key"
       ansible.builtin.stat:
         path: "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc"
       register: pbs_enc_stat
 
-    - name: "PVE-wire | Enable client-side encryption (autogen key, once)"
-      ansible.builtin.command:
-        argv: [pvesm, set, "{{ pbs_pve_storage_id }}", "--encryption-key", autogen]
-      register: r_enc
-      changed_when: r_enc.rc == 0
-      when:
-        - pbs_encryption_enabled | bool
-        - not pbs_enc_stat.stat.exists
+    - name: "PVE-wire | Stat the previous storage's encryption key"
+      ansible.builtin.stat:
+        path: "/etc/pve/priv/storage/{{ pbs_pve_storage_previous }}.enc"
+      register: pbs_prev_enc_stat
+      when: pbs_pve_storage_previous | length > 0
 
-    - name: "PVE-wire | Read the encryption key (to back up off-node)"
-      ansible.builtin.slurp:
-        src: "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc"
-      register: pbs_enc_key
-      when: pbs_encryption_enabled | bool
-      no_log: true
-
-    # LOSS OF THIS KEY = UNRECOVERABLE BACKUPS. Vault holds the off-node copy (and
-    # its KV history); it is written only when it differs from the node's key.
-    - name: "PVE-wire | The off-node copy of the encryption key (Vault, optional)"
+    - name: "PVE-wire | Vault's copy of the encryption key (optional, read before any key is made)"
       ansible.builtin.include_role:
         name: vault_secret
       vars:
@@ -291,6 +285,73 @@
         vault_secret_optional: true
       when: pbs_encryption_enabled | bool
 
+    - name: "PVE-wire | Remember Vault's copy"
+      ansible.builtin.set_fact:
+        pbs_vault_key: "{{ vault_secret_result.encryption_key | default('') }}"
+      no_log: true
+      when: pbs_encryption_enabled | bool
+
+    - name: "PVE-wire | The new storage takes the previous storage's key"
+      ansible.builtin.command:
+        argv: [pvesm, set, "{{ pbs_pve_storage_id }}", "--encryption-key", "/etc/pve/priv/storage/{{ pbs_pve_storage_previous }}.enc"]
+      register: r_enc_prev
+      changed_when: r_enc_prev.rc == 0
+      when:
+        - pbs_encryption_enabled | bool
+        - not pbs_enc_stat.stat.exists
+        - pbs_pve_storage_previous | length > 0
+        - pbs_prev_enc_stat.stat.exists | default(false)
+
+    - name: "PVE-wire | Else the new storage takes Vault's key (through a 0600 file that does not stay)"
+      when:
+        - pbs_encryption_enabled | bool
+        - not pbs_enc_stat.stat.exists
+        - not (pbs_prev_enc_stat.stat.exists | default(false))
+        - pbs_vault_key | length > 0
+      block:
+        - name: "PVE-wire | Vault's key, on the node for the length of this task"
+          ansible.builtin.copy:
+            dest: "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc.import"
+            content: "{{ pbs_vault_key }}"
+            mode: "0600"
+          no_log: true
+        - name: "PVE-wire | The storage takes it"
+          ansible.builtin.command:
+            argv: [pvesm, set, "{{ pbs_pve_storage_id }}", "--encryption-key", "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc.import"]
+          changed_when: true
+      always:
+        - name: "PVE-wire | The import file is gone"
+          ansible.builtin.file:
+            path: "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc.import"
+            state: absent
+
+    - name: "PVE-wire | Enable client-side encryption (autogen key, first ever)"
+      ansible.builtin.command:
+        argv: [pvesm, set, "{{ pbs_pve_storage_id }}", "--encryption-key", autogen]
+      register: r_enc
+      changed_when: r_enc.rc == 0
+      when:
+        - pbs_encryption_enabled | bool
+        - not pbs_enc_stat.stat.exists
+        - not (pbs_prev_enc_stat.stat.exists | default(false))
+        - pbs_vault_key | length == 0
+
+    - name: "PVE-wire | Stat the storage encryption key again (a dry run on a new storage has none)"
+      ansible.builtin.stat:
+        path: "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc"
+      register: pbs_enc_stat_now
+
+    - name: "PVE-wire | Read the encryption key (to back up off-node)"
+      ansible.builtin.slurp:
+        src: "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc"
+      register: pbs_enc_key
+      when:
+        - pbs_encryption_enabled | bool
+        - pbs_enc_stat_now.stat.exists
+      no_log: true
+
+    # LOSS OF THIS KEY = UNRECOVERABLE BACKUPS. Vault holds the off-node copy (and
+    # its KV history); it is written only when it differs from the node's key.
     - name: "PVE-wire | Back up the encryption key to Vault (only when it differs)"
       ansible.builtin.include_role:
         name: vault_secret
@@ -304,7 +365,7 @@
       when:
         - pbs_encryption_enabled | bool
         - pbs_enc_key.content is defined
-        - (vault_secret_result.encryption_key | default('')) != (pbs_enc_key.content | b64decode)
+        - pbs_vault_key != (pbs_enc_key.content | b64decode)
 
     - name: "PVE-wire | Existing backup jobs"
       ansible.builtin.command:
@@ -312,6 +373,18 @@
       register: r_jobs
       changed_when: false
       check_mode: false   # read-only probe: must run under --check too (its JSON feeds the next task)
+
+    # The datastore moved: the job that wrote to the previous storage now writes to this one
+    # (one PBS job per node; the previous entry keeps its old datastore until it retires).
+    - name: "PVE-wire | The PBS job follows the storage (previous → declared)"
+      ansible.builtin.command:
+        argv: [pvesh, set, "/cluster/backup/{{ (r_jobs.stdout | from_json | selectattr('storage', 'defined') | selectattr('storage', 'eq', pbs_pve_storage_previous) | map(attribute='id') | first) }}", --storage, "{{ pbs_pve_storage_id }}"]
+      when:
+        - pbs_pve_storage_previous | length > 0
+        - pbs_pve_storage_id not in (r_jobs.stdout | from_json | selectattr('storage', 'defined') | map(attribute='storage') | list)
+        - pbs_pve_storage_previous in (r_jobs.stdout | from_json | selectattr('storage', 'defined') | map(attribute='storage') | list)
+      register: r_job_move
+      changed_when: true
 
     - name: "PVE-wire | Create the 2nd backup job -> PBS (keeps the NFS job)"
       ansible.builtin.command:
@@ -337,7 +410,9 @@
           - "PBS S3 second copy (managed by ansible pbs role)"
       register: r_job
       changed_when: r_job.rc == 0
-      when: pbs_pve_storage_id not in (r_jobs.stdout | from_json | map(attribute='storage') | list)
+      when:
+        - r_job_move is skipped
+        - pbs_pve_storage_id not in (r_jobs.stdout | from_json | selectattr('storage', 'defined') | map(attribute='storage') | list)
 
     # --- PBS must NOT back itself up into its own datastore (circular) ----------
     # The all-guests S3 job would include the PBS VM; backing the backup server up
