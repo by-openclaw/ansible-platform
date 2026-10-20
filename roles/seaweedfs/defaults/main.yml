@@ -96,6 +96,10 @@ seaweedfs_offsite_bucket: "seaweedfs-offsite"
 seaweedfs_offsite_endpoint: "{{ platform_external_s3.contabo.endpoint }}"
 seaweedfs_offsite_region: "{{ platform_external_s3.contabo.region }}"
 seaweedfs_offsite_filer_path: "/buckets"
+# Buckets the mirror must NOT push: the PBS bucket of the on-site datastore (its history goes
+# off-site through PBS's own sync, infra/0008 2026-10-20; the bucket retires with it). Any path
+# component matching a pattern is excluded (weed filer.backup -filerExcludePathPatterns).
+seaweedfs_offsite_exclude_path_patterns: ["pbs-datastore"]
 seaweedfs_offsite_is_incremental: false
 # One-time resync window for the offsite backup (e.g. "4h"): when set, the backup starts that far
 # back instead of at its saved checkpoint — to skip a replay whose events were already sent.

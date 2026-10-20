@@ -231,7 +231,7 @@
         - >-
           until nc -z 127.0.0.1 {{ seaweedfs_filer_port | int + seaweedfs_grpc_offset | int }}; do sleep 2; done;
           exec {{ seaweedfs_bin }} filer.backup -filer=localhost:{{ seaweedfs_filer_port }}
-          -filerPath={{ seaweedfs_offsite_filer_path }}{{ (' -timeAgo=' ~ seaweedfs_backup_time_ago) if seaweedfs_backup_time_ago | length > 0 else '' }}
+          -filerPath={{ seaweedfs_offsite_filer_path }}{{ (' -filerExcludePathPatterns=' ~ (seaweedfs_offsite_exclude_path_patterns | join(','))) if (seaweedfs_offsite_exclude_path_patterns | length > 0) else '' }}{{ (' -timeAgo=' ~ seaweedfs_backup_time_ago) if seaweedfs_backup_time_ago | length > 0 else '' }}
       volumes:
         - "{{ seaweedfs_config_dir }}:{{ seaweedfs_config_dir }}:ro"   # replication.toml (the Contabo sink), security.toml
         - "/etc/ssl/certs:/etc/ssl/certs:ro"

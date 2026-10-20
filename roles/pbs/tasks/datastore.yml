@@ -1,20 +1,31 @@
 ---
-# S3-backed datastore on SeaweedFS (via the Traefik HTTPS route — PBS S3 needs TLS).
-# Order: create bucket+scoped identity -> load creds -> s3 endpoint -> s3 check ->
-# local cache dir -> datastore.
-
-- name: "Datastore | Provision the SeaweedFS S3 bucket + scoped identity"
+# The S3 datastore on the off-site provider (infra/0008 amended 2026-10-20). Order: provider
+# credentials from Vault -> the bucket exists on the provider -> the PBS S3 endpoint -> s3 check ->
+# local cache dir -> datastore -> the one-off migration sync job from the on-site datastore.
+- name: "Datastore | The provider's S3 credentials (Vault)"
   ansible.builtin.include_role:
-    name: seaweedfs_bucket
+    name: vault_secret
   vars:
-    seaweedfs_bucket_identity: "{{ pbs_s3_identity }}"
-    seaweedfs_bucket_names: ["{{ pbs_s3_bucket }}"]
-    # Vault mode — file mode persisted the S3 key to the controller's disk.
-    seaweedfs_bucket_vault_path: "{{ pbs_s3_vault_path }}"
+    vault_secret_path: "{{ pbs_s3_vault_path }}"
 
-- name: "Datastore | Bind the PBS S3 credentials (handed back by seaweedfs_bucket)"
+- name: "Datastore | Bind them"
   ansible.builtin.set_fact:
-    pbs_s3_creds: "{{ seaweedfs_bucket_key }}"
+    pbs_s3_creds: "{{ vault_secret_result }}"
+  no_log: true
+
+# The bucket is created from the controller (boto3 there; the PBS guest carries no AWS SDK):
+# credentials go as module arguments, never into an environment or onto a command line.
+- name: "Datastore | The bucket exists on the provider ({{ pbs_s3_bucket }})"
+  amazon.aws.s3_bucket:
+    name: "{{ pbs_s3_bucket }}"
+    endpoint_url: "https://{{ pbs_s3_endpoint_host }}"
+    region: "{{ pbs_s3_region | default(omit, true) }}"
+    access_key: "{{ pbs_s3_creds.access_key }}"
+    secret_key: "{{ pbs_s3_creds.secret_key }}"
+    ceph: true     # path-style addressing, no AWS-only bucket features
+    state: present
+  delegate_to: localhost
+  become: false
   no_log: true
 
 - name: "Datastore | List existing S3 endpoints"
@@ -23,25 +34,16 @@
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
   changed_when: false
 
-- name: "Datastore | Create the SeaweedFS S3 endpoint"
+# NO --port: PBS defaults to 443 and signs the bare host (a port in the signed host once broke the
+# signature behind a reverse proxy). --region is what SigV4 needs on a non-AWS provider.
+- name: "Datastore | Create the S3 endpoint ({{ pbs_s3_endpoint_id }})"
   ansible.builtin.command:
-    argv:
-      - proxmox-backup-manager
-      - s3
-      - endpoint
-      - create
-      - "{{ pbs_s3_endpoint_id }}"
-      - "--access-key"
-      - "{{ pbs_s3_creds.access_key }}"
-      - "--secret-key"
-      - "{{ pbs_s3_creds.secret_key }}"
-      - "--endpoint"
-      - "{{ pbs_s3_endpoint_host }}"
-      # NO --port: PBS defaults to 443 and signs `host` WITHOUT the port. Setting
-      # --port 443 makes PBS sign host:443, but Traefik forwards a bare Host header
-      # -> SigV4 canonical-host mismatch (SignatureDoesNotMatch). Omit it.
-      - "--path-style"
-      - "{{ pbs_s3_path_style | string | lower }}"
+    argv: >-
+      {{ ['proxmox-backup-manager', 's3', 'endpoint', 'create', pbs_s3_endpoint_id,
+          '--access-key', pbs_s3_creds.access_key, '--secret-key', pbs_s3_creds.secret_key,
+          '--endpoint', pbs_s3_endpoint_host, '--path-style', (pbs_s3_path_style | string | lower)]
+         + (['--region', pbs_s3_region] if (pbs_s3_region | length > 0) else [])
+         + (['--provider-quirks', pbs_s3_provider_quirks | join(';')] if (pbs_s3_provider_quirks | length > 0) else []) }}
   no_log: true
   changed_when: true
   when: pbs_s3_endpoint_id not in (pbs_s3_ep_list.stdout | from_json | map(attribute='id') | list)
@@ -85,3 +87,33 @@
   ansible.builtin.command: "proxmox-backup-manager datastore show {{ pbs_datastore_name }}"
   register: pbs_ds_show
   changed_when: false
+
+# --- the one-off migration: a LOCAL sync job (no --remote) pulls the on-site datastore's
+#     snapshots into the new one; it is run by playbooks/pbs-datastore-migrate.yml ----------------
+- name: "Datastore | Existing sync jobs"
+  ansible.builtin.command: "proxmox-backup-manager sync-job list --output-format json"
+  register: pbs_sync_list
+  check_mode: false  # read-only probe
+  changed_when: false
+  when: pbs_datastore_migrate_from | length > 0
+
+- name: "Datastore | The migration sync job ({{ pbs_datastore_migrate_from }} → {{ pbs_datastore_name }})"
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - sync-job
+      - create
+      - "{{ pbs_datastore_migrate_job }}"
+      - "--store"
+      - "{{ pbs_datastore_name }}"
+      - "--remote-store"
+      - "{{ pbs_datastore_migrate_from }}"
+      - "--remove-vanished"
+      - "false"
+      - "--comment"
+      - "one-off: the on-site datastore's history into the off-site one (infra/0008, 2026-10-20)"
+  changed_when: true
+  when:
+    - pbs_datastore_migrate_from | length > 0
+    - pbs_datastore_migrate_from in (pbs_ds_list.stdout | from_json | map(attribute='name') | list)
+    - pbs_datastore_migrate_job not in (pbs_sync_list.stdout | default('[]', true) | from_json | map(attribute='id') | list)
