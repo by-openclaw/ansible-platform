@@ -26,6 +26,7 @@ pbs_s3_endpoint_host: "{{ platform_external_s3[pbs_s3_provider].host }}"
 pbs_s3_region: "{{ platform_external_s3[pbs_s3_provider].region | default('') }}"
 pbs_s3_path_style: "{{ platform_external_s3[pbs_s3_provider].path_style | default(true) }}"
 pbs_s3_provider_quirks: "{{ platform_external_s3[pbs_s3_provider].pbs_quirks | default([]) }}"   # PBS --provider-quirks
+pbs_s3_put_rate_limit: "{{ platform_external_s3[pbs_s3_provider].pbs_put_rate_limit | default(0) }}"   # PUTs per second, 0 = none (429 from the provider on 2026-10-21)
 pbs_s3_bucket: "pbs-datastore"                                             # on the provider; created by the role
 pbs_s3_vault_path: "{{ platform_external_s3[pbs_s3_provider].vault_path }}"   # access_key + secret_key
 
@@ -35,6 +36,14 @@ pbs_s3_vault_path: "{{ platform_external_s3[pbs_s3_provider].vault_path }}"   # 
 # until the owner's go to retire it.
 pbs_datastore_migrate_from: "pbs-datastore"
 pbs_datastore_migrate_job: "migrate-pbs-datastore"
+# The first night (2026-10-21): the sync created groups as root@pam, the nightly job (the backup
+# token) was then refused by the owner check on 18 guests; both wrote to the provider at once and
+# it answered 429. So: the synced groups belong to the backup token, the sync runs daily after the
+# backup window, and the first passes carry only the last snapshots of each group — the rest of
+# the history follows when pbs_datastore_migrate_transfer_last is raised to 0 (unlimited).
+pbs_datastore_migrate_owner: "{{ pbs_pve_backup_user }}!{{ pbs_pve_backup_token }}"
+pbs_datastore_migrate_schedule: "05:00"          # UTC on the PBS guest; the nightly jobs end ~04:00Z
+pbs_datastore_migrate_transfer_last: 7           # 0 = every snapshot
 
 pbs_version: "4.2.7-1"   # 2026-09-29 (4.2 line)
 pbs_datastore_name: "pbs-s3"                 # naming/0001 §4.1: {content}-{backend}, site- and tier-free
@@ -47,7 +56,18 @@ pbs_prune_schedule: "daily"                 # 00:00 UTC
 # 21:00 UTC = 23:00 CEST: a full run takes 72-97 min (measured 09-21/09-28), so it
 # ends before GC/prune (00:00 UTC) and the 03:30 CEST backup job, and never
 # overlaps the 05:00 CEST NFS job that keeps the node's disks busy until ~08:15.
-pbs_verify_schedule: "21:00"
+pbs_verify_schedule: "sat 22:00"            # weekly: a verify of an off-site datastore reads every chunk back over the line (2026-10-21: 24 h at 27 %, saturating it)
+
+# --- The platform automation's identity on PBS (identity/0003; security/0001 #77 shape) --------
+# What the automation presents to PBS for maintenance the manager cannot do (change the owner of
+# a group, prune or run jobs through the API): a PBS user with an API token, DatastoreAdmin on
+# every datastore, the token in Vault under the identity. The client package carries the commands.
+pbs_automation_user: "svc-ansible-{{ platform_env }}@pbs"
+pbs_automation_token: "admin"
+pbs_automation_acl_path: "/datastore"
+pbs_automation_role: "DatastoreAdmin"
+pbs_automation_vault_path: "{{ platform_env }}/svc-ansible/pbs-api"
+pbs_client_version: "4.2.8-1"                 # proxmox-backup-client on the PBS guest (same repo as the server)
 
 # --- Authentik OIDC (SSO) -----------------------------------------------------
 pbs_oidc_enabled: true
@@ -132,7 +152,7 @@ pbs_keep_last: 1
 pbs_keep_daily: 14
 pbs_keep_weekly: 8
 pbs_keep_monthly: 12
-pbs_reverify_days: 30
+pbs_reverify_days: 90                      # a full re-read of the off-site set at most quarterly
 
 # The two datastore jobs, declared once; tasks/jobs.yml makes the live jobs match
 # (create, update drift, retire superseded ids). Ids carry no cadence: the old ones

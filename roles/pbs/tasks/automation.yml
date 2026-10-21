@@ -1,0 +1,82 @@
+---
+# The platform automation's identity on PBS: user + API token (Vault-held) + DatastoreAdmin, and
+# the client package whose commands the manager lacks (change-owner, …). Same read-then-mint
+# pattern as the PVE backup token in playbooks/pbs-pve-storage.yml.
+- name: "Automation | The client package (pinned)"
+  ansible.builtin.apt:
+    name: "proxmox-backup-client={{ pbs_client_version }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Automation | Users today"
+  ansible.builtin.command: "proxmox-backup-manager user list --output-format json"
+  register: pbs_auto_users
+  check_mode: false
+  changed_when: false
+
+- name: "Automation | The user exists: {{ pbs_automation_user }}"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, user, create, "{{ pbs_automation_user }}", --comment, "platform automation (identity/0003)"]
+  when: pbs_automation_user not in (pbs_auto_users.stdout | from_json | map(attribute='userid') | list)
+  changed_when: true
+
+- name: "Automation | Its token as Vault holds it (absent is valid)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ pbs_automation_vault_path }}"
+    vault_secret_optional: true
+
+- name: "Automation | Is the held token the one PBS has?"
+  ansible.builtin.set_fact:
+    pbs_auto_tok_held: >-
+      {{ (vault_secret_result.tokenid | default('')) == (pbs_automation_user ~ '!' ~ pbs_automation_token)
+         and (vault_secret_result.value | default('') | length > 0)
+         and (pbs_automation_token in ((pbs_auto_users.stdout | from_json | selectattr('userid', 'equalto', pbs_automation_user) | map(attribute='tokens') | first | default([])) | map(attribute='tokenname') | list)) }}
+  no_log: true
+
+- name: "Automation | (Re)generate the token when Vault does not hold a usable one"
+  when: not (pbs_auto_tok_held | bool)
+  block:
+    - name: "Automation | Delete any stale token (secret unknown)"
+      ansible.builtin.command:
+        argv: [proxmox-backup-manager, user, delete-token, "{{ pbs_automation_user }}", "{{ pbs_automation_token }}"]
+      register: pbs_auto_deltok
+      changed_when: pbs_auto_deltok.rc == 0
+      failed_when: false
+    - name: "Automation | Generate the token"
+      ansible.builtin.command:
+        argv: [proxmox-backup-manager, user, generate-token, "{{ pbs_automation_user }}", "{{ pbs_automation_token }}"]
+      register: pbs_auto_gentok
+      changed_when: true
+      no_log: true
+    - name: "Automation | Store the minted token in Vault (a new version; the previous one is kept)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      when: pbs_auto_gentok is not skipped   # a dry run mints nothing
+      vars:
+        vault_secret_path: "{{ pbs_automation_vault_path }}"
+        vault_secret_force_fields:
+          tokenid: "{{ (pbs_auto_gentok.stdout | regex_replace('^[^{]*', '') | from_json).tokenid }}"
+          value: "{{ (pbs_auto_gentok.stdout | regex_replace('^[^{]*', '') | from_json).value }}"
+          note: "the platform automation's PBS API token ({{ pbs_automation_user }}!{{ pbs_automation_token }}): DatastoreAdmin on {{ pbs_automation_acl_path }} (roles/pbs automation.yml)"
+
+- name: "Automation | ACLs today"
+  ansible.builtin.command: "proxmox-backup-manager acl list --output-format json"
+  register: pbs_auto_acl
+  check_mode: false
+  changed_when: false
+
+- name: "Automation | {{ pbs_automation_role }} on {{ pbs_automation_acl_path }} for the user and the token"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, acl, update, "{{ pbs_automation_acl_path }}", "{{ pbs_automation_role }}", --auth-id, "{{ item }}"]
+  loop:
+    - "{{ pbs_automation_user }}"
+    - "{{ pbs_automation_user }}!{{ pbs_automation_token }}"
+  when: >-
+    (pbs_auto_acl.stdout | from_json
+     | selectattr('path', 'equalto', pbs_automation_acl_path)
+     | selectattr('ugid', 'equalto', item)
+     | selectattr('roleid', 'equalto', pbs_automation_role) | list | length) == 0
+  changed_when: true
