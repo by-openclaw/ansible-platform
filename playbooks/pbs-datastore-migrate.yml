@@ -25,6 +25,69 @@
       failed_when: pbs_datastore_migrate_job not in (mig_jobs.stdout | from_json | map(attribute='id') | list)
 
     # `task list` has no "running" filter: every task of the last 200, a running one has no endtime.
+    # A verify of the off-site datastore reads every chunk back over the same line: never beside the sync.
+    - name: "Migrate | Tasks in flight"
+      ansible.builtin.command: "proxmox-backup-manager task list --all true --limit 200 --output-format json"
+      register: mig_tasks0
+      changed_when: false
+
+    - name: "Migrate | A running verify is stopped first"
+      ansible.builtin.command:
+        argv: [proxmox-backup-manager, task, stop, "{{ item }}"]
+      loop: "{{ mig_tasks0.stdout | from_json | selectattr('worker_type', 'equalto', 'verificationjob') | rejectattr('endtime', 'defined') | map(attribute='upid') | list }}"
+      loop_control: { label: "verify" }
+      changed_when: true
+
+    # --- the groups on the target belong to the declared owner (the backup token): a group the
+    #     sync created as root@pam refuses the nightly backup ("owner check failed", 2026-10-21) --------
+    - name: "Migrate | Owner of every group on the target"
+      ansible.builtin.find:
+        paths: "{{ pbs_datastore_cache_path }}"
+        recurse: true
+        patterns: "owner"
+      register: mig_owner_files
+
+    - name: "Migrate | Read them"
+      ansible.builtin.slurp:
+        src: "{{ item.path }}"
+      loop: "{{ mig_owner_files.files }}"
+      loop_control: { label: "{{ item.path | regex_replace('^.*/' ~ pbs_datastore_name ~ '/', '') }}" }
+      register: mig_owners
+
+    - name: "Migrate | The groups to hand over"
+      ansible.builtin.set_fact:
+        mig_wrong_owner: >-
+          {{ (mig_owners.results | map(attribute='item.path') | list)
+             | zip(mig_owners.results | map(attribute='content') | map('b64decode') | map('trim') | list)
+             | rejectattr('1', 'equalto', pbs_datastore_migrate_owner)
+             | map(attribute='0')
+             | map('regex_replace', '^.*/' ~ pbs_datastore_name ~ '/', '')
+             | map('regex_replace', '/owner$', '') | list }}
+
+    - name: "Migrate | The automation's PBS token (Vault)"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ pbs_automation_vault_path }}"
+      when: mig_wrong_owner | length > 0
+
+    # The token travels on stdin (PBS_PASSWORD_FD names the descriptor, not the secret); the
+    # repository is the guest's own name so the platform certificate validates.
+    - name: "Migrate | Hand the group over to the declared owner"
+      ansible.builtin.command:
+        argv: [proxmox-backup-client, change-owner, "{{ item }}", "{{ pbs_datastore_migrate_owner }}",
+               --repository, "{{ vault_secret_result.tokenid }}@{{ pbs_node_fqdn }}:{{ pbs_datastore_name }}"]
+        stdin: "{{ vault_secret_result.value }}"
+      environment:
+        PBS_PASSWORD_FD: "0"
+      loop: "{{ mig_wrong_owner }}"
+      no_log: true
+      changed_when: true
+
+    - name: "Migrate | Handed over"
+      ansible.builtin.debug:
+        msg: "PBS_MIGRATE owners: {{ mig_wrong_owner | length }} group(s) handed to {{ pbs_datastore_migrate_owner }}: {{ mig_wrong_owner | join(' ') }}"
+
     - name: "Migrate | Already running?"
       ansible.builtin.command: "proxmox-backup-manager task list --all true --limit 200 --output-format json"
       register: mig_tasks
