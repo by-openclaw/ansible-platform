@@ -57,7 +57,9 @@
       when: pbs_auto_gentok is not skipped   # a dry run mints nothing
       vars:
         vault_secret_path: "{{ pbs_automation_vault_path }}"
-        vault_secret_force_fields:
+        vault_secret_init: "{{ _pbs_auto_doc }}"            # creates the document the first time
+        vault_secret_force_fields: "{{ _pbs_auto_doc }}"    # a new version every time PBS mints
+        _pbs_auto_doc:
           tokenid: "{{ (pbs_auto_gentok.stdout | regex_replace('^[^{]*', '') | from_json).tokenid }}"
           value: "{{ (pbs_auto_gentok.stdout | regex_replace('^[^{]*', '') | from_json).value }}"
           note: "the platform automation's PBS API token ({{ pbs_automation_user }}!{{ pbs_automation_token }}): DatastoreAdmin on {{ pbs_automation_acl_path }} (roles/pbs automation.yml)"

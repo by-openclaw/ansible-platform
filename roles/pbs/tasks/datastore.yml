@@ -49,19 +49,21 @@
   changed_when: true
   when: pbs_s3_endpoint_id not in (pbs_s3_ep_list.stdout | from_json | map(attribute='id') | list)
 
-# The settings a provider needs can change after creation: converge them on the live endpoint.
-- name: "Datastore | The endpoint's rate limit and quirks follow the declaration"
+# The quirks a provider needs can change after creation: converge them on the live endpoint.
+# (`--put-rate-limit` is accepted by PBS 4.2.8 but never persisted in s3.cfg — it is passed at
+# creation only and not converged; the concurrency on the provider is held down by the schedules:
+# the sync after the nightly window, the verify weekly.)
+- name: "Datastore | The endpoint's quirks follow the declaration"
   ansible.builtin.command:
     argv: >-
-      {{ ['proxmox-backup-manager', 's3', 'endpoint', 'update', pbs_s3_endpoint_id]
-         + (['--put-rate-limit', pbs_s3_put_rate_limit | string] if (pbs_s3_put_rate_limit | int > 0) else ['--delete', 'put-rate-limit'])
-         + (['--provider-quirks', pbs_s3_provider_quirks | join(';')] if (pbs_s3_provider_quirks | length > 0) else []) }}
+      {{ ['proxmox-backup-manager', 's3', 'endpoint', 'update', pbs_s3_endpoint_id,
+          '--provider-quirks', pbs_s3_provider_quirks | join(';')] }}
   vars:
     _live: "{{ pbs_s3_ep_list.stdout | from_json | selectattr('id', 'equalto', pbs_s3_endpoint_id) | first | default({}) }}"
   when:
     - pbs_s3_endpoint_id in (pbs_s3_ep_list.stdout | from_json | map(attribute='id') | list)
-    - ((_live['put-rate-limit'] | default(0) | int) != (pbs_s3_put_rate_limit | int))
-      or ((_live['provider-quirks'] | default([]) | sort) != (pbs_s3_provider_quirks | sort))
+    - pbs_s3_provider_quirks | length > 0
+    - (_live['provider-quirks'] | default([]) | sort) != (pbs_s3_provider_quirks | sort)
   changed_when: true
 
 - name: "Datastore | Verify S3 connectivity (s3 check)"
