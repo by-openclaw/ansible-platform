@@ -426,9 +426,15 @@
       loop: "{{ r_jobs.stdout | from_json | selectattr('storage', 'defined') | selectattr('storage', 'eq', pbs_pve_storage_id) | list }}"
       loop_control:
         label: "{{ item.id }}"
+      vars:
+        # compared as plain strings, the way roles/pve_host compares its NAS job
+        _want_note: "{{ pbs_backup_notes | string }}"
+        _have_note: "{{ item['notes-template'] | default('') | string }}"
+        _want_comment: "{{ pbs_backup_comment | string }}"
+        _have_comment: "{{ item.comment | default('') | string }}"
       when:
         - r_job is skipped
-        - (item['notes-template'] | default('')) != pbs_backup_notes or (item.comment | default('')) != pbs_backup_comment
+        - _want_note != _have_note or _want_comment != _have_comment
       changed_when: true
 
     # --- PBS must NOT back itself up into its own datastore (circular) ----------
