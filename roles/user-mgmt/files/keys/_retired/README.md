@@ -20,3 +20,4 @@ The private halves were set aside on the controller (`playbooks/controller-files
 
 - `id_ed25519_rune_nopass.pub` — the Windows guests' keyless connection key (April 2026), replaced by `svc-rune-prod` on 2026-10-22 (PR #1020); Vault `prod/windows/ssh-key` archived.
 - `id_ed25519_rune_automation.pub` — root's keyless automation key on the hypervisors (April 2026), replaced by `svc-rune-prod` on 2026-10-22; Vault `prod/proxmox/ssh-key` archived.
+- `id_ed25519_opnsense.pub` — the keyless firewall key (April 2026); the firewall's automation user accepted only `svc-ansible-prod` already, the roles name that key since 2026-10-22; Vault `prod/opnsense/ssh-key` archived.
