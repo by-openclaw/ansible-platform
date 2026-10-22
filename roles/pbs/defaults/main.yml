@@ -137,8 +137,10 @@ pbs_no_fsfreeze_vms:
   # The VM name the prod firewall has carried since the 26.7 cutover (VMID 196). It is a
   # Proxmox guest name, not an inventory host, so there is nothing to derive it from.
   - "{{ groups['opnsense'] | first }}-new"
-pbs_backup_notes: "PBS off-site copy (object store) — alongside the NAS archive. {{ '{{' }} guestname {{ '}}' }} (VMID {{ '{{' }} vmid {{ '}}' }})"
-pbs_backup_comment: "PBS off-site copy — second copy of every guest (managed by the pbs role)"
+# PVE's own placeholders ({{guestname}} …) written with the '{{' escape like roles/pve_host; ASCII only,
+# so the comparison with the live job is byte-exact whatever the API's encoding of a dash.
+pbs_backup_notes: "PBS off-site copy (object store), beside the NAS archive: {{ '{{' }}guestname{{ '}}' }} (VMID {{ '{{' }}vmid{{ '}}' }}) on node {{ '{{' }}node{{ '}}' }}"
+pbs_backup_comment: "PBS off-site copy - second copy of every guest (managed by the pbs role)"
 # Client-side encryption: the key is generated + stored in Vault; PVE encrypts
 # before upload. Losing the key = unrecoverable backups -> Vault is the store.
 pbs_encryption_enabled: true
