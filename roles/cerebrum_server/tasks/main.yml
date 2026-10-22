@@ -1,0 +1,236 @@
+---
+# roles/cerebrum_server — see defaults/main.yml. Order: pinned installers → WebView2 → Cerebrum →
+# the run account (Vault) → Cerebrum.ini from the database host's login (Vault) → device files kept
+# to the declaration → the project → the logon task → firewall → housekeeping → first start → report.
+- name: "Cerebrum server | The installers are pinned (object store URL + sha256)"
+  ansible.builtin.assert:
+    that:
+      - cerebrum_server_installer_url | length > 0
+      - cerebrum_server_installer_sha256 | length == 64
+      - cerebrum_server_webview2_url | length > 0
+      - cerebrum_server_webview2_sha256 | length == 64
+      - groups['cerebrum_db'] | default([]) | length > 0
+    fail_msg: >-
+      cerebrum_server: name the Cerebrum installer and the WebView2 runtime on the object store with
+      their sha256 (inventory group_vars/cerebrum_server.yml), and declare a cerebrum_db host
+    quiet: true
+
+- name: "Cerebrum server | Download folder"
+  ansible.windows.win_file:
+    path: "{{ cerebrum_server_download_dir }}"
+    state: directory
+
+- name: "Cerebrum server | The installers, verified against their checksums"
+  ansible.windows.win_get_url:
+    url: "{{ item.url }}"
+    dest: "{{ cerebrum_server_download_dir }}\\{{ item.file }}"
+    checksum: "{{ item.sha256 }}"
+    checksum_algorithm: sha256
+  loop:
+    - file: MicrosoftEdgeWebView2RuntimeInstallerX64.exe
+      url: "{{ cerebrum_server_webview2_url }}"
+      sha256: "{{ cerebrum_server_webview2_sha256 }}"
+    - file: "Cerebrum_{{ cerebrum_server_version }}_Installer.exe"
+      url: "{{ cerebrum_server_installer_url }}"
+      sha256: "{{ cerebrum_server_installer_sha256 }}"
+  loop_control:
+    label: "{{ item.file }}"
+
+- name: "Cerebrum server | Microsoft Edge WebView2 runtime (the installer's dependency)"
+  ansible.windows.win_package:
+    path: "{{ cerebrum_server_download_dir }}\\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+    product_id: "Microsoft EdgeWebView"
+    arguments: /silent /install
+    state: present
+
+- name: "Cerebrum server | Installed without the bundled SQL, version {{ cerebrum_server_version }}"
+  ansible.windows.win_package:
+    path: "{{ cerebrum_server_download_dir }}\\Cerebrum_{{ cerebrum_server_version }}_Installer.exe"
+    product_id: "{{ cerebrum_server_product_id }}"
+    creates_path: "{{ cerebrum_server_exe }}"
+    arguments: >-
+      /InstallSentinel={{ 'Install' if cerebrum_server_sentinel == 'install' else 'Skip' }}
+      /InstallSQL=Skip /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+      /COMPONENTS="{{ cerebrum_server_components | join(',') }}"
+      /LOG="{{ cerebrum_server_download_dir }}\Cerebrum_{{ cerebrum_server_version }}_install.log"
+    state: present
+
+# --- the account that hosts the application ------------------------------------------------------------
+- name: "Cerebrum server | The run account's password (Vault, created on first contact)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ cerebrum_server_run_user_vault_path }}"
+    vault_secret_init:
+      user: "{{ cerebrum_server_run_user }}"
+      password: >-   # pragma: allowlist secret
+        {{ lookup('ansible.builtin.password', '/dev/null', length=cerebrum_server_password_length, chars=['ascii_letters', 'digits']) }}
+    vault_secret_metadata_put:
+      origin: "roles/cerebrum_server (the local account whose logon starts Cerebrum on {{ inventory_hostname }})"
+
+- name: "Cerebrum server | The run account carries Vault's password (module payload, never argv)"
+  ansible.windows.win_user:
+    name: "{{ cerebrum_server_run_user }}"
+    password: "{{ vault_secret_result.password }}"
+    update_password: always   # pragma: allowlist secret
+    groups: "{{ cerebrum_server_run_user_groups }}"
+    groups_action: replace
+    password_never_expires: true
+    user_cannot_change_password: true
+    account_disabled: false
+    description: "roles/cerebrum_server: the session that hosts the Cerebrum server and its Watchdog"
+    state: present
+  no_log: true
+
+# --- Cerebrum.ini: the database connection from the database host's login --------------------------------
+- name: "Cerebrum server | The application's database login (Vault, written by roles/cerebrum_db)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ cerebrum_server_db_login_vault_path }}"
+
+- name: "Cerebrum server | Keep it for the ini"
+  ansible.builtin.set_fact:
+    cerebrum_server_db_login_user: "{{ vault_secret_result.user }}"
+    cerebrum_server_db_login_password: "{{ vault_secret_result.password }}"   # pragma: allowlist secret
+  no_log: true
+
+- name: "Cerebrum server | Cerebrum.ini (the vendor's UTF-16 file; the login inside)"
+  ansible.windows.win_template:
+    src: Cerebrum.ini.j2
+    dest: "{{ cerebrum_server_ini }}"
+    output_encoding: utf-16
+    newline_sequence: "\r\n"
+  no_log: true
+  register: cerebrum_server_ini_written
+
+- name: "Cerebrum server | The ini inherits nothing"
+  ansible.windows.win_acl_inheritance:
+    path: "{{ cerebrum_server_ini }}"
+    state: absent
+    reorganize: false
+
+- name: "Cerebrum server | The ini: Administrators, SYSTEM and the run account only"
+  ansible.windows.win_acl:
+    path: "{{ cerebrum_server_ini }}"
+    user: "{{ item.user }}"
+    rights: "{{ item.rights }}"
+    type: allow
+    state: present
+  loop:
+    - { user: Administrators, rights: FullControl }
+    - { user: SYSTEM, rights: FullControl }
+    - { user: "{{ cerebrum_server_run_user }}", rights: Read }
+  loop_control:
+    label: "{{ item.user }}"
+
+# --- the device definitions kept to the declaration (every file loads, vendor checklist row 7) ------------
+- name: "Cerebrum server | Device definition files present"
+  ansible.windows.win_find:
+    paths: "{{ cerebrum_server_install_dir }}\\GenericDevices"
+    patterns: ["*.cgd"]
+    recurse: true
+  register: cerebrum_server_cgd
+  when: cerebrum_server_device_families | length > 0
+
+- name: "Cerebrum server | Definitions outside the declared families removed"
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ (cerebrum_server_cgd.files | default([])) | map(attribute='path') | list
+       | reject('regex_search', '\\\\(' ~ ((cerebrum_server_device_families + cerebrum_server_device_families_builtin)
+                                     | map('regex_escape') | join('|')) ~ ')$')
+       | list }}
+  when: cerebrum_server_device_families | length > 0
+
+# --- the site's project ---------------------------------------------------------------------------------------
+- name: "Cerebrum server | The site's project file (object store, verified)"
+  ansible.windows.win_get_url:
+    url: "{{ cerebrum_server_project_url }}"
+    dest: "{{ cerebrum_server_install_dir }}\\Projects\\{{ cerebrum_server_project_url | basename }}"
+    checksum: "{{ cerebrum_server_project_sha256 }}"
+    checksum_algorithm: sha256
+  when: cerebrum_server_project_url | length > 0
+
+# --- the vendor's start: Watchdog, then the server, at the run account's logon ------------------------------
+- name: "Cerebrum server | Watchdog and server start at the run account's logon (highest rights, one instance)"
+  community.windows.win_scheduled_task:
+    name: "{{ cerebrum_server_task_name }}"
+    description: "roles/cerebrum_server: the Watchdog and the server at the logon of {{ cerebrum_server_run_user }}"
+    actions:
+      - path: "{{ cerebrum_server_watchdog_exe }}"
+        working_directory: "{{ cerebrum_server_install_dir }}"
+      - path: "{{ cerebrum_server_exe }}"
+        working_directory: "{{ cerebrum_server_install_dir }}"
+    triggers:
+      - type: logon
+        user_id: "{{ cerebrum_server_run_user }}"
+        enabled: true
+    username: "{{ cerebrum_server_run_user }}"
+    logon_type: interactive_token
+    run_level: highest
+    multiple_instances: 2
+    disallow_start_if_on_batteries: false
+    stop_if_going_on_batteries: false
+    enabled: true
+    state: present
+
+# --- the host firewall: per port, bound to the program ------------------------------------------------------
+- name: "Cerebrum server | The firewall rules of the application"
+  community.windows.win_firewall_rule:
+    name: "{{ item.name }}"
+    direction: "{{ item.direction }}"
+    action: allow
+    protocol: "{{ item.protocol }}"
+    localport: "{{ item.localport | default(omit) }}"
+    remoteport: "{{ item.remoteport | default(omit) }}"
+    remoteip: "{{ (item.remoteip | join(',')) if (item.remoteip | length > 0) else omit }}"
+    program: "{{ item.program }}"
+    profiles: "{{ cerebrum_server_firewall_profiles }}"
+    enabled: "{{ item.remoteip | length > 0 }}"
+    state: present
+  loop: "{{ cerebrum_server_firewall_rules }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# --- housekeeping: error logs older than the retention ------------------------------------------------------
+- name: "Cerebrum server | Error logs past the retention, days: {{ cerebrum_server_errorlogs_keep_days }}"
+  ansible.windows.win_find:
+    paths: "{{ cerebrum_server_errorlogs_dir }}"
+    patterns: ["*.log", "*.dmp"]
+    age: "{{ cerebrum_server_errorlogs_keep_days }}d"
+    recurse: true
+  register: cerebrum_server_old_logs
+  failed_when: false
+
+- name: "Cerebrum server | Removed"
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ (cerebrum_server_old_logs.files | default([])) | map(attribute='path') | list }}"
+
+# --- the first start ------------------------------------------------------------------------------------------
+- name: "Cerebrum server | Start now through the logon task"
+  ansible.windows.win_command:
+    argv: [schtasks.exe, /Run, /TN, "{{ cerebrum_server_task_name }}"]
+  when: cerebrum_server_start | bool
+  changed_when: true
+
+- name: "Cerebrum server | The server answers on 40001"
+  ansible.windows.win_wait_for:
+    port: 40001
+    timeout: 300
+  when: cerebrum_server_start | bool
+
+- name: "Cerebrum server | Report"
+  ansible.builtin.debug:
+    msg: >-
+      CEREBRUM_SERVER {{ inventory_hostname }}: {{ cerebrum_server_version }} ({{ cerebrum_server_components | join(', ') }}),
+      database {{ cerebrum_server_db_address }}\{{ cerebrum_server_db_instance }},{{ cerebrum_server_db_port }} / {{ cerebrum_server_db_database }}
+      as {{ cerebrum_server_db_login_user }}; run account {{ cerebrum_server_run_user }} ({{ cerebrum_server_run_user_groups | join(', ') }});
+      ini {{ 'written' if cerebrum_server_ini_written is changed else 'unchanged' }};
+      firewall {{ cerebrum_server_firewall_rules | selectattr('remoteip', 'defined') | list | length }} rules
+      ({{ cerebrum_server_firewall_rules | rejectattr('remoteip') | map(attribute='name') | join(', ') or 'all sourced' }} disabled: no source declared);
+      device families {{ 'pruned to ' ~ (cerebrum_server_device_families | length) if cerebrum_server_device_families | length > 0 else 'untouched' }};
+      started {{ cerebrum_server_start | bool }}

@@ -1,0 +1,131 @@
+---
+# ==============================================================================
+# Role: cerebrum_server — the EVS Cerebrum server application on its own guest.
+#
+# The vendor's installer (Inno Setup) with the declared components, pinned by checksum from the
+# object store; `Cerebrum.ini` as data (the database connection from roles/cerebrum_db's login in
+# Vault); a dedicated local account whose logon starts the Watchdog and the server (the vendor's
+# own way: both are desktop applications); the host firewall per port, bound to the program; the
+# error-log housekeeping; the first start. Settings live in the database (roles tasks of
+# playbooks/cerebrum-db-config.yml) and the configuration in the .ccf (playbooks/cerebrum-ops.yml):
+# docs/services/cerebrum/playbooks.md seq 2.
+# ==============================================================================
+cerebrum_server_env: "{{ env | default(platform_env) }}"
+
+# --- the installers, pinned ------------------------------------------------------------------------
+cerebrum_server_download_dir: 'C:\ProgramData\platform\installers'
+cerebrum_server_version: "2.9.3"
+cerebrum_server_installer_url: ""               # Cerebrum_<version>_Installer.exe on the object store (inventory)
+cerebrum_server_installer_sha256: ""            # REQUIRED
+cerebrum_server_webview2_url: ""                # Microsoft Edge WebView2 runtime (the installer's dependency)
+cerebrum_server_webview2_sha256: ""             # REQUIRED
+cerebrum_server_product_id: "{B1E6A442-4B28-479A-92CC-AF039E047927}_is1"   # the vendor's uninstall key (same across versions)
+cerebrum_server_install_dir: 'C:\Program Files\EVS Broadcast Equipment\Cerebrum'
+cerebrum_server_exe: "{{ cerebrum_server_install_dir }}\\Cerebrum.exe"
+cerebrum_server_watchdog_exe: "{{ cerebrum_server_install_dir }}\\Cerebrum Watchdog.exe"
+# Components of the installer on a server: the server and its Watchdog; the Designer seat where
+# the inventory says so. Clients, witness, mirror creator, service manager, federation have roles
+# of their own.
+cerebrum_server_components: [cerebrum, cerebrum_watchdog]
+# The licence: Cerebrum reads a Sentinel key. `install` adds the Sentinel driver (a hardware key);
+# `skip` leaves it out (demo key, or a software licence applied through the application).
+cerebrum_server_sentinel: skip
+
+# --- Cerebrum.ini: the bootstrap (docs/services/cerebrum/README.md §12.1) --------------------------
+cerebrum_server_db_host: "{{ groups['cerebrum_db'] | first }}"
+cerebrum_server_db_address: "{{ hostvars[cerebrum_server_db_host].ansible_host }}"
+cerebrum_server_db_instance: "{{ hostvars[cerebrum_server_db_host].cerebrum_db_instance | default('CEREBRUMSQL') }}"
+cerebrum_server_db_port: "{{ hostvars[cerebrum_server_db_host].cerebrum_db_port | default(1433) }}"
+cerebrum_server_db_database: "{{ hostvars[cerebrum_server_db_host].cerebrum_db_database | default('Cerebrum') }}"
+cerebrum_server_db_login_vault_path: "{{ cerebrum_server_env }}/cerebrum/{{ cerebrum_server_db_host }}/app-login"   # written by roles/cerebrum_db
+cerebrum_server_ini: "{{ cerebrum_server_install_dir }}\\Cerebrum.ini"
+cerebrum_server_bind_address: "0.0.0.0"         # VIRTUAL:BIND_ADDRESS … FOURTH and COR_LINK:BIND_ADDRESS: the server's own address, or 0.0.0.0
+cerebrum_server_bind_addresses: ["{{ cerebrum_server_bind_address }}", "0.0.0.0", "0.0.0.0", "0.0.0.0"]
+cerebrum_server_redundant: false                # SQL:REDUNDANT; the pair comes with the HA decision (README §8)
+cerebrum_server_secondary_connection: ""        # SQL:SECONDARY_CONNECTION of the pair
+cerebrum_server_disable_crash_dump: 0
+cerebrum_server_demo_key: ""                    # License:Demonstration_Key — empty on a licensed server
+
+# --- the account that hosts the application (the vendor starts both at its logon) ------------------
+cerebrum_server_run_user: cerebrum
+cerebrum_server_run_user_vault_path: "{{ cerebrum_server_env }}/cerebrum/{{ inventory_hostname }}/run-user"
+# Administrators: the vendor requires the application elevated for its TLS binding (web client over
+# HTTPS); without TLS, `Users` is enough — set it per tier.
+cerebrum_server_run_user_groups: [Administrators]
+cerebrum_server_task_name: "PLATFORM-cerebrum-start-at-logon"
+cerebrum_server_password_length: 28
+
+# --- the first start (Cerebrum creates its database and the default settings rows) -------------------
+cerebrum_server_start: false                    # true: run the logon task once now and wait for the server port
+
+# --- housekeeping --------------------------------------------------------------------------------------
+cerebrum_server_errorlogs_dir: "{{ cerebrum_server_install_dir }}\\ErrorLogs"
+cerebrum_server_errorlogs_keep_days: 30
+cerebrum_server_device_families: []             # GenericDevices to keep (basenames of .cgd); empty = keep every file (no pruning)
+cerebrum_server_device_families_builtin:        # the server's own definitions, never removed
+  - "Application Overview.cgd"
+  - "Services.cgd"
+  - "Resource Manager.cgd"
+  - "Assignment Engine.cgd"
+  - "IPRouting.cgd"
+  - "Cerebrum.cgd"
+  - "CerebrumRCPClient.cgd"
+  - "Router.cgd"
+cerebrum_server_project_url: ""                 # the site's .cjf on the object store (optional)
+cerebrum_server_project_sha256: ""
+
+# --- the host firewall, per port, bound to the program (README §4) --------------------------------------
+cerebrum_server_client_cidrs: "{{ platform_mgmt_cidrs }}"     # clients and panels (a client zone replaces this)
+cerebrum_server_device_cidrs: []                            # the controlled devices (ACP, traps)
+cerebrum_server_monitoring_host: "{{ hostvars[groups['monitoring'] | first].ansible_host }}"
+cerebrum_server_api_cidrs: "{{ [cerebrum_server_monitoring_host] + platform_mgmt_cidrs }}"   # the Northbound API (the watch, the ops playbook)
+cerebrum_server_firewall_profiles: [domain, private, public]
+cerebrum_server_firewall_rules:
+  - name: "CEREBRUM-In-Server-TCP"
+    direction: in
+    protocol: tcp
+    localport: "40001,40002"
+    remoteip: "{{ cerebrum_server_client_cidrs }}"
+    program: "{{ cerebrum_server_exe }}"
+  - name: "CEREBRUM-In-Server-UDP"
+    direction: in
+    protocol: udp
+    localport: "40001,40002"
+    remoteip: "{{ cerebrum_server_client_cidrs }}"
+    program: "{{ cerebrum_server_exe }}"
+  - name: "CEREBRUM-In-Northbound"
+    direction: in
+    protocol: tcp
+    localport: "40009"
+    remoteip: "{{ cerebrum_server_api_cidrs }}"
+    program: "{{ cerebrum_server_exe }}"
+  - name: "CEREBRUM-In-ACP"
+    direction: in
+    protocol: udp
+    localport: "2071,2072"
+    remoteip: "{{ cerebrum_server_device_cidrs }}"
+    program: "{{ cerebrum_server_exe }}"
+  - name: "CEREBRUM-In-SNMP-Traps"
+    direction: in
+    protocol: udp
+    localport: "162"
+    remoteip: "{{ cerebrum_server_device_cidrs }}"
+    program: "{{ cerebrum_server_exe }}"
+  - name: "CEREBRUM-In-SNMP-Agent"
+    direction: in
+    protocol: udp
+    localport: "1161"
+    remoteip: ["{{ cerebrum_server_monitoring_host }}"]
+    program: "{{ cerebrum_server_exe }}"
+  - name: "CEREBRUM-Out-SQL"
+    direction: out
+    protocol: tcp
+    remoteport: "{{ cerebrum_server_db_port }}"
+    remoteip: ["{{ cerebrum_server_db_address }}"]
+    program: "{{ cerebrum_server_exe }}"
+  - name: "CEREBRUM-Out-ACP"
+    direction: out
+    protocol: udp
+    remoteport: "2071,2072"
+    remoteip: "{{ cerebrum_server_device_cidrs }}"
+    program: "{{ cerebrum_server_exe }}"
