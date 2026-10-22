@@ -109,7 +109,8 @@
       no_log: true
       when:
         - pbs_datastore_migrate_ns | length > 0
-        - pbs_datastore_migrate_ns not in (mig_ns.stdout | from_json | map(attribute='ns') | list)
+        # the client answers {"data": [{"ns": ""}, …]} — the list sits under `data`
+        - pbs_datastore_migrate_ns not in ((mig_ns.stdout | from_json).data | map(attribute='ns') | list)
       changed_when: true
 
     - name: "Migrate | Already running?"
