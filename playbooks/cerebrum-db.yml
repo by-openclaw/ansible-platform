@@ -1,0 +1,16 @@
+---
+# ==============================================================================
+# EVS Cerebrum — the SQL Server instance (roles/cerebrum_db): pinned installer, sa from
+# Vault then disabled, static port, the application and audit logins, nightly backup, the
+# firewall rule for the Cerebrum servers. The database itself is created by Cerebrum at its
+# first start (docs/services/cerebrum/README.md §15.2). Runs after the guest baseline
+# (playbooks/windows-guests.yml); the hosts are the `cerebrum_db` group.
+#
+#   Dry run: ansible-playbook playbooks/cerebrum-db.yml --check --diff
+#   Apply:   ansible-playbook playbooks/cerebrum-db.yml [-e target=vm-x]
+# ==============================================================================
+- name: "Cerebrum DB | the SQL Server instance"
+  hosts: "{{ target | default('cerebrum_db') }}"
+  gather_facts: false
+  roles:
+    - cerebrum_db

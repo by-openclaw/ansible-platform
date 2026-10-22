@@ -1,0 +1,64 @@
+---
+# ==============================================================================
+# Role: cerebrum_db — the SQL Server instance EVS Cerebrum stores its state in.
+#
+# The vendor's help: the application "uses an SQL database for storing the network/application
+# events and the configuration data", creates its own database at first start through the login
+# its ini names, and supports a remote instance. This role owns everything around that database:
+# the instance (pinned installer from the object store, unattended), its `sa` password from Vault
+# (never the vendor's documented default), a static TCP port, the logins the application and the
+# audit read with, the services that stay off, a nightly native backup, and the host firewall rule.
+# The database itself is Cerebrum's to create (docs/services/cerebrum/README.md §15.2).
+#
+# Secrets: Vault only, carried as module payloads or rendered into a file the role removes in the
+# same play. Management SQL runs over the SSH session (Windows authentication, `sqlcmd -E`):
+# BUILTIN\Administrators is a sysadmin on this dedicated database host, so no password crosses a
+# command line. `sa` is set from Vault at install and disabled afterwards (CIS 2.14): the
+# application uses its own login.
+# ==============================================================================
+cerebrum_db_env: "{{ env | default(platform_env) }}"
+
+# --- the installers, pinned by checksum (the object store holds them; the inventory names them) ---
+cerebrum_db_download_dir: 'C:\ProgramData\platform\installers'
+cerebrum_db_version: "2019"                     # the lab runs 2019 Express (15.0.2000 + GDR 2190); the vendor ships Express with its installer
+cerebrum_db_installer_url: ""                   # SQLEXPR_x64_ENU.exe of that version, on the object store (inventory)
+cerebrum_db_installer_sha256: ""                # REQUIRED — the role refuses to install without it
+cerebrum_db_odbc_msi_url: ""                    # Microsoft ODBC Driver 17 for SQL Server (msodbcsql.msi) — sqlcmd needs it
+cerebrum_db_odbc_msi_sha256: ""
+cerebrum_db_sqlcmd_msi_url: ""                  # Microsoft Command Line Utilities 15 for SQL Server (MsSqlCmdLnUtils.msi)
+cerebrum_db_sqlcmd_msi_sha256: ""
+cerebrum_db_sqlcmd: 'C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\SQLCMD.EXE'
+
+# --- the instance ---------------------------------------------------------------------------------
+cerebrum_db_instance: CEREBRUMSQL               # the vendor's installer uses this name; Cerebrum.ini points at host\instance,port
+cerebrum_db_port: 1433                          # static; the lab ran on a dynamic port with the Browser on (the opposite of this)
+cerebrum_db_features: SQLENGINE
+cerebrum_db_sysadmins: ['BUILTIN\Administrators']   # the SSH management session (roles/windows_guest's Administrator) — the role's own door
+cerebrum_db_service: "MSSQL${{ cerebrum_db_instance }}"
+cerebrum_db_services_off:                       # what a database host does not run (CIS 2.x, the vendor's own lab: Agent off)
+  - "SQLAgent${{ cerebrum_db_instance }}"
+  - "SQLTELEMETRY${{ cerebrum_db_instance }}"
+  - SQLBrowser
+
+# --- secrets (Vault, get-or-create; paths under the tier: security/0001) -------------------------
+cerebrum_db_sa_vault_path: "{{ cerebrum_db_env }}/cerebrum/{{ inventory_hostname }}/sa"
+cerebrum_db_sa_enabled: false                   # CIS 2.14: the server administrator login stays disabled; management = Windows authentication
+# The logins Cerebrum and the platform use. `server_roles` apply at the instance (the application
+# needs dbcreator until it has created its database); `db_role` applies inside the database once it
+# exists. The audit login reads only; the backup task runs as SYSTEM with db_backupoperator.
+cerebrum_db_database: Cerebrum                  # the vendor's default name; the lab's is `Cortex` (inventory sets it)
+cerebrum_db_logins:
+  - { name: cerebrum,       vault_path: "{{ cerebrum_db_env }}/cerebrum/{{ inventory_hostname }}/app-login", server_roles: [dbcreator], db_role: db_owner }
+  - { name: cerebrum_audit, vault_path: "{{ cerebrum_db_env }}/cerebrum/{{ inventory_hostname }}/audit-ro",  server_roles: [],          db_role: db_datareader }
+cerebrum_db_password_length: 28
+
+# --- backup (infra/0008): a native full backup every night, seven rotating files, in the guest backup ---
+cerebrum_db_backup_dir: 'C:\Backup\SQL'
+cerebrum_db_backup_time: "02:00"
+cerebrum_db_state_dir: 'C:\ProgramData\platform\cerebrum-db'
+cerebrum_db_backup_task: "PLATFORM-cerebrum-db-backup"
+
+# --- firewall: the instance answers the Cerebrum servers only ------------------------------------
+cerebrum_db_allowed_from: "{{ groups['cerebrum_server'] | default([]) | map('extract', hostvars, 'ansible_host') | list }}"
+cerebrum_db_firewall_rule: "CEREBRUM-DB-In-SQL"
+cerebrum_db_firewall_profiles: [domain, private, public]

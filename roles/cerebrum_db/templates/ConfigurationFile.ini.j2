@@ -1,0 +1,23 @@
+; SQL Server unattended set-up, rendered by roles/cerebrum_db and removed in the same play.
+; The sa password comes from Vault; the management door is Windows authentication.
+[OPTIONS]
+ACTION="Install"
+QUIET="True"
+IACCEPTSQLSERVERLICENSETERMS="True"
+SUPPRESSPRIVACYSTATEMENTNOTICE="True"
+UpdateEnabled="False"
+ENU="True"
+FEATURES={{ cerebrum_db_features }}
+INSTANCENAME="{{ cerebrum_db_instance }}"
+INSTANCEID="{{ cerebrum_db_instance }}"
+SQLSVCACCOUNT="NT Service\MSSQL${{ cerebrum_db_instance }}"
+SQLSVCSTARTUPTYPE="Automatic"
+SQLSVCINSTANTFILEINIT="True"
+AGTSVCSTARTUPTYPE="Disabled"
+BROWSERSVCSTARTUPTYPE="Disabled"
+SECURITYMODE="SQL"
+SAPWD="{{ cerebrum_db_sa_password }}"
+SQLSYSADMINACCOUNTS={% for a in cerebrum_db_sysadmins %}"{{ a }}"{{ " " if not loop.last else "" }}{% endfor %}
+
+TCPENABLED="1"
+NPENABLED="0"
