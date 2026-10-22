@@ -2,6 +2,11 @@
 
 The EVS Cerebrum server application on its own Windows guest (`docs/services/cerebrum/playbooks.md` seq 2). The database is `roles/cerebrum_db`'s, the settings rows are `playbooks/cerebrum-db-config.yml`'s, the configuration (`.ccf`) is `playbooks/cerebrum-ops.yml`'s.
 
+## Two layouts
+
+- **Standalone** (`cerebrum_server_sql_bundled: true`): the installer's own SQL Server Express on this host (`/InstallSQL=Install`), then `roles/cerebrum_db` takes the instance over (Vault's `sa`, static port, logins, backup); the ini points at `localhost`.
+- **Multi-VM** (default): `/InstallSQL=Skip`, the database on the `cerebrum_db` host.
+
 ## What it does, in order
 
 1. Refuses to run without the Cerebrum installer and the WebView2 runtime pinned by sha256 on the object store, and without a `cerebrum_db` host; downloads and verifies both.

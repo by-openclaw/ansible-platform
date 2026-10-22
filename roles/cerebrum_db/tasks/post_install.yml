@@ -1,0 +1,142 @@
+---
+# After the instance exists, whoever installed it (Microsoft's media on a dedicated host, or the
+# Cerebrum installer's bundled SQL Express on a standalone server): static port, services off,
+# logins over Windows authentication, the nightly backup, the firewall rule, the report.
+# --- a static port, dynamic ports off ----------------------------------------------------------------
+- name: "Cerebrum DB | The instance id"
+  ansible.windows.win_reg_stat:
+    path: 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL'
+    name: "{{ cerebrum_db_instance }}"
+  register: cerebrum_db_instance_id
+
+- name: "Cerebrum DB | TCP on {{ cerebrum_db_port }} only (every address, dynamic ports off)"
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\{{ cerebrum_db_instance_id.value }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: string
+  loop:
+    - { name: TcpPort, data: "{{ cerebrum_db_port }}" }
+    - { name: TcpDynamicPorts, data: "" }
+  loop_control:
+    label: "{{ item.name }}"
+  register: cerebrum_db_tcp
+
+- name: "Cerebrum DB | TCP protocol enabled"
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\{{ cerebrum_db_instance_id.value }}\MSSQLServer\SuperSocketNetLib\Tcp'
+    name: Enabled
+    data: 1
+    type: dword
+  register: cerebrum_db_tcp_on
+
+- name: "Cerebrum DB | The instance runs, restarted when its network settings changed"
+  ansible.windows.win_service:
+    name: "{{ cerebrum_db_service }}"
+    start_mode: auto
+    state: "{{ 'restarted' if (cerebrum_db_tcp is changed or cerebrum_db_tcp_on is changed) else 'started' }}"
+
+- name: "Cerebrum DB | Agent, telemetry and the Browser stay off"
+  ansible.windows.win_service:
+    name: "{{ item }}"
+    start_mode: disabled
+    state: stopped
+  loop: "{{ cerebrum_db_services_off }}"
+  failed_when: false   # a service the edition does not install is not an error
+
+- name: "Cerebrum DB | The port answers"
+  ansible.windows.win_wait_for:
+    port: "{{ cerebrum_db_port }}"
+    timeout: 120
+
+# --- logins over Windows authentication (the rendered SQL removed right after) ---------------------
+- name: "Cerebrum DB | State folder"
+  ansible.windows.win_file:
+    path: "{{ cerebrum_db_state_dir }}"
+    state: directory
+
+- name: "Cerebrum DB | Logins (rendered, run, removed)"
+  block:
+    - name: "Cerebrum DB | The logins script (passwords from Vault; Administrators and SYSTEM may read it)"
+      ansible.windows.win_template:
+        src: logins.sql.j2
+        dest: "{{ cerebrum_db_state_dir }}\\logins.sql"
+      no_log: true
+    - name: "Cerebrum DB | The logins script inherits nothing"
+      ansible.windows.win_acl_inheritance:
+        path: "{{ cerebrum_db_state_dir }}\\logins.sql"
+        state: absent
+        reorganize: false
+    - name: "Cerebrum DB | The logins script: Administrators and SYSTEM only"
+      ansible.windows.win_acl:
+        path: "{{ cerebrum_db_state_dir }}\\logins.sql"
+        user: "{{ item }}"
+        rights: FullControl
+        type: allow
+        state: present
+      loop: [Administrators, SYSTEM]
+    - name: "Cerebrum DB | Logins, roles, sa, the application's database grants (Windows authentication)"
+      ansible.windows.win_command:
+        argv: ["{{ cerebrum_db_sqlcmd }}", -E, -S, ".\\{{ cerebrum_db_instance }}", -b, -i, "{{ cerebrum_db_state_dir }}\\logins.sql"]
+      register: cerebrum_db_logins_run
+      changed_when: "'CHANGED' in cerebrum_db_logins_run.stdout"
+      failed_when: cerebrum_db_logins_run.rc != 0 or 'DONE' not in cerebrum_db_logins_run.stdout
+  always:
+    - name: "Cerebrum DB | The logins script is gone"
+      ansible.windows.win_file:
+        path: "{{ cerebrum_db_state_dir }}\\logins.sql"
+        state: absent
+
+# --- the nightly backup --------------------------------------------------------------------------------
+- name: "Cerebrum DB | Backup folder"
+  ansible.windows.win_file:
+    path: "{{ cerebrum_db_backup_dir }}"
+    state: directory
+
+- name: "Cerebrum DB | The backup statement (no secret inside)"
+  ansible.windows.win_template:
+    src: backup.sql.j2
+    dest: "{{ cerebrum_db_state_dir }}\\backup.sql"
+
+- name: "Cerebrum DB | The nightly backup task, as SYSTEM, at {{ cerebrum_db_backup_time }}"
+  community.windows.win_scheduled_task:
+    name: "{{ cerebrum_db_backup_task }}"
+    description: "roles/cerebrum_db: full backup of {{ cerebrum_db_database }} to {{ cerebrum_db_backup_dir }} (seven rotating files)"
+    actions:
+      - path: "{{ cerebrum_db_sqlcmd }}"
+        arguments: "-E -S .\\{{ cerebrum_db_instance }} -b -i \"{{ cerebrum_db_state_dir }}\\backup.sql\""
+    triggers:
+      - type: daily
+        start_boundary: "2026-01-01T{{ cerebrum_db_backup_time }}:00"
+    username: SYSTEM
+    logon_type: service_account
+    run_level: highest
+    execution_time_limit: PT2H
+    enabled: true
+    state: present
+
+# --- the host firewall: the Cerebrum servers only ------------------------------------------------------
+- name: "Cerebrum DB | The instance answers the Cerebrum servers only"
+  community.windows.win_firewall_rule:
+    name: "{{ cerebrum_db_firewall_rule }}"
+    direction: in
+    action: allow
+    protocol: tcp
+    localport: "{{ cerebrum_db_port }}"
+    remoteip: "{{ cerebrum_db_allowed_from | join(',') }}"
+    program: 'C:\Program Files\Microsoft SQL Server\{{ cerebrum_db_instance_id.value }}\MSSQL\Binn\sqlservr.exe'
+    profiles: "{{ cerebrum_db_firewall_profiles }}"
+    enabled: true
+    state: present
+  when: cerebrum_db_allowed_from | length > 0
+
+- name: "Cerebrum DB | Report"
+  ansible.builtin.debug:
+    msg: >-
+      CEREBRUM_DB {{ inventory_hostname }}: instance {{ cerebrum_db_instance }} ({{ cerebrum_db_instance_id.value }})
+      on tcp {{ cerebrum_db_port }}; logins {{ cerebrum_db_logins | map(attribute='name') | join(', ') }} + SYSTEM (backups);
+      sa {{ 'enabled' if cerebrum_db_sa_enabled | bool else 'disabled' }};
+      database {{ cerebrum_db_database }}
+      {{ 'present' if ('no database yet' not in (cerebrum_db_logins_run.stdout | default(''))) else 'not yet created by Cerebrum' }};
+      backup {{ cerebrum_db_backup_time }} → {{ cerebrum_db_backup_dir }};
+      firewall from {{ cerebrum_db_allowed_from | join(', ') or 'nobody (no cerebrum_server host)' }}
