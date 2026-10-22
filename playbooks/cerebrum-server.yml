@@ -1,0 +1,15 @@
+---
+# ==============================================================================
+# EVS Cerebrum — the server application (roles/cerebrum_server): pinned installer, the run
+# account, Cerebrum.ini pointing at the cerebrum_db host with the login from Vault, the logon
+# task for Watchdog and server, per-port firewall rules, log housekeeping, the first start.
+# Runs after playbooks/windows-guests.yml and playbooks/cerebrum-db.yml; hosts = cerebrum_server.
+#
+#   Dry run: ansible-playbook playbooks/cerebrum-server.yml --check --diff
+#   Apply:   ansible-playbook playbooks/cerebrum-server.yml [-e target=vm-x] [-e cerebrum_server_start=true]
+# ==============================================================================
+- name: "Cerebrum server | the server application"
+  hosts: "{{ target | default('cerebrum_server') }}"
+  gather_facts: false
+  roles:
+    - cerebrum_server

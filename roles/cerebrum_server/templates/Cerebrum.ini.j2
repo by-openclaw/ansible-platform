@@ -1,0 +1,20 @@
+[__GENERAL__]
+CORTEX:DISABLE_CRASH_DUMP={{ cerebrum_server_disable_crash_dump }}
+IP:PRIMARY=0
+License:Demonstration_Key={{ cerebrum_server_demo_key }}
+VIRTUAL:BIND_ADDRESS={{ cerebrum_server_bind_addresses[0] }}
+VIRTUAL:SECOND_BIND_ADDRESS={{ cerebrum_server_bind_addresses[1] }}
+VIRTUAL:THIRD_BIND_ADDRESS={{ cerebrum_server_bind_addresses[2] }}
+VIRTUAL:FOURTH_BIND_ADDRESS={{ cerebrum_server_bind_addresses[3] }}
+SQL:USE_DEFAULT=0
+SQL:LOGIN_CREDENTIALS=2
+SQL:LOGIN_USERNAME={{ cerebrum_server_db_login_user }}
+SQL:LOGIN_PASSWORD={{ cerebrum_server_db_login_password }}{# pragma: allowlist secret #}
+SQL:PRIMARY_CONNECTION={{ cerebrum_server_db_address }}\{{ cerebrum_server_db_instance }},{{ cerebrum_server_db_port }}
+SQL:REDUNDANT={{ 1 if cerebrum_server_redundant | bool else 0 }}
+SQL:SECONDARY_CONNECTION={{ cerebrum_server_secondary_connection if cerebrum_server_redundant | bool else (cerebrum_server_db_address ~ '\' ~ cerebrum_server_db_instance ~ ',' ~ cerebrum_server_db_port) }}
+SQL:DATABASE={{ cerebrum_server_db_database }}
+SQL:SECONDARY_DATABASE={{ cerebrum_server_db_database }}
+SQL:USE_MULTI_SUBNET_CLUSTERING=0
+COR_LINK:BIND_ADDRESS={{ cerebrum_server_bind_address }}
+CORTEX:RUNNING=1
