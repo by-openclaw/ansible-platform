@@ -420,7 +420,9 @@
     # storage by the task above) keeps whatever note template it had: converge it to the role's text.
     - name: "PVE-wire | The PBS job's note template and comment as declared"
       ansible.builtin.command:
-        argv: [pvesh, set, "/cluster/backup/{{ item.id }}", --notes-template, "{{ pbs_backup_notes }}", --comment, "{{ pbs_backup_comment }}"]
+        # PVE refuses a note template without the storage it applies to ("storage: missing property
+        # required by 'notes-template'"), so the storage rides along unchanged.
+        argv: [pvesh, set, "/cluster/backup/{{ item.id }}", --storage, "{{ pbs_pve_storage_id }}", --notes-template, "{{ pbs_backup_notes }}", --comment, "{{ pbs_backup_comment }}"]
       loop: "{{ r_jobs.stdout | from_json | selectattr('storage', 'defined') | selectattr('storage', 'eq', pbs_pve_storage_id) | list }}"
       loop_control:
         label: "{{ item.id }}"
