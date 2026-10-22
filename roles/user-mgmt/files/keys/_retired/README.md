@@ -17,3 +17,5 @@ The private halves were set aside on the controller (`playbooks/controller-files
 | `id_ed25519_by-systems.pub` | `by-systems@rune-vm` | root on 32 guests (inert: `PermitRootLogin no`), Administrator on the Windows guests, Terraform's first-boot list |
 | `id_ed25519_rune.pub` | `rune@by-systems-rune-vm` | root on the first hypervisor and one guest; `ansible.cfg`'s former default key |
 | `id_ed25519.pub` | the owner's early personal key | nowhere |
+
+- `id_ed25519_rune_nopass.pub` — the Windows guests' keyless connection key (April 2026), replaced by `svc-rune-prod` on 2026-10-22 (PR #1020); Vault `prod/windows/ssh-key` archived.
