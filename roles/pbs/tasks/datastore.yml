@@ -117,35 +117,26 @@
 
 - name: "Datastore | The migration sync job ({{ pbs_datastore_migrate_from }} → {{ pbs_datastore_name }})"
   ansible.builtin.command:
-    argv:
-      - proxmox-backup-manager
-      - sync-job
-      - create
-      - "{{ pbs_datastore_migrate_job }}"
-      - "--store"
-      - "{{ pbs_datastore_name }}"
-      - "--remote-store"
-      - "{{ pbs_datastore_migrate_from }}"
-      - "--remove-vanished"
-      - "false"
-      - "--owner"
-      - "{{ pbs_datastore_migrate_owner }}"
-      - "--schedule"
-      - "{{ pbs_datastore_migrate_schedule }}"
-      - "--comment"
-      - "the on-site datastore's history into the off-site one (infra/0008, 2026-10-20); retired with the source"
+    argv: >-
+      {{ ['proxmox-backup-manager', 'sync-job', 'create', pbs_datastore_migrate_job,
+          '--store', pbs_datastore_name, '--remote-store', pbs_datastore_migrate_from,
+          '--remove-vanished', 'false', '--owner', pbs_datastore_migrate_owner,
+          '--schedule', pbs_datastore_migrate_schedule,
+          '--comment', "the on-site datastore's history into the off-site one (infra/0008, 2026-10-20); retired with the source"]
+         + (['--ns', pbs_datastore_migrate_ns] if (pbs_datastore_migrate_ns | length > 0) else []) }}
   changed_when: true
   when:
     - pbs_datastore_migrate_from | length > 0
     - pbs_datastore_migrate_from in (pbs_ds_list.stdout | from_json | map(attribute='name') | list)
     - pbs_datastore_migrate_job not in (pbs_sync_list.stdout | default('[]', true) | from_json | map(attribute='id') | list)
 
-- name: "Datastore | The migration sync job's owner, schedule and depth follow the declaration"
+- name: "Datastore | The migration sync job's owner, schedule, depth and namespace follow the declaration"
   ansible.builtin.command:
     argv: >-
       {{ ['proxmox-backup-manager', 'sync-job', 'update', pbs_datastore_migrate_job,
           '--owner', pbs_datastore_migrate_owner, '--schedule', pbs_datastore_migrate_schedule]
-         + (['--transfer-last', pbs_datastore_migrate_transfer_last | string] if (pbs_datastore_migrate_transfer_last | int > 0) else ['--delete', 'transfer-last']) }}
+         + (['--transfer-last', pbs_datastore_migrate_transfer_last | string] if (pbs_datastore_migrate_transfer_last | int > 0) else ['--delete', 'transfer-last'])
+         + (['--ns', pbs_datastore_migrate_ns] if (pbs_datastore_migrate_ns | length > 0) else ['--delete', 'ns']) }}
   vars:
     _job: "{{ pbs_sync_list.stdout | default('[]', true) | from_json | selectattr('id', 'equalto', pbs_datastore_migrate_job) | first | default({}) }}"
   when:
@@ -154,4 +145,5 @@
     - (_job.owner | default('root@pam')) != pbs_datastore_migrate_owner
       or (_job.schedule | default('')) != pbs_datastore_migrate_schedule
       or ((_job['transfer-last'] | default(0) | int) != (pbs_datastore_migrate_transfer_last | int))
+      or ((_job.ns | default('')) != pbs_datastore_migrate_ns)
   changed_when: true
