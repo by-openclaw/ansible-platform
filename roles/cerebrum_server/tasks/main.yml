@@ -9,10 +9,11 @@
       - cerebrum_server_installer_sha256 | length == 64
       - cerebrum_server_webview2_url | length > 0
       - cerebrum_server_webview2_sha256 | length == 64
-      - groups['cerebrum_db'] | default([]) | length > 0
+      - (cerebrum_server_sql_bundled | bool) or (groups['cerebrum_db'] | default([]) | length > 0)
     fail_msg: >-
       cerebrum_server: name the Cerebrum installer and the WebView2 runtime on the object store with
-      their sha256 (inventory group_vars/cerebrum_server.yml), and declare a cerebrum_db host
+      their sha256 (inventory group_vars/cerebrum_server.yml); a multi-VM layout also needs a
+      cerebrum_db host, a standalone one sets cerebrum_server_sql_bundled
     quiet: true
 
 - name: "Cerebrum server | Download folder"
@@ -43,17 +44,27 @@
     arguments: /silent /install
     state: present
 
-- name: "Cerebrum server | Installed without the bundled SQL, version {{ cerebrum_server_version }}"
+- name: "Cerebrum server | Installed with the declared components, version {{ cerebrum_server_version }}"
   ansible.windows.win_package:
     path: "{{ cerebrum_server_download_dir }}\\Cerebrum_{{ cerebrum_server_version }}_Installer.exe"
     product_id: "{{ cerebrum_server_product_id }}"
     creates_path: "{{ cerebrum_server_exe }}"
     arguments: >-
       /InstallSentinel={{ 'Install' if cerebrum_server_sentinel == 'install' else 'Skip' }}
-      /InstallSQL=Skip /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+      /InstallSQL={{ 'Install' if cerebrum_server_sql_bundled | bool else 'Skip' }}
+      /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
       /COMPONENTS="{{ cerebrum_server_components | join(',') }}"
       /LOG="{{ cerebrum_server_download_dir }}\Cerebrum_{{ cerebrum_server_version }}_install.log"
     state: present
+
+# --- standalone: the bundled SQL Express taken over (sa from Vault, port, logins, backup) ---------------
+- name: "Cerebrum server | The bundled instance taken over by roles/cerebrum_db"
+  ansible.builtin.include_role:
+    name: cerebrum_db
+  vars:
+    cerebrum_db_install_source: bundled
+    cerebrum_db_allowed_from: []
+  when: cerebrum_server_sql_bundled | bool
 
 # --- the account that hosts the application ------------------------------------------------------------
 - name: "Cerebrum server | The run account's password (Vault, created on first contact)"

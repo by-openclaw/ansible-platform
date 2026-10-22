@@ -1,0 +1,96 @@
+---
+# The instance from Microsoft's own media (a dedicated database host): pinned installers, the
+# unattended set-up with Vault's sa password, the client utilities.
+- name: "Cerebrum DB | The installers are pinned (object store URL + sha256 for each)"
+  ansible.builtin.assert:
+    that:
+      - cerebrum_db_installer_url | length > 0
+      - cerebrum_db_installer_sha256 | length == 64
+      - cerebrum_db_odbc_msi_url | length > 0
+      - cerebrum_db_odbc_msi_sha256 | length == 64
+      - cerebrum_db_sqlcmd_msi_url | length > 0
+      - cerebrum_db_sqlcmd_msi_sha256 | length == 64
+    fail_msg: >-
+      cerebrum_db: name the three installers on the object store with their sha256
+      (inventory group_vars/cerebrum_db.yml) — the role installs nothing unpinned
+    quiet: true
+
+- name: "Cerebrum DB | Download folder"
+  ansible.windows.win_file:
+    path: "{{ cerebrum_db_download_dir }}"
+    state: directory
+
+- name: "Cerebrum DB | The installers, verified against their checksums"
+  ansible.windows.win_get_url:
+    url: "{{ item.url }}"
+    dest: "{{ cerebrum_db_download_dir }}\\{{ item.file }}"
+    checksum: "{{ item.sha256 }}"
+    checksum_algorithm: sha256
+  loop:
+    - file: "SQLEXPR_x64_ENU_{{ cerebrum_db_version }}.exe"
+      url: "{{ cerebrum_db_installer_url }}"
+      sha256: "{{ cerebrum_db_installer_sha256 }}"
+    - file: msodbcsql.msi
+      url: "{{ cerebrum_db_odbc_msi_url }}"
+      sha256: "{{ cerebrum_db_odbc_msi_sha256 }}"
+    - file: MsSqlCmdLnUtils.msi
+      url: "{{ cerebrum_db_sqlcmd_msi_url }}"
+      sha256: "{{ cerebrum_db_sqlcmd_msi_sha256 }}"
+  loop_control:
+    label: "{{ item.file }}"
+
+# --- the instance, unattended, once -----------------------------------------------------------------
+- name: "Cerebrum DB | Is the instance installed?"
+  ansible.windows.win_service_info:
+    name: "{{ cerebrum_db_service }}"
+  register: cerebrum_db_svc
+
+- name: "Cerebrum DB | Install (answer file rendered, used, removed)"
+  when: cerebrum_db_svc.services | length == 0
+  block:
+    - name: "Cerebrum DB | The answer file (sa password from Vault; Administrators and SYSTEM may read it)"
+      ansible.windows.win_template:
+        src: ConfigurationFile.ini.j2
+        dest: "{{ cerebrum_db_download_dir }}\\ConfigurationFile.ini"
+      no_log: true
+    - name: "Cerebrum DB | The answer file inherits nothing"
+      ansible.windows.win_acl_inheritance:
+        path: "{{ cerebrum_db_download_dir }}\\ConfigurationFile.ini"
+        state: absent
+        reorganize: false
+    - name: "Cerebrum DB | The answer file: Administrators and SYSTEM only"
+      ansible.windows.win_acl:
+        path: "{{ cerebrum_db_download_dir }}\\ConfigurationFile.ini"
+        user: "{{ item }}"
+        rights: FullControl
+        type: allow
+        state: present
+      loop: [Administrators, SYSTEM]
+    - name: "Cerebrum DB | SQL Server {{ cerebrum_db_version }} Express, instance {{ cerebrum_db_instance }}"
+      ansible.windows.win_package:
+        path: "{{ cerebrum_db_download_dir }}\\SQLEXPR_x64_ENU_{{ cerebrum_db_version }}.exe"
+        arguments: "/ConfigurationFile={{ cerebrum_db_download_dir }}\\ConfigurationFile.ini /IAcceptSQLServerLicenseTerms /Q"
+        creates_service: "{{ cerebrum_db_service }}"
+        expected_return_code: [0, 3010]
+        state: present
+  always:
+    - name: "Cerebrum DB | The answer file is gone"
+      ansible.windows.win_file:
+        path: "{{ cerebrum_db_download_dir }}\\ConfigurationFile.ini"
+        state: absent
+
+- name: "Cerebrum DB | ODBC driver 17 and the command-line utilities (sqlcmd)"
+  ansible.windows.win_package:
+    path: "{{ cerebrum_db_download_dir }}\\{{ item.file }}"
+    arguments: "{{ item.args }}"
+    creates_path: "{{ item.creates }}"
+    state: present
+  loop:
+    - file: msodbcsql.msi
+      args: "/qn IACCEPTMSODBCSQLLICENSETERMS=YES"
+      creates: 'C:\Windows\System32\msodbcsql17.dll'
+    - file: MsSqlCmdLnUtils.msi
+      args: "/qn IACCEPTMSSQLCMDLNUTILSLICENSETERMS=YES"
+      creates: "{{ cerebrum_db_sqlcmd }}"
+  loop_control:
+    label: "{{ item.file }}"

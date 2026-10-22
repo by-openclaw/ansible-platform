@@ -2,9 +2,14 @@
 
 The SQL Server instance EVS Cerebrum stores its state in. Cerebrum creates its own database at first start through the login its ini names (`docs/services/cerebrum/README.md` §15.2); this role owns everything around it.
 
+## Two layouts
+
+- **Dedicated database host(s)** (`cerebrum_db_install_source: microsoft`, the default): the instance comes from Microsoft's own SQL Server Express media, pinned on the object store.
+- **Standalone server** (`bundled`): the Cerebrum installer put its SQL Express on the server host (`roles/cerebrum_server` with `cerebrum_server_sql_bundled: true`); this role only takes the instance over. The vendor's documented `sa` password is replaced by Vault's at the first run.
+
 ## What it does, in order
 
-1. Refuses to run unless the three installers are named on the object store with their sha256 (`cerebrum_db_installer_*`, `cerebrum_db_odbc_msi_*`, `cerebrum_db_sqlcmd_msi_*`), then downloads and verifies them.
+1. Dedicated host: refuses to run unless the three installers are named on the object store with their sha256 (`cerebrum_db_installer_*`, `cerebrum_db_odbc_msi_*`, `cerebrum_db_sqlcmd_msi_*`), then downloads and verifies them. Standalone: checks the bundled instance exists.
 2. `sa` password and the logins' passwords: Vault, created on first contact (`<tier>/cerebrum/<host>/sa`, `/app-login`, `/audit-ro`).
 3. Installs SQL Server Express unattended, once: the answer file carries the `sa` password, is readable by Administrators and SYSTEM only, and is removed in the same play. `BUILTIN\Administrators` is the sysadmin account: the platform's SSH session manages the instance over Windows authentication, no password on a command line.
 4. Installs the ODBC driver and `sqlcmd`.

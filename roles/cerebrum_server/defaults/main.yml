@@ -27,13 +27,18 @@ cerebrum_server_watchdog_exe: "{{ cerebrum_server_install_dir }}\\Cerebrum Watch
 # the inventory says so. Clients, witness, mirror creator, service manager, federation have roles
 # of their own.
 cerebrum_server_components: [cerebrum, cerebrum_watchdog]
+# Standalone server: the installer's bundled SQL Server Express on this host (/InstallSQL=Install);
+# roles/cerebrum_db then takes the instance over (source "bundled"). Multi-VM: false, and the
+# cerebrum_db group names the dedicated database host(s).
+cerebrum_server_sql_bundled: false
 # The licence: Cerebrum reads a Sentinel key. `install` adds the Sentinel driver (a hardware key);
 # `skip` leaves it out (demo key, or a software licence applied through the application).
 cerebrum_server_sentinel: skip
 
 # --- Cerebrum.ini: the bootstrap (docs/services/cerebrum/README.md §12.1) --------------------------
-cerebrum_server_db_host: "{{ groups['cerebrum_db'] | first }}"
-cerebrum_server_db_address: "{{ hostvars[cerebrum_server_db_host].ansible_host }}"
+# Standalone: the database is on this host; multi-VM: the first cerebrum_db host.
+cerebrum_server_db_host: "{{ inventory_hostname if cerebrum_server_sql_bundled | bool else (groups['cerebrum_db'] | first) }}"
+cerebrum_server_db_address: "{{ 'localhost' if cerebrum_server_sql_bundled | bool else hostvars[cerebrum_server_db_host].ansible_host }}"
 cerebrum_server_db_instance: "{{ hostvars[cerebrum_server_db_host].cerebrum_db_instance | default('CEREBRUMSQL') }}"
 cerebrum_server_db_port: "{{ hostvars[cerebrum_server_db_host].cerebrum_db_port | default(1433) }}"
 cerebrum_server_db_database: "{{ hostvars[cerebrum_server_db_host].cerebrum_db_database | default('Cerebrum') }}"
