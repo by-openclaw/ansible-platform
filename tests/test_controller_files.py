@@ -131,7 +131,7 @@ KEYS_RE = re.compile("^(" + "|".join(e["path"].replace("{{ platform_org }}", "by
 @pytest.mark.parametrize(
     "name",
     ["id_ed25519_svc-ansible-prod", "id_ed25519_svc-ansible-prod.pub", "id_ed25519_svc-rune-prod", "id_ed25519_by-research.pub",
-     "id_ed25519_opnsense", "config", "known_hosts", "known_hosts.old",
+     "config", "known_hosts", "known_hosts.old",
      "authorized_keys", "rune-agent.sock"],
 )
 def test_an_identity_the_inventory_names_is_kept(name):
@@ -142,7 +142,8 @@ def test_an_identity_the_inventory_names_is_kept(name):
     "name",
     ["id_ed25519", "id_ed25519.pub", "id_ed25519_rune", "id_ed25519_rune.pub", "id_ed25519_by-systems", "id_rsa", "anything",
      "id_ed25519_rune_nopass", "id_ed25519_rune_nopass.pub",  # retired 2026-10-22: svc-rune-prod replaced it on the Windows guests
-     "id_ed25519_rune_automation", "id_ed25519_rune_automation.pub"],  # retired 2026-10-22: svc-rune-prod is root's key on the nodes
+     "id_ed25519_rune_automation", "id_ed25519_rune_automation.pub",  # retired 2026-10-22: svc-rune-prod is root's key on the nodes
+     "id_ed25519_opnsense", "id_ed25519_opnsense.pub"],  # retired 2026-10-22: the firewall accepts svc-ansible-prod's key only
 )
 def test_a_retired_or_unknown_key_is_not_kept(name):
     assert not KEYS_RE.match(name)
