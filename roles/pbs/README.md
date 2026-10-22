@@ -16,3 +16,12 @@ Class **A**: excluded from its own S3 job; DR copy = NFS `vzdump-qemu-103`. Rest
 - Health: `proxmox-backup-manager datastore list`, `verify-job list`, `task list`; from PVE `pvesm status --storage pbs` active.
 - Restore: `proxmox-backup-client restore <snapshot> <archive> <dest> --keyfile /etc/pve/priv/storage/pbs.enc` — set `PBS_FINGERPRINT` or the client **prompts and hangs**.
 - Common: `backup owner check failed` after an identity change → `change-owner` the groups (temporary DatastoreAdmin); unpriv-CT backups from an Ansible shell → `umask 022`.
+
+## The migrated history lives in a namespace
+
+A PBS sync job carries only the snapshots newer than the newest one already in the target group. The
+nightly backups reached the off-site datastore before the old history did, so the history is synced into
+its own namespace (`pbs_datastore_migrate_ns`, default `history`) where every group starts empty. The
+prune and verify jobs cover it (`max-depth: 7`), so it ages out under the same retention. To restore from
+it, add a PVE storage entry for the same datastore with the `namespace` option (and the node's own key),
+or use the PBS web interface.

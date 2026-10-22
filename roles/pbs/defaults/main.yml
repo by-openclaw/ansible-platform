@@ -43,9 +43,13 @@ pbs_datastore_migrate_job: "migrate-pbs-datastore"
 # the history follows when pbs_datastore_migrate_transfer_last is raised to 0 (unlimited).
 pbs_datastore_migrate_owner: "{{ pbs_pve_backup_user }}!{{ pbs_pve_backup_token }}"
 pbs_datastore_migrate_schedule: "05:00"          # UTC on the PBS guest; the nightly jobs end ~04:00Z
-pbs_datastore_migrate_transfer_last: 0           # 0 = every snapshot
-# 0 = every snapshot (set 2026-10-22, the local datastore holds 932 snapshots since 2026-08-29 and the
-# off-site one 437: the weekly/monthly points of infra/0008 must exist off-site before the local one retires).
+pbs_datastore_migrate_transfer_last: 0           # 0 = every snapshot (set 2026-10-22)
+# A sync only carries snapshots NEWER than the newest one already in the target group (PBS rule, seen
+# 2026-10-22: "skipped: 6 snapshot(s) … older than the newest snapshot present on sync target"). The
+# history that predates the nightly copies (932 local snapshots since 2026-08-29 against 437 off-site)
+# therefore needs an EMPTY target: its own namespace on the off-site datastore. Prune and verify reach
+# it through max-depth; a restore from it names the namespace (PVE storage option `namespace`).
+pbs_datastore_migrate_ns: "history"
 
 pbs_version: "4.2.7-1"   # 2026-09-29 (4.2 line)
 pbs_datastore_name: "pbs-s3"                 # naming/0001 §4.1: {content}-{backend}, site- and tier-free
@@ -173,6 +177,7 @@ pbs_jobs:
       keep-daily: "{{ pbs_keep_daily }}"
       keep-weekly: "{{ pbs_keep_weekly }}"
       keep-monthly: "{{ pbs_keep_monthly }}"
+      max-depth: 7                        # the root and every namespace (the migrated history)
   verify:
     id: verify
     legacy: [verify-weekly]
@@ -181,6 +186,7 @@ pbs_jobs:
       schedule: "{{ pbs_verify_schedule }}"
       ignore-verified: true
       outdated-after: "{{ pbs_reverify_days }}"
+      max-depth: 7
 
 # Where PBS's notifications go. The built-in mail-to-root target mails root@pam's
 # address and the built-in matcher routes everything but successful prunes — but

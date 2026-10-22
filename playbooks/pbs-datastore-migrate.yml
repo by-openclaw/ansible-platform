@@ -69,7 +69,6 @@
         name: vault_secret
       vars:
         vault_secret_path: "{{ pbs_automation_vault_path }}"
-      when: mig_wrong_owner | length > 0
 
     # The token travels on stdin (PBS_PASSWORD_FD names the descriptor, not the secret); the
     # repository is the guest's own name so the platform certificate validates.
@@ -87,6 +86,31 @@
     - name: "Migrate | Handed over"
       ansible.builtin.debug:
         msg: "PBS_MIGRATE owners: {{ mig_wrong_owner | length }} group(s) handed to {{ pbs_datastore_migrate_owner }}: {{ mig_wrong_owner | join(' ') }}"
+
+    # The history goes to its own namespace (see pbs_datastore_migrate_ns): it must exist before the
+    # sync runs. Same token on stdin, same repository as the hand-over above.
+    - name: "Migrate | Namespaces on the target"
+      ansible.builtin.command:
+        argv: [proxmox-backup-client, namespace, list, --repository, "{{ vault_secret_result.tokenid }}@{{ pbs_node_fqdn }}:{{ pbs_datastore_name }}", --output-format, json]
+        stdin: "{{ vault_secret_result.value }}"
+      environment:
+        PBS_PASSWORD_FD: "0"
+      register: mig_ns
+      no_log: true
+      changed_when: false
+      when: pbs_datastore_migrate_ns | length > 0
+
+    - name: "Migrate | The history namespace exists on the target"
+      ansible.builtin.command:
+        argv: [proxmox-backup-client, namespace, create, "{{ pbs_datastore_migrate_ns }}", --repository, "{{ vault_secret_result.tokenid }}@{{ pbs_node_fqdn }}:{{ pbs_datastore_name }}"]
+        stdin: "{{ vault_secret_result.value }}"
+      environment:
+        PBS_PASSWORD_FD: "0"
+      no_log: true
+      when:
+        - pbs_datastore_migrate_ns | length > 0
+        - pbs_datastore_migrate_ns not in (mig_ns.stdout | from_json | map(attribute='ns') | list)
+      changed_when: true
 
     - name: "Migrate | Already running?"
       ansible.builtin.command: "proxmox-backup-manager task list --all true --limit 200 --output-format json"
