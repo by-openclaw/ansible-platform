@@ -1,0 +1,11 @@
+-- nightly full backup of the application's database (roles/cerebrum_db): one file per weekday,
+-- overwritten each week, verified by checksum; the guest backup carries the folder off the host.
+SET NOCOUNT ON;
+IF DB_ID(N'{{ cerebrum_db_database }}') IS NOT NULL
+BEGIN
+    DECLARE @file nvarchar(400) = N'{{ cerebrum_db_backup_dir }}\{{ cerebrum_db_database }}_' + DATENAME(weekday, GETDATE()) + N'.bak';
+    BACKUP DATABASE [{{ cerebrum_db_database }}] TO DISK = @file WITH INIT, CHECKSUM, STATS = 25;
+    RESTORE VERIFYONLY FROM DISK = @file WITH CHECKSUM;
+END
+ELSE
+    PRINT 'no database yet: Cerebrum creates it at first start';

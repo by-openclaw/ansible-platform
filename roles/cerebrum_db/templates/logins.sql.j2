@@ -1,0 +1,75 @@
+-- rendered by roles/cerebrum_db, run once over Windows authentication, removed in the same play.
+-- Prints CHANGED for every change so the task reports only what it did.
+SET NOCOUNT ON;
+{% for l in cerebrum_db_logins %}
+IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'{{ l.name }}')
+BEGIN
+    CREATE LOGIN [{{ l.name }}] WITH PASSWORD = N'{{ cerebrum_db_login_passwords[l.name] | replace("'", "''") }}', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF;
+    PRINT 'CHANGED login {{ l.name }} created';
+END
+ELSE IF PWDCOMPARE(N'{{ cerebrum_db_login_passwords[l.name] | replace("'", "''") }}', (SELECT password_hash FROM sys.sql_logins WHERE name = N'{{ l.name }}')) = 0
+BEGIN
+    ALTER LOGIN [{{ l.name }}] WITH PASSWORD = N'{{ cerebrum_db_login_passwords[l.name] | replace("'", "''") }}';
+    PRINT 'CHANGED login {{ l.name }} password';
+END
+{% for r in l.server_roles %}
+IF IS_SRVROLEMEMBER(N'{{ r }}', N'{{ l.name }}') = 0
+BEGIN
+    ALTER SERVER ROLE [{{ r }}] ADD MEMBER [{{ l.name }}];
+    PRINT 'CHANGED server role {{ r }} for {{ l.name }}';
+END
+{% endfor %}
+{% endfor %}
+-- the backup task runs as SYSTEM
+IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'NT AUTHORITY\SYSTEM')
+BEGIN
+    CREATE LOGIN [NT AUTHORITY\SYSTEM] FROM WINDOWS;
+    PRINT 'CHANGED login SYSTEM created';
+END
+-- sa: Vault's password, then disabled (the application has its own login)
+IF PWDCOMPARE(N'{{ cerebrum_db_sa_password | replace("'", "''") }}', (SELECT password_hash FROM sys.sql_logins WHERE name = N'sa')) = 0
+BEGIN
+    ALTER LOGIN [sa] WITH PASSWORD = N'{{ cerebrum_db_sa_password | replace("'", "''") }}';
+    PRINT 'CHANGED sa password';
+END
+{% if cerebrum_db_sa_enabled | bool %}
+IF EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'sa' AND is_disabled = 1)
+BEGIN
+    ALTER LOGIN [sa] ENABLE;
+    PRINT 'CHANGED sa enabled';
+END
+{% else %}
+IF EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'sa' AND is_disabled = 0)
+BEGIN
+    ALTER LOGIN [sa] DISABLE;
+    PRINT 'CHANGED sa disabled';
+END
+{% endif %}
+-- inside the application's database, once Cerebrum has created it
+IF DB_ID(N'{{ cerebrum_db_database }}') IS NOT NULL
+BEGIN
+    USE [{{ cerebrum_db_database }}];
+{% for l in cerebrum_db_logins %}
+    IF DATABASE_PRINCIPAL_ID(N'{{ l.name }}') IS NULL
+    BEGIN
+        CREATE USER [{{ l.name }}] FOR LOGIN [{{ l.name }}];
+        PRINT 'CHANGED user {{ l.name }} in {{ cerebrum_db_database }}';
+    END
+    IF IS_ROLEMEMBER(N'{{ l.db_role }}', N'{{ l.name }}') = 0
+    BEGIN
+        ALTER ROLE [{{ l.db_role }}] ADD MEMBER [{{ l.name }}];
+        PRINT 'CHANGED role {{ l.db_role }} for {{ l.name }}';
+    END
+{% endfor %}
+    IF DATABASE_PRINCIPAL_ID(N'NT AUTHORITY\SYSTEM') IS NULL
+    BEGIN
+        CREATE USER [NT AUTHORITY\SYSTEM] FOR LOGIN [NT AUTHORITY\SYSTEM];
+        PRINT 'CHANGED user SYSTEM in {{ cerebrum_db_database }}';
+    END
+    IF IS_ROLEMEMBER(N'db_backupoperator', N'NT AUTHORITY\SYSTEM') = 0
+    BEGIN
+        ALTER ROLE [db_backupoperator] ADD MEMBER [NT AUTHORITY\SYSTEM];
+        PRINT 'CHANGED role db_backupoperator for SYSTEM';
+    END
+END
+PRINT 'DONE';
