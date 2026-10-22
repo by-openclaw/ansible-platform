@@ -28,10 +28,9 @@
       - { name: "svc-ansible-{{ platform_env }}", vault_svc: "svc-ansible" }
       - { name: "svc-rune-{{ platform_env }}", vault_svc: "svc-rune" }
       - { name: "{{ platform_org }}", vault_svc: "break-glass" }
-      # The automation's remaining keys (identity.yml platform_pve_root_key / platform_fw_ssh_key,
-      # inventory windows_guests): escrowed as they are, see the header.
-      - { name: "rune_automation", vault_svc: "proxmox" }      # root on the Proxmox nodes
-      - { name: "rune_nopass", vault_svc: "windows" }          # Administrator on the Windows guests
+      # The automation's remaining legacy key (identity.yml platform_fw_ssh_key): escrowed as it is, see
+      # the header. rune_automation (root on the nodes) and rune_nopass (the Windows guests) retired on
+      # 2026-10-22: svc-rune-prod replaced both; a run must NOT regenerate them.
       - { name: "opnsense", vault_svc: "opnsense" }            # root on the firewalls
   tasks:
     - name: "Keys | Stat existing key files"
