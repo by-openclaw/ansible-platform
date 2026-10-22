@@ -18,6 +18,13 @@ The SQL Server instance EVS Cerebrum stores its state in. Cerebrum creates its o
 7. A nightly full backup with checksum and verify, seven rotating files under `cerebrum_db_backup_dir`, as a scheduled task run by SYSTEM; the guest backup carries the folder off the host.
 8. One inbound firewall rule: the instance port from the `cerebrum_server` hosts only.
 
+## State, upgrades, patches
+
+- `cerebrum_db_state: present | absent`. Absent uninstalls the instance with Microsoft's media and removes the backup task and the firewall rule; the data files, the backups and the Vault documents stay.
+- `cerebrum_db_patches`: Microsoft's GDR/CU packages, pinned (kb, version, url, sha256), applied in order when the instance's patch level is below them; the instance restarts with the patch. A major upgrade (2019 → 2022) is a new `cerebrum_db_version` with its media: the vendor's supported SQL versions decide when.
+- `cerebrum_db_hardening`: CIS SQL Server 2019 section 2 server options as declared data (`cerebrum_db_sp_configure`), login auditing (`cerebrum_db_audit_level`, both outcomes), `sa` disabled; `BUILTIN\Administrators` stays the management door of this dedicated host, the documented exception.
+- The vendor bundle (`cerebrum_db_install_source: bundled`) exists for a server that already carries it; the platform does not use it: no Microsoft patch channel.
+
 ## Inputs the inventory sets
 
 | Variable | Meaning |

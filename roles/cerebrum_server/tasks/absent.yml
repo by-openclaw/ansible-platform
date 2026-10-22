@@ -1,0 +1,52 @@
+---
+# The application leaves the host: the logon task and the firewall rules go, the processes stop,
+# the vendor's uninstaller runs silently, the run account is disabled (its Vault document and the
+# data folders stay: never delete, archive).
+- name: "Cerebrum server | The logon task gone"
+  community.windows.win_scheduled_task:
+    name: "{{ cerebrum_server_task_name }}"
+    state: absent
+
+- name: "Cerebrum server | The firewall rules gone"
+  community.windows.win_firewall_rule:
+    name: "{{ item.name }}"
+    state: absent
+  loop: "{{ cerebrum_server_firewall_rules }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: "Cerebrum server | Is it installed?"
+  ansible.windows.win_reg_stat:
+    path: "{{ cerebrum_server_uninstall_key }}"
+    name: UninstallString
+  register: cerebrum_server_uninstall_string
+
+- name: "Cerebrum server | The processes stopped before the uninstaller"
+  ansible.windows.win_command:
+    argv: [taskkill.exe, /IM, "{{ item }}", /F]
+  loop: ["Cerebrum.exe", "Cerebrum Watchdog.exe"]
+  register: cerebrum_server_kill
+  changed_when: cerebrum_server_kill.rc == 0
+  failed_when: false
+  when: cerebrum_server_uninstall_string.exists
+
+- name: "Cerebrum server | Uninstalled silently (the vendor's uninstaller)"
+  ansible.windows.win_package:
+    product_id: "{{ cerebrum_server_product_id }}"
+    arguments: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+    state: absent
+  when: cerebrum_server_uninstall_string.exists
+
+- name: "Cerebrum server | The run account disabled (kept, with its Vault document)"
+  ansible.windows.win_user:
+    name: "{{ cerebrum_server_run_user }}"
+    account_disabled: true
+    state: present
+  failed_when: false
+
+- name: "Cerebrum server | Report"
+  ansible.builtin.debug:
+    msg: >-
+      CEREBRUM_SERVER {{ inventory_hostname }}: absent — application
+      {{ 'removed' if cerebrum_server_uninstall_string.exists else 'already absent' }};
+      data folders, backups and Vault documents kept

@@ -1,0 +1,24 @@
+---
+- name: "Cerebrum DB | The package, verified: {{ cerebrum_db_patch.kb }}"
+  ansible.windows.win_get_url:
+    url: "{{ cerebrum_db_patch.url }}"
+    dest: "{{ cerebrum_db_download_dir }}\\SQLServer-{{ cerebrum_db_patch.kb }}-x64.exe"
+    checksum: "{{ cerebrum_db_patch.sha256 }}"
+    checksum_algorithm: sha256
+
+- name: "Cerebrum DB | Applied to the instance: {{ cerebrum_db_patch.kb }}"
+  ansible.windows.win_command:
+    argv:
+      - "{{ cerebrum_db_download_dir }}\\SQLServer-{{ cerebrum_db_patch.kb }}-x64.exe"
+      - /quiet
+      - /action=patch
+      - /IAcceptSQLServerLicenseTerms
+      - "/instancename={{ cerebrum_db_instance }}"
+  register: cerebrum_db_patch_run
+  changed_when: true
+  failed_when: cerebrum_db_patch_run.rc not in [0, 3010]
+
+- name: "Cerebrum DB | The instance runs after the patch"
+  ansible.windows.win_service:
+    name: "{{ cerebrum_db_service }}"
+    state: started

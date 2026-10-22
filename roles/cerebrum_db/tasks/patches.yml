@@ -1,0 +1,23 @@
+---
+# Microsoft's GDR/CU packages for the instance, pinned, applied when the instance's patch level is
+# below the declared one (the instance restarts with the patch). Windows Update does not carry
+# SQL Server packages unless Microsoft Update is opted in; the pin here is explicit either way.
+- name: "Cerebrum DB | The instance id"
+  ansible.windows.win_reg_stat:
+    path: 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL'
+    name: "{{ cerebrum_db_instance }}"
+  register: cerebrum_db_patch_instance_id
+
+- name: "Cerebrum DB | The instance's patch level"
+  ansible.windows.win_reg_stat:
+    path: 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\{{ cerebrum_db_patch_instance_id.value }}\Setup'
+    name: PatchLevel
+  register: cerebrum_db_patch_level
+
+- name: "Cerebrum DB | A patch below the declared version is applied"
+  ansible.builtin.include_tasks: patch_one.yml
+  loop: "{{ cerebrum_db_patches }}"
+  loop_control:
+    loop_var: cerebrum_db_patch
+    label: "{{ cerebrum_db_patch.kb }} ({{ cerebrum_db_patch.version }})"
+  when: (cerebrum_db_patch_level.value | default('0.0.0.0')) is version(cerebrum_db_patch.version, '<')

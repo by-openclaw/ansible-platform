@@ -1,0 +1,29 @@
+---
+# CIS Microsoft SQL Server 2019 Benchmark, the server-level options (section 2) and login auditing
+# (5.1). sa is handled in post_install.yml (disabled, 2.14); BUILTIN\Administrators stays the
+# management door of this dedicated host (documented exception to 3.x), nothing else is a sysadmin.
+- name: "Cerebrum DB | The hardening statements (no secret inside)"
+  ansible.windows.win_template:
+    src: hardening.sql.j2
+    dest: "{{ cerebrum_db_state_dir }}\\hardening.sql"
+
+- name: "Cerebrum DB | Server options as declared (Windows authentication)"
+  ansible.windows.win_command:
+    argv: ["{{ cerebrum_db_sqlcmd }}", -E, -S, ".\\{{ cerebrum_db_instance }}", -b, -i, "{{ cerebrum_db_state_dir }}\\hardening.sql"]
+  register: cerebrum_db_hardening_run
+  changed_when: "'CHANGED' in cerebrum_db_hardening_run.stdout"
+  failed_when: cerebrum_db_hardening_run.rc != 0 or 'DONE' not in cerebrum_db_hardening_run.stdout
+
+- name: "Cerebrum DB | Login auditing level: {{ cerebrum_db_audit_level }}"
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\{{ cerebrum_db_instance_id.value }}\MSSQLServer'
+    name: AuditLevel
+    data: "{{ cerebrum_db_audit_level }}"
+    type: dword
+  register: cerebrum_db_audit_reg
+
+- name: "Cerebrum DB | The instance restarted when the audit level changed"
+  ansible.windows.win_service:
+    name: "{{ cerebrum_db_service }}"
+    state: restarted
+  when: cerebrum_db_audit_reg is changed

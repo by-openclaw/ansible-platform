@@ -11,6 +11,7 @@
 # docs/services/cerebrum/playbooks.md seq 2.
 # ==============================================================================
 cerebrum_server_env: "{{ env | default(platform_env) }}"
+cerebrum_server_state: present                  # absent: the application uninstalled, the run account disabled, data folders and Vault documents kept
 
 # --- the installers, pinned ------------------------------------------------------------------------
 cerebrum_server_download_dir: 'C:\ProgramData\platform\installers'
@@ -30,7 +31,9 @@ cerebrum_server_components: [cerebrum, cerebrum_watchdog]
 # Standalone server: the installer's bundled SQL Server Express on this host (/InstallSQL=Install);
 # roles/cerebrum_db then takes the instance over (source "bundled"). Multi-VM: false, and the
 # cerebrum_db group names the dedicated database host(s).
-cerebrum_server_sql_bundled: false
+cerebrum_server_sql_bundled: false              # the owner's rule (2026-10-22): SQL from Microsoft's media even on a standalone server
+                                                #   (the cerebrum_db group then holds this host too); the bundle stays available, not used
+cerebrum_server_uninstall_key: 'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{{ cerebrum_server_product_id }}'
 # The licence: Cerebrum reads a Sentinel key. `install` adds the Sentinel driver (a hardware key);
 # `skip` leaves it out (demo key, or a software licence applied through the application).
 cerebrum_server_sentinel: skip

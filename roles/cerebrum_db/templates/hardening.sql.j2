@@ -1,0 +1,14 @@
+-- rendered by roles/cerebrum_db (no secret inside), run over Windows authentication; CIS SQL Server
+-- 2019 section 2: every option set only when it differs, CHANGED printed per change.
+SET NOCOUNT ON;
+DECLARE @adv int = (SELECT CAST(value_in_use AS int) FROM sys.configurations WHERE name = 'show advanced options');
+IF @adv = 0 BEGIN EXEC sp_configure 'show advanced options', 1; RECONFIGURE; END
+{% for o in cerebrum_db_sp_configure %}
+IF EXISTS (SELECT 1 FROM sys.configurations WHERE name = N'{{ o.name }}' AND CAST(value_in_use AS int) <> {{ o.value }})
+BEGIN
+    EXEC sp_configure N'{{ o.name }}', {{ o.value }}; RECONFIGURE;
+    PRINT 'CHANGED {{ o.name }} = {{ o.value }}';
+END
+{% endfor %}
+IF @adv = 0 BEGIN EXEC sp_configure 'show advanced options', 0; RECONFIGURE; END
+PRINT 'DONE';
