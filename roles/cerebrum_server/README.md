@@ -20,6 +20,11 @@ The EVS Cerebrum server application on its own Windows guest (`docs/services/cer
 9. Error logs older than the retention removed.
 10. With `cerebrum_server_start: true`: the logon task run once and the server port awaited (Cerebrum then creates its database and default settings).
 
+## State and upgrades
+
+- `cerebrum_server_state: present | absent`. Absent removes the logon task and the firewall rules, stops the processes, runs the vendor's uninstaller silently and disables the run account; data folders and Vault documents stay.
+- An upgrade is the version pin: the role reads the installed version from the vendor's uninstall key and runs the silent installer over the existing one when the pin differs; the ini is re-rendered and the logon task kept. Downgrades are not attempted.
+
 ## Not in this role
 
 Accounts inside Cerebrum (`USERS.XML` holds hashed passwords; the vendor's procedure applies), the web client and its certificate (`roles/cerebrum_web`), the registry (`roles/cerebrum_nmos`), shipping the audit trail (a `windows_logging` file source, next), the auto-logon of the run account: a Windows session must exist for a desktop application; the platform does not store a logon password in the registry, so the session is opened at boot by the vendor's recommended means (an LSA-stored auto-logon set once by the operator) or stays an operator's RDP session. Decision pending with the vendor.

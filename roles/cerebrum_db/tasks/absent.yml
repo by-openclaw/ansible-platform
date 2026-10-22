@@ -1,0 +1,37 @@
+---
+# The instance leaves the host; its data files, the backups and the Vault documents stay (never delete,
+# archive): the vendor's own note says the mdf/ldf files survive an uninstall.
+- name: "Cerebrum DB | The backup task gone"
+  community.windows.win_scheduled_task:
+    name: "{{ cerebrum_db_backup_task }}"
+    state: absent
+
+- name: "Cerebrum DB | The firewall rule gone"
+  community.windows.win_firewall_rule:
+    name: "{{ cerebrum_db_firewall_rule }}"
+    state: absent
+
+- name: "Cerebrum DB | Is the instance installed?"
+  ansible.windows.win_service_info:
+    name: "{{ cerebrum_db_service }}"
+  register: cerebrum_db_absent_svc
+
+- name: "Cerebrum DB | The instance uninstalled with Microsoft's media (data files kept)"
+  ansible.windows.win_command:
+    argv:
+      - "{{ cerebrum_db_download_dir }}\\SQLEXPR_x64_ENU_{{ cerebrum_db_version }}.exe"
+      - /ACTION=Uninstall
+      - "/INSTANCENAME={{ cerebrum_db_instance }}"
+      - "/FEATURES={{ cerebrum_db_features }}"
+      - /Q
+  register: cerebrum_db_uninstall
+  changed_when: true
+  failed_when: cerebrum_db_uninstall.rc not in [0, 3010]
+  when: cerebrum_db_absent_svc.services | length > 0
+
+- name: "Cerebrum DB | Report"
+  ansible.builtin.debug:
+    msg: >-
+      CEREBRUM_DB {{ inventory_hostname }}: absent — instance
+      {{ 'removed' if cerebrum_db_absent_svc.services | length > 0 else 'already absent' }};
+      data files, backups and Vault documents kept

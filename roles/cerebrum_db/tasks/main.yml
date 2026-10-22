@@ -1,51 +1,11 @@
 ---
-# roles/cerebrum_db — see defaults/main.yml for the contract. Order: pinned installers → Vault
-# secrets → unattended install (one-shot, the rendered answer file removed right after) → the
-# client utilities → a static port → services off → logins over Windows authentication (rendered
-# SQL removed right after) → the nightly backup task → the firewall rule → report.
-# --- secrets: Vault, created on first contact ------------------------------------------------------
-- name: "Cerebrum DB | The sa password (Vault, created on first contact)"
-  ansible.builtin.include_role:
-    name: vault_secret
-  vars:
-    vault_secret_path: "{{ cerebrum_db_sa_vault_path }}"
-    vault_secret_init:
-      password: >-   # pragma: allowlist secret
-        {{ lookup('ansible.builtin.password', '/dev/null', length=cerebrum_db_password_length, chars=['ascii_letters', 'digits']) }}
-    vault_secret_metadata_put:
-      origin: "roles/cerebrum_db (sa of {{ cerebrum_db_instance }} on {{ inventory_hostname }}; disabled after install)"
+# roles/cerebrum_db — see defaults/main.yml for the contract. cerebrum_db_state decides:
+# present (present.yml: secrets → the instance → patches → port, services, logins, backup,
+# firewall → hardening) or absent (absent.yml: the instance uninstalled, data and backups kept).
+- name: "Cerebrum DB | Absent: the instance uninstalled, data and backups kept"
+  ansible.builtin.include_tasks: absent.yml
+  when: cerebrum_db_state == 'absent'
 
-- name: "Cerebrum DB | Keep it for the answer file and the logins script"
-  ansible.builtin.set_fact:
-    cerebrum_db_sa_password: "{{ vault_secret_result.password }}"
-  no_log: true
-
-- name: "Cerebrum DB | The logins' passwords (Vault, created on first contact)"
-  ansible.builtin.include_tasks: login_secret.yml
-  loop: "{{ cerebrum_db_logins }}"
-  loop_control:
-    loop_var: cerebrum_db_login
-    label: "{{ cerebrum_db_login.name }}"
-
-# --- the instance: from Microsoft's media (dedicated host) or already there (bundled by the Cerebrum installer)
-- name: "Cerebrum DB | The instance from Microsoft's media"
-  ansible.builtin.include_tasks: install.yml
-  when: cerebrum_db_install_source == 'microsoft'
-
-- name: "Cerebrum DB | The bundled instance is there (the Cerebrum installer put it in place)"
-  ansible.windows.win_service_info:
-    name: "{{ cerebrum_db_service }}"
-  register: cerebrum_db_bundled_svc
-  when: cerebrum_db_install_source == 'bundled'
-
-- name: "Cerebrum DB | A bundled instance must exist before this role configures it"
-  ansible.builtin.assert:
-    that: cerebrum_db_bundled_svc.services | length > 0
-    fail_msg: >-
-      cerebrum_db: install source 'bundled' but service {{ cerebrum_db_service }} is absent — run the
-      Cerebrum installer with /InstallSQL=Install first (roles/cerebrum_server, cerebrum_server_sql_bundled)
-    quiet: true
-  when: cerebrum_db_install_source == 'bundled'
-
-- name: "Cerebrum DB | Everything after the instance"
-  ansible.builtin.include_tasks: post_install.yml
+- name: "Cerebrum DB | Present"
+  ansible.builtin.include_tasks: present.yml
+  when: cerebrum_db_state == 'present'

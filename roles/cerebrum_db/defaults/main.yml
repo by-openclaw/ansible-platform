@@ -17,6 +17,7 @@
 # application uses its own login.
 # ==============================================================================
 cerebrum_db_env: "{{ env | default(platform_env) }}"
+cerebrum_db_state: present                      # absent: the instance uninstalled, its data files, backups and Vault documents kept
 
 # --- where the instance comes from ----------------------------------------------------------------
 # microsoft: Microsoft's own SQL Server Express media, pinned below (a dedicated database host, the
@@ -24,7 +25,11 @@ cerebrum_db_env: "{{ env | default(platform_env) }}"
 #            this host by roles/cerebrum_server with cerebrum_server_sql_bundled (a standalone server);
 #            this role then only takes it over: Vault's sa password instead of the vendor's documented
 #            default, the static port, the logins, the backup, the firewall rule.
-cerebrum_db_install_source: microsoft
+cerebrum_db_install_source: microsoft           # the owner's rule (2026-10-22): Microsoft's media, Microsoft's patches — the bundle is not used
+
+# --- patches from Microsoft (GDR / CU), pinned; applied in order when the instance is below them ----
+# - { kb: "KB5122773", version: "15.0.2190.7", url: "https://…/SQLServer2019-KB5122773-x64.exe", sha256: "…" }
+cerebrum_db_patches: []
 
 # --- the installers, pinned by checksum (the object store holds them; the inventory names them) ---
 cerebrum_db_download_dir: 'C:\ProgramData\platform\installers'
@@ -59,6 +64,21 @@ cerebrum_db_logins:
   - { name: cerebrum,       vault_path: "{{ cerebrum_db_env }}/cerebrum/{{ inventory_hostname }}/app-login", server_roles: [dbcreator], db_role: db_owner }
   - { name: cerebrum_audit, vault_path: "{{ cerebrum_db_env }}/cerebrum/{{ inventory_hostname }}/audit-ro",  server_roles: [],          db_role: db_datareader }
 cerebrum_db_password_length: 28
+
+# --- hardening (CIS Microsoft SQL Server 2019 Benchmark, section 2 and 3) --------------------------
+cerebrum_db_hardening: true
+cerebrum_db_sp_configure:                       # name → value; every row guarded, changed only on drift
+  - { name: "Ad Hoc Distributed Queries", value: 0 }   # 2.1
+  - { name: "clr enabled", value: 0 }                   # 2.2
+  - { name: "cross db ownership chaining", value: 0 }   # 2.3
+  - { name: "Database Mail XPs", value: 0 }             # 2.4
+  - { name: "Ole Automation Procedures", value: 0 }     # 2.5
+  - { name: "remote access", value: 0 }                 # 2.6
+  - { name: "remote admin connections", value: 0 }      # 2.7
+  - { name: "scan for startup procs", value: 0 }        # 2.8
+  - { name: "xp_cmdshell", value: 0 }                   # 2.16
+  - { name: "contained database authentication", value: 0 }
+cerebrum_db_audit_level: 3                      # 5.1 login auditing: 0 none, 1 success, 2 failure, 3 both (NIS2 21(2)(b): both)
 
 # --- backup (infra/0008): a native full backup every night, seven rotating files, in the guest backup ---
 cerebrum_db_backup_dir: 'C:\Backup\SQL'
