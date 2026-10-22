@@ -407,14 +407,27 @@
           - "--enabled"
           - "1"
           - "--notes-template"
-          - "PBS S3 copy (SeaweedFS) — {{ '{{guestname}}' }} (VMID {{ '{{vmid}}' }})"
+          - "{{ pbs_backup_notes }}"
           - "--comment"
-          - "PBS S3 second copy (managed by ansible pbs role)"
+          - "{{ pbs_backup_comment }}"
       register: r_job
       changed_when: r_job.rc == 0
       when:
         - r_job_move is skipped
         - pbs_pve_storage_id not in (r_jobs.stdout | from_json | selectattr('storage', 'defined') | map(attribute='storage') | list)
+
+    # The job that already writes to the declared storage (created earlier, or moved from the previous
+    # storage by the task above) keeps whatever note template it had: converge it to the role's text.
+    - name: "PVE-wire | The PBS job's note template and comment as declared"
+      ansible.builtin.command:
+        argv: [pvesh, set, "/cluster/backup/{{ item.id }}", --notes-template, "{{ pbs_backup_notes }}", --comment, "{{ pbs_backup_comment }}"]
+      loop: "{{ r_jobs.stdout | from_json | selectattr('storage', 'defined') | selectattr('storage', 'eq', pbs_pve_storage_id) | list }}"
+      loop_control:
+        label: "{{ item.id }}"
+      when:
+        - r_job is skipped
+        - (item['notes-template'] | default('')) != pbs_backup_notes or (item.comment | default('')) != pbs_backup_comment
+      changed_when: true
 
     # --- PBS must NOT back itself up into its own datastore (circular) ----------
     # The all-guests S3 job would include the PBS VM; backing the backup server up
