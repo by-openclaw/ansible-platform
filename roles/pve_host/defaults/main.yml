@@ -113,8 +113,9 @@ pve_host_guard_from_controller: true      # after enabling: SSH + UI must still 
 pve_host_root_keys_dir: "{{ playbook_dir }}/../roles/user-mgmt/files/keys"
 pve_host_root_key_files:
   - id_ed25519_svc-ansible-prod.pub
-  - id_ed25519_svc-rune-prod.pub
-  - id_ed25519_rune_automation.pub   # the automation's root key (no passphrase yet; escrowed: Vault proxmox/ssh-key)
+  - id_ed25519_svc-rune-prod.pub     # the automation's own key (identity/0004: passphrase, in the automation agent)
+  # id_ed25519_rune_automation.pub — the keyless root key of April 2026 — retired 2026-10-22 (files/keys/_retired):
+  # the role removes it from the nodes by key text.
 # Where PVE keeps root's keys: pve-cluster's file, and /root/.ssh/authorized_keys is the symlink
 # it made to that file (an exclusive write or a plain file there breaks the link — the second
 # node had a stale copy in root's own file, 2026-10-15). Keys the platform retired
