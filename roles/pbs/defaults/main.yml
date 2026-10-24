@@ -34,7 +34,7 @@ pbs_s3_vault_path: "{{ platform_external_s3[pbs_s3_provider].vault_path }}"   # 
 # A local sync job pulls every snapshot of the old datastore into the new one (chunks travel once,
 # deduplicated); playbooks/pbs-datastore-migrate.yml runs it. The old datastore stays untouched
 # until the owner's go to retire it.
-pbs_datastore_migrate_from: "pbs-datastore"
+pbs_datastore_migrate_from: ""                  # "" since 2026-10-24: the history is off-site (namespace history), the source retires
 pbs_datastore_migrate_job: "migrate-pbs-datastore"
 # The first night (2026-10-21): the sync created groups as root@pam, the nightly job (the backup
 # token) was then refused by the owner check on 18 guests; both wrote to the provider at once and
@@ -118,7 +118,7 @@ pbs_pve_node: "{{ groups['proxmox_nodes'] | first }}"
 pbs_pve_node_ssh: "{{ hostvars[groups['proxmox_nodes'] | first].ansible_host }}"          # node OOB, root SSH (id_ed25519_rune_automation)
 pbs_pve_storage_id: "pbs-s3"              # PVE storage entry: {content}-{backend} (naming/0001 §4.1); a storage's
                                           # datastore is FIXED at creation, so a moved datastore means a new id
-pbs_pve_storage_previous: "pbs"           # the entry of the on-site datastore: its job moves, its key is reused,
+pbs_pve_storage_previous: ""              # "" since 2026-10-24 (was "pbs"): the entry of the on-site datastore: its job moves, its key is reused,
                                           # the entry itself retires with that datastore ('' once gone)
 pbs_pve_backup_user: "svc-pbs-backup-prod@pbs"   # naming/0002 §3 (renamed 2026-09-01; was pve-backup@pbs)
 pbs_pve_backup_token: "pve"               # API token name -> pve-backup@pbs!pve
@@ -199,3 +199,10 @@ pbs_notify_email: "{{ platform_ops_email }}"
 # Host firewall (ufw) rules for this role's native listeners — applied by roles/host_firewall when ufw is active
 pbs_firewall_rules:
   - { port: "{{ pbs_port }}", proto: tcp, from: "{{ platform_trusted_cidrs }}", comment: "PBS API/UI (PVE node, Traefik)" }
+
+# --- retired datastores (infra/0008 decision 7, owner 2026-10-24): the on-site datastore leaves the
+#     PBS configuration once its history is off-site. The sync job that migrated it and the datastore
+#     entry are removed; the DATA is kept (no --destroy-data): the bucket is the owner's to delete.
+pbs_datastores_retired: [pbs-datastore]
+pbs_sync_jobs_retired: [migrate-pbs-datastore]
+pbs_pve_storages_retired: [pbs]                 # the PVE storage entry of the on-site datastore
