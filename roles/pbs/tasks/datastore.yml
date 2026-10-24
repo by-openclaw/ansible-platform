@@ -147,3 +147,30 @@
       or ((_job['transfer-last'] | default(0) | int) != (pbs_datastore_migrate_transfer_last | int))
       or ((_job.ns | default('')) != pbs_datastore_migrate_ns)
   changed_when: true
+
+# --- retirement: the migration sync job and the on-site datastore leave the configuration ---------
+- name: "Datastore | Sync jobs today"
+  ansible.builtin.command: "proxmox-backup-manager sync-job list --output-format json"
+  register: pbs_sync_now
+  check_mode: false  # read-only probe
+  changed_when: false
+
+- name: "Datastore | Retired sync jobs removed"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, sync-job, remove, "{{ item }}"]
+  loop: "{{ pbs_sync_jobs_retired }}"
+  when: item in (pbs_sync_now.stdout | from_json | map(attribute='id') | list)
+  changed_when: true
+
+- name: "Datastore | Datastores today"
+  ansible.builtin.command: "proxmox-backup-manager datastore list --output-format json"
+  register: pbs_ds_now
+  check_mode: false  # read-only probe
+  changed_when: false
+
+- name: "Datastore | Retired datastores removed from the configuration (data kept)"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, datastore, remove, "{{ item }}"]
+  loop: "{{ pbs_datastores_retired }}"
+  when: item in (pbs_ds_now.stdout | from_json | map(attribute='name') | list)
+  changed_when: true

@@ -437,6 +437,22 @@
         - _want_note != _have_note or _want_comment != _have_comment
       changed_when: true
 
+    # The on-site datastore's storage entry retires with it (owner 2026-10-24): the entry goes,
+    # its key and password files under /etc/pve/priv/storage/ stay (never delete, archive).
+    - name: "PVE-wire | Storage entries today"
+      ansible.builtin.command:
+        argv: [pvesm, status]
+      register: r_pvesm
+      changed_when: false
+      check_mode: false   # read-only probe
+
+    - name: "PVE-wire | Retired storage entries removed"
+      ansible.builtin.command:
+        argv: [pvesm, remove, "{{ item }}"]
+      loop: "{{ pbs_pve_storages_retired }}"
+      when: r_pvesm.stdout_lines | select('match', '^' ~ item ~ '\\s') | list | length > 0
+      changed_when: true
+
     # --- PBS must NOT back itself up into its own datastore (circular) ----------
     # The all-guests S3 job would include the PBS VM; backing the backup server up
     # into the datastore it serves deadlocks ("http upgrade request timed out").
