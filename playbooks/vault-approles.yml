@@ -16,11 +16,14 @@
     # (cloudflare, resend, ci, discord, geoip, synology, backup, net, vpn, monit,
     # proxmox, break-glass) and identity accounts (svc-ansible/svc-rune) are NOT
     # given a service AppRole here.
+    # Identities retired (policy + AppRole removed, their credentials file deleted).
+    vault_approle_retired: [dhs-lab]
     vault_approle_services:
       - adguard
-      # The lab control node of the media fabric (go-acp, dhs-debian): it presents the Arista eAPI
-      # credential, so that credential lives under its own prefix (prod/dhs-lab/*), read-only.
-      - dhs-lab
+      # The network fabric (owner 2026-10-25): the switches' credentials live at
+      # prod/network/<switch>/{eapi,ssh,snmpv3,ospf}; the fabric automation reads them with this
+      # identity. Replaces the short-lived dhs-lab (retired below).
+      - network
       - authentik
       - crowdsec
       - gitlab
@@ -42,6 +45,17 @@
       vars:
         vault_policy_service: "{{ svc }}"
       loop: "{{ vault_approle_services }}"
+      loop_control:
+        loop_var: svc
+        label: "{{ svc }}"
+
+    - name: "Retire {service}-{env} policy + AppRole (its credentials file goes with it)"
+      ansible.builtin.include_role:
+        name: vault_policy
+      vars:
+        vault_policy_service: "{{ svc }}"
+        vault_policy_state: absent
+      loop: "{{ vault_approle_retired }}"
       loop_control:
         loop_var: svc
         label: "{{ svc }}"
