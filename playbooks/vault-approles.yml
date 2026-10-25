@@ -16,6 +16,10 @@
     # (cloudflare, resend, ci, discord, geoip, synology, backup, net, vpn, monit,
     # proxmox, break-glass) and identity accounts (svc-ansible/svc-rune) are NOT
     # given a service AppRole here.
+    # Capabilities per identity when "read" is not enough: the fabric automation WRITES the
+    # switches' secrets into its own prefix (owner 2026-10-25), nothing beyond it.
+    vault_approle_capabilities:
+      network: [create, read, update, list]
     # Identities retired (policy + AppRole removed, their credentials file deleted).
     vault_approle_retired: [dhs-lab]
     vault_approle_services:
@@ -44,6 +48,7 @@
         name: vault_policy
       vars:
         vault_policy_service: "{{ svc }}"
+        vault_policy_capabilities: "{{ vault_approle_capabilities[svc] | default(['read']) }}"
       loop: "{{ vault_approle_services }}"
       loop_control:
         loop_var: svc
