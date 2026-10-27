@@ -21,7 +21,7 @@ visibility live, so a guest that skips it is outside both.
 
 | | |
 |---|---|
-| Resolvers | AdGuard v4 + v6 first, the firewall's Unbound as fallback |
+| Resolvers | AdGuard v4, then the firewall's Unbound, then AdGuard v6 — `options timeout:1 attempts:2` |
 | Where | `systemd-resolved` drop-in when it is running, `/etc/resolv.conf` otherwise |
 | RA handling | `accept_ra=2` on hosts where forwarding silently disabled it |
 
@@ -30,10 +30,14 @@ visibility live, so a guest that skips it is outside both.
 **The fallback is deliberate.** AdGuard is a single VM. Without a fallback its reboot takes
 name resolution down platform-wide — including Vault and Traefik — which is worse than
 briefly resolving unfiltered. The resolver library only reaches the fallback when AdGuard
-does not answer.
+does not answer — and only after its timeout. The order and the options are the point: the
+firewall is the SECOND entry and a server gets 1 s x 2 attempts, so a dead AdGuard costs about
+2 s per lookup. With the defaults (5 s x 2, firewall third) it cost 20 s, every client gave up
+first, and on 2026-10-24 one full resolver disk took the platform down for three days with the
+fallback sitting unused in every resolv.conf.
 
 **`/etc/resolv.conf` honours at most three nameservers.** glibc's `MAXNS` is 3 and silently
-ignores the rest, so the file gets both AdGuard addresses plus one fallback, in that order.
+ignores the rest, so the file gets AdGuard v4, the firewall v4 and AdGuard v6, in that order.
 `systemd-resolved` has no such limit and receives the full list.
 
 ## The RA fix, precisely

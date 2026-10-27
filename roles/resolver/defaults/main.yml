@@ -58,3 +58,13 @@ resolver_accept_ra_value: 2
 # /etc/resolv.conf on a Proxmox container is seeded from the CT config at creation, so the
 # same values belong in the Terraform guest definition; this role owns the running state.
 resolver_manage_resolv_conf: true
+# glibc resolver options written to /etc/resolv.conf. timeout:1 attempts:2 bounds what a dead
+# nameserver costs: 2 s per lookup before the next one is asked, instead of the 5 s x 2 default
+# (2026-10-24: AdGuard down = 20 s per lookup on every guest, every client gave up before the
+# firewall was ever asked — the fallback existed and was never reached). systemd-resolved hosts
+# switch servers on their own and ignore this.
+resolver_options:
+  - edns0
+  - trust-ad
+  - "timeout:1"
+  - "attempts:2"
