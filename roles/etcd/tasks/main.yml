@@ -9,7 +9,12 @@
   when: etcd_state == 'absent'
   tags: [etcd]
 
-- name: "etcd | Certificate, secret, directories"
+- name: "etcd | Root password (Vault) — every tagged phase needs it"
+  ansible.builtin.import_tasks: secret.yml
+  when: etcd_state == 'present'
+  tags: [always]   # the cluster phase authenticates with it: no tagged run without it
+
+- name: "etcd | Certificate, directories"
   ansible.builtin.import_tasks: prepare.yml
   when: etcd_state == 'present'
   tags: [etcd]
