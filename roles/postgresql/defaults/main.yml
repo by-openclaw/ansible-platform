@@ -46,6 +46,11 @@ pg_max_locks_per_transaction: 256
 # setting: a standby must never carry less than the leader, so it is raised on the standbys
 # first (Patroni applies it at their next restart), the leader last.
 pg_max_connections: 400
+# WAL a replication slot may retain on the leader. Unlimited (-1, PostgreSQL's default) lets a
+# dead member fill the leader's disk: lxc-pgsql-02's slot held 2 GB (2026-10-05 → 10-27) while
+# that member crash-looped on a corrupt WAL record. Past this size the slot is invalidated and the
+# member is re-cloned (patronictl reinit) — the leader stays up. Reloadable (SIGHUP) setting.
+pg_max_slot_wal_keep_size: "4GB"
 # Log every connection with role + database (Loki keeps them), so the next time the
 # ceiling is approached the client that opened the connections is named — without it,
 # only the victims' errors are visible. Restart-required setting.
