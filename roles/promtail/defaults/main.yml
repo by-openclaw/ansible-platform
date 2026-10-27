@@ -37,6 +37,12 @@ promtail_aide_glob: "/var/log/aide/aide.log"
 # owner creates later inherit it. Declared per host group (group_vars), never chmod'ed.
 promtail_acl_dirs: []           # ["/var/log/pods"]
 promtail_acl_traverse: []       # ["/var/lib/docker"] — parent dirs that only need x (traverse), never recursive
+# A file its owner creates 0600 defeats the ACL above: the ACL mask follows the file's group
+# bits, so promtail's entry is there but effective "---" (AdGuard's querylog.json — 2026-10-27:
+# the archive had never received a line). On such a host promtail reads through
+# CAP_DAC_READ_SEARCH (read-only bypass of file permission checks, as an ambient capability of
+# the unit's own user) instead of running as root. Per host group, with the reason.
+promtail_dac_read_search: false
 # Syslog listeners (RFC5424 over TCP) — e.g. the firewall shipping its logs to
 # Loki. Each entry opens the port in ufw for allow_from (FW-originated traffic
 # needs no FW rule). Labels: job=<name>, host=<syslog hostname>, app=<app-name>.

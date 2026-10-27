@@ -4,16 +4,19 @@
 #
 # The query log's ARCHIVE is Loki (shipped line by line below, audit class = 90 d, stored in
 # the S3 bucket behind Loki): the file on the resolver is a short working copy. It was the only
-# copy, kept 90 d locally, sized from a 2026-09-28 measurement of ~55 MB/day — the real rate is
-# ~320 MB/day, so the file reached 11.8 GB on a 20 GB disk (HostDiskAlmostFull, 2026-10-11).
-# AdGuard keeps the current file + one rotated: 7 d ≈ 2 × ~2.3 GB.
-adguard_querylog_retention: "168h"     # 7 d on the resolver — maps to querylog.interval
+# copy. Measured rates: ~55 MB/day (2026-09-28), ~320 MB/day (2026-10-11, 11.8 GB on the 20 GB
+# disk), ~900 MB/day (2026-10-27: current file 5.2 GB + rotated 8.6 GB = disk FULL, Docker could
+# not start after the 2026-10-24 reboot, the resolver was down and with it every FQDN on the
+# platform for three days). AdGuard keeps the current file + one rotated: 24 h ≈ 2 × ~1 GB.
+adguard_querylog_retention: "24h"      # 1 d on the resolver — maps to querylog.interval
 adguard_statistics_retention: "24h"    # dashboard statistics — maps to statistics.interval
 
 # Ship the query log to Loki (one JSON object per line; job adguard_querylog). Stats and
 # searches span 90 d there, not on this disk.
 promtail_extra_file_jobs:
   - {name: adguard_querylog, path: /opt/AdGuardHome/data/querylog.json, audit: true}
-# AdGuard's data dir is root-only (0700): promtail reads through an ACL, inherited by the
-# files AdGuard rotates in (the shipper role applies it).
+# AdGuard's data dir is root-only (0700): promtail traverses it through an ACL. The query log
+# itself AdGuard creates 0600, which masks the inherited ACL entry to nothing (2026-10-27: Loki
+# had never received a line) — the shipper reads it through CAP_DAC_READ_SEARCH instead.
 promtail_acl_dirs: ["/opt/AdGuardHome/data"]
+promtail_dac_read_search: true

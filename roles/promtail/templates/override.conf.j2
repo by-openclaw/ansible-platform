@@ -1,0 +1,8 @@
+# Managed by Ansible (roles/promtail). The packaged unit runs our config as the promtail user.
+[Service]
+User=promtail
+SupplementaryGroups=systemd-journal adm
+{% if promtail_dac_read_search | bool %}
+# Files their owner creates 0600 (promtail_dac_read_search): read-only bypass of permission checks.
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+{% endif %}
