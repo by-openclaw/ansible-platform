@@ -16,6 +16,20 @@
       *               hard    core            0
       root            hard    core            0
 
+# systemd reads drop-ins from these directories (systemd-system.conf(5), coredump.conf(5)) but the
+# packages do not create them; copy does not either, and a dry-run cannot tell (2026-10-27: the
+# first apply failed on 34 hosts with "Destination directory does not exist").
+- name: "Coredump | Drop-in directories exist"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/systemd/system.conf.d
+    - /etc/systemd/coredump.conf.d
+
 - name: "Coredump | systemd: every service starts with LimitCORE=0 (systemd-system.conf(5) DefaultLimitCORE)"
   ansible.builtin.copy:
     dest: /etc/systemd/system.conf.d/10-hardening-core.conf
