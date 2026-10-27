@@ -36,6 +36,17 @@ docker_compose_from_debian: "{{ docker_engine == 'debian' and ansible_distributi
 # for ip6tables (GA in 27+). The bridge subnet is private and masqueraded to the
 # host's real v6, so a single ULA is safe to share across hosts.
 docker_ipv6: true
+# dockerd daemon.json, documented keys (Docker Engine reference, "daemon configuration file"):
+# live-restore — containers keep running while the daemon restarts (an upgrade, a configuration
+#   change, the ufw/Docker start sequence). Documented limit: a daemon down for long leaves each
+#   container a 64 KB stdout buffer; ours restart in seconds. Takes effect from the restart AFTER
+#   it is written.
+# default-ulimits — the limit every container starts with unless it declares its own; core 0
+#   (CIS Docker Benchmark 2.x host hardening; 2026-10-24→27 a crash loop wrote 27 GB of core
+#   files). The scaffold's per-container `ulimits` stays explicit on top of this default.
+docker_live_restore: true
+docker_default_ulimits:
+  core: {Name: core, Hard: 0, Soft: 0}
 docker_fixed_cidr_v6: "{{ platform_docker_cidr6 }}"
 
 # Container networks that may reach the HOST (hairpin to a published port — e.g. Vault's own
