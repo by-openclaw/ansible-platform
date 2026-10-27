@@ -30,7 +30,13 @@
     - /etc/systemd/system.conf.d
     - /etc/systemd/coredump.conf.d
 
-- name: "Coredump | systemd: every service starts with LimitCORE=0 (systemd-system.conf(5) DefaultLimitCORE)"
+# Where systemd-coredump is installed (VMs, the hypervisor) the PACKAGE decides the limit: it ships
+# /usr/lib/systemd/system.conf.d/20-coredump-debian.conf with DefaultLimitCORE=infinity so that every
+# crash reaches the handler, which then applies coredump.conf (Storage=none below: nothing is kept,
+# the crash is logged). A drop-in of ours there is overridden by name order and would only state a
+# value the system does not have (measured 2026-10-27: our file present, effective value infinity).
+# An unprivileged LXC cannot run the handler, so inside it the limit itself is the control.
+- name: "Coredump | LXC: every service starts with LimitCORE=0 (systemd-system.conf(5) DefaultLimitCORE)"
   ansible.builtin.copy:
     dest: /etc/systemd/system.conf.d/10-hardening-core.conf
     owner: root
@@ -42,13 +48,21 @@
       [Manager]
       DefaultLimitCORE=0
   register: hardening_coredump_manager
+  when: hardening_is_container | bool
+
+- name: "Coredump | VM / hypervisor: no limit drop-in of ours — systemd-coredump's 20-coredump-debian.conf governs it"
+  ansible.builtin.file:
+    path: /etc/systemd/system.conf.d/10-hardening-core.conf
+    state: absent
+  register: hardening_coredump_manager_absent
+  when: not hardening_is_container | bool
 
 # The manager re-reads its configuration on re-execution (systemctl(1) daemon-reexec); services
 # already running keep their current limit until they restart.
 - name: "Coredump | systemd re-executes with the new default"  # noqa: no-handler
   ansible.builtin.systemd_service:
     daemon_reexec: true
-  when: hardening_coredump_manager is changed
+  when: (hardening_coredump_manager is changed) or (hardening_coredump_manager_absent is changed)
 
 # VMs and the hypervisor only: an unprivileged LXC cannot set kernel.core_pattern (the host's
 # value governs it — which is exactly why the hypervisor is in this play).
