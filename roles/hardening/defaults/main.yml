@@ -151,6 +151,19 @@ hardening_auditd_space_left_action: "SYSLOG"
 # set here — Docker-in-LXC hosts require forwarding (roles/docker sets it).
 hardening_sysctl_enabled: true
 
+# Core dumps restricted (CIS Ubuntu 1.5.1 / Debian 1.5.1; ISO 27001:2022 A.8.9, A.8.6).
+# Debian ships limits.d/10-coredump-debian.conf with "hard core infinity" and systemd's
+# DefaultLimitCORE is infinity: a crashing service writes a core file into its working
+# directory for every crash (kernel.core_pattern "core"). 2026-10-24→27 a PostgreSQL replica
+# did that 7 869 times = 27 GB and filled its disk. Three documented controls close it:
+# pam_limits hard core 0 (sessions), systemd DefaultLimitCORE=0 (every service, hence every
+# container the Docker daemon starts), systemd-coredump with Storage=none and
+# ProcessSizeMax=0 (coredump.conf(5)) so that kernel.core_pattern is a handler that keeps
+# nothing — on VMs and the hypervisor; an unprivileged LXC shares the host's core_pattern.
+hardening_coredump_restrict: true
+hardening_coredump_storage: none
+hardening_coredump_process_size_max: 0
+
 # Lynis audit gate — security/0003 §5 (LOCKED: >=80 or the play fails).
 hardening_lynis_min_score: 80
 hardening_lynis_enforce: true

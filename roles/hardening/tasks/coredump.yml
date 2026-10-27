@@ -1,0 +1,69 @@
+---
+# Core dumps restricted — CIS "Ensure core dumps are restricted" (1.5.1), three documented layers.
+# Why all three: pam_limits only covers login sessions; services inherit systemd's default
+# (infinity); and whatever limit a process ends up with, the kernel hands the dump to
+# core_pattern — a handler that stores nothing is the floor.
+
+- name: "Coredump | pam_limits: no core file for any session (overrides Debian's limits.d/10-coredump-debian.conf)"
+  ansible.builtin.copy:
+    dest: /etc/security/limits.d/99-hardening-core.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/hardening) — CIS 1.5.1. pam_limits(8): the last matching line wins,
+      # and Debian's 10-coredump-debian.conf sets "hard core infinity".
+      *               hard    core            0
+      root            hard    core            0
+
+- name: "Coredump | systemd: every service starts with LimitCORE=0 (systemd-system.conf(5) DefaultLimitCORE)"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system.conf.d/10-hardening-core.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/hardening) — CIS 1.5.1. Services (and the containers the Docker
+      # daemon starts) inherit this limit unless their unit or container declares its own.
+      [Manager]
+      DefaultLimitCORE=0
+  register: hardening_coredump_manager
+
+# The manager re-reads its configuration on re-execution (systemctl(1) daemon-reexec); services
+# already running keep their current limit until they restart.
+- name: "Coredump | systemd re-executes with the new default"  # noqa: no-handler
+  ansible.builtin.systemd_service:
+    daemon_reexec: true
+  when: hardening_coredump_manager is changed
+
+# VMs and the hypervisor only: an unprivileged LXC cannot set kernel.core_pattern (the host's
+# value governs it — which is exactly why the hypervisor is in this play).
+- name: "Coredump | systemd-coredump owns kernel.core_pattern (installs /usr/lib/sysctl.d/50-coredump.conf)"
+  ansible.builtin.apt:
+    name: systemd-coredump
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: not hardening_is_container | bool
+
+- name: "Coredump | coredump.conf(5): the handler keeps nothing"
+  ansible.builtin.copy:
+    dest: /etc/systemd/coredump.conf.d/10-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/hardening) — CIS 1.5.1. The crash is still logged in the journal
+      # (unit, signal, PID); the core itself is discarded.
+      [Coredump]
+      Storage={{ hardening_coredump_storage }}
+      ProcessSizeMax={{ hardening_coredump_process_size_max }}
+  when: not hardening_is_container | bool
+
+- name: "Coredump | The package's sysctl drop-in is loaded now, not at the next boot"
+  ansible.builtin.command:
+    argv: [sysctl, --system]
+  changed_when: false
+  when:
+    - not hardening_is_container | bool
+    - not ansible_check_mode
