@@ -9,7 +9,7 @@ groups:
         annotations:
           summary: "Platform resolver {{ '{{' }} $labels.instance {{ '}}' }} does not answer"
           description: "The guests' first nameserver ({{ '{{' }} $labels.instance {{ '}}' }}) has not answered the {{ '{{' }} $labels.job {{ '}}' }} lookup for {{ prometheus_alert_resolver_for }}. Every lookup on every guest stalls up to 5 s until it is back, so most other probes fail with it (#424)."
-          runbook: "Check the resolver chain in order: AdGuard on {{ groups['adguard'] | first }} → the firewall's Unbound → dnscrypt. A firewall rebuild or reboot looks exactly like this. The probe alerts this one explains are held back until it clears."
+          runbook: "First its disk: df on {{ groups['adguard'] | first }} — Docker does not start on a full disk, and a reboot does not free it (2026-10-24: seven reboots, three days). Then the chain in order: AdGuard → the firewall's Unbound → dnscrypt. A firewall rebuild or reboot looks exactly like this. The probe alerts this one explains are held back until it clears."
       - alert: ProbeFailed
         expr: probe_success{job!~"blackbox_dns_v[46]"} == 0
         for: {{ prometheus_alert_probe_for }}
@@ -76,6 +76,19 @@ groups:
           summary: "{{ '{{' }} $labels.instance {{ '}}' }} {{ '{{' }} $labels.mountpoint {{ '}}' }} has {{ '{{' }} $value | humanizePercentage {{ '}}' }} free"
           description: "The filesystem {{ '{{' }} $labels.mountpoint {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} has been below {{ (prometheus_alert_disk_free_ratio * 100) | int }} % free for 15 min. Services on it will fail to write once it is full (databases, logs, backups)."
           runbook: "Find what grows (journal, docker images, backups, a runaway log) with du on that mount; prune or grow the disk through the infra repo, not by hand."
+      - alert: HostDiskCritical
+        expr: >-
+          (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes) < {{ prometheus_alert_disk_free_ratio_critical }}
+          or (
+            predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}[{{ prometheus_alert_disk_fill_window }}], {{ prometheus_alert_disk_fill_horizon_hours }} * 3600) < 0
+            and (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes) < {{ prometheus_alert_disk_free_ratio * 2.5 }}
+          )
+        for: 30m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ '{{' }} $labels.instance {{ '}}' }} {{ '{{' }} $labels.mountpoint {{ '}}' }} is about to be full"
+          description: "The filesystem {{ '{{' }} $labels.mountpoint {{ '}}' }} on {{ '{{' }} $labels.instance {{ '}}' }} is below {{ (prometheus_alert_disk_free_ratio_critical * 100) | int }} % free, or its {{ prometheus_alert_disk_fill_window }} trend reaches zero within {{ prometheus_alert_disk_fill_horizon_hours }} h. A full disk stops Docker from starting after a reboot: on the resolver that is a platform-wide outage (2026-10-24)."
+          runbook: "Act now, not at the next working day: du -xh --max-depth=2 on that mount names what grows; the service's role bounds it (retention, core dumps, slot WAL); grow the disk through the infra repo. A reboot does not free a disk."
       - alert: SeaweedFSVolumeSlotsLow
         expr: >-
           max by (instance) (SeaweedFS_volumeServer_max_volumes)
