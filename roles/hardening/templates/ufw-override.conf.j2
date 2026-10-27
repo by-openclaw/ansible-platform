@@ -1,5 +1,13 @@
 # Managed by Ansible (role: hardening) — ufw at boot in a container / VM:
-#  * start after the network (and Docker, whose chains ufw must coexist with) is up
+#  * ufw keeps its stock ordering (Before=network-pre.target: the ruleset is loaded before any
+#    link comes up). It is NOT ordered after the network or after Docker: an After=network-online
+#    (or docker.service) next to that Before= is an ordering cycle, and systemd breaks a cycle by
+#    dropping jobs. 2026-10-24: vm-mailcow-01 lost network-online.target AND containerd.service
+#    from docker.service's start — Docker came up before its address existed and without
+#    containerd, three containers never started, mail was unreachable for three days; four LXCs
+#    lost network.target the same way. Docker needs no ordering here: the DOCKER-USER chain that
+#    ufw's after.rules fill is declared in that file (roles/docker), so iptables-restore creates
+#    it and Docker keeps an existing chain.
 #  * if the chains did not load (boot race: "No chain/target/match by that name"), do NOT stay
 #    on "policy DROP without rules" — that locks the guest out of everything incl. its own
 #    loopback (2026-09-21, two LXCs after a hypervisor reboot); fail open and let systemd retry
@@ -8,8 +16,7 @@
 #    was empty from then on (2026-10-03, five guests). The role also masks that unit; the
 #    ordering stays for a host where something unmasks it.
 [Unit]
-After=network-online.target nftables.service{{ ' docker.service' if hardening_ufw_after_docker | bool else '' }}
-Wants=network-online.target
+After=nftables.service
 StartLimitIntervalSec=0
 
 [Service]
