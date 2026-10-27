@@ -158,13 +158,10 @@
     group: root
     mode: "0755"
 
-- name: "Promtail | Point the packaged service at our config"
-  ansible.builtin.copy:
+- name: "Promtail | Point the packaged service at our config (+ the read capability where files are 0600)"
+  ansible.builtin.template:
+    src: override.conf.j2
     dest: /etc/systemd/system/promtail.service.d/override.conf
-    content: |
-      [Service]
-      User=promtail
-      SupplementaryGroups=systemd-journal adm
     owner: root
     group: root
     mode: "0644"
