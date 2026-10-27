@@ -63,6 +63,12 @@
   when: inventory_hostname in (platform_docker_firewall_enforce | default([]))
 
 - name: "Scaffold | Run the containers"
+  # One host at a time. A changed definition recreates the container on EVERY host of the play;
+  # the three etcd members recreated at once lost their quorum (2026-10-27: Patroni demoted the
+  # leader, failover to timeline 21). A few seconds between hosts keeps consensus and, for any
+  # multi-instance service, availability. Day-0 bootstraps still start every member in the same
+  # play — just not in the same second.
+  throttle: 1
   community.docker.docker_container:
     name: "{{ scaffold_ctr.name }}"
     image: "{{ scaffold_ctr.image }}"
