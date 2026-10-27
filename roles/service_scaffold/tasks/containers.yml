@@ -134,3 +134,14 @@
     loop_var: scaffold_ctr
     label: "{{ scaffold_ctr.name }}"
   when: not ansible_check_mode
+
+# Docker's own hygiene: "docker image prune -a" (dangling: false = every image without a
+# container). Runs only after the containers above are up, so what is pruned is what nothing uses.
+- name: "Scaffold | Prune the images no container uses any more"
+  community.docker.docker_prune:
+    images: true
+    images_filters:
+      dangling: false
+  when:
+    - service_scaffold_prune_images | bool
+    - not ansible_check_mode

@@ -72,6 +72,11 @@ service_scaffold_restart_policy: "{{ platform_container_restart_policy | default
 # (27 GB) in the data volume until the disk was full (HostDiskAlmostFull → PostgresDown). The
 # platform's policy (inventory); a container that declares `ulimits` keeps its own.
 service_scaffold_ulimits: "{{ platform_container_ulimits | default(['core:0:0']) }}"
+# After the containers run, the images no container uses any more are removed — the documented
+# `docker image prune -a` (security/0003 image hygiene; ISO 27001:2022 A.8.9). Measured
+# 2026-10-27: 60–82 % of the image store unused on the database and registry hosts, every
+# superseded version kept since the first deploy. A rollback re-pulls its pinned tag.
+service_scaffold_prune_images: true
 
 # Toggle the central-registration assertions off ONLY for a first bring-up where
 # the SSO app / catalog / audit row are landing in the same change set.
