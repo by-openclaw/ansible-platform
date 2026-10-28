@@ -20,3 +20,40 @@ promtail_extra_file_jobs:
 # had never received a line) — the shipper reads it through CAP_DAC_READ_SEARCH instead.
 promtail_acl_dirs: ["/opt/AdGuardHome/data"]
 promtail_dac_read_search: true
+
+# ------------------------------------------------------------------------------
+# One address for two instances (ADR infra/0011): keepalived owns the virtual address on the
+# instance with the highest priority whose own AdGuard answers; the first host of the group is
+# the preferred owner and takes the address back when it is healthy again (keepalived.conf(5):
+# preemption is the default). Advertisements go to the peers directly (unicast_peer), one
+# instance per address family (native_ipv6). The health check is dig against the local
+# AdGuard: exit 0 = an answer (even NXDOMAIN), 9 = no server — the priority then drops below
+# the peer's and the address moves.
+# ------------------------------------------------------------------------------
+keepalived_scripts:
+  - name: resolver_answers
+    command: "/usr/bin/dig +time=1 +tries=1 +short @127.0.0.1 {{ groups['adguard'] | first }}.{{ platform_domain }} A"
+    interval: 2
+    timeout: 3
+    fall: 2
+    rise: 2
+    weight: -60
+keepalived_instances:
+  - name: resolver_v4
+    family: 4
+    interface: "{{ ansible_facts['default_ipv4']['interface'] | default('eth0') }}"
+    virtual_router_id: 53
+    priority: "{{ 150 if inventory_hostname == (groups['adguard'] | first) else 100 }}"
+    unicast_src: "{{ ansible_host }}"
+    unicast_peers: "{{ groups['adguard'] | difference([inventory_hostname]) | map('extract', hostvars, 'ansible_host') | list }}"
+    virtual_ips: ["{{ platform_resolver_vip4 }}/{{ platform_zones.svc.cidr4 | ansible.utils.ipaddr('prefix') }}"]
+    track_script: resolver_answers
+  - name: resolver_v6
+    family: 6
+    interface: "{{ ansible_facts['default_ipv4']['interface'] | default('eth0') }}"
+    virtual_router_id: 54
+    priority: "{{ 150 if inventory_hostname == (groups['adguard'] | first) else 100 }}"
+    unicast_src: "{{ platform_host_v6 }}"
+    unicast_peers: "{{ groups['adguard'] | difference([inventory_hostname]) | map('extract', hostvars, 'platform_host_v6') | list }}"
+    virtual_ips: ["{{ platform_resolver_vip6 }}/{{ platform_zones.svc.cidr6 | ansible.utils.ipaddr('prefix') }}"]
+    track_script: resolver_answers

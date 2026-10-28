@@ -1,0 +1,17 @@
+---
+# keepalived — one address for several instances (VRRP, RFC 5798). Generic: the instances and
+# their health scripts are declared by the consumer (inventory group_vars); this role installs the
+# package, renders keepalived.conf(5), admits the peers' advertisements on the host firewall and
+# keeps the daemon running. ISO 27001:2022 A.8.14 (redundancy of information processing facilities).
+keepalived_instances: []
+# - name: <vrrp_instance>          family: 4 | 6 (6 → native_ipv6)
+#   interface: eth0                virtual_router_id: 1-255 (unique per link and family)
+#   priority: 1-254                unicast_src: <this host's address>   unicast_peers: [<peer>, …]
+#   virtual_ips: ["<address>/<prefix>", …]   track_script: <name of a keepalived_scripts entry>
+keepalived_scripts: []
+# - name: <vrrp_script>  command: "<absolute path + arguments>"  interval: 2  timeout: 3  fall: 2  rise: 2  weight: -60
+keepalived_advert_int: 1
+keepalived_script_user: root
+keepalived_router_id: "{{ inventory_hostname }}"
+# Every instance starts as BACKUP and lets the priorities elect the owner (keepalived.conf(5)).
+keepalived_initial_state: BACKUP

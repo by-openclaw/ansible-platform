@@ -1,0 +1,48 @@
+---
+- name: "Keepalived | Package present"
+  ansible.builtin.apt:
+    name: keepalived
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Keepalived | Configuration (keepalived.conf(5))"
+  ansible.builtin.template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    owner: root
+    group: root
+    mode: "0600"
+    validate: /usr/sbin/keepalived --config-test -f %s
+  notify: Reload keepalived
+
+# VRRP is IP protocol 112: the peers' advertisements must reach this host (ufw supports
+# `proto vrrp`; roles/host_firewall owns every ufw rule).
+- name: "Keepalived | The peers' advertisements reach this host"
+  ansible.builtin.include_role:
+    name: host_firewall
+  vars:
+    host_firewall_rules:
+      - proto: vrrp
+        from: "{{ keepalived_instances | map(attribute='unicast_peers') | flatten | unique | list }}"
+        comment: "VRRP advertisements (keepalived peers)"
+  when: keepalived_instances | length > 0
+
+- name: "Keepalived | Enabled and running"
+  ansible.builtin.systemd_service:
+    name: keepalived
+    enabled: true
+    state: started
+
+- name: "Keepalived | Addresses this host owns right now"
+  ansible.builtin.command:
+    argv: [ip, -br, address, show]
+  register: keepalived_addrs
+  changed_when: false
+  check_mode: false
+
+- name: "Keepalived | Report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} owns {{ keepalived_instances | map(attribute='virtual_ips') | flatten
+         | map('regex_replace', '/.*$', '') | select('in', keepalived_addrs.stdout) | list | join(', ') or 'no virtual address' }}

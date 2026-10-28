@@ -9,8 +9,10 @@
 # ------------------------------------------------------------------------------
 # Identity / addressing
 # ------------------------------------------------------------------------------
-adguard_ip: "{{ hostvars[groups['adguard'] | first].ansible_host }}"
-adguard_ip6: "{{ hostvars[inventory_hostname].platform_host_v6 }}"
+# The address the resolver tier is reached at (the rewrite of its own name, the Vault document):
+# the virtual address when the tier is behind one (ADR infra/0011), else this instance's own.
+adguard_ip: "{{ platform_resolver_vip4 | default(hostvars[inventory_hostname].ansible_host) }}"
+adguard_ip6: "{{ platform_resolver_vip6 | default(hostvars[inventory_hostname].platform_host_v6) }}"
 # Primary NIC (netplan) — used to disable IPv6 RA/SLAAC so the host stays
 # static-only (keeps adguard_ip6, drops the auto EUI-64 mngtmpaddr).
 adguard_primary_iface: "eth0"
