@@ -54,9 +54,11 @@
         name: pbs
         tasks_from: tls.yml
 
-# The hypervisor pins the backup server by fingerprint: after a new certificate the storage
-# definition and the configuration-export unit must carry the new one — same run.
-- name: "Hypervisor trusts the backup server's current certificate (storage fingerprint)"
+# The hypervisor addresses the backup server by name and trusts it through its CA store (no pinned
+# fingerprint — pbs-pve-storage.yml); this run converges that and the configuration-export unit.
+# Until 2026-10-26 it re-pinned a fingerprint an hour after the certificate swap: the 26 guests
+# backed up in between failed.
+- name: "Hypervisor trusts the backup server through its CA store (storage definition)"
   ansible.builtin.import_playbook: pbs-pve-storage.yml
 
 - name: Configuration export unit carries the current fingerprint
