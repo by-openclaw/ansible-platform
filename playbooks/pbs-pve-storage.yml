@@ -195,6 +195,55 @@
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
 
+    # `server` is a FIXED parameter of a pbs storage: PVE refuses `pvesm set --server` ("can't change
+    # value of fixed parameter 'server'", 2026-10-28). Moving from the IP to the name means removing
+    # and re-adding the definition. `pvesm remove` deletes the storage's password and encryption-key
+    # files (PBSPlugin on_delete_hook), so the key must be in Vault, identical to the local one,
+    # BEFORE the definition goes; the key logic below then restores Vault's copy. No backup data is
+    # touched: the datastore and its snapshots live on PBS.
+    - name: "PVE-wire | The storage as PVE holds it, before any change"
+      ansible.builtin.command:
+        argv: [pvesh, get, "/storage/{{ pbs_pve_storage_id }}", --output-format, json]
+      register: r_storage_before
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: "PVE-wire | Does the definition have to be recreated (server by name)?"
+      ansible.builtin.set_fact:
+        pbs_recreate: >-
+          {{ pbs_trusted_cert | bool
+             and pbs_pve_storage_id in r_pvesm.stdout
+             and ((r_storage_before.stdout | default('{}', true) | from_json).server | default('')) != pbs_server_name }}
+        pbs_key_fp_before: "{{ (r_storage_before.stdout | default('{}', true) | from_json)['encryption-key'] | default('') }}"
+
+    - name: "PVE-wire | Recreate: the key is in Vault and identical to the node's before the definition goes"
+      when: pbs_recreate | bool
+      block:
+        - name: "PVE-wire | Vault's copy of the encryption key"
+          ansible.builtin.include_role:
+            name: vault_secret
+          vars:
+            vault_secret_path: "{{ pbs_encryption_vault_path }}"
+            vault_secret_optional: true
+        - name: "PVE-wire | The node's key"
+          ansible.builtin.slurp:
+            src: "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc"
+          register: pbs_local_key_before
+          no_log: true
+        - name: "PVE-wire | Both present and identical"
+          ansible.builtin.assert:
+            that:
+              - (vault_secret_result.encryption_key | default('')) | length > 0
+              - (vault_secret_result.encryption_key | default('') | trim) == (pbs_local_key_before.content | b64decode | trim)
+            fail_msg: "Vault does not hold this storage's current encryption key — the definition is NOT recreated"
+            quiet: true
+        - name: "PVE-wire | Remove the definition (datastore and snapshots stay on PBS)"
+          ansible.builtin.command:
+            argv: [pvesm, remove, "{{ pbs_pve_storage_id }}"]
+          changed_when: true
+          when: not ansible_check_mode
+
     - name: "PVE-wire | Add the PBS storage (content=backup; by name through the CA store, or by IP + fingerprint)"
       ansible.builtin.command:
         argv: >-
@@ -210,7 +259,7 @@
       failed_when:
         - r_add.rc != 0
         - "'already defined' not in (r_add.stderr | default(''))"
-      when: pbs_pve_storage_id not in r_pvesm.stdout
+      when: (pbs_pve_storage_id not in r_pvesm.stdout) or (pbs_recreate | bool)
 
     # Converge the pinned fingerprint on an EXISTING storage: `pvesm add` only sets it at creation.
     # When the server's certificate changes (the wildcard, each renewal) the storage would stay
@@ -234,15 +283,15 @@
 
     # A trusted certificate: the server is addressed by name and no fingerprint stays pinned —
     # `pvesm set --delete fingerprint` is the documented way to drop an option.
-    - name: "PVE-wire | The storage trusts the certificate through the CA store: server by name, no pinned fingerprint"
+    - name: "PVE-wire | A name-based storage pins no fingerprint (`--delete` is the documented way to drop an option)"
       ansible.builtin.command:
-        argv: [pvesm, set, "{{ pbs_pve_storage_id }}", --server, "{{ pbs_server_name }}", --delete, fingerprint]
+        argv: [pvesm, set, "{{ pbs_pve_storage_id }}", --delete, fingerprint]
       vars:
         pbs_storage_now: "{{ r_storage_now.stdout | default('{}', true) | from_json }}"
       when:
         - pbs_trusted_cert | bool
-        - (pbs_storage_now.server | default('')) != pbs_server_name
-          or (pbs_storage_now.fingerprint | default('')) | length > 0
+        - (pbs_storage_now.server | default('')) == pbs_server_name
+        - (pbs_storage_now.fingerprint | default('')) | length > 0
       changed_when: true
 
     # Converge credentials on an EXISTING storage (e.g. the backup-user rename):
@@ -349,6 +398,22 @@
         - not pbs_enc_stat.stat.exists
         - not (pbs_prev_enc_stat.stat.exists | default(false))
         - pbs_vault_key | length == 0
+
+    - name: "PVE-wire | A recreated definition carries the key it had (same fingerprint)"
+      ansible.builtin.command:
+        argv: [pvesh, get, "/storage/{{ pbs_pve_storage_id }}", --output-format, json]
+      register: r_storage_after
+      changed_when: false
+      when: pbs_recreate | bool and not ansible_check_mode
+    - name: "PVE-wire | Same key, by name, no fingerprint"
+      ansible.builtin.assert:
+        that:
+          - (r_storage_after.stdout | from_json)['encryption-key'] | default('') == pbs_key_fp_before
+          - (r_storage_after.stdout | from_json).server == pbs_server_name
+          - (r_storage_after.stdout | from_json).fingerprint | default('') | length == 0
+        fail_msg: "the recreated storage does not match: check the key before touching any backup"
+        quiet: true
+      when: pbs_recreate | bool and not ansible_check_mode
 
     - name: "PVE-wire | Stat the storage encryption key again (a dry run on a new storage has none)"
       ansible.builtin.stat:
