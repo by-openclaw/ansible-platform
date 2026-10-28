@@ -103,9 +103,10 @@ pbs_traefik_enabled: true
 # traefik_route insecure-skip-verify option.
 pbs_port: 8007                                   # PBS API/UI (own TLS)
 # The API/UI certificate (security/0004: no self-signed certificate): the proxy serves the
-# platform wildcard (roles/tls_cert; refreshed by playbooks/certs-sync.yml). The hypervisor pins
-# the server by fingerprint: a new certificate means playbooks/pbs-pve-storage.yml in the same
-# window (certs-sync.yml does both).
+# platform wildcard (roles/tls_cert; refreshed by playbooks/certs-sync.yml). The hypervisor
+# addresses the server by NAME and trusts it through its CA store — no pinned fingerprint, so a
+# renewal changes nothing there (PVE storage docs: `fingerprint` is for a certificate the host does
+# not trust). pbs_console_cert false = self-signed: pbs-pve-storage.yml pins IP + fingerprint instead.
 pbs_console_cert: true
 pbs_node_fqdn: "{{ inventory_hostname }}.{{ platform_domain }}"
 pbs_cert_dir: "/etc/ssl/{{ platform_org }}"
