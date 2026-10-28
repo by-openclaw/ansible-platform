@@ -17,6 +17,26 @@
 - name: "Identity/SSH baseline (identity/0004 §9)"
   hosts: "{{ target | default('none') }}"
   become: true
+  pre_tasks:
+    # A guest's first run: cloud-init is still upgrading packages when the play arrives and the
+    # first apt task fails on the dpkg lock (vm-adguard-02, 2026-10-28). `cloud-init status --wait`
+    # is cloud-init's own way to block until the first boot is complete; a guest without
+    # cloud-init (the LXC images) has nothing to wait for.
+    - name: "Baseline | Is cloud-init present on this guest?"
+      ansible.builtin.stat:
+        path: /usr/bin/cloud-init
+      register: baseline_cloud_init
+      become: false
+    - name: "Baseline | First boot complete (cloud-init status --wait)"
+      ansible.builtin.command:
+        argv: [cloud-init, status, --wait]
+      register: baseline_first_boot
+      changed_when: false
+      failed_when: false   # a degraded first boot is reported, not fatal: the baseline still applies
+      when: baseline_cloud_init.stat.exists and not ansible_check_mode
+    - name: "Baseline | First boot state"
+      ansible.builtin.debug:
+        msg: "{{ (baseline_first_boot.stdout | default('no cloud-init')) | trim }}"
   roles:
     - user-mgmt
     - sshd-hardening
