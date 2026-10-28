@@ -68,9 +68,13 @@ pve_host_backup_signal_retired_filter: /etc/platform-backup-signal/backup-signal
 # A node carries the NAS (NFS) copy only where that storage exists: prod yes; the dev node
 # keeps the PBS copy only (its backup-signal unit failed listing poc-backup, 2026-10-15).
 pve_host_nfs_backup_enabled: true
+# vzdump runs one job at a time per node (the second waits for the lock, `lockwait` 180 min, then
+# fails). The PBS (S3) job takes 2.5–6 h (03:30 local, pbs_backup_schedule); at 05:00 this job always
+# waited for it and failed on 2026-10-25 ("can't acquire lock '/var/run/vzdump.lock' - got timeout").
+# The fast local copy runs FIRST: ~2.5 h from 01:00, done before the S3 job starts.
 pve_host_nfs_backup_job:
   storage: "{{ platform_nfs_backup_storage }}"
-  schedule: "05:00"
+  schedule: "01:00"
   comment: "Daily backup all VMs and LXCs - {{ pve_host_node }}"
   all: 1
   mode: snapshot
