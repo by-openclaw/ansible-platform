@@ -37,7 +37,10 @@ controller_jobs:
   # renewal would have left the copies to expire.
   - name: certs-sync
     description: "Refresh the wildcard certificate copies on every consumer"
-    on_calendar: "Mon *-*-* 04:17:00 UTC"
+    # Outside every backup window: the node's vzdump jobs run 01:00–08:30 UTC (NAS then S3), PBS
+    # garbage collection and prune at 00:00 UTC, the verify job Saturday 22:00. On 2026-10-26 this
+    # ran at 04:17 inside the nightly PBS job and 26 guests failed to back up.
+    on_calendar: "Mon *-*-* 11:00:00 UTC"
     playbook: "playbooks/certs-sync.yml"
 
 # --- HashiCorp's package repository and Terraform (tasks/hashicorp.yml) --------------------------
