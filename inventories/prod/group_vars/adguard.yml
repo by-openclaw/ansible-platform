@@ -33,8 +33,11 @@ promtail_dac_read_search: true
 keepalived_scripts:
   - name: resolver_answers
     command: "/usr/bin/dig +time=1 +tries=1 +short @127.0.0.1 {{ groups['adguard'] | first }}.{{ platform_domain }} A"
-    interval: 2
-    timeout: 3
+    # keepalived's default interval (1 s): measured 2026-10-28 with interval 2, an instance that
+    # stops answering kept the address ~6 s (fall 2 x 2 s + advertisement) and one lookup through
+    # it failed; with 1 s the window is ~3 s. rise 2 keeps a flapping instance from taking it back.
+    interval: 1
+    timeout: 2
     fall: 2
     rise: 2
     weight: -60
