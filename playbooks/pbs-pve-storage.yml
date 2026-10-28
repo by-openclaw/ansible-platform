@@ -372,20 +372,26 @@
         - not (pbs_prev_enc_stat.stat.exists | default(false))
         - pbs_vault_key | length > 0
       block:
+        # Not under /etc/pve: pmxcfs refuses the copy module's chmod ("Operation not permitted",
+        # 2026-10-28 — the storage was recreated and left WITHOUT its key until the second run).
+        # /run is root-only tmpfs; `pvesm set --encryption-key <file>` copies the key into
+        # /etc/pve/priv/storage/<id>.enc itself.
         - name: "PVE-wire | Vault's key, on the node for the length of this task"
           ansible.builtin.copy:
-            dest: "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc.import"
+            dest: "/run/{{ pbs_pve_storage_id }}.enc.import"
             content: "{{ pbs_vault_key }}"
+            owner: root
+            group: root
             mode: "0600"
           no_log: true
         - name: "PVE-wire | The storage takes it"
           ansible.builtin.command:
-            argv: [pvesm, set, "{{ pbs_pve_storage_id }}", "--encryption-key", "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc.import"]
+            argv: [pvesm, set, "{{ pbs_pve_storage_id }}", "--encryption-key", "/run/{{ pbs_pve_storage_id }}.enc.import"]
           changed_when: true
       always:
         - name: "PVE-wire | The import file is gone"
           ansible.builtin.file:
-            path: "/etc/pve/priv/storage/{{ pbs_pve_storage_id }}.enc.import"
+            path: "/run/{{ pbs_pve_storage_id }}.enc.import"
             state: absent
 
     - name: "PVE-wire | Enable client-side encryption (autogen key, first ever)"
