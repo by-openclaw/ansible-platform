@@ -20,7 +20,7 @@
           {%- for r in host_firewall_rules -%}
             {%- for src in (r.from | default(['any'])) -%}
               {%- set _ = out.append({'port': (r.port | string) if r.port is defined else '',
-                                      'proto': (r.proto | default('tcp')) if r.port is defined else 'any',
+                                      'proto': r.proto | default('tcp' if r.port is defined else 'any'),
                                       'from': src, 'comment': r.comment | default('')}) -%}
             {%- endfor -%}
           {%- endfor -%}

@@ -1,0 +1,46 @@
+# Managed by Ansible (roles/keepalived) — keepalived.conf(5). Manual edits are overwritten.
+global_defs {
+    router_id {{ keepalived_router_id }}
+    script_user {{ keepalived_script_user }}
+    enable_script_security
+}
+{% for s in keepalived_scripts %}
+
+vrrp_script {{ s.name }} {
+    script "{{ s.command }}"
+    interval {{ s.interval | default(2) }}
+    timeout {{ s.timeout | default(3) }}
+    fall {{ s.fall | default(2) }}
+    rise {{ s.rise | default(2) }}
+    weight {{ s.weight | default(-60) }}
+}
+{% endfor %}
+{% for i in keepalived_instances %}
+
+vrrp_instance {{ i.name }} {
+    state {{ keepalived_initial_state }}
+    interface {{ i.interface }}
+    virtual_router_id {{ i.virtual_router_id }}
+    priority {{ i.priority }}
+    advert_int {{ keepalived_advert_int }}
+{% if i.family | default(4) | int == 6 %}
+    native_ipv6
+{% endif %}
+    unicast_src_ip {{ i.unicast_src }}
+    unicast_peer {
+{% for p in i.unicast_peers %}
+        {{ p }}
+{% endfor %}
+    }
+    virtual_ipaddress {
+{% for v in i.virtual_ips %}
+        {{ v }} dev {{ i.interface }}
+{% endfor %}
+    }
+{% if i.track_script is defined %}
+    track_script {
+        {{ i.track_script }}
+    }
+{% endif %}
+}
+{% endfor %}
