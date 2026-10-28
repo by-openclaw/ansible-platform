@@ -1,32 +1,6 @@
 ---
 # sudo package first (minimal LXC images may lack it), then groups (role groups
 # + docker where Docker runs), then each account.
-- name: "User-mgmt | Ensure sudo is installed"
-  ansible.builtin.apt:
-    name: sudo
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
-
-- name: "User-mgmt | Ensure role groups exist"
-  ansible.builtin.group:
-    name: "{{ item }}"
-    state: present
-  loop: "{{ user_mgmt_role_groups }}"
-
-- name: "User-mgmt | Detect Docker (gates the docker group)"
-  ansible.builtin.command: "command -v dockerd"
-  register: um_dockerd
-  changed_when: false
-  failed_when: false
-  check_mode: false
-
-- name: "User-mgmt | Ensure the docker group where Docker runs"
-  ansible.builtin.group:
-    name: "{{ user_mgmt_docker_group }}"
-    state: present
-  when: um_dockerd.rc == 0
-
 # Account passwords from Vault — ONCE for the play, then bound on every host. A
 # per-host read is one delegated SSH session per host to the Vault host at once
 # (31 hosts took it UNREACHABLE on the mail-relay rollout).
@@ -53,6 +27,43 @@
   loop: "{{ ansible_play_hosts }}"
   run_once: true
   no_log: true
+
+# The first run on a guest connects as the break-glass account cloud-init created; when its
+# sudoers already requires the password Vault holds (a run that stopped halfway), every become
+# below needs that password — so it is bound before the first privileged task.
+- name: "User-mgmt | The session's sudo password follows the account it connects as"
+  ansible.builtin.set_fact:
+    ansible_become_password: "{{ user_mgmt_passwords[um_session_acct.vault_path].password }}"
+  vars:
+    um_session_acct: "{{ user_mgmt_accounts | selectattr('name', 'equalto', ansible_user) | selectattr('password', 'defined') | selectattr('password') | first | default({}) }}"
+  no_log: true
+  when: um_session_acct.vault_path is defined
+
+- name: "User-mgmt | Ensure sudo is installed"
+  ansible.builtin.apt:
+    name: sudo
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "User-mgmt | Ensure role groups exist"
+  ansible.builtin.group:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ user_mgmt_role_groups }}"
+
+- name: "User-mgmt | Detect Docker (gates the docker group)"
+  ansible.builtin.command: "command -v dockerd"
+  register: um_dockerd
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "User-mgmt | Ensure the docker group where Docker runs"
+  ansible.builtin.group:
+    name: "{{ user_mgmt_docker_group }}"
+    state: present
+  when: um_dockerd.rc == 0
 
 - name: "User-mgmt | Provision each account"
   ansible.builtin.include_tasks: account.yml
