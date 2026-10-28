@@ -51,6 +51,17 @@
                rounds=(acct.password_rounds | default(user_mgmt_fast_hash_rounds) | int)) }}
       no_log: true
 
+    # A guest's first run connects as the break-glass account cloud-init created (sudo without a
+    # password): from this point its sudoers requires the password Vault holds, so the session's
+    # become password follows — otherwise the run dies at the next account with "Incorrect sudo
+    # password" (vm-adguard-02, 2026-10-28, twice).
+    - name: "User-mgmt | The session's sudo password follows the account it connects as — {{ acct.name }}"
+      ansible.builtin.set_fact:
+        ansible_become_password: "{{ um_acct_pw }}"
+      no_log: true
+      when:
+        - acct.password | default(false)
+        - acct.name == ansible_user
     - name: "User-mgmt | Install the authorized key (one per identity) — {{ acct.name }}"
       ansible.posix.authorized_key:
         user: "{{ acct.name }}"
