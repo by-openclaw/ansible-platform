@@ -134,6 +134,14 @@
   vars:
     pbs_fp: "{{ hostvars[groups['pbs'][0]]['pbs_fingerprint'] }}"
     pbs_ip: "{{ hostvars[groups['pbs'] | first].ansible_host }}"
+    # PVE storage docs (pbs backend): `fingerprint` is for a self-signed certificate or one the host
+    # does not trust. PBS serves the platform wildcard (pbs_console_cert, a public CA the node trusts
+    # through its CA store), so the storage addresses the server by its NAME and pins nothing — a
+    # renewed certificate then changes nothing on this side. Pinned by IP + fingerprint, the weekly
+    # certs-sync of 2026-10-26 swapped the certificate at 04:24 and re-pinned at 05:24: the 26 guests
+    # backed up in between all failed ("Certificate fingerprint was not confirmed").
+    pbs_server_name: "{{ groups['pbs'] | first }}.{{ platform_domain }}"
+    pbs_trusted_cert: "{{ pbs_console_cert | bool }}"
     pbs_svc_subnet: "{{ platform_zones.svc.cidr4 }}"     # SVC VLAN (where PBS lives)
     pbs_fw_oob_ip: "{{ hostvars[groups['opnsense'] | first].ansible_host }}"     # FW OOB IP the node routes SVC traffic through
     # Guests whose agent cannot freeze the filesystem: the agent setting they get, and how it reads in `qm config`.
@@ -187,25 +195,15 @@
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
       changed_when: false
 
-    - name: "PVE-wire | Add the PBS storage (content=backup)"
+    - name: "PVE-wire | Add the PBS storage (content=backup; by name through the CA store, or by IP + fingerprint)"
       ansible.builtin.command:
-        argv:
-          - pvesm
-          - add
-          - pbs
-          - "{{ pbs_pve_storage_id }}"
-          - "--server"
-          - "{{ pbs_ip }}"
-          - "--datastore"
-          - "{{ pbs_datastore_name }}"
-          - "--username"
-          - "{{ pbs_tok.tokenid }}"
-          - "--password"
-          - "{{ pbs_tok.value }}"
-          - "--fingerprint"
-          - "{{ pbs_fp }}"
-          - "--content"
-          - backup
+        argv: >-
+          {{ ['pvesm', 'add', 'pbs', pbs_pve_storage_id,
+              '--server', (pbs_server_name if pbs_trusted_cert | bool else pbs_ip),
+              '--datastore', pbs_datastore_name,
+              '--username', pbs_tok.tokenid, '--password', pbs_tok.value]
+             + ([] if pbs_trusted_cert | bool else ['--fingerprint', pbs_fp])
+             + ['--content', 'backup'] }}
       no_log: true
       register: r_add
       changed_when: r_add.rc == 0
@@ -225,12 +223,26 @@
       changed_when: false
       failed_when: false   # absent on a first run under --check: the comparisons below then see nothing
 
-    - name: "PVE-wire | The storage pins the certificate the server presents now"
+    - name: "PVE-wire | The storage pins the certificate the server presents now (self-signed certificate only)"
       ansible.builtin.command:
         argv: [pvesm, set, "{{ pbs_pve_storage_id }}", --fingerprint, "{{ pbs_fp }}"]
       when:
+        - not pbs_trusted_cert | bool
         - pbs_fp | length > 0
         - ((r_storage_now.stdout | default('{}', true) | from_json).fingerprint | default('') | lower) != (pbs_fp | lower)
+      changed_when: true
+
+    # A trusted certificate: the server is addressed by name and no fingerprint stays pinned —
+    # `pvesm set --delete fingerprint` is the documented way to drop an option.
+    - name: "PVE-wire | The storage trusts the certificate through the CA store: server by name, no pinned fingerprint"
+      ansible.builtin.command:
+        argv: [pvesm, set, "{{ pbs_pve_storage_id }}", --server, "{{ pbs_server_name }}", --delete, fingerprint]
+      vars:
+        pbs_storage_now: "{{ r_storage_now.stdout | default('{}', true) | from_json }}"
+      when:
+        - pbs_trusted_cert | bool
+        - (pbs_storage_now.server | default('')) != pbs_server_name
+          or (pbs_storage_now.fingerprint | default('')) | length > 0
       changed_when: true
 
     # Converge credentials on an EXISTING storage (e.g. the backup-user rename):

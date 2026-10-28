@@ -16,7 +16,6 @@
       - pve_host_cb_storage.stdout is search('server ')
       - pve_host_cb_storage.stdout is search('datastore ')
       - pve_host_cb_storage.stdout is search('username ')
-      - pve_host_cb_storage.stdout is search('fingerprint ')
     fail_msg: "storage '{{ pve_host_config_backup_storage }}' is not a complete pbs storage in /etc/pve/storage.cfg — run playbooks/pbs-pve-storage.yml first"
     quiet: true
 
@@ -24,8 +23,13 @@
   ansible.builtin.set_fact:
     pve_host_cb_repository: >-
       {{ pve_host_cb_kv.username }}@{{ pve_host_cb_kv.server }}:{{ pve_host_cb_kv.datastore }}
+    # Empty when the storage trusts the server through the CA store (server by name, no
+    # fingerprint pinned — playbooks/pbs-pve-storage.yml): the client then validates the same way.
     pve_host_cb_fingerprint: >-
-      {{ pve_host_cb_kv.fingerprint }}
+      {{ pve_host_cb_kv.fingerprint | default('') }}
+    pve_host_cb_environment: >-
+      {{ {'PBS_PASSWORD_FILE': '/etc/pve/priv/storage/' ~ pve_host_config_backup_storage ~ '.pw'}
+         | combine({'PBS_FINGERPRINT': pve_host_cb_kv.fingerprint} if pve_host_cb_kv.fingerprint is defined else {}) }}
   vars:
     # "key value" lines of the storage block -> a dict (no regex escapes in YAML strings)
     pve_host_cb_kv: >-
@@ -44,9 +48,7 @@
         {% for name, path in pve_host_config_backup_paths.items() %}{{ name }}.pxar:{{ path }} {% endfor %}
         --repository {{ pve_host_cb_repository }} --backup-type host --backup-id {{ pve_host_node }}
         --keyfile /etc/pve/priv/storage/{{ pve_host_config_backup_storage }}.enc
-    host_job_environment:
-      PBS_PASSWORD_FILE: "/etc/pve/priv/storage/{{ pve_host_config_backup_storage }}.pw"
-      PBS_FINGERPRINT: "{{ pve_host_cb_fingerprint }}"
+    host_job_environment: "{{ pve_host_cb_environment }}"
     host_job_on_calendar: "{{ pve_host_config_backup_schedule }}"
     host_job_randomized_delay: "300"
     host_job_wants_network: true
@@ -55,9 +57,7 @@
 - name: "PVE host | Host backups of this node on the datastore"
   ansible.builtin.command:
     argv: [/usr/bin/proxmox-backup-client, snapshot, list, --repository, "{{ pve_host_cb_repository }}", --output-format, json]
-  environment:
-    PBS_PASSWORD_FILE: "/etc/pve/priv/storage/{{ pve_host_config_backup_storage }}.pw"
-    PBS_FINGERPRINT: "{{ pve_host_cb_fingerprint }}"
+  environment: "{{ pve_host_cb_environment }}"
   register: pve_host_cb_snapshots
   changed_when: false
   failed_when: false
