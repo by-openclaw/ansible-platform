@@ -7,3 +7,10 @@ promtail_extra_file_jobs:
   - {name: pbs_access, path: "/var/log/proxmox-backup/api/access.log", audit: true}
 promtail_acl_dirs:
   - /var/log/proxmox-backup/api
+
+# --- AIDE scope (roles/hardening) ------------------------------------------------------------
+# The S3 datastore cache and PBS's lock directory change on every backup, prune and GC by design:
+# 720 000 entries a day in the report, 116 MB/day of noise that hid every real change (census 2026-10-30).
+hardening_aide_excludes_extra:
+  - /var/lib/proxmox-backup
+  - /run/proxmox-backup
