@@ -13,4 +13,4 @@ search {{ resolver_search_domain }}
 {% for ns in resolver_nameservers[:3] %}
 nameserver {{ ns }}
 {% endfor %}
-options {{ resolver_options | join(' ') }}
+options {{ (resolver_options + (resolver_options_fallback if resolver_has_fallback | bool else [])) | join(' ') }}
