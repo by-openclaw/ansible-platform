@@ -44,15 +44,12 @@
           '--endpoint', pbs_s3_endpoint_host, '--path-style', (pbs_s3_path_style | string | lower)]
          + (['--region', pbs_s3_region] if (pbs_s3_region | length > 0) else [])
          + (['--provider-quirks', pbs_s3_provider_quirks | join(';')] if (pbs_s3_provider_quirks | length > 0) else [])
-         + (['--put-rate-limit', pbs_s3_put_rate_limit | string] if (pbs_s3_put_rate_limit | int > 0) else []) }}
+         + (['--limit-active-requests', pbs_s3_limit_active_requests | string] if (pbs_s3_limit_active_requests | int > 0) else []) }}
   no_log: true
   changed_when: true
   when: pbs_s3_endpoint_id not in (pbs_s3_ep_list.stdout | from_json | map(attribute='id') | list)
 
 # The quirks a provider needs can change after creation: converge them on the live endpoint.
-# (`--put-rate-limit` is accepted by PBS 4.2.8 but never persisted in s3.cfg — it is passed at
-# creation only and not converged; the concurrency on the provider is held down by the schedules:
-# the sync after the nightly window, the verify weekly.)
 - name: "Datastore | The endpoint's quirks follow the declaration"
   ansible.builtin.command:
     argv: >-
@@ -64,6 +61,22 @@
     - pbs_s3_endpoint_id in (pbs_s3_ep_list.stdout | from_json | map(attribute='id') | list)
     - pbs_s3_provider_quirks | length > 0
     - (_live['provider-quirks'] | default([]) | sort) != (pbs_s3_provider_quirks | sort)
+  changed_when: true
+
+# The request rate the provider tolerates: `--limit-active-requests` (PUT/POST/DELETE per second,
+# persisted in s3.cfg — the earlier `--put-rate-limit` of PBS 4.2.8 never was). 2026-10-30 02:40Z
+# the nightly job hit "429 Too Many Requests" at Contabo 145 times and two guests' backups failed.
+- name: "Datastore | The endpoint's request rate limit follows the declaration"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['proxmox-backup-manager', 's3', 'endpoint', 'update', pbs_s3_endpoint_id,
+          '--limit-active-requests', pbs_s3_limit_active_requests | string] }}
+  vars:
+    _live: "{{ pbs_s3_ep_list.stdout | from_json | selectattr('id', 'equalto', pbs_s3_endpoint_id) | first | default({}) }}"
+  when:
+    - pbs_s3_endpoint_id in (pbs_s3_ep_list.stdout | from_json | map(attribute='id') | list)
+    - pbs_s3_limit_active_requests | int > 0
+    - (_live['limit-active-requests'] | default(0) | int) != (pbs_s3_limit_active_requests | int)
   changed_when: true
 
 - name: "Datastore | Verify S3 connectivity (s3 check)"
