@@ -93,6 +93,19 @@ pve_host_nfs_backup_prune:
   keep-daily: 7
   keep-weekly: 4
 
+# --- vzdump node defaults (/etc/vzdump.conf) ------------------------------------------------
+# Backup fleecing for every job of the node (PVE Admin Guide, "VM Backup Fleecing"): without it "the
+# guest write blocks until" the old data has reached the backup target, so a slow or failing target
+# (an object store behind a rate limit) stalls or errors guest I/O. On 2026-10-30 02:51:22Z an aborted
+# upload to the S3 datastore surfaced as a write error in the firewall VM: UFS panicked, the firewall
+# rebooted, every service was unreachable for 2.5 minutes. With fleecing the old data goes to a local
+# fleecing image. The guide wants "a fast local storage, with thin provisioning and discard support":
+# one per node, declared in host_vars (a sparse ZFS pool qualifies); the play fails when it is not
+# declared or not active. Jobs that set `fleecing` themselves override this node-wide fallback.
+pve_host_vzdump_conf: /etc/vzdump.conf
+pve_host_vzdump_fleecing_enabled: true
+pve_host_vzdump_fleecing_storage: ""
+
 # --- Proxmox firewall (datacenter + host) ------------------------------------
 pve_host_firewall_enabled: true
 pve_host_firewall_log_level_in: info
