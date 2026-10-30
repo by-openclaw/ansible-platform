@@ -26,6 +26,13 @@ promtail_auditd_log: "/var/log/audit/audit.log"
 promtail_env_label: "{{ platform_env }}"
 promtail_vault_audit_log: ""   # set on the vault host: path of Vault's file audit log (SEC-07)
 promtail_extra_file_jobs: []   # [{name: traefik_access, path: /var/log/traefik/access.log}]
+# File logs a guest may carry that never reach the journal because the product writes a file:
+# the CrowdSec agent (config.yaml `log_media: file` → /var/log/crowdsec.log, zero journal lines)
+# and the Lynis audit report (security/0003 gate). Declared once for every host — promtail simply
+# finds no file where the product is absent. Both are security streams (audit class, INF-32).
+promtail_standard_file_jobs:
+  - {name: crowdsec_agent, path: /var/log/crowdsec.log, audit: true}
+  - {name: lynis_report, path: /var/log/lynis.log, audit: true}
 # The AIDE report (file integrity, roles/hardening): the current report lives at
 # /var/log/aide/aide.log (savelog keeps the older ones beside it) — the mailing is off
 # (SILENTREPORTS), the log store is where a report is read. Only the current file is tailed:
