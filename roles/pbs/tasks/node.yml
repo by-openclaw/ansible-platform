@@ -1,0 +1,14 @@
+---
+# Node options (PBS Admin Guide, Configuration Files → node.cfg): declared, converged on drift.
+- name: "Node | Options today"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, node, show, --output-format, json]
+  register: pbs_node_now
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "Node | Task logs are kept {{ pbs_task_log_max_days }} days (task-log-max-days)"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, node, update, --task-log-max-days, "{{ pbs_task_log_max_days }}"]
+  when: ((pbs_node_now.stdout | from_json)['task-log-max-days'] | default(0) | int) != (pbs_task_log_max_days | int)
+  changed_when: true

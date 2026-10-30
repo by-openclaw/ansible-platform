@@ -207,3 +207,10 @@ pbs_firewall_rules:
 pbs_datastores_retired: [pbs-datastore]
 pbs_sync_jobs_retired: [migrate-pbs-datastore]
 pbs_pve_storages_retired: [pbs]                 # the PVE storage entry of the on-site datastore
+
+# --- Node options (node.cfg) -------------------------------------------------------------------
+# Task logs: PBS keeps every task's log under /var/log/proxmox-backup/tasks until `task-log-max-days`
+# (node.cfg, "Maximum days to keep task logs") says otherwise — unset, nothing is ever removed
+# (541 MB and growing on vm-pbs-01, census 2026-10-30). The documentation's example value is 30 days;
+# the backup liveness signal and the verify/prune/GC alerts read the task LIST, not old logs.
+pbs_task_log_max_days: 30

@@ -25,3 +25,5 @@ its own namespace (`pbs_datastore_migrate_ns`, default `history`) where every gr
 prune and verify jobs cover it (`max-depth: 7`), so it ages out under the same retention. To restore from
 it, add a PVE storage entry for the same datastore with the `namespace` option (and the node's own key),
 or use the PBS web interface.
+
+- Node options (`tasks/node.yml`, tags `pbs,node`): `task-log-max-days` from `pbs_task_log_max_days` (30, the Admin Guide's example) — PBS otherwise keeps task logs forever. ISO 27001 A.8.15 logging (bounded retention), A.8.6 capacity.
