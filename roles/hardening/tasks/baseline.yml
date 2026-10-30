@@ -299,6 +299,7 @@
       SystemMaxUse={{ hardening_journald_max_use }}
       SystemKeepFree={{ hardening_journald_keep_free }}
       MaxRetentionSec={{ hardening_journald_retention }}
+      RuntimeMaxUse={{ hardening_journald_runtime_max_use }}
   register: hardening_journald_caps
 
 - name: "Baseline | Apply journald caps"  # noqa: no-handler
@@ -306,6 +307,32 @@
     name: systemd-journald
     state: restarted
   when: hardening_journald_caps is changed
+
+# journald.conf(5), Storage=: "journald will initially use volatile storage, until a call to journalctl
+# --flush" — and it falls back to volatile when /var/log/journal cannot be written (disk full), then
+# stays there after the disk is freed. Measured: lxc-pgsql-02's data volume filled on 2026-10-27; the
+# journal then grew to 2.9 GB in RAM, the 4 GB memory cgroup OOM-killed journald/postgres/crowdsec on
+# 2026-10-29 and the Patroni leader demoted. The flag file is journald's own record of the flushed
+# state; `journalctl --flush` is idempotent (journalctl(1)) and restores persistent logging.
+- name: "Baseline | Is the journal persistent right now?"
+  ansible.builtin.stat:
+    path: /run/systemd/journal/flushed
+  register: hardening_journald_flushed
+  check_mode: false   # read-only probe
+
+- name: "Baseline | Persistent journal directory"
+  ansible.builtin.stat:
+    path: /var/log/journal
+  register: hardening_journald_var
+  check_mode: false   # read-only probe
+
+- name: "Baseline | Journal flushed to persistent storage (journalctl --flush, idempotent)"
+  ansible.builtin.command:
+    argv: [journalctl, --flush]
+  when:
+    - hardening_journald_var.stat.isdir | default(false)
+    - (not hardening_journald_flushed.stat.exists) or (hardening_journald_caps is changed)
+  changed_when: not hardening_journald_flushed.stat.exists
 
 # A unit whose file is gone (package removed, service retired by a role) or that is
 # masked (switched off for good) keeps its "failed" state until reset — e.g.
