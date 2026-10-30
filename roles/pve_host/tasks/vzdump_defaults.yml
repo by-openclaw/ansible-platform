@@ -1,0 +1,40 @@
+---
+# Node-wide vzdump defaults (vzdump(1), "Configuration": /etc/vzdump.conf is the fallback for what a
+# backup job does not set itself). Backup fleecing — PVE Admin Guide, "VM Backup Fleecing": a running
+# VM's writes to not-yet-backed-up blocks first copy the old data to the backup target ("the guest write
+# blocks until this operation is finished"); with fleecing "such old data is cached in a fleecing image
+# rather than sent directly to the backup target", which "can help guest IO performance and even prevent
+# hangs in certain scenarios". Measured 2026-10-30 02:51:22Z: a chunk upload to the S3 datastore failed
+# (HTTP 429), vzdump aborted the job, the firewall VM saw `vtbd0: hard error cmd=write`, FreeBSD
+# panicked ("UFS: root fs would be forcibly unmounted") and rebooted — 2.5 minutes without the firewall.
+- name: "PVE host | The fleecing storage is declared for this node"
+  ansible.builtin.assert:
+    that: pve_host_vzdump_fleecing_storage | length > 0
+    fail_msg: "pve_host_vzdump_fleecing_storage must name a local, thin-provisioned storage of {{ pve_host_node }} (host_vars)"
+    quiet: true
+  when: pve_host_vzdump_fleecing_enabled | bool
+
+- name: "PVE host | Storage entries today"
+  ansible.builtin.command:
+    argv: [pvesm, status, --enabled, "1"]
+  register: pve_host_vzdump_storages
+  changed_when: false
+  check_mode: false   # read-only probe
+  when: pve_host_vzdump_fleecing_enabled | bool
+
+- name: "PVE host | The fleecing storage is active on this node"
+  ansible.builtin.assert:
+    that: pve_host_vzdump_storages.stdout_lines | select('match', '^' ~ pve_host_vzdump_fleecing_storage ~ '\s+\S+\s+active\s') | list | length == 1
+    fail_msg: "{{ pve_host_vzdump_fleecing_storage }} is not an active storage on {{ pve_host_node }}"
+    quiet: true
+  when: pve_host_vzdump_fleecing_enabled | bool
+
+- name: "PVE host | Node-wide vzdump default: fleecing {{ 'on ' ~ pve_host_vzdump_fleecing_storage if pve_host_vzdump_fleecing_enabled | bool else 'off' }}"
+  ansible.builtin.lineinfile:
+    path: "{{ pve_host_vzdump_conf }}"
+    regexp: '^\s*fleecing:'
+    line: "fleecing: enabled={{ 1 if pve_host_vzdump_fleecing_enabled | bool else 0 }}{{ (',storage=' ~ pve_host_vzdump_fleecing_storage) if pve_host_vzdump_fleecing_enabled | bool else '' }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
