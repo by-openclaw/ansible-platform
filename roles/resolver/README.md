@@ -21,7 +21,7 @@ visibility live, so a guest that skips it is outside both.
 
 | | |
 |---|---|
-| Resolvers | AdGuard v4, then the firewall's Unbound, then AdGuard v6 — `options timeout:1 attempts:2` |
+| Resolvers | guests: AdGuard v4, the firewall's Unbound, AdGuard v6 — `options timeout:1 attempts:2`; hypervisors: the firewall first, AdGuard second (same options); the resolver hosts and isolated zones: the firewall only, glibc default timeouts |
 | Where | `systemd-resolved` drop-in when it is running, `/etc/resolv.conf` otherwise |
 | RA handling | `accept_ra=2` on hosts where forwarding silently disabled it |
 
