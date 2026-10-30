@@ -8,3 +8,5 @@ journald: disk caps plus `RuntimeMaxUse` for the volatile journal under /run (jo
 is 10 % of the tmpfs capped at 4 GB — the host's RAM as seen from an LXC), and the journal is flushed back
 to /var/log/journal whenever journald fell back to volatile mode (journalctl(1) `--flush`, idempotent).
 ISO 27001:2022 A.8.15 logging, A.8.6 capacity management.
+
+Swap (VMs, `tasks/swap.yml`): a swap file sized by the Red Hat Enterprise Linux 9 table (RAM < 2 GiB → 2 × RAM; 2–8 GB → equal to RAM; 8–64 GB → 4 GB), overridden per host where the product documents its own requirement (mailcow 1 GiB; GitLab, Kubernetes and Vault: none). Containers get their swap allowance from the node (Terraform, pct(1) default 512 MB); nodes keep the installer's swap volume. ISO 27001:2022 A.8.6 capacity management.

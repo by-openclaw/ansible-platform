@@ -1,0 +1,100 @@
+---
+# Swap for VMs: a swap file sized by the RHEL table (defaults/main.yml), declared per host where a
+# product says otherwise. Idempotent: file present → size checked; 0 → no swap at all.
+- name: "Swap | Current swap devices"
+  ansible.builtin.slurp:
+    src: /proc/swaps
+  register: hardening_swaps_now
+  check_mode: false   # read-only probe
+
+- name: "Swap | The swap file today"
+  ansible.builtin.stat:
+    path: "{{ hardening_swapfile_path }}"
+  register: hardening_swapfile_now
+  check_mode: false   # read-only probe
+
+- name: "Swap | Facts: wanted / present / active"
+  ansible.builtin.set_fact:
+    hardening_swap_want_mb: "{{ hardening_swapfile_mb | int }}"
+    hardening_swap_active: "{{ hardening_swapfile_path in (hardening_swaps_now.content | b64decode) }}"
+    hardening_swap_size_ok: >-
+      {{ hardening_swapfile_now.stat.exists
+         and ((hardening_swapfile_now.stat.size | int) // 1048576) == (hardening_swapfile_mb | int) }}
+
+# --- a swap file of the wrong size (or none wanted) leaves first --------------------------------
+- name: "Swap | Deactivate the swap file (size changes, or no swap wanted here)"
+  ansible.builtin.command:
+    argv: [swapoff, "{{ hardening_swapfile_path }}"]
+  when:
+    - hardening_swap_active | bool
+    - (hardening_swap_want_mb | int == 0) or not (hardening_swap_size_ok | bool)
+  changed_when: true
+
+- name: "Swap | Remove the swap file (size changes, or no swap wanted here)"
+  ansible.builtin.file:
+    path: "{{ hardening_swapfile_path }}"
+    state: absent
+  when:
+    - hardening_swapfile_now.stat.exists
+    - (hardening_swap_want_mb | int == 0) or not (hardening_swap_size_ok | bool)
+
+- name: "Swap | No fstab entry when no swap is wanted"
+  ansible.posix.mount:
+    src: "{{ hardening_swapfile_path }}"
+    path: none
+    fstype: swap
+    state: absent
+  when: hardening_swap_want_mb | int == 0
+
+# --- the declared swap file -----------------------------------------------------------------------
+- name: "Swap | Allocate {{ hardening_swapfile_mb }} MB at {{ hardening_swapfile_path }}"
+  ansible.builtin.command:
+    argv: [fallocate, -l, "{{ hardening_swap_want_mb }}M", "{{ hardening_swapfile_path }}"]
+    creates: "{{ hardening_swapfile_path }}"
+  when: hardening_swap_want_mb | int > 0
+  register: hardening_swap_allocated
+
+- name: "Swap | Root-only (CIS: swap must not be world-readable)"
+  ansible.builtin.file:
+    path: "{{ hardening_swapfile_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - hardening_swap_want_mb | int > 0
+    - hardening_swapfile_now.stat.exists or not ansible_check_mode   # --check cannot chmod a file it did not create
+
+- name: "Swap | Format as swap (only a fresh file)"
+  ansible.builtin.command:
+    argv: [mkswap, "{{ hardening_swapfile_path }}"]
+  when:
+    - hardening_swap_want_mb | int > 0
+    - hardening_swap_allocated is changed
+  changed_when: true
+
+- name: "Swap | fstab entry"
+  ansible.posix.mount:
+    src: "{{ hardening_swapfile_path }}"
+    path: none
+    fstype: swap
+    opts: sw
+    dump: "0"
+    passno: "0"
+    state: present
+  when: hardening_swap_want_mb | int > 0
+
+- name: "Swap | Active now"
+  ansible.builtin.command:
+    argv: [swapon, "{{ hardening_swapfile_path }}"]
+  when:
+    - hardening_swap_want_mb | int > 0
+    - (not (hardening_swap_active | bool)) or (hardening_swap_allocated is changed)
+  changed_when: true
+
+- name: "Swap | vm.swappiness as declared"
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: "{{ hardening_swappiness }}"
+    sysctl_file: /etc/sysctl.d/99-hardening-swap.conf
+    reload: true
+  when: hardening_swap_want_mb | int > 0
