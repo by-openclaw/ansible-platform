@@ -209,3 +209,22 @@ hardening_serial_ports_file: "/proc/tty/driver/serial"
 hardening_serial_getty_unit: "serial-getty@ttyS0.service"
 hardening_serial_port_absent: "{{ (hardening_serial_ports.stdout | default('')) is search('(?m)^0: uart:unknown') }}"
 hardening_serial_port_present: "{{ (hardening_serial_ports.stdout | default('')) is search('(?m)^0: uart:(?!unknown)') }}"
+
+# --- Swap (VMs) ----------------------------------------------------------------------------------
+# Red Hat Enterprise Linux 9, "Recommended swap space": RAM < 2 GiB → 2 × RAM; 2–8 GB → equal to
+# RAM; 8–64 GB → at least 4 GB (the Proxmox installer sizes a node's swap the same way: = RAM,
+# clamped to 4–8 GB). Products whose documentation says otherwise set their own value in the
+# inventory: GitLab "Disable swap where possible" → 0; Kubernetes "the kubelet will not start on a
+# Linux node that has swap enabled" → 0; mailcow "6 GiB RAM + 1 GiB swap" → 1024; Vault
+# "disabling swap" → 0. Containers are skipped: an LXC's swap is a cgroup allowance declared on the
+# node (Terraform, pct(1) default 512 MB), not a file in the guest. Census 2026-10-30: every VM ran
+# with swap 0 — the kernel's only answer to pressure was the OOM killer.
+hardening_swap_enabled: true
+hardening_swapfile_path: /swapfile
+# RAM as the hypervisor declares it (the kernel reports a little less): rounded to 512 MB.
+hardening_swap_ram_mb: "{{ ((ansible_memtotal_mb | int + 256) // 512) * 512 }}"
+hardening_swapfile_mb: >-
+  {{ (hardening_swap_ram_mb | int * 2) if (hardening_swap_ram_mb | int) < 2048
+     else (hardening_swap_ram_mb | int) if (hardening_swap_ram_mb | int) <= 8192
+     else 4096 }}
+hardening_swappiness: 60   # the kernel's default; no product document of ours asks for another value

@@ -37,6 +37,13 @@
   ansible.builtin.import_tasks: baseline.yml
   tags: [hardening, baseline]
 
+- name: Swap for VMs (RHEL table; product documents override per host)
+  ansible.builtin.import_tasks: swap.yml
+  when:
+    - hardening_swap_enabled | bool
+    - not (hardening_is_container | bool)
+  tags: [hardening, baseline, swap]
+
 - name: Apply automatic security patching
   ansible.builtin.import_tasks: patching.yml
   when: hardening_auto_updates | bool
