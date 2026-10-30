@@ -172,6 +172,11 @@ hardening_lynis_enforce: true
 hardening_journald_max_use: "1G"
 hardening_journald_keep_free: "2G"
 hardening_journald_retention: "30day"
+# The volatile journal under /run (RAM). journald.conf(5): RuntimeMaxUse "defaults to 10%" of the file
+# system, "capped to 4G" — inside an LXC the tmpfs shows the HOST's RAM, so the cap is 4 GB in a 4 GB
+# guest. journald also falls back to the volatile journal when /var/log/journal cannot be written (disk
+# full) and stays there until `journalctl --flush`: lxc-pgsql-02 held 2.9 GB of logs in RAM 2026-10-27→29.
+hardening_journald_runtime_max_use: "128M"
 
 # AIDE watches the HOST's files. Container runtime storage (image layers change on every
 # pull) and guest storage (VM disks, container root filesystems, backup shares) are not

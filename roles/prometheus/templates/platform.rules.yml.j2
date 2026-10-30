@@ -108,6 +108,15 @@ groups:
           summary: "{{ '{{' }} $labels.instance {{ '}}' }} has {{ '{{' }} $value | humanizePercentage {{ '}}' }} memory available"
           description: "{{ '{{' }} $labels.instance {{ '}}' }} has had less than {{ (prometheus_alert_mem_free_ratio * 100) | int }} % of its memory available for 10 min: the kernel is about to kill processes or the host is swapping."
           runbook: "Look at the top consumers (docker stats / top); restart the leaking service or raise the guest's memory through the infra repo."
+      - alert: HostSharedMemoryHigh
+        # tmpfs pages are RAM the kernel cannot reclaim; the usual grower is journald's volatile journal
+        expr: (node_memory_Shmem_bytes / node_memory_MemTotal_bytes) > {{ prometheus_alert_shmem_ratio }}
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ '{{' }} $labels.instance {{ '}}' }} holds {{ '{{' }} $value | humanizePercentage {{ '}}' }} of its memory in shared memory (tmpfs)"
+          description: "Files on tmpfs are RAM that cannot be reclaimed. The usual cause is journald writing to /run/log/journal — volatile mode after a disk-full fallback or a boot that never flushed — where its default cap is 4 GB even inside a 4 GB guest: memory-cgroup OOM kills follow (a database member on 2026-10-29: the Patroni leader demoted)."
+          runbook: "`du -sm /run/log/journal /dev/shm /tmp` names the consumer. No /run/systemd/journal/flushed = volatile journal: `journalctl --flush` (idempotent, journalctl(1)) moves it to /var/log/journal; `playbooks/hardening.yml --tags baseline` re-asserts it and the RuntimeMaxUse cap."
       - alert: ZfsPoolNotOnline
         # one alert per pool: every LXC of the node reports the node's pool state too
         expr: max by (zpool, state) (node_zfs_zpool_state{state!="online"}) == 1

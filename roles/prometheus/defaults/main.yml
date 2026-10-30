@@ -65,7 +65,7 @@ prometheus_keep:
     - "node_(uname|os|exporter_build)_info"
     - "node_(boot_time|time)_seconds"
     - "node_load(1|5|15)"
-    - "node_memory_(MemTotal|MemAvailable|MemFree|Buffers|Cached|SwapTotal|SwapFree)_bytes"
+    - "node_memory_(MemTotal|MemAvailable|MemFree|Buffers|Cached|Shmem|SwapTotal|SwapFree)_bytes"   # Shmem: the HostSharedMemoryHigh rule
     - "node_cpu_seconds_total"
     - "node_filesystem_(avail_bytes|size_bytes|free_bytes|files|files_free|readonly|device_error)"
     - "node_network_(receive|transmit)_(bytes|errs|drop)_total"
@@ -231,6 +231,9 @@ prometheus_alert_unit_restarts_for: "5m"
 # guests' PBS backups while the disk still had 76 GB free.
 prometheus_alert_seaweedfs_free_slots: 30
 prometheus_alert_mem_free_ratio: 0.05
+# Shared memory (tmpfs: journald's volatile journal under /run, /dev/shm, /tmp) is RAM the kernel cannot
+# reclaim. lxc-pgsql-02 reached 73 % on 2026-10-29 (2.9 GB of journal in RAM) and was OOM-killed.
+prometheus_alert_shmem_ratio: 0.25
 prometheus_alert_pg_conn_warn_ratio: 0.80    # backends / max_connections
 prometheus_alert_pg_conn_crit_ratio: 0.95
 
