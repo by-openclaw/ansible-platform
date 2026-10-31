@@ -1,0 +1,119 @@
+---
+- name: "Docker data | VM: the module's data disk is attached"
+  ansible.builtin.stat:
+    path: "{{ docker_data_vm_device }}"
+  register: docker_data_dev
+
+- name: "Docker data | VM: a data disk is a Terraform change first"
+  ansible.builtin.assert:
+    that: docker_data_dev.stat.exists
+    fail_msg: "no data disk at {{ docker_data_vm_device }} — set vm-linux `data_disk_size_gib` in infra-terraform-proxmox and apply, then re-run"
+    quiet: true
+
+- name: "Docker data | VM: rsync for the copy"
+  ansible.builtin.package:
+    name: rsync
+    state: present
+
+- name: "Docker data | VM: filesystem on the data disk (an existing one is never reformatted)"
+  community.general.filesystem:
+    dev: "{{ docker_data_vm_device }}"
+    fstype: "{{ docker_data_vm_fstype }}"
+
+- name: "Docker data | VM: filesystem UUID"
+  ansible.builtin.command:
+    cmd: "blkid -s UUID -o value {{ docker_data_vm_device }}"
+  register: docker_data_uuid
+  check_mode: false  # read-only probe
+  changed_when: false
+  failed_when: false
+
+- name: "Docker data | VM: drop-in directory for docker.service"
+  ansible.builtin.file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    mode: "0755"
+
+- name: "Docker data | VM: the engine never starts without its volume (systemd.unit(5) RequiresMountsFor=)"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/docker.service.d/data-volume.conf
+    content: |
+      # roles/docker_data — the data root is its own filesystem; the engine waits for it
+      [Unit]
+      RequiresMountsFor={{ docker_data_path }}
+    mode: "0644"
+  notify: Docker data daemon reload
+
+- name: "Docker data | VM: plan"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ docker_data_vm_device }} ({{ docker_data_vm_fstype }}, UUID {{ docker_data_uuid.stdout | default('pending') }})
+      → {{ docker_data_path }} ({{ docker_data_before.containers | default([]) | length }} containers running)
+
+- name: "Docker data | VM: move the data root (skipped under --check)"
+  when: not ansible_check_mode
+  block:
+    - name: "Docker data | VM: stop the engine (the data root moves)"
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+      loop: "{{ docker_data_services_stop }}"
+
+    - name: "Docker data | VM: mount the volume on a staging path (no fstab entry)"
+      ansible.posix.mount:
+        path: "{{ docker_data_vm_staging_path }}"
+        src: "UUID={{ docker_data_uuid.stdout }}"
+        fstype: "{{ docker_data_vm_fstype }}"
+        state: ephemeral
+
+    - name: "Docker data | VM: copy the data root into the volume (numeric ids kept)"
+      ansible.builtin.command:
+        cmd: "rsync {{ docker_data_rsync_opts }} {{ docker_data_path }}/ {{ docker_data_vm_staging_path }}/"
+      changed_when: true
+
+    - name: "Docker data | VM: verify the copy (a second pass has nothing to transfer)"
+      ansible.builtin.command:
+        cmd: "rsync {{ docker_data_rsync_opts }} --dry-run --itemize-changes {{ docker_data_path }}/ {{ docker_data_vm_staging_path }}/"
+      register: docker_data_rsync_check
+      changed_when: false
+      failed_when: docker_data_rsync_check.rc != 0 or docker_data_rsync_check.stdout_lines | length > 0
+
+    - name: "Docker data | VM: release the staging mount"
+      ansible.posix.mount:
+        path: "{{ docker_data_vm_staging_path }}"
+        state: unmounted
+
+    - name: "Docker data | VM: staging directory gone"
+      ansible.builtin.file:
+        path: "{{ docker_data_vm_staging_path }}"
+        state: absent
+
+    - name: "Docker data | VM: remove the old data root from the root filesystem"
+      ansible.builtin.file:
+        path: "{{ docker_data_path }}"
+        state: absent
+
+    - name: "Docker data | VM: the mount target as an empty directory"
+      ansible.builtin.file:
+        path: "{{ docker_data_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0710"
+
+    - name: "Docker data | VM: mount the volume on the data root (fstab)"
+      ansible.posix.mount:
+        path: "{{ docker_data_path }}"
+        src: "UUID={{ docker_data_uuid.stdout }}"
+        fstype: "{{ docker_data_vm_fstype }}"
+        opts: "{{ docker_data_vm_mount_opts }}"
+        state: mounted
+
+    - name: "Docker data | VM: apply the drop-in before the engine starts"
+      ansible.builtin.meta: flush_handlers
+
+    - name: "Docker data | VM: start the engine on the volume"
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: started
+      loop: "{{ docker_data_services_start }}"

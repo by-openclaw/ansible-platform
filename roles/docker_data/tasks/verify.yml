@@ -1,0 +1,33 @@
+---
+- name: "Docker data | Verify: mounts after the move"
+  ansible.builtin.setup:
+    gather_subset: [mounts]
+
+- name: "Docker data | Verify: the data root is its own mount"
+  ansible.builtin.assert:
+    that: ansible_facts.mounts | selectattr('mount', 'equalto', docker_data_path) | list | length > 0
+    fail_msg: "{{ docker_data_path }} is not a mount point on {{ inventory_hostname }}"
+    quiet: true
+
+- name: "Docker data | Verify: the engine is up and every container is back"
+  community.docker.docker_host_info:
+    containers: true
+  register: docker_data_after
+  until: docker_data_after.containers | length >= (docker_data_before.containers | default([]) | length)
+  retries: "{{ docker_data_containers_wait_retries }}"
+  delay: 10
+
+- name: "Docker data | Verify: the engine's data root is the volume"
+  ansible.builtin.assert:
+    that: docker_data_after.host_info.DockerRootDir == docker_data_path
+    fail_msg: "Docker Root Dir is {{ docker_data_after.host_info.DockerRootDir }}"
+    quiet: true
+
+- name: "Docker data | Result"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ docker_data_path }} on
+      {{ (ansible_facts.mounts | selectattr('mount', 'equalto', docker_data_path) | first).device }}
+      ({{ ((ansible_facts.mounts | selectattr('mount', 'equalto', docker_data_path) | first).size_total / 1073741824) | round(1) }} GiB,
+      {{ ((ansible_facts.mounts | selectattr('mount', 'equalto', docker_data_path) | first).size_available / 1073741824) | round(1) }} GiB free),
+      {{ docker_data_after.containers | length }} containers running

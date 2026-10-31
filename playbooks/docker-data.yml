@@ -1,0 +1,15 @@
+---
+# ==============================================================================
+# Playbook: docker-data.yml — the Docker data root on its own volume on every Docker
+# host (roles/docker_data; CIS Docker Benchmark 1.1.1). One engine stop per guest:
+# serial, one service at a time, announced. VMs need their data disk from
+# infra-terraform-proxmox first (vm-linux `data_disk_size_gib`).
+#   Plan:  ansible-playbook -i inventories/prod/hosts.yml playbooks/docker-data.yml --check
+#   Apply: ansible-playbook -i inventories/prod/hosts.yml playbooks/docker-data.yml --limit <guest>
+# ==============================================================================
+- name: "Docker data root on its own volume"
+  hosts: "{{ target | default('docker_hosts') }}"
+  serial: 1
+  become: true
+  roles:
+    - docker_data
