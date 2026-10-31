@@ -1,0 +1,31 @@
+---
+- name: "Docker data | Facts this role reads (a play may skip fact gathering)"
+  ansible.builtin.setup:
+    gather_subset: [virtual, mounts]
+  when: ansible_facts.virtualization_type is not defined or ansible_facts.mounts is not defined
+
+- name: "Docker data | Is the data root already its own mount?"
+  ansible.builtin.set_fact:
+    docker_data_is_mount: "{{ ansible_facts.mounts | selectattr('mount', 'equalto', docker_data_path) | list | length > 0 }}"
+
+- name: "Docker data | Containers running before the move (the engine restarts once)"
+  community.docker.docker_host_info:
+    containers: true
+  register: docker_data_before
+  when: not docker_data_is_mount
+
+- name: "Docker data | LXC: storage-managed mount point on the guest's node"
+  ansible.builtin.include_tasks: lxc.yml
+  when:
+    - not docker_data_is_mount
+    - ansible_facts.virtualization_type == 'lxc'
+
+- name: "Docker data | VM: the module's data disk"
+  ansible.builtin.include_tasks: vm.yml
+  when:
+    - not docker_data_is_mount
+    - ansible_facts.virtualization_type == 'kvm'
+
+- name: "Docker data | Verify the result"
+  ansible.builtin.include_tasks: verify.yml
+  when: docker_data_is_mount or not ansible_check_mode

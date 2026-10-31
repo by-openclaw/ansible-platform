@@ -1,0 +1,152 @@
+---
+# Runs on the guest; pct / pvesm / rsync steps are delegated to the node that holds it.
+- name: "Docker data | LXC: guests per node (VMID by name)"
+  ansible.builtin.command:
+    cmd: pct list
+  register: docker_data_pct_list
+  delegate_to: "{{ item }}"
+  loop: "{{ docker_data_nodes }}"
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+
+- name: "Docker data | LXC: resolve the node and VMID of this guest"
+  ansible.builtin.set_fact:
+    docker_data_ct: >-
+      {%- set ns = namespace(node='', vmid='') -%}
+      {%- for r in docker_data_pct_list.results -%}
+        {%- for line in r.stdout_lines[1:] -%}
+          {%- set f = line.split() -%}
+          {%- if f[-1] == inventory_hostname -%}
+            {%- set ns.node = r.item -%}{%- set ns.vmid = f[0] -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ {'node': ns.node, 'vmid': ns.vmid} }}
+
+- name: "Docker data | LXC: the guest runs on one of the nodes"
+  ansible.builtin.assert:
+    that: docker_data_ct.node | length > 0
+    fail_msg: "no container named {{ inventory_hostname }} on {{ docker_data_nodes | join(', ') }}"
+    quiet: true
+
+- name: "Docker data | LXC: current container config"
+  ansible.builtin.command:
+    cmd: "pct config {{ docker_data_ct.vmid }}"
+  register: docker_data_cfg
+  delegate_to: "{{ docker_data_ct.node }}"
+  check_mode: false  # read-only probe
+  changed_when: false
+
+- name: "Docker data | LXC: rootfs volume, free mount-point index, existing data mount, id map"
+  ansible.builtin.set_fact:
+    docker_data_rootfs_volid: "{{ (docker_data_cfg.stdout_lines | select('match', '^rootfs:') | first).split()[1].split(',')[0] }}"
+    docker_data_mp_existing: "{{ docker_data_cfg.stdout_lines | select('match', '^mp[0-9]+:') | select('search', 'mp=' ~ docker_data_path ~ '(,|$)') | list }}"
+    docker_data_mp_index: >-
+      {%- set used = docker_data_cfg.stdout_lines | select('match', '^mp[0-9]+:') | map('regex_replace', '^mp([0-9]+):.*$', '\1') | map('int') | list -%}
+      {{ range(0, 256) | reject('in', used) | first }}
+    docker_data_unprivileged: "{{ docker_data_cfg.stdout_lines | select('match', '^unprivileged: 1') | list | length > 0 }}"
+
+- name: "Docker data | LXC: plan"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} = CT {{ docker_data_ct.vmid }} on {{ docker_data_ct.node }}:
+      {{ 'mount point present, not mounted in the guest' if docker_data_mp_existing | length > 0
+         else 'create mp' ~ docker_data_mp_index ~ ' = ' ~ docker_data_rootfs_volid.split(':')[0] ~ ':' ~ docker_data_size_gib ~ ' GiB' }},
+      move {{ docker_data_path }} ({{ docker_data_before.containers | default([]) | length }} containers running)
+
+- name: "Docker data | LXC: move the data root (skipped under --check)"
+  when: not ansible_check_mode
+  block:
+    - name: "Docker data | LXC: stop the engine (the data root moves)"
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+      loop: "{{ docker_data_services_stop }}"
+
+    - name: "Docker data | LXC: volume mount point on the guest's storage"
+      ansible.builtin.command:
+        cmd: >-
+          pct set {{ docker_data_ct.vmid }} -mp{{ docker_data_mp_index }}
+          {{ docker_data_rootfs_volid.split(':')[0] }}:{{ docker_data_size_gib }},mp={{ docker_data_path }},backup={{ 1 if docker_data_mp_backup else 0 }}
+      delegate_to: "{{ docker_data_ct.node }}"
+      when: docker_data_mp_existing | length == 0
+      changed_when: true
+
+    - name: "Docker data | LXC: re-read the config (the volume id)"
+      ansible.builtin.command:
+        cmd: "pct config {{ docker_data_ct.vmid }}"
+      register: docker_data_cfg_after
+      delegate_to: "{{ docker_data_ct.node }}"
+      changed_when: false
+
+    - name: "Docker data | LXC: the volume id of the data mount point"
+      ansible.builtin.set_fact:
+        docker_data_volid: "{{ (docker_data_cfg_after.stdout_lines | select('match', '^mp[0-9]+:') | select('search', 'mp=' ~ docker_data_path ~ '(,|$)') | first).split()[1].split(',')[0] }}"
+
+    - name: "Docker data | LXC: host paths of the rootfs and of the volume"
+      ansible.builtin.command:
+        cmd: "pvesm path {{ item }}"
+      register: docker_data_paths
+      delegate_to: "{{ docker_data_ct.node }}"
+      loop: ["{{ docker_data_rootfs_volid }}", "{{ docker_data_volid }}"]
+      changed_when: false
+
+    - name: "Docker data | LXC: source (old data root on the rootfs) and destination (the volume)"
+      ansible.builtin.set_fact:
+        docker_data_src: "{{ docker_data_paths.results[0].stdout }}{{ docker_data_path }}"
+        docker_data_dst: "{{ docker_data_paths.results[1].stdout }}"
+
+    - name: "Docker data | LXC: copy the data root into the volume (node-side, numeric ids kept)"
+      ansible.builtin.command:
+        cmd: "rsync {{ docker_data_rsync_opts }} {{ docker_data_src }}/ {{ docker_data_dst }}/"
+      delegate_to: "{{ docker_data_ct.node }}"
+      changed_when: true
+
+    - name: "Docker data | LXC: verify the copy (a second pass has nothing to transfer)"
+      ansible.builtin.command:
+        cmd: "rsync {{ docker_data_rsync_opts }} --dry-run --itemize-changes {{ docker_data_src }}/ {{ docker_data_dst }}/"
+      register: docker_data_rsync_check
+      delegate_to: "{{ docker_data_ct.node }}"
+      changed_when: false
+      failed_when: docker_data_rsync_check.rc != 0 or docker_data_rsync_check.stdout_lines | length > 0
+
+    - name: "Docker data | LXC: remove the old data root from the rootfs (hidden under the mount from now on)"
+      ansible.builtin.file:
+        path: "{{ docker_data_src }}"
+        state: absent
+      delegate_to: "{{ docker_data_ct.node }}"
+
+    - name: "Docker data | LXC: the mount target stays as an empty directory"
+      ansible.builtin.file:
+        path: "{{ docker_data_src }}"
+        state: directory
+        owner: "{{ docker_data_lxc_idmap_offset if docker_data_unprivileged else 0 }}"
+        group: "{{ docker_data_lxc_idmap_offset if docker_data_unprivileged else 0 }}"
+        mode: "0710"
+      delegate_to: "{{ docker_data_ct.node }}"
+
+    - name: "Docker data | LXC: did the node hotplug the mount point into the running guest?"
+      ansible.builtin.command:
+        cmd: "findmnt -n -o SOURCE {{ docker_data_path }}"
+      register: docker_data_findmnt
+      changed_when: false
+      failed_when: false
+
+    - name: "Docker data | LXC: no hotplug → restart the container (mount points apply at start)"
+      ansible.builtin.command:
+        cmd: "pct reboot {{ docker_data_ct.vmid }}"
+      delegate_to: "{{ docker_data_ct.node }}"
+      when: docker_data_findmnt.rc != 0
+      changed_when: true
+
+    - name: "Docker data | LXC: wait for the guest after the restart"
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 180
+      when: docker_data_findmnt.rc != 0
+
+    - name: "Docker data | LXC: start the engine on the volume"
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: started
+      loop: "{{ docker_data_services_start }}"

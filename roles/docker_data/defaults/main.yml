@@ -1,0 +1,36 @@
+---
+# ==============================================================================
+# Role: docker_data — the Docker data root (/var/lib/docker) on its own volume.
+#
+# CIS Docker Benchmark 1.1.1 "Ensure a separate partition for containers has been
+# created": a runaway image, log or volume can no longer fill the guest's root
+# filesystem (the 2026-10-24 resolver outage and the 2026-10-27 replica core dumps
+# both filled a root fs). ISO 27001:2022 A.8.6 (capacity), A.8.13 (backup: a VOLUME
+# mount point is part of vzdump, a bind mount is not — PVE Admin Guide, pct(1)).
+#
+# LXC: a storage-managed mount point (`pct set -mpN <storage>:<GiB>,mp=<path>,backup=1`)
+#      on the guest's own node, on the storage that holds its rootfs; the data is copied
+#      node-side between the two datasets while the engine is stopped. Terraform ignores
+#      `mount_point` on containers (modules/lxc-cloudinit), so this creates no drift.
+# VM:  the second disk the Terraform module attaches (vm-linux `data_disk_size_gib`,
+#      scsi1), formatted and mounted by this role; docker.service gains
+#      RequiresMountsFor= so the engine never starts on the root fs again.
+#
+# Idempotent: a guest whose data root is already a mount point is left alone.
+# One engine stop per guest (minutes): run the play serial, announce per service.
+# ==============================================================================
+docker_data_path: /var/lib/docker
+docker_data_size_gib: 8          # LXC volume size; 3× the measured use, minimum 8 (host_vars override)
+docker_data_mp_backup: true      # the mount point is included in vzdump (backup=1)
+docker_data_nodes: "{{ groups['proxmox_nodes'] }}"   # where the guest's VMID is looked up (Terraform owns VMIDs: no copy here)
+docker_data_lxc_idmap_offset: 100000   # unprivileged CT: container root = host uid/gid 100000
+
+docker_data_vm_device: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1   # the module's data disk
+docker_data_vm_fstype: ext4
+docker_data_vm_mount_opts: "defaults,nofail,x-systemd.device-timeout=10"
+docker_data_vm_staging_path: /mnt/docker-data-new
+
+docker_data_services_stop: [docker.socket, docker.service, containerd.service]
+docker_data_services_start: [containerd.service, docker.socket, docker.service]
+docker_data_rsync_opts: "-aHAXx --numeric-ids"
+docker_data_containers_wait_retries: 18   # × 10 s for the containers to be back after the engine restart
