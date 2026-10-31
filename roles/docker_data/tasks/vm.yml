@@ -53,6 +53,12 @@
 - name: "Docker data | VM: move the data root (skipped under --check)"
   when: not ansible_check_mode
   block:
+    - name: "Docker data | VM: stop every running container (live-restore would keep them alive)"
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: stopped
+      loop: "{{ docker_data_container_names }}"
+
     - name: "Docker data | VM: stop the engine (the data root moves)"
       ansible.builtin.systemd_service:
         name: "{{ item }}"
@@ -88,6 +94,18 @@
         path: "{{ docker_data_vm_staging_path }}"
         state: absent
 
+    - name: "Docker data | VM: nothing may still be mounted under the data root"
+      ansible.builtin.command:
+        cmd: findmnt -rn -o TARGET
+      register: docker_data_mounts_left
+      changed_when: false
+
+    - name: "Docker data | VM: refuse to delete while a container mount is left"
+      ansible.builtin.assert:
+        that: docker_data_mounts_left.stdout_lines | select('match', '^' ~ docker_data_path ~ '/') | list | length == 0
+        fail_msg: "mounts still under {{ docker_data_path }}: {{ docker_data_mounts_left.stdout_lines | select('match', '^' ~ docker_data_path ~ '/') | list }}"
+        quiet: true
+
     - name: "Docker data | VM: remove the old data root from the root filesystem"
       ansible.builtin.file:
         path: "{{ docker_data_path }}"
@@ -117,3 +135,9 @@
         name: "{{ item }}"
         state: started
       loop: "{{ docker_data_services_start }}"
+
+    - name: "Docker data | VM: start every container that was running"
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: started
+      loop: "{{ docker_data_container_names }}"

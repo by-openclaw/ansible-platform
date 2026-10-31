@@ -25,6 +25,14 @@
   register: docker_data_before
   when: not docker_data_is_mount
 
+# live-restore (roles/docker) keeps containers running when the engine stops: they must be
+# stopped by name first, or the copy runs on a live data root and the overlay mounts stay
+# busy; the same names are started again once the engine runs on the volume (a stopped
+# `unless-stopped` container would otherwise stay down).
+- name: "Docker data | Names of the running containers"
+  ansible.builtin.set_fact:
+    docker_data_container_names: "{{ docker_data_before.containers | default([]) | map(attribute='Names') | map('first') | map('regex_replace', '^/', '') | list }}"
+
 - name: "Docker data | LXC: storage-managed mount point on the guest's node"
   ansible.builtin.include_tasks: lxc.yml
   when:

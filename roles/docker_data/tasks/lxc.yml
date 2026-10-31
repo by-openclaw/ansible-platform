@@ -57,6 +57,12 @@
 - name: "Docker data | LXC: move the data root (skipped under --check)"
   when: not ansible_check_mode
   block:
+    - name: "Docker data | LXC: stop every running container (live-restore would keep them alive)"
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: stopped
+      loop: "{{ docker_data_container_names }}"
+
     - name: "Docker data | LXC: stop the engine (the data root moves)"
       ansible.builtin.systemd_service:
         name: "{{ item }}"
@@ -150,3 +156,9 @@
         name: "{{ item }}"
         state: started
       loop: "{{ docker_data_services_start }}"
+
+    - name: "Docker data | LXC: start every container that was running"
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: started
+      loop: "{{ docker_data_container_names }}"
