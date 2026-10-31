@@ -1,12 +1,23 @@
 ---
 - name: "Docker data | Facts this role reads (a play may skip fact gathering)"
   ansible.builtin.setup:
-    gather_subset: [virtual, mounts]
-  when: ansible_facts.virtualization_type is not defined or ansible_facts.mounts is not defined
+    gather_subset: [virtual]
+  when: ansible_facts.virtualization_type is not defined
 
+# findmnt, not the mounts fact: Ansible drops every mount whose device is not a path
+# (a ZFS dataset such as pool/subvol-540-disk-1), so an LXC volume mount point is
+# invisible to ansible_facts.mounts and the role would migrate a migrated guest again.
 - name: "Docker data | Is the data root already its own mount?"
+  ansible.builtin.command:
+    cmd: "findmnt -n -o SOURCE,FSTYPE,SIZE,AVAIL {{ docker_data_path }}"
+  register: docker_data_findmnt_before
+  check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
+  changed_when: false
+  failed_when: false
+
+- name: "Docker data | Mount state"
   ansible.builtin.set_fact:
-    docker_data_is_mount: "{{ ansible_facts.mounts | selectattr('mount', 'equalto', docker_data_path) | list | length > 0 }}"
+    docker_data_is_mount: "{{ docker_data_findmnt_before.rc == 0 }}"
 
 - name: "Docker data | Containers running before the move (the engine restarts once)"
   community.docker.docker_host_info:
