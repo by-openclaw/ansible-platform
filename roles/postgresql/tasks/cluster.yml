@@ -54,7 +54,7 @@
       - --force
   register: pg_dcs_apply
   changed_when: "'Not changed' not in pg_dcs_apply.stdout"
-  when: inventory_hostname == pg_leader
+  delegate_to: "{{ pg_leader }}"   # on the leader, whichever member that is (a rolling image change moves it away from the member being processed)
 
 - name: "cluster | Members after the configuration step"
   ansible.builtin.command:
@@ -90,7 +90,7 @@
       - --pending
       - --force
   changed_when: true
+  delegate_to: "{{ pg_leader }}"
   when:
     - pg_apply_pending_restart | bool
     - pg_pending_restart | length > 0
-    - inventory_hostname == pg_leader

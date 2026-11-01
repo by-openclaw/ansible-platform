@@ -16,30 +16,31 @@
     pg_pgbackrest_restart_pending: >-
       {{ pg_pgbackrest_members.stdout | from_json | selectattr('Pending restart', 'defined') | list | length > 0 }}
 
-- name: "pgbackrest | Stanza in the repository (leader; a no-op once it exists)"
+# Delegated to the leader, whichever member that is: during a rolling image change the member being
+# processed hands its leadership away first, so "run when I am the leader" never matched (2026-11-01,
+# first apply: stanza, check and the DCS change were all skipped). Idempotent, so every member's
+# run may repeat it.
+- name: "pgbackrest | Stanza in the repository (on the leader; a no-op once it exists)"
   ansible.builtin.command:
     argv: [docker, exec, "{{ pg_container_name }}", pgbackrest, --stanza, "{{ pg_pgbackrest_stanza }}", stanza-create]
   register: pg_pgbackrest_stanza_create
   changed_when: "'already exists' not in pg_pgbackrest_stanza_create.stdout"
-  when: inventory_hostname == pg_pgbackrest_leader
+  delegate_to: "{{ pg_pgbackrest_leader }}"
 
 # `check` forces a WAL switch and waits until that segment is in the repository: archive_command,
 # credentials, bucket and encryption proven in one go. It needs archive_mode on, i.e. the restart
 # that the DCS change asked for; until then it is skipped and reported.
-- name: "pgbackrest | Archiving works end to end (check)"
+- name: "pgbackrest | Archiving works end to end (check, on the leader)"
   ansible.builtin.command:
     argv: [docker, exec, "{{ pg_container_name }}", pgbackrest, --stanza, "{{ pg_pgbackrest_stanza }}", check]
   changed_when: false
-  when:
-    - inventory_hostname == pg_pgbackrest_leader
-    - not pg_pgbackrest_restart_pending | bool
+  delegate_to: "{{ pg_pgbackrest_leader }}"
+  when: not pg_pgbackrest_restart_pending | bool
 
 - name: "pgbackrest | Check deferred: a member waits for its restart"
   ansible.builtin.debug:
     msg: "archive_mode becomes active after the pending restart (-e pg_apply_pending_restart=true); run the check then."
-  when:
-    - inventory_hostname == pg_pgbackrest_leader
-    - pg_pgbackrest_restart_pending | bool
+  when: pg_pgbackrest_restart_pending | bool
 
 # The backups (roles/host_job: systemd units, each step one plain command — infra/0010 §4),
 # installed on every member, run where the LEADER is: the cluster manager's /primary endpoint
