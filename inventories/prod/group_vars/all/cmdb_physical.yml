@@ -1,0 +1,115 @@
+---
+# ==============================================================================
+# Physical estate — the source the CMDB playbook (services/0003 Phase 2) loads into NetBox.
+# Seeded 2026-11-01 from the owner's rack photos + live reads (dmidecode, ethtool).
+# `confirm: true` = read from a photo, not from the device; the owner confirms or corrects.
+# No credentials here, ever: the iLO default labels seen on two chassis are to be rotated.
+# ==============================================================================
+cmdb_sites:
+  - name: basement-rack
+    description: "owner's DevOps rack (single rack today)"
+    racks:
+      - name: rk-01
+        u_height: 42     # confirm
+        confirm: true
+
+cmdb_physical_devices:
+  # --- hypervisors (Ansible-managed; details also measured live) ----------------------------
+  - name: srv-proxmox-poc-01
+    role: hypervisor
+    manufacturer: HP
+    model: ProLiant DL380p Gen8 (25 SFF)
+    serial: CZ224902J8
+    rack: rk-01
+    position: 1          # the lower 25-SFF chassis in the front photo; confirm the U
+    u_height: 2
+    confirm: true
+    power_supplies:
+      - { slot: 1, model: "503296-B21", watts: 460, serial: "5ANLE0CLL3T5ZS" }
+      - { slot: 2, model: "503296-B21", watts: 460, serial: "5ANLE0CLL3T5ZL" }
+    interfaces:
+      - { name: nic0, type: 1000base-t, driver: tg3, link: up }
+      - { name: nic1, type: 1000base-t, driver: tg3, link: up }
+      - { name: nic2, type: 1000base-t, driver: tg3, link: up }
+      - { name: nic3, type: 1000base-t, driver: tg3, link: up }
+      - { name: nic4, type: 10gbase-x-sfpp, driver: myri10ge, link: up, note: "slot 2 card, port 1, fibre" }
+      - { name: nic5, type: 10gbase-x-sfpp, driver: myri10ge, link: down, note: "slot 2 card, port 2, no fibre" }
+      - { name: ilo, type: 1000base-t, mgmt_only: true }
+    drives_note: "25 bays: 1-18 + 20 in use (300 GB SAS 10K/15K), 19 and 21-25 empty, spares 14/15/20 (2026-10-30)"
+
+  - name: br-pmox-03
+    role: hypervisor
+    manufacturer: Tyan
+    model: GT24-B8236-IL (1U, 4 bays)
+    serial: ""           # dmidecode reports nothing; read it from the chassis label
+    rack: rk-01
+    position: 22         # rail number next to the chassis in the front photo
+    u_height: 1
+    confirm: true
+    interfaces:
+      - { name: nic0, type: 1000base-t, driver: e1000e, link: down }
+      - { name: nic1, type: 1000base-t, driver: igb, link: up }
+      - { name: nic2, type: 10gbase-x-sfpp, driver: ixgbe, link: down, module: "FCI TRX10GVP2010 (SR), aqua LC fibre plugged" }
+      - { name: nic3, type: 1000base-t, driver: igb, link: up }
+      - { name: nic4, type: 1000base-t, driver: igb, link: down }
+      - { name: nic5, type: 10gbase-x-sfpp, driver: ixgbe, link: down, module: "FCI TRX10GVP2010 (SR), aqua LC fibre plugged" }
+      - { name: bmc, type: 1000base-t, mgmt_only: true, note: "AMI IPMI 2.0, OOB DHCP" }
+
+  - name: br-pmox-04
+    role: hypervisor
+    status: planned      # parked: stays in standby, component tests pending (SID cable, backplane power)
+    manufacturer: HP
+    model: ProLiant DL380p Gen8
+    serial: CZ224902JR
+    part_number: 665554-B21
+    rack: rk-01
+    position: 7          # 2U chassis with the iLO label at the bottom of the front photo; confirm
+    u_height: 2
+    confirm: true
+    power_supplies_tested: ["750 W DPS-750RB A (HSTNS-PD18, P/N 506822-101)", "460 W HSTNS-PL14 (P/N 499250-201)"]
+    fans: "Delta PFR0612XHE-BB11 (stock)"
+
+  - name: pve01
+    role: hypervisor
+    manufacturer: HP
+    model: ProLiant DL380p Gen8 (8 SFF)
+    serial: ""           # label partly visible in the photo (CZ2249…); read it from the chassis
+    rack: rk-01
+    position: 11         # the 8-SFF chassis, rails 10-12 in the photo; confirm
+    u_height: 2
+    confirm: true
+    note: "front PS1 indicator amber on 2026-11-01 photo: one power supply absent or faulted — confirm"
+
+  # --- network --------------------------------------------------------------------------------
+  - name: sw-01
+    role: switch
+    manufacturer: HP
+    model: V1910-48G (JE009A)
+    rack: rk-01
+    position: 0          # confirm
+    u_height: 1
+    confirm: true
+    note: "48×1000base-t + 4×SFP 1000base-x (no 10 GbE): the 10 GbE plan (infra/0009 Phase 0) needs a 10 GbE switch; SFP port 52 in use"
+
+  # --- power ----------------------------------------------------------------------------------
+  - name: pdu-01
+    role: pdu
+    manufacturer: APC
+    model: "Metered Rack PDU (model number on the label: read it)"
+    rack: rk-01
+    confirm: true
+    note: "load 5 A on the display 2026-11-01; network port cabled (status amber), serial port free"
+
+  # --- broadcast / media gear sharing the rack (not platform-managed, inventoried for space + power)
+  - { name: evs-nfr2000-1, role: media, manufacturer: EVS, model: "Neuron NFR2000 (2× NPU0500-B)", serial: "0071812", rack: rk-01, u_height: 1, confirm: true, note: "rear: BNC rows, 4×SFP+ (one LC fibre), RJ45 cabled" }
+  - { name: evs-nfr2000-2, role: media, manufacturer: EVS, model: "Neuron NFR2000 (2× NPU0500-B)", serial: "0066005", rack: rk-01, u_height: 1, confirm: true }
+  - { name: ateme-dr5000, role: media, manufacturer: Ateme, model: "Kyrion DR5000 (decoder 3, satellite RF1)", rack: rk-01, u_height: 1, confirm: true }
+  - { name: axon-ccp1601, role: media, manufacturer: Axon, model: "CCP-1601 control panel", rack: rk-01, u_height: 1, confirm: true }
+  - { name: pronomic-2u, role: other, manufacturer: Pronomic, model: "2U unit (identify)", rack: rk-01, u_height: 2, confirm: true }
+  - { name: console-01, role: console, manufacturer: Samsung, model: "monitor on a shelf (KVM console)", rack: rk-01, confirm: true }
+
+cmdb_cabling_notes:
+  - "srv-proxmox-poc-01 nic4 (10 GbE, Myricom) is UP at 10 Gb/s: find the far end (not the HP V1910, which has no 10 GbE port)"
+  - "br-pmox-03 nic2/nic5 (10 GbE SR modules) have aqua LC fibres plugged but NO link: far end down or mismatched — this is the 10 GbE path Phase 0 needs"
+  - "srv-proxmox-poc-01 4×1 GbE onboard all cabled (grey, black, red, white) + iLO (red): map each to a switch port"
+  - "the rack also holds a NAS (Synology DS1513+) and the firewall's ISP handoffs — not in the photos yet"
