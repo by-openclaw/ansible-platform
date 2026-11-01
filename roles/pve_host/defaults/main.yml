@@ -80,7 +80,7 @@ pve_host_nfs_backup_job:
   mode: snapshot
   compress: zstd
   enabled: 1
-  mailnotification: always
+  mailnotification: failure           # a mail means a failure; success = the backup signal below + the PBS verify (owner 2026-11-01: no "succeeded" mail flood)
   mailto: "{{ platform_ops_email }}"
   node: "{{ pve_host_node }}"
   notes-template: "Backup of {{ '{{' }}guestname{{ '}}' }} (VMID {{ '{{' }}vmid{{ '}}' }}) on node {{ '{{' }}node{{ '}}' }} - {{ platform_company | upper }} automated backup"
@@ -346,3 +346,10 @@ pve_storage_replace_force: false          # an EXISTING volume that still carrie
 pve_storage_retire_replaced: true         # delete the replaced volume on the controller afterwards
 pve_storage_replace_timeout: 14400        # seconds the copy onto the new member may take
 pve_storage_replace_device_timeout: 60    # seconds until the node shows a volume that was just created
+
+# --- Notifications (PVE notification system) --------------------------------------------------
+# Jobs without a legacy `mailto` (the PBS job, replication, fencing, updates) go through the
+# built-in `default-matcher` → `mail-to-root`. Vendor matcher filter: only these severities reach
+# the mailbox; `info` (a job that succeeded) stays in the task log and in the backup signal.
+pve_host_notification_matcher: default-matcher
+pve_host_notification_severities: [warning, error]

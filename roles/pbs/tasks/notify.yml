@@ -18,3 +18,28 @@
     (pbs_users.stdout | from_json | selectattr('userid', 'equalto', 'root@pam') | first).email | default('')
     != pbs_notify_email
   changed_when: true
+
+# Same rule on PBS (Notifications → Matchers). The built-in matcher is an INVERTED one ("everything
+# but successful prunes": invert-match + match-field type=prune + severity info); it becomes a plain
+# severity filter — warnings and errors reach the mailbox, prune/GC/verify successes stay in the
+# task log. The inversion and the field match are removed, or the severities would flip meaning.
+- name: "notify | The default notification matcher as it is"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, notification, matcher, list, --output-format, json]
+  register: pbs_matchers_now
+  check_mode: false  # read-only probe: must run under --check too (the next task reads it)
+  changed_when: false
+
+- name: "notify | Matcher = severities {{ pbs_notification_severities | join(',') }}, no inversion, no field match"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['proxmox-backup-manager', 'notification', 'matcher', 'update', pbs_notification_matcher]
+         + (pbs_notification_severities | map('regex_replace', '^', '--match-severity=') | list)
+         + (['--delete=invert-match'] if 'invert-match' in _m else [])
+         + (['--delete=match-field'] if 'match-field' in _m else []) }}
+  vars:
+    _m: "{{ pbs_matchers_now.stdout | from_json | selectattr('name', 'equalto', pbs_notification_matcher) | first | default({}) }}"
+  changed_when: true
+  when: >-
+    (_m['match-severity'] | default([]) | sort) != (pbs_notification_severities | sort)
+    or 'invert-match' in _m or 'match-field' in _m
