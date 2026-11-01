@@ -95,6 +95,12 @@
   ansible.builtin.include_tasks: storage_replace.yml
   when: pve_storage_replace_ld | string | length > 0
 
+# Expand: drives just fitted become whole mirrors of the pool — tasks/storage_expand.yml. No scrub
+# afterwards: the new members hold nothing to read yet.
+- name: "Storage | Grow the pool by mirrors of new drives"
+  ansible.builtin.include_tasks: storage_expand.yml
+  when: pve_storage_add_mirrors | length > 0
+
 - name: "Storage | Scrub the pool and wait (every block read and verified)"
   ansible.builtin.command:
     argv: [zpool, scrub, -w, "{{ pve_host_zfs_pool }}"]

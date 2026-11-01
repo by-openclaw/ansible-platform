@@ -346,6 +346,14 @@ pve_storage_replace_force: false          # an EXISTING volume that still carrie
 pve_storage_retire_replaced: true         # delete the replaced volume on the controller afterwards
 pve_storage_replace_timeout: 14400        # seconds the copy onto the new member may take
 pve_storage_replace_device_timeout: 60    # seconds until the node shows a volume that was just created
+# Expand (pve_storage_add_mirrors=[[<port:box:bay>, <port:box:bay>], …]): drives just fitted become
+# whole mirrors of the pool — one single-drive RAID-0 volume per drive on the controller (the pool's
+# shape), a dry run, then one `zpool add` with every mirror; each new member must be ONLINE.
+# Refused before anything changes: a drive that is not healthy and without a volume, a pool that is
+# not ONLINE or not made of mirrors only, a volume that turns out to be in use (imported pool, mount,
+# LVM). An odd drive stays without a volume: the spare for a replace. --check runs every read and
+# every refusal that can run before the volumes exist. Online: no reboot, no controller setup screen.
+pve_storage_add_mirrors: []
 
 # --- Notifications (PVE notification system) --------------------------------------------------
 # Jobs without a legacy `mailto` (the PBS job, replication, fencing, updates) go through the

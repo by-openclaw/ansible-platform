@@ -1,0 +1,297 @@
+---
+# Grow the pool by whole mirrors of drives just fitted: for every pair in pve_storage_add_mirrors,
+# one single-drive RAID-0 volume per drive on the controller (the pool's shape), proof that the
+# node sees fresh volumes nothing uses, a dry run of the add, then ONE `zpool add` with every
+# mirror; each new member must then be ONLINE. Included by storage_health.yml when
+# pve_storage_add_mirrors is set. --check runs every read and every refusal that can run before
+# the volumes exist, and none of the changing commands. An odd drive stays without a volume: the
+# spare storage_replace.yml takes (pve_storage_replace_with_drive).
+- name: "Storage expand | The drives named"
+  ansible.builtin.set_fact:
+    pve_expand_drives: "{{ pve_storage_add_mirrors | flatten | map('string') | list }}"
+
+- name: "Storage expand | The pairs are well formed, and this run does nothing else"
+  ansible.builtin.assert:
+    that:
+      - pve_storage_add_mirrors | length > 0
+      - pve_storage_add_mirrors | map('length') | unique | list == [2]
+      - pve_expand_drives | length == pve_expand_drives | unique | length
+      - not (pve_storage_reenable | bool)
+      - pve_storage_replace_ld | string | length == 0
+    fail_msg: "pve_storage_add_mirrors = pairs of drives [port:box:bay, port:box:bay], each drive once; not together with a repair or a replace"
+    quiet: true
+
+- name: "Storage expand | Layout of the controller"
+  ansible.builtin.command:
+    argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", show, config]
+  register: pve_expand_config
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "Storage expand | The drives without a volume (the controller's line about each)"
+  ansible.builtin.set_fact:
+    pve_expand_unassigned: >-
+      {%- set unassigned = {} -%}
+      {%- set ns = namespace(free=false) -%}
+      {%- for line in pve_expand_config.stdout_lines -%}
+        {%- set t = line.split() -%}
+        {%- if t | length >= 1 and t[0] | lower in ['array', 'unassigned'] -%}
+          {%- set ns.free = (t[0] | lower == 'unassigned') -%}
+        {%- elif t | length >= 2 and t[0] == 'physicaldrive' and ns.free -%}
+          {%- set _ = unassigned.update({t[1]: line | trim}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ unassigned }}
+
+- name: "Storage expand | Health and shape of the pool"
+  ansible.builtin.command:
+    argv: [zpool, status, -P, "{{ pve_host_zfs_pool }}"]
+  register: pve_expand_pool
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "Storage expand | Size of the pool before"
+  ansible.builtin.command:
+    argv: [zpool, list, -H, -o, size, "{{ pve_host_zfs_pool }}"]
+  register: pve_expand_size_before
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "Storage expand | Groups of the pool"
+  ansible.builtin.set_fact:
+    pve_expand_groups: >-
+      {{ pve_expand_pool.stdout_lines | map('trim') | select | map('split') | map('first')
+         | select('match', '^(mirror|raidz|draid|replacing|spare|logs|cache|spares|special|dedup)') | list }}
+    pve_expand_pool_state: "{{ pve_expand_pool.stdout | regex_search('state: *(\\S+)', '\\1') | first | default('') }}"
+
+- name: "Storage expand | Every drive is fitted, healthy and without a volume; the pool is ONLINE and made of mirrors"
+  ansible.builtin.assert:
+    that:
+      - pve_expand_drives | difference(pve_expand_unassigned.keys() | list) | length == 0
+      - pve_expand_drives | map('extract', pve_expand_unassigned) | reject('search', ', OK[)]$') | list | length == 0
+      - pve_expand_pool_state == 'ONLINE'
+      - pve_expand_groups | length > 0
+      - pve_expand_groups | reject('match', '^mirror') | list | length == 0
+    fail_msg: >-
+      refused, nothing changed — drives without a volume: {{ pve_expand_unassigned.values() | list }};
+      pool {{ pve_host_zfs_pool }} {{ pve_expand_pool_state }}, groups {{ pve_expand_groups }}
+    quiet: true
+
+- name: "Storage expand | Plan"
+  ansible.builtin.debug:
+    msg: >-
+      pool {{ pve_host_zfs_pool }} ({{ pve_expand_size_before.stdout | trim }}, {{ pve_expand_groups | length }} mirrors)
+      grows by {{ pve_storage_add_mirrors | length }}: {{ pve_storage_add_mirrors | map('join', ' + ') | list }}
+      — one RAID-0 volume per drive, then one zpool add
+
+- name: "Storage expand | Create the volume of each drive (controller)"
+  ansible.builtin.command:
+    argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", create, type=ld, "drives={{ item }}", raid=0]
+  loop: "{{ pve_expand_drives }}"
+  changed_when: true
+  when: not ansible_check_mode
+
+- name: "Storage expand | The volumes: read, prove, add"
+  when: not ansible_check_mode
+  block:
+    - name: "Storage expand | Layout of the controller, with the new volumes"
+      ansible.builtin.command:
+        argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", show, config]
+      register: pve_expand_config_after
+      changed_when: false
+
+    - name: "Storage expand | The volume of each drive"
+      ansible.builtin.set_fact:
+        pve_expand_ld_of: >-
+          {%- set out = {} -%}
+          {%- set ns = namespace(ld='') -%}
+          {%- for line in pve_expand_config_after.stdout_lines -%}
+            {%- set t = line.split() -%}
+            {%- if t | length >= 2 and t[0] == 'logicaldrive' -%}
+              {%- set ns.ld = t[1] -%}
+            {%- elif t | length >= 1 and t[0] | lower in ['array', 'unassigned'] -%}
+              {%- set ns.ld = '' -%}
+            {%- elif t | length >= 2 and t[0] == 'physicaldrive' and ns.ld and t[1] in pve_expand_drives -%}
+              {%- set _ = out.update({t[1]: ns.ld}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: "Storage expand | Every drive got its volume"
+      ansible.builtin.assert:
+        that: pve_expand_drives | difference(pve_expand_ld_of.keys() | list) | length == 0
+        fail_msg: >-
+          the controller shows no volume for {{ pve_expand_drives | difference(pve_expand_ld_of.keys() | list) }}:
+          {{ pve_expand_config_after.stdout_lines | select('search', 'physicaldrive|logicaldrive') | map('trim') | list }}
+        quiet: true
+
+    - name: "Storage expand | Each new volume (controller)"
+      ansible.builtin.command:
+        argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", ld, "{{ pve_expand_ld_of[item] }}", show, detail]
+      loop: "{{ pve_expand_drives }}"
+      register: pve_expand_details
+      changed_when: false
+
+    - name: "Storage expand | Identifier, status and size of each new volume"
+      ansible.builtin.set_fact:
+        pve_expand_volumes: >-
+          {%- set out = {} -%}
+          {%- for r in pve_expand_details.results -%}
+            {%- set _ = out.update({r.item: {
+                  'ld': pve_expand_ld_of[r.item],
+                  'id': (r.stdout | regex_findall('Unique Identifier: *([0-9A-Fa-f]+)') | first | default('') | lower),
+                  'status': (r.stdout | regex_findall('Status: *([A-Za-z]+)') | first | default('')),
+                  'fault_tolerance': (r.stdout | regex_findall('Fault Tolerance: *([0-9A-Za-z+]+)') | first | default('')),
+                  'size': (r.stdout | regex_findall('Size: *([0-9.]+ [A-Z]+)') | first | default(''))}}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # The controller's identifier of a volume is the WWN the kernel names the disk by — as
+    # wwn-0x<id>, or as scsi-3<id> for a volume that was just created (seen 2026-10-30).
+    - name: "Storage expand | Wait for the node to name each new volume"
+      ansible.builtin.find:
+        paths: "{{ pve_host_disk_by_id_dir }}"
+        file_type: link
+        patterns: ["wwn-0x{{ pve_expand_volumes[item].id }}", "scsi-3{{ pve_expand_volumes[item].id }}"]
+      loop: "{{ pve_expand_drives }}"
+      register: pve_expand_links
+      until: pve_expand_links.matched | int > 0
+      retries: "{{ (pve_storage_replace_device_timeout | int / 5) | int }}"
+      delay: 5
+
+    - name: "Storage expand | The device of each new volume"
+      ansible.builtin.set_fact:
+        pve_expand_devices: >-
+          {%- set out = {} -%}
+          {%- for r in pve_expand_links.results -%}
+            {%- set paths = r.files | map(attribute='path') | list -%}
+            {%- set _ = out.update({r.item: ((paths | select('search', '/wwn-0x') | list) + paths) | first}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: "Storage expand | Where each device link points"
+      ansible.builtin.stat:
+        path: "{{ pve_expand_devices[item] }}"
+      loop: "{{ pve_expand_drives }}"
+      register: pve_expand_stats
+
+    - name: "Storage expand | Members of every imported pool"
+      ansible.builtin.command:
+        argv: [zpool, status, -P]
+      register: pve_expand_pools
+      changed_when: false
+
+    - name: "Storage expand | What each new volume carries (mount points)"
+      ansible.builtin.command:
+        argv: [lsblk, -n, -r, -o, MOUNTPOINT, "{{ pve_expand_devices[item] }}"]
+      loop: "{{ pve_expand_drives }}"
+      register: pve_expand_mounts
+      changed_when: false
+
+    - name: "Storage expand | What each new volume carries (file systems)"
+      ansible.builtin.command:
+        argv: [lsblk, -n, -r, -o, FSTYPE, "{{ pve_expand_devices[item] }}"]
+      loop: "{{ pve_expand_drives }}"
+      register: pve_expand_fs
+      changed_when: false
+
+    - name: "Storage expand | Pool labels on each new volume (zdb -l; none = it fails)"
+      ansible.builtin.command:
+        argv: [zdb, -l, "{{ pve_expand_devices[item] }}"]
+      loop: "{{ pve_expand_drives }}"
+      register: pve_expand_labels
+      changed_when: false
+      failed_when: false
+
+    - name: "Storage expand | Physical volumes of LVM"
+      ansible.builtin.command:
+        argv: [pvs, --noheadings, -o, pv_name]
+      register: pve_expand_pvs
+      changed_when: false
+
+    # Never, forced or not: a member of an imported pool, something mounted, an LVM volume.
+    # A file system or another pool's labels from the drive's earlier life are overwritten: the
+    # volume was created in this run on a drive the operator named and the controller listed as
+    # unused (the rule storage_replace.yml applies to a volume it creates).
+    - name: "Storage expand | Each new volume is a healthy single-drive volume of one size that nothing uses"
+      ansible.builtin.assert:
+        that:
+          - pve_expand_volumes[item].id | length > 0
+          - pve_expand_volumes[item].status == 'OK'
+          - pve_expand_volumes[item].fault_tolerance == '0'
+          - pve_expand_volumes[item].size == pve_expand_volumes[pve_expand_drives | first].size
+          - pve_expand_volumes[item].id not in (pve_expand_pools.stdout | lower)
+          - pve_expand_mounted | length == 0
+          - pve_expand_pv_hits | length == 0
+        fail_msg: >-
+          refused, nothing changed on the pool — drive {{ item }}: volume {{ pve_expand_volumes[item] }},
+          device {{ pve_expand_devices[item] }},
+          member of an imported pool={{ pve_expand_volumes[item].id in (pve_expand_pools.stdout | lower) }},
+          mounted={{ pve_expand_mounted }}, LVM={{ pve_expand_pv_hits }}
+        quiet: true
+      vars:
+        pve_expand_target: "{{ (pve_expand_stats.results | selectattr('item', 'eq', item) | first).stat.lnk_source | default('/nonexistent') }}"
+        pve_expand_pv_hits: "{{ pve_expand_pvs.stdout_lines | map('trim') | select('eq', pve_expand_target) | list }}"
+        pve_expand_mounted: "{{ (pve_expand_mounts.results | selectattr('item', 'eq', item) | first).stdout | trim }}"
+      loop: "{{ pve_expand_drives }}"
+
+    - name: "Storage expand | The add, as ZFS will run it"
+      ansible.builtin.set_fact:
+        pve_expand_overwrite: >-
+          {{ (pve_expand_fs.results | map(attribute='stdout') | map('trim') | select | list | length > 0)
+             or (pve_expand_labels.results | selectattr('rc', 'eq', 0) | list | length > 0) }}
+        pve_expand_add_args: >-
+          {%- set out = [] -%}
+          {%- for pair in pve_storage_add_mirrors -%}
+            {%- set _ = out.append('mirror') -%}
+            {%- for d in pair -%}
+              {%- set _ = out.append(pve_expand_devices[d | string]) -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: "Storage expand | Dry run of the add (ZFS prints the layout it would make)"
+      ansible.builtin.command:
+        argv: "{{ ['zpool', 'add', '-n'] + (['-f'] if pve_expand_overwrite | bool else []) + [pve_host_zfs_pool] + pve_expand_add_args }}"
+      register: pve_expand_dry
+      changed_when: false
+
+    - name: "Storage expand | What ZFS would make"
+      ansible.builtin.debug:
+        msg: "{{ pve_expand_dry.stdout_lines }}"
+
+    - name: "Storage expand | Add the mirrors"
+      ansible.builtin.command:
+        argv: "{{ ['zpool', 'add'] + (['-f'] if pve_expand_overwrite | bool else []) + [pve_host_zfs_pool] + pve_expand_add_args }}"
+      changed_when: true
+
+    - name: "Storage expand | Members of every imported pool, afterwards"
+      ansible.builtin.command:
+        argv: [zpool, status, -P]
+      register: pve_expand_pools_after
+      changed_when: false
+
+    - name: "Storage expand | Size of the pool after"
+      ansible.builtin.command:
+        argv: [zpool, list, -H, -o, size, "{{ pve_host_zfs_pool }}"]
+      register: pve_expand_size_after
+      changed_when: false
+
+    - name: "Storage expand | Every new member is ONLINE"
+      ansible.builtin.assert:
+        that: pve_expand_pools_after.stdout_lines | select('search', pve_expand_volumes[item].id) | map('split') | map(attribute=1) | list == ['ONLINE']
+        fail_msg: "{{ pve_expand_pools_after.stdout_lines | select('search', pve_expand_volumes[item].id ~ '|state:|scan:') | map('trim') | list }}"
+        quiet: true
+      loop: "{{ pve_expand_drives }}"
+
+    - name: "Storage expand | Done"
+      ansible.builtin.set_fact:
+        pve_storage_expanded: true
+
+- name: "Storage expand | Result"
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('pool ' ~ pve_host_zfs_pool ~ ' grown from ' ~ (pve_expand_size_before.stdout | trim) ~ ' to ' ~ (pve_expand_size_after.stdout | trim)
+          ~ ' by ' ~ (pve_storage_add_mirrors | length) ~ ' mirror(s): ' ~ (pve_expand_add_args | join(' ')))
+         if pve_storage_expanded | default(false) | bool
+         else 'DRY RUN — every check that can run before the volumes exist passed; nothing was changed' }}
