@@ -1,0 +1,20 @@
+# Restore drill — {{ drill_guest.name }} — {{ drill_started[:10] }}
+
+**Result:** {{ 'PASS' if drill_up | default(false) | bool else 'FAIL' }}
+**Control:** infra/0008 §Restore testing (decision 10: monthly), ISO 27001:2022 A.8.13, NIS2 Art. 21(2)(c)
+**Run by:** `playbooks/restore-drill.yml` on {{ inventory_hostname }}, {{ drill_started }}
+
+| Item | Value |
+|---|---|
+| Source guest | {{ drill_guest.name }} (VMID {{ drill_vmid }}, {{ 'container' if drill_snapshot.format == 'pbs-ct' else 'VM' }}) |
+| Snapshot | `{{ drill_snapshot.volid }}` ({{ drill_snapshot.size | default(0) | int | human_readable }}, taken {{ '%Y-%m-%dT%H:%M:%SZ' | strftime(drill_snapshot.ctime) }}) |
+| Snapshot verification state | {{ (drill_snapshot.verification | default({})).state | default('not yet verified') }} |
+| Encrypted | {{ 'yes (client-side key of the node)' if drill_snapshot.encrypted | default(false) else 'no' }} |
+| Restored to | VMID {{ drill_target_vmid }} on `{{ drill_target_storage }}`, every network device removed before the first start |
+| Restore time | {{ (drill_t1 | default(drill_t0) | int) - (drill_t0 | int) }} s |
+| Time to a running system | {{ (drill_t2 | default(drill_t1 | default(drill_t0)) | int) - (drill_t1 | default(drill_t0) | int) }} s ({{ 'systemctl is-system-running' if drill_snapshot.format == 'pbs-ct' else 'guest agent ping' }}) |
+| Total | {{ (drill_t2 | default(drill_t1 | default(drill_t0)) | int) - (drill_t0 | int) }} s |
+| Cleanup | drill guest stopped and destroyed with its disks |
+
+Notes: the drill proves the datastore, the node's client key and the archive of this guest; it does not
+test the application inside (no network). A FAIL is an incident (infra/0008): open it, do not retry.
