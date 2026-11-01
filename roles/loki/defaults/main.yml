@@ -19,6 +19,12 @@ loki_grpc_port: 9096
 loki_data_dir: "/var/lib/loki"          # local WAL/cache/compactor scratch ONLY
 loki_retention: "720h"                   # 30d
 loki_max_query_length: "2161h"           # queries may span the whole (90 d) audit retention
+# Ingestion limits per tenant (Loki docs, limits_config). The defaults (4 MB/s, burst 6 MB) dropped
+# lines 18 times on 2026-10-31 22Z while 41 hosts' services restarted in series ("ingestion rate limit
+# exceeded for user fake"): a dropped line is lost. Sized for the measured peak (~450k lines/h steady,
+# bursts of restarts) with headroom; the host carries it (Loki wrote 12 MB locally, chunks go to S3).
+loki_ingestion_rate_mb: 16
+loki_ingestion_burst_size_mb: 32
 
 # SeaweedFS S3 backend (via the Traefik HTTPS route — like PBS; NO explicit port so
 # the SigV4 host header matches what Traefik forwards).
