@@ -230,9 +230,11 @@
           mounted={{ pve_expand_mounted }}, LVM={{ pve_expand_pv_hits }}
         quiet: true
       vars:
-        pve_expand_target: "{{ (pve_expand_stats.results | selectattr('item', 'eq', item) | first).stat.lnk_source | default('/nonexistent') }}"
+        pve_expand_target: >-
+          {{ (pve_expand_stats.results | selectattr('item', 'eq', item) | first).stat.lnk_source | default('/nonexistent') }}
         pve_expand_pv_hits: "{{ pve_expand_pvs.stdout_lines | map('trim') | select('eq', pve_expand_target) | list }}"
-        pve_expand_mounted: "{{ (pve_expand_mounts.results | selectattr('item', 'eq', item) | first).stdout | trim }}"
+        pve_expand_mounted: >-
+          {{ (pve_expand_mounts.results | selectattr('item', 'eq', item) | first).stdout | trim }}
       loop: "{{ pve_expand_drives }}"
 
     - name: "Storage expand | The add, as ZFS will run it"
