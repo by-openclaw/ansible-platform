@@ -1,0 +1,43 @@
+---
+# One snapshot verified on its own (ignore-verified off) and waited for. The verify API answers at
+# once with a task id (UPID); the task then reads every chunk of the snapshot back from the
+# provider — so one snapshot at a time: parallel verify tasks share the provider's 10 MB/s and its
+# request cap, and a chunk read answered 429 marks the snapshot failed again.
+# Caller: playbooks/pbs-reverify.yml — sets pbs_verify_one (an entry of the snapshots listing),
+# pbs_datastore_name and pbs_reverify_wait_retries; the outcomes accumulate in pbs_reverify_results.
+- name: "Verify | Start the verify of {{ pbs_verify_one['backup-type'] ~ '/' ~ pbs_verify_one['backup-id'] ~ '/' ~ pbs_verify_one['backup-time'] }}"
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-debug
+      - api
+      - create
+      - "/admin/datastore/{{ pbs_datastore_name }}/verify"
+      - --backup-type
+      - "{{ pbs_verify_one['backup-type'] }}"
+      - --backup-id
+      - "{{ pbs_verify_one['backup-id'] }}"
+      - --backup-time
+      - "{{ pbs_verify_one['backup-time'] | string }}"
+      - --ignore-verified
+      - "false"
+      - --output-format
+      - json
+  register: pbs_verify_start
+  changed_when: true
+
+- name: "Verify | Wait until the task stops"
+  ansible.builtin.command:
+    argv: [proxmox-backup-debug, api, get, "/nodes/localhost/tasks/{{ pbs_verify_start.stdout | from_json }}/status", --output-format, json]
+  register: pbs_verify_status
+  changed_when: false
+  failed_when: false   # a transient API error is one more poll, not the end of the run
+  until: ((pbs_verify_status.stdout | default('{}', true) | from_json).status | default('')) == 'stopped'
+  retries: "{{ pbs_reverify_wait_retries }}"
+  delay: 30
+
+- name: "Verify | Record the outcome"
+  ansible.builtin.set_fact:
+    pbs_reverify_results: >-
+      {{ pbs_reverify_results | default([])
+         + [{'snapshot': pbs_verify_one['backup-type'] ~ '/' ~ pbs_verify_one['backup-id'] ~ '/' ~ pbs_verify_one['backup-time'],
+             'exitstatus': (pbs_verify_status.stdout | from_json).exitstatus | default('unknown')}] }}
