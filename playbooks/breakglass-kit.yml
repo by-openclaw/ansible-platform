@@ -27,7 +27,7 @@
     # into it here (the kit folder is the one place they sit outside Vault).
     # `needs` = the fields the item's reader takes from the file, at its top level: the agent
     # bootstrap of playbooks/ssh-agent.yml for 02 and 04, a person at the console for 05.
-    kit_from_vault:
+    kit_vault_items:
       - path: "{{ platform_env }}/break-glass/os"
         name: "02-os-password-{{ platform_org }}.json"
         needs: [username, password]
@@ -45,6 +45,16 @@
       - path: "{{ platform_env }}/proxmox/root"
         name: "07-pve-password-root.json"
         needs: [password]
+    # The PBS client key of each hypervisor. Guest backups on the off-site datastore are encrypted
+    # with it, and the Vault snapshot is inside those backups: after the loss of the site, Vault
+    # cannot come back without this copy. Same documents as roles/pbs `pbs_encryption_vault_path`.
+    kit_pbs_keys: >-
+      {%- set out = [] -%}
+      {%- for node in groups['proxmox_nodes'] | default([]) | sort -%}
+        {%- set _ = out.append({'path': platform_env ~ '/pbs/' ~ node ~ '/encryption-key',
+                                'name': '08-pbs-encryption-key-' ~ node ~ '.json',
+                                'needs': ['encryption_key']}) -%}
+      {%- endfor -%}{{ out }}
   tasks:
     - name: "Kit | Vault login (ansible-deploy AppRole; root fallback)"
       ansible.builtin.include_role:
@@ -58,7 +68,7 @@
           X-Vault-Token: "{{ vault_deploy_token }}"
         timeout: "{{ vault_api_timeout }}"
         status_code: [200, 403, 404]
-      loop: "{{ kit_from_vault }}"
+      loop: "{{ kit_vault_items + kit_pbs_keys }}"
       loop_control: { label: "{{ item.name }}" }
       register: kit_vault_reads
       check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
@@ -131,6 +141,14 @@
       - src: "{{ kit_dir }}/07-pve-password-root.json"   # exported from Vault above
         name: "07-pve-password-root.json"
         what: "hypervisor root password (console, WebUI pam realm)"
+    # Exported from Vault above, one per hypervisor.
+    kit_pbs_items: >-
+      {%- set out = [] -%}
+      {%- for node in groups['proxmox_nodes'] | default([]) | sort -%}
+        {%- set _ = out.append({'src': kit_dir ~ '/08-pbs-encryption-key-' ~ node ~ '.json',
+                                'name': '08-pbs-encryption-key-' ~ node ~ '.json',
+                                'what': 'PBS client key of ' ~ node ~ ': opens its off-site guest backups, Vault snapshot included'}) -%}
+      {%- endfor -%}{{ out }}
   tasks:
     - name: "Kit | Ensure the folder (0700)"
       ansible.builtin.file:
@@ -141,7 +159,7 @@
     - name: "Kit | Stat every kit item"
       ansible.builtin.stat:
         path: "{{ item.src }}"
-      loop: "{{ kit_items }}"
+      loop: "{{ kit_items + kit_pbs_items }}"
       loop_control: { label: "{{ item.name }}" }
       register: kit_stat
 
