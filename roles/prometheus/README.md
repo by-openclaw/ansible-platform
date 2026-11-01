@@ -2,7 +2,7 @@
 
 Prometheus (a container: `prom/prometheus:<prometheus_version>`, host network, loopback) on `lxc-monitoring-01` (`:9090`; TSDB `/var/lib/prometheus/metrics2`, run as the prometheus account this role owns — alertmanager and blackbox run as it too), node_exporter fleet-wide (`:9100`). Metrics only — NetBox and others deep-link here; **metrics never live in NetBox**.
 
-- Retention window is the only state; scrape targets = inventory.
+- Retention window is the only state; scrape targets = inventory. A host with `platform_guest_stopped: true` (kept, powered off by the owner's decision) is left out of the node and windows jobs: a scrape of it can only fail.
 
 Run: `ansible-playbook -i inventories/prod/hosts.yml playbooks/monitoring.yml`
 

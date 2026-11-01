@@ -1,7 +1,9 @@
 {# Managed by Ansible (role: prometheus). Do not edit by hand. #}
+{# A guest the owner keeps powered off (platform_guest_stopped in the inventory) is no target: a
+   scrape of it can only fail, and the alert would say "down" about a decision. #}
 {% set node_hosts = [] %}
 {% for grp in prometheus_node_groups %}
-{%   for h in groups[grp] | default([]) %}
+{%   for h in groups[grp] | default([]) if not (hostvars[h].platform_guest_stopped | default(false)) %}
 {%     if h not in node_hosts %}{{ node_hosts.append(h) or "" }}{% endif %}
 {%   endfor %}
 {% endfor %}
@@ -58,7 +60,7 @@ scrape_configs:
 
   - job_name: windows
 {{ keep_only('windows') }}    static_configs:
-{% for h in groups['windows_guests'] | default([]) | sort %}
+{% for h in groups['windows_guests'] | default([]) | sort if not (hostvars[h].platform_guest_stopped | default(false)) %}
       - targets: ['{{ hostvars[h].ansible_host }}:{{ prometheus_windows_exporter_port }}']
         labels:
           instance: "{{ h }}"
