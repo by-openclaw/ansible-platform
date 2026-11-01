@@ -2,16 +2,18 @@
 
 Every stateful service declares **one backup class**, its **mechanism**, and its
 **restore path** here. This is the authoritative matrix; per-role READMEs link
-back to it. 3-2-1 = local (NFS) + PBS (SeaweedFS S3, encrypted) + offsite
+back to it. 3-2-1 = local (NFS) + PBS (Contabo S3, encrypted) + offsite
 (Contabo via SeaweedFS `filer.backup`).
 
 ## The universal layer (every guest)
 
+Times are the hypervisor's local time, Europe/Brussels. Measured 2026-11-01.
+
 | Job | When | Mechanism | Proof |
 |---|---|---|---|
-| **PBS** (2nd copy) | 01:30 nightly | `vzdump` → PBS S3 datastore, **client-side encrypted** (key in Vault `prod/pbs/encryption-key`), verify daily 21:00 UTC (failures mailed to the alert mailbox), prune 3/14/8/6, GC daily | 26/26 nightly ✓ · file restore drill ✓ (`ct/501`) |
-| **NFS** (1st copy) | 05:00 nightly | `vzdump` → Synology NFS | PBS's own DR copy lives here (PBS excluded from its S3 job) |
-| **Offsite** (3rd copy) | continuous | SeaweedFS `filer.backup` → Contabo S3 (`/buckets`) | `seaweedfs-backup.service` active |
+| **PBS** (2nd copy) | 03:30 nightly | `vzdump` → PBS datastore `pbs-s3` on Contabo S3, **client-side encrypted** (key per node in Vault, `prod/pbs/<node>/encryption-key`), verify weekly Sunday 06:00 UTC (failures mailed to the alert mailbox), prune 1/14/8/12, GC daily | `docs/services/pbs.md` |
+| **NFS** (1st copy) | 01:00 nightly | `vzdump` → Synology NFS, not encrypted, every guest | PBS's own DR copy lives here (PBS excluded from its S3 job) |
+| **Offsite** (3rd copy) | continuous | SeaweedFS `filer.backup` → Contabo S3 (`/buckets`), `pbs-datastore` excluded | container `seaweedfs-backup` running |
 
 Guest images capture everything on the rootfs and named docker volumes.
 **Not captured by vzdump**: bind-mounts (`/data` on seaweedfs) — see below.
