@@ -23,3 +23,8 @@ postgresql:
     log_connections: "{{ 'on' if pg_log_connections | bool else 'off' }}"
     log_disconnections: "{{ 'on' if pg_log_disconnections | bool else 'off' }}"
     log_statement: "{{ pg_log_statement }}"
+{% if pg_pgbackrest_enabled | bool %}
+    archive_mode: "on"
+    archive_command: "pgbackrest --stanza={{ pg_pgbackrest_stanza }} archive-push %p"
+    archive_timeout: {{ pg_pgbackrest_archive_timeout }}
+{% endif %}

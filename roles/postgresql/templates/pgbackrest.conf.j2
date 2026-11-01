@@ -1,0 +1,26 @@
+# Managed by Ansible (roles/postgresql). Repository credentials: 0600, postgres only.
+# Repository = an encrypted prefix in a bucket of the off-site provider (infra/0008 decision 2).
+[global]
+repo1-type=s3
+repo1-s3-endpoint={{ pg_pgbackrest_s3_endpoint_host }}
+repo1-s3-bucket={{ pg_pgbackrest_s3_bucket }}
+repo1-s3-region={{ pg_pgbackrest_s3_region }}
+repo1-s3-uri-style={{ 'path' if pg_pgbackrest_s3_path_style | bool else 'host' }}
+repo1-s3-key={{ pg_pgbackrest_s3_creds.access_key }}
+repo1-s3-key-secret={{ pg_pgbackrest_s3_creds.secret_key }}
+repo1-path={{ pg_pgbackrest_repo_path }}
+repo1-cipher-type=aes-256-cbc
+repo1-cipher-pass={{ pg_pgbackrest_cipher_pass }}
+repo1-retention-full={{ pg_pgbackrest_retention_full }}
+repo1-retention-diff={{ pg_pgbackrest_retention_diff }}
+repo1-bundle=y
+process-max={{ pg_pgbackrest_process_max }}
+start-fast=y
+log-level-console=info
+log-level-file=off
+lock-path=/tmp/pgbackrest
+
+[{{ pg_pgbackrest_stanza }}]
+pg1-path=/var/lib/postgresql/data/pgdata
+pg1-port=5432
+pg1-socket-path={{ pg_socket_dir }}

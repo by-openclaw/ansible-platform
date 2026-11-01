@@ -201,6 +201,21 @@ groups:
           summary: "PostgreSQL on {{ '{{' }} $labels.instance {{ '}}' }} does not answer its metrics scrape"
           description: "The exporter cannot reach the cluster: either PostgreSQL is down, or the exporter's own credential stopped working. Every service with a database is affected."
           runbook: "Check the container on the database host, then the exporter's credential in Vault ({{ platform_env }}/postgresql/exporter)."
+      - alert: PostgresArchiverFailing
+        expr: increase(pg_stat_archiver_failed_count[15m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "PostgreSQL on {{ '{{' }} $labels.instance {{ '}}' }} fails to archive WAL"
+          description: "archive_command (pgBackRest archive-push to the off-site repository) failed in the last 15 minutes: the point-in-time window stops growing and pg_wal grows until it works again (infra/0008 decision 2)."
+          runbook: "On the member: `docker exec postgres pgbackrest --stanza=<scope> check`; the PostgreSQL log carries the archiver's error; repository credentials in Vault ({{ platform_env }}/backup/s3-contabo), passphrase ({{ platform_env }}/postgresql/pgbackrest)."
+      - alert: PostgresArchiveStale
+        expr: pg_stat_archiver_last_archive_age > 900 and on (instance) pg_replication_is_replica == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "No WAL archived from the PostgreSQL leader {{ '{{' }} $labels.instance {{ '}}' }} for 15 minutes"
+          description: "archive_timeout closes a segment every 60 s even when idle, so a leader that archived nothing for 15 minutes has a broken archive path: the recovery point falls behind by the minute."
+          runbook: "Same as PostgresArchiverFailing; if pg_stat_archiver shows no attempt at all, archive_mode is off in the DCS (playbooks/postgresql.yml --tags cluster -e pg_apply_pending_restart=true)."
 
   - name: platform-firewall-token
     rules:

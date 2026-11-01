@@ -1,0 +1,90 @@
+---
+# After the member runs with the new image and the DCS carries archive_mode/archive_command:
+# the stanza in the repository, the end-to-end check, the backup timers. Writes happen on the
+# leader; the timers are installed on every member and run only where the leader is.
+- name: "pgbackrest | Members"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ pg_container_name }}", patronictl, -c, "{{ pg_patroni_conf }}", list, -f, json]
+  register: pg_pgbackrest_members
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "pgbackrest | Who leads, and whether a restart is still pending"
+  ansible.builtin.set_fact:
+    pg_pgbackrest_leader: >-
+      {{ pg_pgbackrest_members.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | first | default('') }}
+    pg_pgbackrest_restart_pending: >-
+      {{ pg_pgbackrest_members.stdout | from_json | selectattr('Pending restart', 'defined') | list | length > 0 }}
+
+- name: "pgbackrest | Stanza in the repository (leader; a no-op once it exists)"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ pg_container_name }}", pgbackrest, --stanza, "{{ pg_pgbackrest_stanza }}", stanza-create]
+  register: pg_pgbackrest_stanza_create
+  changed_when: "'already exists' not in pg_pgbackrest_stanza_create.stdout"
+  when: inventory_hostname == pg_pgbackrest_leader
+
+# `check` forces a WAL switch and waits until that segment is in the repository: archive_command,
+# credentials, bucket and encryption proven in one go. It needs archive_mode on, i.e. the restart
+# that the DCS change asked for; until then it is skipped and reported.
+- name: "pgbackrest | Archiving works end to end (check)"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ pg_container_name }}", pgbackrest, --stanza, "{{ pg_pgbackrest_stanza }}", check]
+  changed_when: false
+  when:
+    - inventory_hostname == pg_pgbackrest_leader
+    - not pg_pgbackrest_restart_pending | bool
+
+- name: "pgbackrest | Check deferred: a member waits for its restart"
+  ansible.builtin.debug:
+    msg: "archive_mode becomes active after the pending restart (-e pg_apply_pending_restart=true); run the check then."
+  when:
+    - inventory_hostname == pg_pgbackrest_leader
+    - pg_pgbackrest_restart_pending | bool
+
+# The backups (roles/host_job: systemd units, each step one plain command — infra/0010 §4),
+# installed on every member, run where the LEADER is: the cluster manager's /primary endpoint
+# answers 200 there only. Expiry of old backups runs inside each backup command.
+- name: "pgbackrest | Weekly full backup (roles/host_job)"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: pg-pgbackrest-full
+    host_job_description: "PostgreSQL pgBackRest full backup (leader only)"
+    host_job_on_calendar: "{{ pg_pgbackrest_full_on_calendar }}"
+    host_job_exec_condition:
+      - >-
+        /usr/bin/curl -fsS -o /dev/null --max-time {{ pg_backup_leader_check_timeout }}
+        --cacert {{ pg_ca_bundle }} https://{{ pg_fqdn }}:{{ pg_patroni_port }}/primary
+    host_job_exec:
+      - "/usr/bin/docker exec {{ pg_container_name }} pgbackrest --stanza={{ pg_pgbackrest_stanza }} --type=full backup"
+    host_job_timeout: "6h"
+
+- name: "pgbackrest | Nightly differential backup (roles/host_job)"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: pg-pgbackrest-diff
+    host_job_description: "PostgreSQL pgBackRest differential backup (leader only)"
+    host_job_on_calendar: "{{ pg_pgbackrest_diff_on_calendar }}"
+    host_job_exec_condition:
+      - >-
+        /usr/bin/curl -fsS -o /dev/null --max-time {{ pg_backup_leader_check_timeout }}
+        --cacert {{ pg_ca_bundle }} https://{{ pg_fqdn }}:{{ pg_patroni_port }}/primary
+    host_job_exec:
+      - "/usr/bin/docker exec {{ pg_container_name }} pgbackrest --stanza={{ pg_pgbackrest_stanza }} --type=diff backup"
+    host_job_timeout: "3h"
+
+- name: "pgbackrest | Daily archive + repository check (roles/host_job)"
+  ansible.builtin.include_role:
+    name: host_job
+  vars:
+    host_job_name: pg-pgbackrest-check
+    host_job_description: "PostgreSQL pgBackRest check: archiving and repository reachable (leader only)"
+    host_job_on_calendar: "{{ pg_pgbackrest_check_on_calendar }}"
+    host_job_exec_condition:
+      - >-
+        /usr/bin/curl -fsS -o /dev/null --max-time {{ pg_backup_leader_check_timeout }}
+        --cacert {{ pg_ca_bundle }} https://{{ pg_fqdn }}:{{ pg_patroni_port }}/primary
+    host_job_exec:
+      - "/usr/bin/docker exec {{ pg_container_name }} pgbackrest --stanza={{ pg_pgbackrest_stanza }} check"
+    host_job_timeout: "30m"
