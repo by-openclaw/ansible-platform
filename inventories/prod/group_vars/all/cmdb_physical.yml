@@ -35,7 +35,7 @@ cmdb_physical_devices:
       - { name: nic4, type: 10gbase-x-sfpp, driver: myri10ge, link: up, note: "slot 2 card, port 1, fibre" }
       - { name: nic5, type: 10gbase-x-sfpp, driver: myri10ge, link: down, note: "slot 2 card, port 2, no fibre" }
       - { name: ilo, type: 1000base-t, mgmt_only: true }
-    drives_note: "25 bays: 1-18 + 20 in use (300 GB SAS 10K/15K), 19 and 21-25 empty, spares 14/15/20 (2026-10-30)"
+    drives_note: "25 bays all fitted (300 GB SAS): pool tank = 11 mirrors, 2.99 T (2026-11-01); slot 20 (10K) is the spare; bay 14 not to be reused"
 
   - name: br-pmox-03
     role: hypervisor
@@ -57,7 +57,20 @@ cmdb_physical_devices:
 
   - name: br-pmox-04
     role: hypervisor
-    status: planned      # parked: stays in standby, component tests pending (SID cable, backplane power)
+    status: staged       # adopted 2026-11-01, no guest, not in the inventory yet
+    manufacturer: HP
+    model: ProLiant DL380p Gen8 (8 SFF)
+    serial: ""           # the iLO reports it blank: read it from the chassis label
+    rack: rk-01
+    u_height: 2
+    confirm: true        # rack position unknown
+    note: "2 CPU, 384 GB; iLO 4 2.74 at 10.6.239.117, embedded NAND self-test Degraded; P420i cache capacitor failed, caching off"
+    interfaces_note: "7 NICs nic0-nic6, nic2 up on vmbr0, 10.6.239.119/20 on OOB; types and far ends not read yet"
+    drives_note: "bays 1-2 HP EH0300JDXBA + EH0300FCBVC 300 GB SAS 15K, rpool mirror; bays 3-4 HP MO001600JWFWQ 1.6 TB SAS SSD, vmdata mirror, 90 % endurance left; bays 5-8 free"
+
+  - name: chassis-cz224902jr
+    role: hypervisor
+    status: inventory    # declassed by the owner 2026-11-01: never left standby, parts only
     manufacturer: HP
     model: ProLiant DL380p Gen8
     serial: CZ224902JR
@@ -89,7 +102,23 @@ cmdb_physical_devices:
     position: 0          # confirm
     u_height: 1
     confirm: true
-    note: "48×1000base-t + 4×SFP 1000base-x (no 10 GbE): the 10 GbE plan (infra/0009 Phase 0) needs a 10 GbE switch; SFP port 52 in use"
+    note: "48×1000base-t + 4×SFP 1000base-x, no 10 GbE: access switch; 10 GbE and faster is fabric-1 and fabric-2; SFP port 52 in use"
+
+  - name: fabric-1
+    role: switch
+    manufacturer: Arista
+    model: DCS-7060CX-32S-F
+    rack: rk-01
+    confirm: true        # rack position and serial not read yet
+    note: "EOS 4.34.3.1M, management 10.6.224.21 (eAPI read 2026-10-25); ports, optics and neighbours to be read through eAPI"
+
+  - name: fabric-2
+    role: switch
+    manufacturer: Arista
+    model: DCS-7020TR-48-F
+    rack: rk-01
+    confirm: true        # rack position and serial not read yet
+    note: "EOS 4.33.5M, management 10.6.224.22 (eAPI read 2026-10-25); ports, optics and neighbours to be read through eAPI"
 
   # --- power ----------------------------------------------------------------------------------
   - name: pdu-01
@@ -109,7 +138,7 @@ cmdb_physical_devices:
   - { name: console-01, role: console, manufacturer: Samsung, model: "monitor on a shelf (KVM console)", rack: rk-01, confirm: true }
 
 cmdb_cabling_notes:
-  - "srv-proxmox-poc-01 nic4 (10 GbE, Myricom) is UP at 10 Gb/s: find the far end (not the HP V1910, which has no 10 GbE port)"
+  - "srv-proxmox-poc-01 nic4 (10 GbE, Myricom) to fabric-2 Et51 (owner's rewiring 2026-10-24)"
   - "br-pmox-03 nic2/nic5 (10 GbE SR modules) have aqua LC fibres plugged but NO link: far end down or mismatched — this is the 10 GbE path Phase 0 needs"
   - "srv-proxmox-poc-01 4×1 GbE onboard all cabled (grey, black, red, white) + iLO (red): map each to a switch port"
   - "the rack also holds a NAS (Synology DS1513+) and the firewall's ISP handoffs — not in the photos yet"
