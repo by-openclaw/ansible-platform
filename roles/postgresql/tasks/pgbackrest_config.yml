@@ -1,0 +1,65 @@
+---
+# pgBackRest's side of the member: the repository credentials and configuration, rendered BEFORE
+# the container runs (the file is mounted read-only into it). The binary itself is in the image.
+- name: "pgbackrest | Configuration directory (holds the repository credentials)"
+  ansible.builtin.file:
+    path: "{{ pg_pgbackrest_conf_host_dir }}"
+    state: directory
+    owner: "{{ pg_uid }}"
+    group: "{{ pg_uid }}"
+    mode: "0700"
+
+- name: "pgbackrest | Provider credentials (Vault: access_key + secret_key)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ pg_pgbackrest_s3_vault_path }}"
+
+- name: "pgbackrest | Bind them"
+  ansible.builtin.set_fact:
+    pg_pgbackrest_s3_creds: "{{ vault_secret_result }}"
+  no_log: true
+
+# The passphrase that encrypts the repository (get-or-create). Losing it = losing every backup:
+# it lives in Vault and in the members' 0600 file, nowhere else. It cannot change once the
+# stanza exists (pgBackRest: cipher settings are fixed at stanza creation).
+- name: "pgbackrest | Repository passphrase (get-or-create in Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ pg_pgbackrest_cipher_vault_path }}"
+    vault_secret_init:
+      cipher_pass: "{{ lookup('community.general.random_string', length=48, special=false) }}"
+      cipher_type: aes-256-cbc
+      stanza: "{{ pg_pgbackrest_stanza }}"
+      bucket: "{{ pg_pgbackrest_s3_bucket }}"
+      repo_path: "{{ pg_pgbackrest_repo_path }}"
+
+- name: "pgbackrest | Bind it"
+  ansible.builtin.set_fact:
+    pg_pgbackrest_cipher_pass: "{{ vault_secret_result.cipher_pass }}"
+  no_log: true
+
+# The bucket is created from the controller (boto3 there; the member carries no AWS SDK):
+# credentials go as module arguments, never into an environment or onto a command line.
+- name: "pgbackrest | The bucket exists on the provider ({{ pg_pgbackrest_s3_bucket }})"
+  amazon.aws.s3_bucket:
+    name: "{{ pg_pgbackrest_s3_bucket }}"
+    endpoint_url: "https://{{ pg_pgbackrest_s3_endpoint_host }}"
+    region: "{{ pg_pgbackrest_s3_region | default(omit, true) }}"
+    access_key: "{{ pg_pgbackrest_s3_creds.access_key }}"
+    secret_key: "{{ pg_pgbackrest_s3_creds.secret_key }}"
+    ceph: true     # path-style addressing, no AWS-only bucket features
+    state: present
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: "pgbackrest | pgbackrest.conf (repository, retention, stanza)"
+  ansible.builtin.template:
+    src: pgbackrest.conf.j2
+    dest: "{{ pg_pgbackrest_conf }}"
+    owner: "{{ pg_uid }}"
+    group: "{{ pg_uid }}"
+    mode: "0600"
+  no_log: true

@@ -41,6 +41,16 @@ Run: `ansible-playbook playbooks/postgresql.yml` (members one at a time, the fir
   login.
 - **Backup**: `pg-backup.timer` on every member, dumping only where the leader runs
   (`pg_dumpall | gzip`, kept `pg_backup_keep_days`).
+- **Continuous archiving + point-in-time recovery** (pgBackRest, infra/0008 decision 2): every
+  WAL segment goes to an encrypted repository on the off-site S3 provider as PostgreSQL closes it
+  (`archive_timeout` 60 s = the loss window); `pg-pgbackrest-full.timer` (weekly) and
+  `pg-pgbackrest-diff.timer` (nightly) back up where the leader runs; `pg-pgbackrest-check.timer`
+  proves archive and repository daily. Retention: 4 fulls, 14 differentials = a 14-day window.
+  Restore to a second: `pgbackrest --stanza=<scope> --delta --type=time --target="<ts with offset>" --target-action=promote restore`
+  on a stopped member (see the drill play). Credentials: provider key from Vault
+  (`platform_external_s3.<provider>.vault_path`), repository passphrase get-or-create at
+  `<env>/postgresql/pgbackrest` — the passphrase is the key to every backup: it never leaves Vault
+  and the 0600 config file on the members.
 - **Verification** (`tasks/verify.yml`, end of the play): every member present, one leader,
   every other member streaming on the leader's timeline.
 

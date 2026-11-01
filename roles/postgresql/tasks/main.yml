@@ -30,6 +30,11 @@
       ansible.builtin.import_tasks: config.yml
       tags: [postgresql, config]
 
+    - name: "PostgreSQL | pgBackRest: repository credentials, bucket, configuration"
+      ansible.builtin.import_tasks: pgbackrest_config.yml
+      when: pg_pgbackrest_enabled | bool
+      tags: [postgresql, config, pgbackrest]
+
     - name: "PostgreSQL | Platform image (server + Patroni)"
       ansible.builtin.import_tasks: image.yml
       tags: [postgresql, image]
@@ -49,6 +54,11 @@
 
     # App databases + roles are created by each app's own playbook (the reusable
     # `postgres_db` role) — not here (separation of concerns).
+
+    - name: "PostgreSQL | pgBackRest: stanza, archiving check, backup jobs"
+      ansible.builtin.import_tasks: pgbackrest.yml
+      when: pg_pgbackrest_enabled | bool
+      tags: [postgresql, backup, pgbackrest]
 
     - name: Install logical backup automation
       ansible.builtin.import_tasks: backup.yml

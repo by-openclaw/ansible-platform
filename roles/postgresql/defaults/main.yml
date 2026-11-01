@@ -97,7 +97,7 @@ pg_superuser_vault_path: "{{ platform_env }}/postgresql/superuser"   # Vault KV 
 # repository (PGDG): same base, same glibc collations, same binaries — the data directory of
 # the former standalone server is adopted as it is. Built on each member (the Verdaccio pattern).
 pg_patroni_version: "4.1.5-2.pgdg13+1"    # exact apt pin; bump deliberately, then pg_platform_rev
-pg_platform_rev: 1
+pg_platform_rev: 2                # 2 = pgBackRest in the image (2026-11-01)
 pg_platform_image: "platform/postgres-patroni"
 pg_platform_tag: "{{ pg_image.split(':')[1] }}-p{{ pg_platform_rev }}"
 pg_build_dir: "/opt/postgres-build"
@@ -157,3 +157,30 @@ pg_backup_keep_days: 7
 pg_backup_on_calendar: "*-*-* 02:00:00"
 pg_backup_partial: "all.sql.partial"          # the dump while it is being written, before it is compressed and dated
 pg_backup_leader_check_timeout: 10            # seconds the cluster manager may take to say whether this member leads
+
+# --- Continuous archiving + point-in-time recovery (pgBackRest; infra/0008 decision 2) ---------
+# Every WAL segment is shipped to an encrypted off-site repository as soon as PostgreSQL closes it
+# (archive_timeout forces a switch after this much idle time: the loss window), a differential
+# backup runs nightly and a full one weekly, taken on the member that leads. Restore to any second
+# of the retention window: `pgbackrest --stanza=<stanza> --type=time --target=<ts> restore`.
+pg_pgbackrest_enabled: true
+pg_pgbackrest_version: "2.60.0-1.pgdg13+1"   # exact apt pin from the image's PGDG repository; bump deliberately, then pg_platform_rev
+pg_pgbackrest_stanza: "{{ pg_cluster_scope }}"
+pg_pgbackrest_conf_host_dir: "/etc/postgres/pgbackrest"   # holds the repository credentials: 0700, pg_uid
+pg_pgbackrest_conf: "{{ pg_pgbackrest_conf_host_dir }}/pgbackrest.conf"
+pg_pgbackrest_container_conf_dir: "/etc/pgbackrest"       # where the binary looks for pgbackrest.conf
+pg_pgbackrest_provider: contabo                            # a key of platform_external_s3 (the PBS datastore's provider)
+pg_pgbackrest_s3_endpoint_host: "{{ platform_external_s3[pg_pgbackrest_provider].host }}"
+pg_pgbackrest_s3_region: "{{ platform_external_s3[pg_pgbackrest_provider].region | default('') }}"
+pg_pgbackrest_s3_path_style: "{{ platform_external_s3[pg_pgbackrest_provider].path_style | default(true) }}"
+pg_pgbackrest_s3_vault_path: "{{ platform_external_s3[pg_pgbackrest_provider].vault_path }}"   # access_key + secret_key
+pg_pgbackrest_s3_bucket: "pgbackrest"                      # on the provider; created by the role from the controller
+pg_pgbackrest_repo_path: "/{{ pg_cluster_scope }}"         # prefix inside the bucket
+pg_pgbackrest_cipher_vault_path: "{{ platform_env }}/postgresql/pgbackrest"   # repository passphrase (get-or-create)
+pg_pgbackrest_retention_full: 4         # weekly fulls kept: four weeks of backups
+pg_pgbackrest_retention_diff: 14        # nightly differentials kept: the 14-day point-in-time window
+pg_pgbackrest_process_max: 2
+pg_pgbackrest_archive_timeout: "60s"    # PostgreSQL closes an idle WAL segment after this: the loss window
+pg_pgbackrest_full_on_calendar: "Sun *-*-* 00:30:00"
+pg_pgbackrest_diff_on_calendar: "Mon..Sat *-*-* 00:30:00"
+pg_pgbackrest_check_on_calendar: "*-*-* 06:00:00"         # archive + repository reachable, end to end
