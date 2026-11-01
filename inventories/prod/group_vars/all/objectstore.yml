@@ -10,5 +10,6 @@ platform_external_s3:
     path_style: true                                     # Contabo requires path-style addressing
     vault_path: "{{ platform_env }}/backup/s3-contabo"   # access_key + secret_key
     pbs_quirks: [skip-if-none-match-header]               # PBS S3 backend: Ceph-RGW-based providers reject the conditional PUT header
-    pbs_limit_active_requests: 25                                # PUTs per second: the provider answered 429 under the first night's load
+    pbs_limit_active_requests: 25                                # PUT/POST/DELETE per second: the provider answered 429 under the first night's load
+    pbs_limit_passive_requests: 100                              # GET/HEAD per second (verify, restore): Contabo documents 250 requests/s and 10 MB/s for the account — 25 + 100 leaves the rest to pgBackRest and the bucket mirrors
 platform_nextcloud_bucket: nextcloud-data                 # Nextcloud's primary-storage bucket at contabo

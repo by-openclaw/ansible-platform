@@ -26,7 +26,11 @@ pbs_s3_endpoint_host: "{{ platform_external_s3[pbs_s3_provider].host }}"
 pbs_s3_region: "{{ platform_external_s3[pbs_s3_provider].region | default('') }}"
 pbs_s3_path_style: "{{ platform_external_s3[pbs_s3_provider].path_style | default(true) }}"
 pbs_s3_provider_quirks: "{{ platform_external_s3[pbs_s3_provider].pbs_quirks | default([]) }}"   # PBS --provider-quirks
-pbs_s3_limit_active_requests: "{{ platform_external_s3[pbs_s3_provider].pbs_limit_active_requests | default(0) }}"   # PUTs per second, 0 = none (429 from the provider on 2026-10-21)
+# The provider's request cap, split by method (0 = not declared): PUT/POST/DELETE per second (429 on
+# 2026-10-21 under the first night's uploads) and GET/HEAD per second — a verify's and a restore's
+# chunk reads count against the same cap (429 during the 2026-11-01 verify while backups uploaded).
+pbs_s3_limit_active_requests: "{{ platform_external_s3[pbs_s3_provider].pbs_limit_active_requests | default(0) }}"
+pbs_s3_limit_passive_requests: "{{ platform_external_s3[pbs_s3_provider].pbs_limit_passive_requests | default(0) }}"
 pbs_s3_bucket: "pbs-datastore"                                             # on the provider; created by the role
 pbs_s3_vault_path: "{{ platform_external_s3[pbs_s3_provider].vault_path }}"   # access_key + secret_key
 
@@ -58,11 +62,16 @@ pbs_datastore_cache_path: "/var/lib/proxmox-backup/s3-cache/{{ pbs_datastore_nam
 # see pbs_backup_schedule below.
 pbs_gc_schedule: "daily"                    # 00:00 UTC
 pbs_prune_schedule: "daily"                 # 00:00 UTC
-# Daily, so a broken backup is proven within a day (it was weekly: 7 days blind).
-# 21:00 UTC = 23:00 CEST: a full run takes 72-97 min (measured 09-21/09-28), so it
-# ends before GC/prune (00:00 UTC) and the 03:30 CEST backup job, and never
-# overlaps the 05:00 CEST NFS job that keeps the node's disks busy until ~08:15.
-pbs_verify_schedule: "sat 22:00"            # weekly: a verify of an off-site datastore reads every chunk back over the line (2026-10-21: 24 h at 27 %, saturating it)
+# Weekly, and OUTSIDE the backup window. A verify of the off-site datastore reads every chunk the
+# new snapshots reference back from the provider — nearly the whole deduplicated set (~490 GB) at
+# the provider's documented 10 MB/s: ~15 h (measured 2026-10-31 22:00Z → 11-01 13:19Z). Started on
+# Saturday 22:00Z it ran through Sunday's backups (01:30–05:05Z); the uploads and the verify's reads
+# together exceeded the provider's 250 requests/s, and every chunk read answered 429 marked a
+# healthy snapshot `failed` (the S3 verify does not retry a 429 — upstream #7606 pending). Sunday
+# 06:00Z: after the backups, done ~21:00Z, before GC/prune (00:00Z) and Monday's backups. A daily
+# job (the vendor's advice for local disks) would re-read the same set every day — 15 h of the
+# provider's line per day — so not for an S3 datastore.
+pbs_verify_schedule: "sun 06:00"
 
 # --- The platform automation's identity on PBS (identity/0003; security/0001 #77 shape) --------
 # What the automation presents to PBS for maintenance the manager cannot do (change the owner of

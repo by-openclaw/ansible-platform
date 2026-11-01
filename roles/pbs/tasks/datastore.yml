@@ -44,7 +44,8 @@
           '--endpoint', pbs_s3_endpoint_host, '--path-style', (pbs_s3_path_style | string | lower)]
          + (['--region', pbs_s3_region] if (pbs_s3_region | length > 0) else [])
          + (['--provider-quirks', pbs_s3_provider_quirks | join(';')] if (pbs_s3_provider_quirks | length > 0) else [])
-         + (['--limit-active-requests', pbs_s3_limit_active_requests | string] if (pbs_s3_limit_active_requests | int > 0) else []) }}
+         + (['--limit-active-requests', pbs_s3_limit_active_requests | string] if (pbs_s3_limit_active_requests | int > 0) else [])
+         + (['--limit-passive-requests', pbs_s3_limit_passive_requests | string] if (pbs_s3_limit_passive_requests | int > 0) else []) }}
   no_log: true
   changed_when: true
   when: pbs_s3_endpoint_id not in (pbs_s3_ep_list.stdout | from_json | map(attribute='id') | list)
@@ -63,20 +64,29 @@
     - (_live['provider-quirks'] | default([]) | sort) != (pbs_s3_provider_quirks | sort)
   changed_when: true
 
-# The request rate the provider tolerates: `--limit-active-requests` (PUT/POST/DELETE per second,
-# persisted in s3.cfg — the earlier `--put-rate-limit` of PBS 4.2.8 never was). 2026-10-30 02:40Z
-# the nightly job hit "429 Too Many Requests" at Contabo 145 times and two guests' backups failed.
-- name: "Datastore | The endpoint's request rate limit follows the declaration"
+# The request rates the provider tolerates (Contabo documents 250 requests/s and 10 MB/s for the
+# account): `--limit-active-requests` = PUT/POST/DELETE per second (the earlier `--put-rate-limit`
+# of PBS 4.2.8 was never persisted), `--limit-passive-requests` = GET/HEAD per second — both in
+# s3.cfg, 0 = not declared. 2026-10-30 02:40Z the nightly job hit "429 Too Many Requests" 145 times
+# and two guests' backups failed; 2026-11-01 04:43–05:01Z the weekly verify's chunk reads got 429
+# while the backups uploaded, and five healthy snapshots were marked failed.
+- name: "Datastore | The endpoint's request rate limits follow the declaration"
   ansible.builtin.command:
     argv: >-
-      {{ ['proxmox-backup-manager', 's3', 'endpoint', 'update', pbs_s3_endpoint_id,
-          '--limit-active-requests', pbs_s3_limit_active_requests | string] }}
+      {{ ['proxmox-backup-manager', 's3', 'endpoint', 'update', pbs_s3_endpoint_id]
+         + (['--limit-active-requests', pbs_s3_limit_active_requests | string] if (pbs_s3_limit_active_requests | int > 0) else [])
+         + (['--limit-passive-requests', pbs_s3_limit_passive_requests | string] if (pbs_s3_limit_passive_requests | int > 0) else []) }}
   vars:
     _live: "{{ pbs_s3_ep_list.stdout | from_json | selectattr('id', 'equalto', pbs_s3_endpoint_id) | first | default({}) }}"
+    _active_drift: >-
+      {{ pbs_s3_limit_active_requests | int > 0
+         and (_live['limit-active-requests'] | default(0) | int) != (pbs_s3_limit_active_requests | int) }}
+    _passive_drift: >-
+      {{ pbs_s3_limit_passive_requests | int > 0
+         and (_live['limit-passive-requests'] | default(0) | int) != (pbs_s3_limit_passive_requests | int) }}
   when:
     - pbs_s3_endpoint_id in (pbs_s3_ep_list.stdout | from_json | map(attribute='id') | list)
-    - pbs_s3_limit_active_requests | int > 0
-    - (_live['limit-active-requests'] | default(0) | int) != (pbs_s3_limit_active_requests | int)
+    - _active_drift | bool or _passive_drift | bool
   changed_when: true
 
 - name: "Datastore | Verify S3 connectivity (s3 check)"
