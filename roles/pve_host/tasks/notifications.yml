@@ -1,0 +1,20 @@
+---
+# The built-in matcher routes every notification of the node to root@pam's mailbox. Restricted
+# to failures and warnings (PVE Admin Guide, Notifications → Matchers → match-severity): a mail
+# is something to act on; a job that succeeded is read in the task log and in the backup signal.
+- name: "PVE host | The default notification matcher as it is"
+  ansible.builtin.command:
+    argv: [pvesh, get, "/cluster/notifications/matchers/{{ pve_host_notification_matcher }}", --output-format, json]
+  register: pve_host_matcher_now
+  changed_when: false
+  check_mode: false   # read-only probe
+
+- name: "PVE host | Matcher severities = {{ pve_host_notification_severities | join(',') }}"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['pvesh', 'set', '/cluster/notifications/matchers/' ~ pve_host_notification_matcher]
+         + (pve_host_notification_severities | map('regex_replace', '^', '--match-severity=') | list) }}
+  changed_when: true
+  when: >-
+    ((pve_host_matcher_now.stdout | from_json)['match-severity'] | default([]) | sort)
+    != (pve_host_notification_severities | sort)
