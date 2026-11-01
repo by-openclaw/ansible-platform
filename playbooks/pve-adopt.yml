@@ -10,7 +10,8 @@
 # (hardening, user-mgmt, pve_host). Re-runnable: with the password already refused, the
 # key-holding plays still converge.
 #
-#   ansible-playbook playbooks/pve-adopt.yml [-e pve_adopt_vault_path=prod/pve.dev/root]
+#   ansible-playbook playbooks/pve-adopt.yml -e pve_adopt_hostname=br-pmox-NN \
+#     -e pve_adopt_vault_path=prod/pve.br-pmox-NN/root
 # ==============================================================================
 - name: "Adopt | The first-contact login the owner stored (Vault)"
   hosts: localhost
@@ -64,8 +65,7 @@
     pve_adopt_keys_dir: "{{ playbook_dir }}/../roles/user-mgmt/files/keys"
     pve_adopt_key_files:
       - id_ed25519_svc-ansible-prod.pub
-      - id_ed25519_svc-rune-prod.pub
-      - id_ed25519_rune_automation.pub   # Terraform (bpg) snippet uploads ride root SSH
+      - id_ed25519_svc-rune-prod.pub     # Terraform (bpg) snippet uploads ride root SSH
   tasks:
     - name: "Adopt | Can the stored password still sign in?"
       ansible.builtin.wait_for_connection:
@@ -95,8 +95,9 @@
   become: false
   vars:
     # naming/0001 §4.1: physical nodes are br-pmox-NN; 01 and 02 are reserved for the two
-    # existing nodes' renames. Empty = keep the factory name.
-    pve_adopt_hostname: "br-pmox-03"
+    # existing nodes' renames. Given per run: a node's name is never a default, a second node
+    # adopted with one would take the first one's name. Empty = keep the factory name.
+    pve_adopt_hostname: ""
   tasks:
     - name: "Adopt | A key-only sign-in works (nothing is changed before this holds)"
       ansible.builtin.ping:
@@ -171,7 +172,7 @@
       ansible.builtin.command:
         argv: "{{ item }}"
       loop:
-        - [zpool, list, -H, -o, name,size,health,ashift]
+        - [zpool, list, -H, -o, "name,size,health,ashift"]
         - [zpool, status, -L]
         - [lscpu]
         - [pvesm, status]
