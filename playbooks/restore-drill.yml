@@ -5,7 +5,9 @@
 # spare VMID, started with NO network device (every netN is removed before the first start),
 # waited for until its system is up, timed, destroyed; a report is written for the ADR repo.
 # A failed drill is an incident: the play fails and leaves nothing behind (the `always` block
-# removes the restored guest).
+# removes the restored guest). Restore, start, stop and destroy go through the node's API
+# (pvesh → pvedaemon): a root session on the hardened node has umask 027, under which `pct restore`
+# creates the guest directory 0750 and the unprivileged extractor cannot write into it (2026-11-01).
 #   First drill / a chosen guest:  ansible-playbook playbooks/restore-drill.yml -e drill_source_vmid=540
 #   Monthly (random guest):        ansible-playbook playbooks/restore-drill.yml
 #   Another node:                  -e drill_node=<inventory name of that node>
@@ -22,6 +24,7 @@
     drill_exclude_vmids: []                            # guests never drilled (none: every backup must restore)
     drill_boot_timeout: 300                            # seconds for the restored guest to report its system up
     drill_report_dir: "{{ lookup('env', 'HOME') }}/repos/doc-platform-core/docs/runbooks/restore-drills"
+    drill_api_kind: "{{ 'lxc' if drill_snapshot.format == 'pbs-ct' else 'qemu' }}"   # the API path of the guest type
   tasks:
     - name: "Drill | Backups on the datastore"
       ansible.builtin.command:
@@ -70,56 +73,70 @@
           (verification {{ (drill_snapshot.verification | default({})).state | default('none') }})
           → VMID {{ drill_target_vmid }} on {{ drill_target_storage }}, no network, then destroyed
 
-    - name: "Drill | Restore, start, verify, destroy"
+    - name: "Drill | Restore, start, verify, destroy (not under --check: the plan above is the dry run)"
+      when: not ansible_check_mode
       block:
         - name: "Drill | Start of the restore"
           ansible.builtin.set_fact:
             drill_t0: "{{ now(utc=true).strftime('%s') }}"
             drill_started: "{{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }}"
 
-        - name: "Drill | Restore the container (pct restore, new MAC addresses)"
+        - name: "Drill | Restore the container (API: create with restore, new MAC addresses)"
           ansible.builtin.command:
-            argv: [pct, restore, "{{ drill_target_vmid }}", "{{ drill_snapshot.volid }}", --storage, "{{ drill_target_storage }}", --unique, "1"]
+            argv: [pvesh, create, "/nodes/{{ inventory_hostname }}/lxc", --vmid, "{{ drill_target_vmid }}", --ostemplate, "{{ drill_snapshot.volid }}", --storage, "{{ drill_target_storage }}", --restore, "1", --unique, "1"]
+          register: drill_restore_ct
           when: drill_snapshot.format == 'pbs-ct'
           changed_when: true
 
-        - name: "Drill | Restore the VM (qmrestore, new MAC addresses and UUID)"
+        - name: "Drill | Restore the VM (API: create from archive, new MAC addresses and UUID)"
           ansible.builtin.command:
-            argv: [qmrestore, "{{ drill_snapshot.volid }}", "{{ drill_target_vmid }}", --storage, "{{ drill_target_storage }}", --unique, "1"]
+            argv: [pvesh, create, "/nodes/{{ inventory_hostname }}/qemu", --vmid, "{{ drill_target_vmid }}", --archive, "{{ drill_snapshot.volid }}", --storage, "{{ drill_target_storage }}", --unique, "1"]
+          register: drill_restore_vm
           when: drill_snapshot.format == 'pbs-vm'
           changed_when: true
+
+        - name: "Drill | Wait for the restore task"
+          ansible.builtin.include_tasks: tasks/pve-task-wait.yml
+          vars:
+            pve_task_upid: "{{ drill_restore_ct.stdout if drill_snapshot.format == 'pbs-ct' else drill_restore_vm.stdout }}"
+            pve_task_what: "restore of {{ drill_guest.name }} to VMID {{ drill_target_vmid }}"
+            pve_task_timeout: 3600
 
         - name: "Drill | Restore done"
           ansible.builtin.set_fact:
             drill_t1: "{{ now(utc=true).strftime('%s') }}"
 
-        - name: "Drill | Network devices of the restored guest"
+        - name: "Drill | Configuration of the restored guest"
           ansible.builtin.command:
-            argv: ["{{ 'pct' if drill_snapshot.format == 'pbs-ct' else 'qm' }}", config, "{{ drill_target_vmid }}"]
+            argv: [pvesh, get, "/nodes/{{ inventory_hostname }}/{{ drill_api_kind }}/{{ drill_target_vmid }}/config", --output-format, json]
           register: drill_cfg
           check_mode: false   # read-only probe
           changed_when: false
           failed_when: false  # under --check nothing was restored: no config, no network devices
 
-        - name: "Drill | Their names (netN), none under --check where nothing was restored"
+        - name: "Drill | Its network devices (netN), none under --check where nothing was restored"
           ansible.builtin.set_fact:
-            drill_nets: "{{ drill_cfg.stdout_lines | default([]) | select('match', '^net[0-9]+:') | map('regex_replace', ':.*$', '') | list }}"
+            drill_nets: "{{ (drill_cfg.stdout | default('{}', true) | from_json).keys() | select('match', '^net[0-9]+$') | list }}"
 
-        - name: "Drill | Remove every network device before the first start (isolated boot)"
+        - name: "Drill | Remove every network device before the first start (isolated boot); not at boot, not protected"
           ansible.builtin.command:
-            argv: ["{{ 'pct' if drill_snapshot.format == 'pbs-ct' else 'qm' }}", set, "{{ drill_target_vmid }}", --delete, "{{ item }}"]
-          loop: "{{ drill_nets }}"
+            argv: >-
+              {{ ['pvesh', 'set', '/nodes/' ~ inventory_hostname ~ '/' ~ drill_api_kind ~ '/' ~ drill_target_vmid ~ '/config', '--onboot', '0', '--protection', '0']
+                 + (drill_nets | map('regex_replace', '^', '--delete=') | list) }}
           changed_when: true
 
-        - name: "Drill | Not started at boot, no HA, no backup (a drill guest is temporary)"
+        - name: "Drill | Start (API)"
           ansible.builtin.command:
-            argv: ["{{ 'pct' if drill_snapshot.format == 'pbs-ct' else 'qm' }}", set, "{{ drill_target_vmid }}", --onboot, "0", --protection, "0"]
+            argv: [pvesh, create, "/nodes/{{ inventory_hostname }}/{{ drill_api_kind }}/{{ drill_target_vmid }}/status/start"]
+          register: drill_start
           changed_when: true
 
-        - name: "Drill | Start"
-          ansible.builtin.command:
-            argv: ["{{ 'pct' if drill_snapshot.format == 'pbs-ct' else 'qm' }}", start, "{{ drill_target_vmid }}"]
-          changed_when: true
+        - name: "Drill | Wait for the start task"
+          ansible.builtin.include_tasks: tasks/pve-task-wait.yml
+          vars:
+            pve_task_upid: "{{ drill_start.stdout }}"
+            pve_task_what: "start of VMID {{ drill_target_vmid }}"
+            pve_task_timeout: 300
 
         - name: "Drill | The container's system is up (running or degraded: no network is expected)"
           ansible.builtin.command:
@@ -163,18 +180,42 @@
           check_mode: false   # read-only probe
           changed_when: false
 
-        - name: "Drill | Stop the drill guest"
+        - name: "Drill | Stop the drill guest (API; a guest that never started answers with an error, tolerated)"
           ansible.builtin.command:
-            argv: ["{{ 'pct' if drill_snapshot.format == 'pbs-ct' else 'qm' }}", stop, "{{ drill_target_vmid }}"]
+            argv: [pvesh, create, "/nodes/{{ inventory_hostname }}/{{ drill_api_kind }}/{{ drill_target_vmid }}/status/stop"]
+          register: drill_stop
           when: drill_target_vmid | string in (drill_resources_after.stdout | from_json | map(attribute='vmid') | map('string') | list)
           failed_when: false
           changed_when: true
 
-        - name: "Drill | Destroy the drill guest and its disks"
+        - name: "Drill | Wait for the stop task"
+          ansible.builtin.include_tasks: tasks/pve-task-wait.yml
+          vars:
+            pve_task_upid: "{{ drill_stop.stdout }}"
+            pve_task_what: "stop of VMID {{ drill_target_vmid }}"
+            pve_task_timeout: 300
+          when: drill_stop is not skipped and drill_stop.rc == 0 and (drill_stop.stdout | default('')) is search('^UPID:')
+
+        - name: "Drill | Destroy the drill guest and its disks (API)"
           ansible.builtin.command:
-            argv: ["{{ 'pct' if drill_snapshot.format == 'pbs-ct' else 'qm' }}", destroy, "{{ drill_target_vmid }}", --purge, "1", --destroy-unreferenced-disks, "1"]
+            argv: [pvesh, delete, "/nodes/{{ inventory_hostname }}/{{ drill_api_kind }}/{{ drill_target_vmid }}", --purge, "1", --destroy-unreferenced-disks, "1"]
+          register: drill_destroy
           when: drill_target_vmid | string in (drill_resources_after.stdout | from_json | map(attribute='vmid') | map('string') | list)
           changed_when: true
+
+        - name: "Drill | Wait for the destroy task"
+          ansible.builtin.include_tasks: tasks/pve-task-wait.yml
+          vars:
+            pve_task_upid: "{{ drill_destroy.stdout }}"
+            pve_task_what: "destroy of VMID {{ drill_target_vmid }}"
+            pve_task_timeout: 600
+          when: drill_destroy is not skipped
+
+        - name: "Drill | No directory of the drill guest left behind (a failed restore leaves an empty one)"
+          ansible.builtin.file:
+            path: "/var/lib/lxc/{{ drill_target_vmid }}"
+            state: absent
+          when: drill_snapshot.format == 'pbs-ct'
 
         - name: "Drill | Report directory (ADR repository clone on the controller)"
           ansible.builtin.file:
