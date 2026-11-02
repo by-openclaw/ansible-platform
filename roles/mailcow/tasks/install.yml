@@ -171,14 +171,14 @@
     cmd: openssl dhparam -out {{ mailcow_install_dir }}/data/assets/ssl/dhparams.pem 2048
     creates: "{{ mailcow_install_dir }}/data/assets/ssl/dhparams.pem"
 
-# mailcow's unbound recurses to root servers on :53, which the platform blocks
-# (force DNS through the chain). Make it FORWARD to the platform resolver, both
-# families for resilience. Validation STAYS ON: mailcow's watchdog requires the
-# `ad` flag (`dig com +dnssec`), and with "iterator" only it counted an error on
-# every check, drove the health level to 0 and restarted unbound in a loop
-# (intermittent "Domain not found" rejects, 2026-09-18). The platform resolver
-# is DNSSEC-validating and returns RRSIGs, so local validation works through it.
-- name: "install | Point mailcow unbound at the platform DNS chain (forward, validate)"
+# mailcow's unbound recurses to root servers on :53, as mailcow documents: "Many - if
+# not all - blacklist lookups will fail with public resolvers" (manual-guides/Unbound/
+# u_e-unbound-fwd), and the platform chain ends at public resolvers. Only the platform's
+# own domain is FORWARDED to the platform resolver, both families for resilience.
+# Validation STAYS ON: mailcow's watchdog requires the `ad` flag (`dig com +dnssec`), and
+# with "iterator" only it counted an error on every check, drove the health level to 0
+# and restarted unbound in a loop (intermittent "Domain not found" rejects, 2026-09-18).
+- name: "install | Recurse in mailcow unbound, forward the platform domain (validate)"
   ansible.builtin.blockinfile:
     path: "{{ mailcow_install_dir }}/data/conf/unbound/unbound.conf"
     marker: "# {mark} ANSIBLE MANAGED — forward to platform DNS chain"
@@ -190,7 +190,7 @@
         # validator not to expect signatures there, else every internal name SERVFAILs.
         domain-insecure: "{{ platform_domain }}"
       forward-zone:
-        name: "."
+        name: "{{ platform_domain }}"
       {% for fwd in mailcow_unbound_forward_to %}
         forward-addr: {{ fwd }}
       {% endfor %}

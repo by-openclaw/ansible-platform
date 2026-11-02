@@ -19,6 +19,10 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: mailcow`). R
 4. **Logs:** every container → journald → promtail → Loki (`host="vm-mailcow-01"`, 14 containers emit); CrowdSec agent with the postfix + dovecot collections over the containers' stdout.
 5. **Operator contact:** `docs/register.md` row.
 
+## DNS
+
+Mailcow's own unbound resolves recursively, as mailcow and Rspamd document: blocklists such as Spamhaus, URIBL and DNSWL refuse lookups that arrive through public resolvers, and the platform chain ends at public resolvers. Only the platform domain is forwarded to the platform resolver, for its internal names. The firewall exception is the pair of `PASS mailcow→WAN DNS` rules: Floating, because the DNS blocks are Floating and run first, and out through Telenet, so the lists see the static mail address. A healthy resolver shows no `*_BLOCKED*` symbol in the Rspamd log.
+
 ## Backup (infra/0008)
 
 Class B (`docs/backup.md`): mailcow's own app-consistent set daily at 01:00 (`mailcow-backup.timer`: vmail, MariaDB, Redis, conf), archived and pushed to the platform S3 by the same timer (pinned rclone, 7-day retention local + bucket), the whole VM in PBS daily (vmid 102).
