@@ -126,6 +126,23 @@ groups:
           summary: "ZFS pool {{ '{{' }} $labels.zpool {{ '}}' }} is {{ '{{' }} $labels.state {{ '}}' }}"
           description: "The pool is not ONLINE: a disk failed or was removed and a mirror runs without redundancy (2026-10-03: a drive of the hypervisor's pool failed and nothing alerted). A second failure in the same mirror loses the pool — every guest disk and the object storage."
           runbook: "On the node: `zpool status -x` names the device; replace the physical disk, then `zpool replace <pool> <old> <new>` and watch the resilver. Do not reboot the node before the replacement (a Smart Array with a failed logical drive can stop at the boot prompt)."
+      - alert: CpuTemperatureHigh
+        # every LXC reports its node's sensors too: only the hypervisors count, one alert per node
+        expr: max by (instance) (node_hwmon_temp_celsius{{ '{' }}instance=~"{{ groups['proxmox_nodes'] | join('|') }}", chip=~".*(coretemp|k10temp).*"{{ '}' }}) > {{ prometheus_alert_cpu_temp_warn }}
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ '{{' }} $labels.instance {{ '}}' }} CPU at {{ '{{' }} $value {{ '}}' }} C"
+          description: "The hottest CPU sensor of the node has stayed above {{ prometheus_alert_cpu_temp_warn }} C for 5 minutes."
+          runbook: "`ipmitool sensor` on the node: compare the CPUs with the front ambient. Check the fans, the room, and that both power supplies are fed."
+      - alert: CpuTemperatureCritical
+        expr: max by (instance) (node_hwmon_temp_celsius{{ '{' }}instance=~"{{ groups['proxmox_nodes'] | join('|') }}", chip=~".*(coretemp|k10temp).*"{{ '}' }}) > {{ prometheus_alert_cpu_temp_crit }}
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ '{{' }} $labels.instance {{ '}}' }} CPU at {{ '{{' }} $value {{ '}}' }} C"
+          description: "The hottest CPU sensor of the node has stayed above {{ prometheus_alert_cpu_temp_crit }} C for 2 minutes. The server may throttle or shut down."
+          runbook: "Act now: check the fans and the room, and move or stop load if the temperature keeps rising."
       - alert: AlertmanagerUnreachable
         expr: prometheus_notifications_alertmanagers_discovered < 1
         for: 5m
