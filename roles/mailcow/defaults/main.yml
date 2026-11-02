@@ -51,9 +51,11 @@ mailcow_additional_server_names: "" # extra SANs if ever needed
 # DMZ->OOB-management path). Backups go to S3 regardless.
 mailcow_vmail_storage: "local"
 
-# --- DNS: mailcow's bundled unbound is recursive (queries root servers on :53),
-# but the platform blocks direct internal->non-FW :53 (forces the local
-# AdGuard->Unbound->dnscrypt chain). So point mailcow's unbound at the chain.
+# --- DNS: mailcow's bundled unbound stays recursive (queries root servers on :53), the
+# vendor's setup: DNS blocklists refuse lookups that arrive through public resolvers, and
+# the platform chain (AdGuard->Unbound->dnscrypt) ends at public resolvers. The firewall
+# passes this one host on :53 ("PASS mailcow→WAN DNS" in opn_filter_rules). Only the
+# platform's own domain is forwarded: its internal names live on the platform resolver.
 # NOTE: the IPv4 resolver 10.1.2.1 is currently DEAD on this network — only the
 # IPv6 resolver fd01:2::1 answers. Hence Docker IPv6 (install.yml) + this v6
 # forwarder. Switch back to 10.1.2.1 if/when the v4 resolver is fixed. ----------

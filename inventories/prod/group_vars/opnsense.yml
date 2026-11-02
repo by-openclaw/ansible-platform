@@ -2276,7 +2276,15 @@ opn_filter_rules:
 # `quick: 1` ensures these block-first matches stop further evaluation.
 # disabled-by-default per `feedback_disabled_rules_for_testing` — flip via
 # `firewall/filter/toggleRule/{uuid}` per zone (or all at once) after dry-run.
+#
+# One exception, the mail host: mailcow and rspamd need their own recursive resolver,
+# DNS blocklists refuse lookups that arrive through public resolvers. A rule naming
+# several interfaces is Floating and runs before every interface rule, so this PASS is
+# Floating too, with a sequence below the first BLOCK (live 8900). It leaves via Telenet
+# so the lists see the static mail address. Never to an internal destination.
 # ---------------------------------------------------------------------------
+- {description: 'PASS mailcow→WAN DNS via Telenet (own recursive resolver v4)', action: pass, interface: 'opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11', direction: in, ipprotocol: inet,  protocol: TCP/UDP, source_net: host4_mailcow, destination_net: grp_net4_internal, destination_not: '1', destination_port: port_dns, gateway: WAN_TELENET_GW,   quick: '1', sequence: '8880', state: present, ref: {adr: 'services/0002', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
+- {description: 'PASS mailcow→WAN DNS via Telenet (own recursive resolver v6)', action: pass, interface: 'opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11', direction: in, ipprotocol: inet6, protocol: TCP/UDP, source_net: host6_mailcow, destination_net: grp_net6_internal, destination_not: '1', destination_port: port_dns, gateway: WAN_TELENET_GWv6, quick: '1', sequence: '8890', state: present, ref: {adr: 'services/0002', lib_manager: FwFilterRuleManager, ansible_module: by_systems.opnsense.opnsense_fw_filter}}
 - description: 'BLOCK internal→non-FW port 53 (force plain DNS through Unbound) v4'
   action: block
   interface: 'opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11'
