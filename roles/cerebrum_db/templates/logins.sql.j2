@@ -12,6 +12,13 @@ BEGIN
     ALTER LOGIN [{{ l.name }}] WITH PASSWORD = N'{{ cerebrum_db_login_passwords[l.name] | replace("'", "''") }}';
     PRINT 'CHANGED login {{ l.name }} password';
 END
+-- A login the Windows lockout rule locked (CHECK_POLICY: repeated wrong passwords, seen 2026-11-03 when
+-- Cerebrum read a clear password from its ini) is unlocked with Vault's password.
+IF LOGINPROPERTY(N'{{ l.name }}', 'IsLocked') = 1
+BEGIN
+    ALTER LOGIN [{{ l.name }}] WITH PASSWORD = N'{{ cerebrum_db_login_passwords[l.name] | replace("'", "''") }}' UNLOCK;
+    PRINT 'CHANGED login {{ l.name }} unlocked';
+END
 {% for r in l.server_roles %}
 IF IS_SRVROLEMEMBER(N'{{ r }}', N'{{ l.name }}') = 0
 BEGIN

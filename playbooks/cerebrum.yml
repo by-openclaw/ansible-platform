@@ -6,8 +6,10 @@
 #      the firewall rule for the Cerebrum servers. Cerebrum creates its database at first start.
 #      A Cerebrum server that carries its own instance is in both groups (the "local" layout).
 #   2. the Cerebrum servers (`cerebrum_server`, each with its `cerebrum_instance`): the ODBC driver
-#      Cerebrum's SQL tester looks for (roles/mssql_odbc); the application Admin password Cerebrum asks
-#      for at its first start, in Vault (roles/cerebrum_server tasks/admin_secret.yml).
+#      Cerebrum's SQL tester looks for (roles/mssql_odbc); Cerebrum.ini with the instance's SQL connection
+#      (created once, before the first start); the application Admin password Cerebrum asks for at its
+#      first start, in Vault, and its encrypted form once set (roles/cerebrum_server ini, admin_password,
+#      admin_capture).
 # Runs after the guest baseline (playbooks/windows-guests.yml). SQL setup may ask for a restart of
 # the database host: the role restarts it then — announce the run first.
 #
@@ -20,13 +22,21 @@
   roles:
     - cerebrum_db
 
-- name: "Cerebrum | the Cerebrum servers: ODBC driver, the application Admin in Vault"
+- name: "Cerebrum | the Cerebrum servers: ODBC driver, Cerebrum.ini, the application Admin in Vault"
   hosts: cerebrum_server
   gather_facts: false
   roles:
     - mssql_odbc
   tasks:
+    - name: "Cerebrum | Cerebrum.ini: the instance's SQL connection, before the first start"
+      ansible.builtin.include_role:
+        name: cerebrum_server
+        tasks_from: ini.yml
     - name: "Cerebrum | The application Admin password (Vault)"
       ansible.builtin.include_role:
         name: cerebrum_server
-        tasks_from: admin_secret.yml
+        tasks_from: admin_password.yml
+    - name: "Cerebrum | The Admin password's encrypted form, once Cerebrum has set it (Vault, for recovery)"
+      ansible.builtin.include_role:
+        name: cerebrum_server
+        tasks_from: admin_capture.yml
