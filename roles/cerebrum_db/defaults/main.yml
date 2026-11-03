@@ -33,14 +33,19 @@ cerebrum_db_patches: []
 
 # --- the installers, pinned by checksum (the object store holds them; the inventory names them) ---
 cerebrum_db_download_dir: 'C:\ProgramData\platform\installers'
-cerebrum_db_version: "2019"                     # the lab runs 2019 Express (15.0.2000 + GDR 2190); the vendor ships Express with its installer
+cerebrum_db_version: "2025"                     # the EVS manual §3.1: Express from 2017 for a non-redundant system; 2025 is the owner's choice (2026-11-03)
 cerebrum_db_installer_url: ""                   # SQLEXPR_x64_ENU.exe of that version, on the object store (inventory)
 cerebrum_db_installer_sha256: ""                # REQUIRED — the role refuses to install without it
-cerebrum_db_odbc_msi_url: ""                    # Microsoft ODBC Driver 17 for SQL Server (msodbcsql.msi) — sqlcmd needs it
-cerebrum_db_odbc_msi_sha256: ""
-cerebrum_db_sqlcmd_msi_url: ""                  # Microsoft Command Line Utilities 15 for SQL Server (MsSqlCmdLnUtils.msi)
+# A copy already on the host (a manual download), taken instead of the URL when set: verified against
+# the same sha256, then copied into the download folder like a downloaded one.
+cerebrum_db_installer_staged_path: ""
+# The command-line utilities (sqlcmd 17, ODBC-based). They need ODBC Driver 18, which SQL Server 2025
+# setup installs with the instance — so they go in after it.
+cerebrum_db_sqlcmd_msi_url: ""                  # Microsoft Command Line Utilities for SQL Server (MsSqlCmdLnUtils.msi)
 cerebrum_db_sqlcmd_msi_sha256: ""
-cerebrum_db_sqlcmd: 'C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\SQLCMD.EXE'
+cerebrum_db_sqlcmd: 'C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\180\Tools\Binn\SQLCMD.EXE'
+# Management runs over shared memory with Windows authentication (-E); sqlcmd on ODBC 18 encrypts by
+# default and the instance has only its self-signed certificate until the platform's (README): -C.
 
 # --- the instance ---------------------------------------------------------------------------------
 cerebrum_db_instance: CEREBRUMSQL               # the vendor's installer uses this name; Cerebrum.ini points at host\instance,port
@@ -53,17 +58,35 @@ cerebrum_db_services_off:                       # what a database host does not 
   - "SQLTELEMETRY${{ cerebrum_db_instance }}"
   - SQLBrowser
 
-# --- secrets (Vault, get-or-create; paths under the tier: security/0001) -------------------------
-cerebrum_db_sa_vault_path: "{{ cerebrum_db_env }}/cerebrum/{{ inventory_hostname }}/sa"
+# --- secrets (Vault, get-or-create; one folder per host and instance: security/0001) ---------------
+cerebrum_db_vault_base: "{{ cerebrum_db_env }}/mssql/{{ inventory_hostname }}/{{ cerebrum_db_instance }}"
+cerebrum_db_sa_vault_path: "{{ cerebrum_db_vault_base }}/sa"
+# A document whose `password` becomes sa's when sa has none yet (a manual install recorded by hand);
+# the old document is then retired through inventories/prod/group_vars/all/vault_retired.yml.
+cerebrum_db_sa_vault_copy_from: ""
 cerebrum_db_sa_enabled: false                   # CIS 2.14: the server administrator login stays disabled; management = Windows authentication
-# The logins Cerebrum and the platform use. `server_roles` apply at the instance (the application
-# needs dbcreator until it has created its database); `db_role` applies inside the database once it
-# exists. The audit login reads only; the backup task runs as SYSTEM with db_backupoperator.
-cerebrum_db_database: Cerebrum                  # the vendor's default name; the lab's is `Cortex` (inventory sets it)
-cerebrum_db_logins:
-  - { name: cerebrum,       vault_path: "{{ cerebrum_db_env }}/cerebrum/{{ inventory_hostname }}/app-login", server_roles: [dbcreator], db_role: db_owner }
-  - { name: cerebrum_audit, vault_path: "{{ cerebrum_db_env }}/cerebrum/{{ inventory_hostname }}/audit-ro",  server_roles: [],          db_role: db_datareader }
-cerebrum_db_password_length: 28
+
+# --- the databases and logins: one per Cerebrum instance (the cerebrum_server hosts) --------------
+# Each Cerebrum server carries `cerebrum_instance` ("01", "02", …) in the inventory; its database and
+# its login follow from it. Cerebrum creates its database at first start through that login.
+cerebrum_db_instances: "{{ groups['cerebrum_server'] | default([]) | map('extract', hostvars, 'cerebrum_instance') | list }}"
+cerebrum_db_database_prefix: "Cerebrum_"
+cerebrum_db_login_prefix: "cerebrum_"
+cerebrum_db_databases: "{{ cerebrum_db_instances | map('regex_replace', '^', cerebrum_db_database_prefix) | list }}"
+# The owner's decision (2026-11-03): each instance's login has the rights of sa (sysadmin), as the
+# vendor's default sa login has; sa itself is then disabled. `db_roles` apply inside every database
+# of cerebrum_db_databases once it exists (sysadmin needs none). The backup task runs as SYSTEM.
+cerebrum_db_login_server_roles: [sysadmin]
+cerebrum_db_logins_extra:
+  - { name: cerebrum_federated, server_roles: [sysadmin], db_roles: [] }                         # the Federation service, when it is used
+  - { name: jumpserver_editor,  server_roles: [],         db_roles: [db_datareader, db_datawriter] }   # browsing and editing through the bastion
+cerebrum_db_logins: >-
+  {%- set out = [] -%}
+  {%- for i in cerebrum_db_instances -%}
+  {%- set _ = out.append({'name': cerebrum_db_login_prefix ~ i, 'server_roles': cerebrum_db_login_server_roles, 'db_roles': []}) -%}
+  {%- endfor -%}
+  {{ out + cerebrum_db_logins_extra }}
+cerebrum_db_password_length: 28                 # letters and digits only: Cerebrum refuses { and } in a password
 
 # --- hardening (CIS Microsoft SQL Server 2019 Benchmark, section 2 and 3) --------------------------
 cerebrum_db_hardening: true
@@ -84,9 +107,9 @@ cerebrum_db_audit_level: 3                      # 5.1 login auditing: 0 none, 1 
 cerebrum_db_backup_dir: 'C:\Backup\SQL'
 cerebrum_db_backup_time: "02:00"
 cerebrum_db_state_dir: 'C:\ProgramData\platform\cerebrum-db'
-cerebrum_db_backup_task: "PLATFORM-cerebrum-db-backup"
+cerebrum_db_backup_task: "PLATFORM-cerebrum-db-backup-{{ cerebrum_db_instance }}"
 
 # --- firewall: the instance answers the Cerebrum servers only ------------------------------------
 cerebrum_db_allowed_from: "{{ groups['cerebrum_server'] | default([]) | map('extract', hostvars, 'ansible_host') | list }}"
-cerebrum_db_firewall_rule: "CEREBRUM-DB-In-SQL"
+cerebrum_db_firewall_rule: "CEREBRUM-DB-In-SQL-{{ cerebrum_db_instance }}"
 cerebrum_db_firewall_profiles: [domain, private, public]

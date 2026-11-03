@@ -26,7 +26,7 @@ BEGIN
     CREATE LOGIN [NT AUTHORITY\SYSTEM] FROM WINDOWS;
     PRINT 'CHANGED login SYSTEM created';
 END
--- sa: Vault's password, then disabled (the application has its own login)
+-- sa: Vault's password; disabled once the instances use their own logins
 IF PWDCOMPARE(N'{{ cerebrum_db_sa_password | replace("'", "''") }}', (SELECT password_hash FROM sys.sql_logins WHERE name = N'sa')) = 0
 BEGIN
     ALTER LOGIN [sa] WITH PASSWORD = N'{{ cerebrum_db_sa_password | replace("'", "''") }}';
@@ -45,31 +45,36 @@ BEGIN
     PRINT 'CHANGED sa disabled';
 END
 {% endif %}
--- inside the application's database, once Cerebrum has created it
-IF DB_ID(N'{{ cerebrum_db_database }}') IS NOT NULL
-BEGIN
-    USE [{{ cerebrum_db_database }}];
-{% for l in cerebrum_db_logins %}
-    IF DATABASE_PRINCIPAL_ID(N'{{ l.name }}') IS NULL
+-- inside each Cerebrum database, once Cerebrum has created it (dynamic SQL: a database that does not
+-- exist yet must not stop the batch from compiling)
+{% for db in cerebrum_db_databases %}
+IF DB_ID(N'{{ db }}') IS NULL
+    PRINT 'ABSENT database {{ db }}';
+ELSE
+    EXEC (N'USE [{{ db }}];
+{% for l in cerebrum_db_logins if l.db_roles | length > 0 %}
+    IF DATABASE_PRINCIPAL_ID(N''{{ l.name }}'') IS NULL
     BEGIN
         CREATE USER [{{ l.name }}] FOR LOGIN [{{ l.name }}];
-        PRINT 'CHANGED user {{ l.name }} in {{ cerebrum_db_database }}';
+        PRINT ''CHANGED user {{ l.name }} in {{ db }}'';
     END
-    IF IS_ROLEMEMBER(N'{{ l.db_role }}', N'{{ l.name }}') = 0
+{% for r in l.db_roles %}
+    IF IS_ROLEMEMBER(N''{{ r }}'', N''{{ l.name }}'') = 0
     BEGIN
-        ALTER ROLE [{{ l.db_role }}] ADD MEMBER [{{ l.name }}];
-        PRINT 'CHANGED role {{ l.db_role }} for {{ l.name }}';
+        ALTER ROLE [{{ r }}] ADD MEMBER [{{ l.name }}];
+        PRINT ''CHANGED role {{ r }} for {{ l.name }} in {{ db }}'';
     END
 {% endfor %}
-    IF DATABASE_PRINCIPAL_ID(N'NT AUTHORITY\SYSTEM') IS NULL
+{% endfor %}
+    IF DATABASE_PRINCIPAL_ID(N''NT AUTHORITY\SYSTEM'') IS NULL
     BEGIN
         CREATE USER [NT AUTHORITY\SYSTEM] FOR LOGIN [NT AUTHORITY\SYSTEM];
-        PRINT 'CHANGED user SYSTEM in {{ cerebrum_db_database }}';
+        PRINT ''CHANGED user SYSTEM in {{ db }}'';
     END
-    IF IS_ROLEMEMBER(N'db_backupoperator', N'NT AUTHORITY\SYSTEM') = 0
+    IF IS_ROLEMEMBER(N''db_backupoperator'', N''NT AUTHORITY\SYSTEM'') = 0
     BEGIN
         ALTER ROLE [db_backupoperator] ADD MEMBER [NT AUTHORITY\SYSTEM];
-        PRINT 'CHANGED role db_backupoperator for SYSTEM';
-    END
-END
+        PRINT ''CHANGED role db_backupoperator for SYSTEM in {{ db }}'';
+    END');
+{% endfor %}
 PRINT 'DONE';

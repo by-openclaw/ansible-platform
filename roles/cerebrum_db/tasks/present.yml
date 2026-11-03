@@ -2,16 +2,33 @@
 # roles/cerebrum_db — state present: secrets → the instance (Microsoft's media, or the bundled one
 # taken over) → patches → everything after the instance → hardening.
 # --- secrets: Vault, created on first contact ------------------------------------------------------
+- name: "Cerebrum DB | The document sa's password is copied from (read only)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ cerebrum_db_sa_vault_copy_from }}"
+    vault_secret_optional: true
+  when: cerebrum_db_sa_vault_copy_from | length > 0
+
+- name: "Cerebrum DB | Its password, when it has one"
+  ansible.builtin.set_fact:
+    cerebrum_db_sa_copied: "{{ (vault_secret_result | default({})).password | default('') if cerebrum_db_sa_vault_copy_from | length > 0 else '' }}"
+  no_log: true
+
 - name: "Cerebrum DB | The sa password (Vault, created on first contact)"
   ansible.builtin.include_role:
     name: vault_secret
   vars:
     vault_secret_path: "{{ cerebrum_db_sa_vault_path }}"
     vault_secret_init:
+      user: sa
       password: >-   # pragma: allowlist secret
-        {{ lookup('ansible.builtin.password', '/dev/null', length=cerebrum_db_password_length, chars=['ascii_letters', 'digits']) }}
+        {{ cerebrum_db_sa_copied if cerebrum_db_sa_copied | length > 0 else
+           lookup('ansible.builtin.password', '/dev/null', length=cerebrum_db_password_length, chars=['ascii_letters', 'digits']) }}
     vault_secret_metadata_put:
-      origin: "roles/cerebrum_db (sa of {{ cerebrum_db_instance }} on {{ inventory_hostname }}; disabled after install)"
+      origin: >-
+        roles/cerebrum_db (sa of {{ cerebrum_db_instance }} on {{ inventory_hostname }}{{ '; copied from ' ~ cerebrum_db_sa_vault_copy_from
+        if cerebrum_db_sa_copied | length > 0 else '' }}; disabled once the instances use their own logins)
 
 - name: "Cerebrum DB | Keep it for the answer file and the logins script"
   ansible.builtin.set_fact:
@@ -45,12 +62,18 @@
     quiet: true
   when: cerebrum_db_install_source == 'bundled'
 
+# A dry run before the first install has no instance to read: patches, configuration and hardening
+# are shown on the next dry run, once the instance exists.
 - name: "Cerebrum DB | Patches from Microsoft, in order"
   ansible.builtin.include_tasks: patches.yml
+  when: not (ansible_check_mode and (cerebrum_db_svc.services | default(['bundled']) | length == 0))
 
 - name: "Cerebrum DB | Everything after the instance"
   ansible.builtin.include_tasks: post_install.yml
+  when: not (ansible_check_mode and (cerebrum_db_svc.services | default(['bundled']) | length == 0))
 
 - name: "Cerebrum DB | Hardening (CIS 2.x, 5.1)"
   ansible.builtin.include_tasks: hardening.yml
-  when: cerebrum_db_hardening | bool
+  when:
+    - cerebrum_db_hardening | bool
+    - not (ansible_check_mode and (cerebrum_db_svc.services | default(['bundled']) | length == 0))

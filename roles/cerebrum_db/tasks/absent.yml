@@ -16,6 +16,10 @@
     name: "{{ cerebrum_db_service }}"
   register: cerebrum_db_absent_svc
 
+- name: "Cerebrum DB | The media (to uninstall with)"
+  ansible.builtin.include_tasks: media.yml
+  when: cerebrum_db_absent_svc.services | length > 0
+
 - name: "Cerebrum DB | The instance uninstalled with Microsoft's media (data files kept)"
   ansible.windows.win_command:
     argv:
