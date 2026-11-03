@@ -108,6 +108,13 @@ platform_vault_retired_documents:
     reason: "the keyless rune_nopass key (April 2026, identity/0004 forbids it): replaced by svc-rune-prod (prod/svc-rune/ssh-key) on every Windows guest"
   - path: "windows/ssh-passphrase"
     reason: "metadata document of the same retired key (passphrase_protected: false)"
+  # --- 2026-11-03: the owner's hand-made SQL document (owner: "key for sa exist in vault copy and
+  #     delete the old"); roles/cerebrum_db copied it into the instance's folder (PR #1091) ---------
+  - path: "windows/vm-winsql-01/sqlexpress"
+    tier: dev
+    reason: "sa of the hand-installed SQLEXPRESS instance (uninstalled); the same password is sa of BY_CEREBRUM, held by roles/cerebrum_db in mssql/vm-winsql-01/BY_CEREBRUM/sa"
+    same_as:
+      - {field: password, path: "mssql/vm-winsql-01/BY_CEREBRUM/sa", field_there: password}
   # --- 2026-10-22: the legacy keyless root key of the hypervisors, same replacement ------------------
   - path: "proxmox/ssh-key"
     reason: "the keyless rune_automation key (April 2026): root on both nodes accepts svc-rune-prod (prod/svc-rune/ssh-key) since the identity cut-over; nothing else used it"
