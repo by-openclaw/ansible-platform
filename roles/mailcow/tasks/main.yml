@@ -38,6 +38,14 @@
   when: mailcow_deploy_stack | bool
   tags: [mailcow, dovecot]
 
+- name: Message size, one decision for Postfix, Rspamd and ClamAV
+  ansible.builtin.include_tasks:
+    file: limits.yml
+    apply:
+      tags: [mailcow, limits]
+  when: mailcow_deploy_stack | bool
+  tags: [mailcow, limits]
+
 - name: Issue + deploy the wildcard TLS cert for the mail ports (gated)
   ansible.builtin.include_tasks:
     file: cert.yml

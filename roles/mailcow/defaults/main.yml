@@ -224,6 +224,18 @@ mailcow_host_smtp_holder: "docker-proxy"
 # recreate the network (tasks/install.yml stops the stack first).
 mailcow_network_keys_regex: '^(?:ENABLE_IPV6|IPV4_NETWORK|IPV6_NETWORK)=.*$'
 
+# --- Message size (services/0002 §Large attachments) ------------------------------------------
+# Base64 adds a third, so a 35 MiB message carries 25 MB of attachments. Larger files go through
+# Nextcloud. The antivirus limit stays above it (tasks/limits.yml asserts this). The scan size is
+# the data clamd reads per file once archives are unpacked; 5 s, Rspamd's default timeout, is
+# short for a message this size.
+mailcow_message_size_limit_mb: 35
+mailcow_antivirus_limit_mb: 40
+mailcow_antivirus_scan_size_mb: 150
+mailcow_antivirus_timeout_s: 20.0
+mailcow_rspamd_container: "mailcowdockerized-rspamd-mailcow-1"
+mailcow_rspamd_antivirus_conf: "{{ mailcow_install_dir }}/data/conf/rspamd/override.d/antivirus.conf"
+
 # --- Dovecot: who authenticated (the master user is visible in the log) ----------------------
 # The sign-in line names the account that authenticated beside the mailbox. For a sign-in made
 # with the master user the two differ — user=<mailbox> auth_user=<master> — so every use of it
