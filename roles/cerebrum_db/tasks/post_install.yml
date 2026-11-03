@@ -62,12 +62,14 @@
         src: logins.sql.j2
         dest: "{{ cerebrum_db_state_dir }}\\logins.sql"
       no_log: true
+      changed_when: false   # a transient file: the SQL run below reports the real changes
     - name: "Cerebrum DB | The logins script inherits nothing"
       ansible.windows.win_acl_inheritance:
         path: "{{ cerebrum_db_state_dir }}\\logins.sql"
         state: absent
         reorganize: false
       when: not ansible_check_mode   # the rendered file exists only on a real run
+      changed_when: false   # a transient file: the SQL run below reports the real changes
     - name: "Cerebrum DB | The logins script: Administrators and SYSTEM only"
       ansible.windows.win_acl:
         path: "{{ cerebrum_db_state_dir }}\\logins.sql"
@@ -77,6 +79,7 @@
         state: present
       loop: [Administrators, SYSTEM]
       when: not ansible_check_mode   # the rendered file exists only on a real run
+      changed_when: false   # a transient file: the SQL run below reports the real changes
     - name: "Cerebrum DB | Logins, roles, sa, the application's database grants (Windows authentication)"
       ansible.windows.win_command:
         argv: ["{{ cerebrum_db_sqlcmd }}", -E, -C, -S, ".\\{{ cerebrum_db_instance }}", -b, -i, "{{ cerebrum_db_state_dir }}\\logins.sql"]
@@ -88,6 +91,7 @@
       ansible.windows.win_file:
         path: "{{ cerebrum_db_state_dir }}\\logins.sql"
         state: absent
+      changed_when: false   # a transient file: the SQL run below reports the real changes
 
 # --- the nightly backup --------------------------------------------------------------------------------
 - name: "Cerebrum DB | Backup folder"
@@ -139,6 +143,6 @@
       on tcp {{ cerebrum_db_port }}; logins {{ cerebrum_db_logins | map(attribute='name') | join(', ') }} + SYSTEM (backups);
       sa {{ 'enabled' if cerebrum_db_sa_enabled | bool else 'disabled' }};
       databases {{ cerebrum_db_databases | join(', ') }}
-      (not yet created by Cerebrum: {{ cerebrum_db_logins_run.stdout | default('') | regex_findall('ABSENT database (\\S+)') | join(', ') or 'none' }});
+      (not yet created by Cerebrum: {{ cerebrum_db_logins_run.stdout | default('') | regex_findall('ABSENT database (\S+)') | join(', ') or 'none' }});
       backup {{ cerebrum_db_backup_time }} → {{ cerebrum_db_backup_dir }};
       firewall from {{ cerebrum_db_allowed_from | join(', ') or 'nobody (no cerebrum_server host)' }}

@@ -26,6 +26,28 @@
     name: "{{ cerebrum_db_service }}"
   register: cerebrum_db_svc
 
+# SQL setup refuses to start while Windows has a restart pending (its RebootRequiredCheck rule, exit
+# 0x84BE0BC2): an uninstall leaves files to delete at the next start (seen 2026-11-03). Restart first.
+- name: "Cerebrum DB | Windows waiting for a restart? (setup's own rule reads these)"
+  ansible.windows.win_reg_stat:
+    path: "{{ item.path }}"
+    name: "{{ item.name | default(omit) }}"
+  loop:
+    - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager', name: PendingFileRenameOperations }
+    - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending' }
+    - { path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired' }
+  loop_control:
+    label: "{{ item.path | basename }}"
+  register: cerebrum_db_pending
+  when: cerebrum_db_svc.services | length == 0
+
+- name: "Cerebrum DB | Restart before setup (a restart is pending)"
+  ansible.windows.win_reboot:
+    reboot_timeout: 1200
+  when:
+    - cerebrum_db_svc.services | length == 0
+    - cerebrum_db_pending.results | selectattr('exists', 'defined') | selectattr('exists') | list | length > 0
+
 - name: "Cerebrum DB | Install (answer file rendered, used, removed)"
   when: cerebrum_db_svc.services | length == 0
   block:
@@ -49,18 +71,32 @@
         state: present
       loop: [Administrators, SYSTEM]
       when: not ansible_check_mode   # the rendered file exists only on a real run
+    # As SYSTEM: setup protects settings with DPAPI (ProtectedData.Protect), which a key-based SSH
+    # session cannot use — no password, no user master key (setup failed 0x84B10001, 2026-11-03).
+    # Task variables, not the become keyword: the inventory's ansible_become: false for the Windows
+    # guests outranks a keyword, not a task variable.
+    # The media unpacks next to itself, in the download folder (chdir), not in a user profile.
     - name: "Cerebrum DB | SQL Server {{ cerebrum_db_version }} Express, instance {{ cerebrum_db_instance }}"
       ansible.windows.win_package:
         path: "{{ cerebrum_db_download_dir }}\\SQLEXPR_x64_ENU_{{ cerebrum_db_version }}.exe"
         arguments: "/ConfigurationFile={{ cerebrum_db_download_dir }}\\ConfigurationFile.ini /IAcceptSQLServerLicenseTerms /Q"
+        chdir: "{{ cerebrum_db_download_dir }}"
         creates_service: "{{ cerebrum_db_service }}"
         expected_return_code: [0, 3010]
         state: present
+      vars:
+        ansible_become: true
+        ansible_become_method: ansible.builtin.runas
+        ansible_become_user: SYSTEM
       register: cerebrum_db_setup
   always:
     - name: "Cerebrum DB | The answer file is gone"
       ansible.windows.win_file:
         path: "{{ cerebrum_db_download_dir }}\\ConfigurationFile.ini"
+        state: absent
+    - name: "Cerebrum DB | The unpacked media is gone (the package stays)"
+      ansible.windows.win_file:
+        path: "{{ cerebrum_db_download_dir }}\\SQLEXPR_x64_ENU_{{ cerebrum_db_version }}"
         state: absent
 
 # Setup answers 3010 when Windows needs a restart to finish; the instance is not configured on a
