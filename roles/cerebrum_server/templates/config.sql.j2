@@ -1,0 +1,33 @@
+-- rendered by roles/cerebrum_server (tasks/config.yml): the declared rows of Cerebrum's settings table
+-- (_Config) of one instance, written only where the value differs. Prints CHANGED per change; a dry run
+-- (preview) prints the same lines and writes nothing.
+SET NOCOUNT ON;
+IF OBJECT_ID(N'[{{ cerebrum_server_db_database }}].dbo._Config') IS NULL
+BEGIN
+    PRINT 'ABSENT _Config (Cerebrum has not created its database yet)';
+    PRINT 'DONE';
+    RETURN;
+END
+{% for key, value in cerebrum_server_config_rows.items() %}
+{% set cat = key.split('/', 1)[0] %}
+{% set prop = key.split('/', 1)[1] %}
+{% set val = value | string | replace("'", "''") %}
+IF NOT EXISTS (SELECT 1 FROM [{{ cerebrum_server_db_database }}].dbo._Config WHERE ConfUser = N'{{ cerebrum_server_config_user }}' AND ConfCategory = N'{{ cat }}' AND ConfProperty = N'{{ prop }}')
+BEGIN
+{% if not cerebrum_server_config_preview | bool %}
+    INSERT INTO [{{ cerebrum_server_db_database }}].dbo._Config (ConfUser, ConfCategory, ConfProperty, ConfValue)
+    VALUES (N'{{ cerebrum_server_config_user }}', N'{{ cat }}', N'{{ prop }}', N'{{ val }}');
+{% endif %}
+    PRINT 'CHANGED {{ cat }}/{{ prop }} added';
+END
+ELSE IF NOT EXISTS (SELECT 1 FROM [{{ cerebrum_server_db_database }}].dbo._Config WHERE ConfUser = N'{{ cerebrum_server_config_user }}' AND ConfCategory = N'{{ cat }}' AND ConfProperty = N'{{ prop }}'
+                    AND ConfValue COLLATE Latin1_General_BIN2 = N'{{ val }}' COLLATE Latin1_General_BIN2)
+BEGIN
+{% if not cerebrum_server_config_preview | bool %}
+    UPDATE [{{ cerebrum_server_db_database }}].dbo._Config SET ConfValue = N'{{ val }}'
+    WHERE ConfUser = N'{{ cerebrum_server_config_user }}' AND ConfCategory = N'{{ cat }}' AND ConfProperty = N'{{ prop }}';
+{% endif %}
+    PRINT 'CHANGED {{ cat }}/{{ prop }}';
+END
+{% endfor %}
+PRINT 'DONE';

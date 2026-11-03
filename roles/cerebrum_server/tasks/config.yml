@@ -1,0 +1,42 @@
+---
+# Cerebrum's settings as data: the rows of its _Config table (ConfUser / ConfCategory / ConfProperty /
+# ConfValue) that each Configuration tab writes, mapped tab by tab with snapshots (2026-11-03). Written
+# on the database host over Windows authentication, only where the value differs. Cerebrum reads them
+# at start: a running Cerebrum picks them up at its next restart. The system configuration (devices,
+# control interfaces, routes, users) is a binary block (_SystemConfig) and travels as a .ccf instead.
+- name: "Cerebrum server | The rows of this instance (shared set + this host's own)"
+  ansible.builtin.set_fact:
+    cerebrum_server_config_rows: "{{ cerebrum_server_config | combine(cerebrum_server_config_host) }}"
+    cerebrum_server_config_preview: "{{ ansible_check_mode }}"   # a dry run reads and reports, writes nothing
+
+- name: "Cerebrum server | The folders the rows name (backup directory)"
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: directory
+  loop: "{{ cerebrum_server_config_dirs }}"
+
+- name: "Cerebrum server | The rows' script, on the database host (no secret inside)"
+  ansible.windows.win_template:
+    src: config.sql.j2
+    dest: "{{ cerebrum_server_db_state_dir }}\\config-{{ cerebrum_server_db_database }}.sql"
+  delegate_to: "{{ cerebrum_server_db_host }}"
+  changed_when: false   # the script is a carrier; the run below reports the real changes
+  check_mode: false     # rendered in a dry run too, as a preview that writes nothing
+
+- name: "Cerebrum server | The rows written where they differ (Windows authentication)"
+  ansible.windows.win_command:
+    argv: ["{{ cerebrum_server_db_sqlcmd }}", -E, -C, -S, ".\\{{ cerebrum_server_db_instance }}", -b, -i,
+           "{{ cerebrum_server_db_state_dir }}\\config-{{ cerebrum_server_db_database }}.sql"]
+  delegate_to: "{{ cerebrum_server_db_host }}"
+  register: cerebrum_server_config_run
+  check_mode: false     # the preview script (dry run) only reads
+  changed_when: "'CHANGED' in cerebrum_server_config_run.stdout"
+  failed_when: cerebrum_server_config_run.rc != 0 or 'DONE' not in cerebrum_server_config_run.stdout
+
+- name: "Cerebrum server | Report"
+  ansible.builtin.debug:
+    msg: >-
+      CEREBRUM_CONFIG {{ inventory_hostname }} ({{ cerebrum_server_db_database }}): {{ cerebrum_server_config_rows | length }} rows declared;
+      {{ (cerebrum_server_config_run.stdout_lines | default([]) | select('match', '^CHANGED') | map('regex_replace', '^CHANGED ', '') | list | join(', ')) or 'no change' }}
+      {{ ('— would change (dry run)' if cerebrum_server_config_preview | bool else '— restart Cerebrum to apply') if cerebrum_server_config_run is changed else '' }}
+      {{ '— ABSENT: Cerebrum has not created its database yet' if 'ABSENT' in (cerebrum_server_config_run.stdout | default('')) else '' }}
