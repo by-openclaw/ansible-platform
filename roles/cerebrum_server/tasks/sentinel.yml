@@ -1,0 +1,36 @@
+---
+# Sentinel RMS persistence: Cerebrum refuses any licence until it exists ("Dependencies for the Sentinel
+# RMS licensing need to be installed … run SentinelPersistanceInstall.bat", About dialog, 2026-11-03).
+# The vendor's batch file runs Sentinel_Init.exe and then sets its own marker; it pauses for a key and
+# does not wait for the program, so the role does the same two steps itself: the program, waited for,
+# then the vendor's marker, only on success. The marker keeps it to once per server.
+- name: "Cerebrum server | Sentinel persistence already initialised? (the vendor's marker)"
+  ansible.windows.win_reg_stat:
+    path: "{{ cerebrum_server_sentinel_marker_key }}"
+    name: installed
+  register: cerebrum_server_sentinel_marker
+
+- name: "Cerebrum server | Sentinel persistence initialised (Sentinel_Init.exe, waited for)"
+  ansible.windows.win_command:
+    argv: ["{{ cerebrum_server_install_dir }}\\Sentinel_Init.exe"]
+    chdir: "{{ cerebrum_server_install_dir }}"
+  async: "{{ cerebrum_server_sentinel_timeout_s }}"
+  poll: 5
+  register: cerebrum_server_sentinel_init
+  when: not (cerebrum_server_sentinel_marker.exists and cerebrum_server_sentinel_marker.value | string == '1')
+
+- name: "Cerebrum server | The vendor's marker, set after a successful initialisation"
+  ansible.windows.win_regedit:
+    path: "{{ cerebrum_server_sentinel_marker_key }}"
+    name: installed
+    data: "1"
+    type: string
+  when: cerebrum_server_sentinel_init is changed
+
+- name: "Cerebrum server | Report"
+  ansible.builtin.debug:
+    msg: >-
+      CEREBRUM_SENTINEL {{ inventory_hostname }}:
+      {{ 'already initialised (vendor marker present)' if (cerebrum_server_sentinel_marker.exists and cerebrum_server_sentinel_marker.value | string == '1')
+         else ('would run Sentinel_Init.exe (dry run)' if ansible_check_mode
+               else 'initialised now (Sentinel_Init.exe rc ' ~ (cerebrum_server_sentinel_init.rc | default('?')) ~ ', marker set)') }}
