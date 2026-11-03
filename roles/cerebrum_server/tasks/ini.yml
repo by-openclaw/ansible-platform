@@ -1,0 +1,105 @@
+---
+# Cerebrum.ini, one line per setting, before Cerebrum's first start so its SQL tab needs no hand: each
+# declared key is set to its value, every other line (Cerebrum's own) stays. The vendor's file is UTF-16
+# with Windows line ends; a missing file is created with its section header.
+- name: "Cerebrum server | The instance's database login (Vault, written by roles/cerebrum_db)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ cerebrum_server_db_login_vault_path }}"
+
+- name: "Cerebrum server | Keep the login's clear and captured forms"
+  ansible.builtin.set_fact:
+    cerebrum_server_db_login_password: "{{ vault_secret_result.password }}"   # pragma: allowlist secret
+    cerebrum_server_db_login_encrypted: "{{ vault_secret_result.ini_password_encrypted | default('') }}"
+  no_log: true
+
+# Cerebrum stores the SQL password ENCRYPTED in its ini (27 characters for a 28-character password on
+# vm-winapp-01, no character in place) and its algorithm is not published: the clear password must never
+# overwrite that line. The line Cerebrum wrote is read first.
+- name: "Cerebrum server | The ini as it is (when present)"
+  ansible.windows.win_stat:
+    path: "{{ cerebrum_server_ini }}"
+  register: cerebrum_server_ini_stat
+
+- name: "Cerebrum server | Its content (not shown)"
+  ansible.builtin.slurp:
+    src: "{{ cerebrum_server_ini }}"
+  register: cerebrum_server_ini_raw
+  when: cerebrum_server_ini_stat.stat.exists
+  no_log: true
+
+- name: "Cerebrum server | The password line Cerebrum wrote, if any (not shown)"
+  ansible.builtin.set_fact:
+    cerebrum_server_ini_password_now: >-
+      {{ (cerebrum_server_ini_raw.content | b64decode(encoding='utf-16') | regex_findall('(?m)^SQL:LOGIN_PASSWORD=(.*?)\r?$') | first | default(''))
+         if cerebrum_server_ini_stat.stat.exists else '' }}
+  no_log: true
+
+- name: "Cerebrum server | Cerebrum.ini: the section header (file created when missing)"
+  community.windows.win_lineinfile:
+    path: "{{ cerebrum_server_ini }}"
+    regex: '^\[__GENERAL__\]$'
+    line: "[__GENERAL__]"
+    insertbefore: BOF
+    create: true
+    encoding: utf-16
+    newline: windows
+  register: cerebrum_server_ini_header
+
+- name: "Cerebrum server | Cerebrum.ini: one line per declared setting"
+  community.windows.win_lineinfile:
+    path: "{{ cerebrum_server_ini }}"
+    regex: "^{{ item.key | regex_escape }}="
+    line: "{{ item.key }}={{ item.value }}"
+    insertafter: EOF
+    encoding: utf-16
+    newline: windows
+  loop: "{{ (cerebrum_server_ini_settings | combine(cerebrum_server_ini_settings_extra)) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}={{ item.value }}"
+  register: cerebrum_server_ini_lines
+  when: not (ansible_check_mode and cerebrum_server_ini_header is changed)   # a dry run has no file to edit yet
+
+# Capture once, replay always: a line Cerebrum wrote stays and its encrypted form joins the login in Vault
+# (`ini_password_encrypted`); a missing line gets that encrypted form back. Never the clear password:
+# Cerebrum decrypts the line, gets a wrong password and retries until the SQL lockout rule locks the
+# login (vm-winapp-02, 2026-11-03). With nothing captured yet the line stays out: the password is typed
+# once in Cerebrum's SQL tab, and the next run captures it.
+- name: "Cerebrum server | Cerebrum.ini: the login's password, only where the line is missing"
+  community.windows.win_lineinfile:
+    path: "{{ cerebrum_server_ini }}"
+    regex: '^SQL:LOGIN_PASSWORD='
+    line: "SQL:LOGIN_PASSWORD={{ cerebrum_server_db_login_encrypted }}"   # pragma: allowlist secret
+    insertafter: '^SQL:LOGIN_USERNAME='
+    encoding: utf-16
+    newline: windows
+  register: cerebrum_server_ini_password
+  no_log: true
+  when:
+    - cerebrum_server_ini_password_now | length == 0
+    - cerebrum_server_db_login_encrypted | length > 0
+    - not (ansible_check_mode and cerebrum_server_ini_header is changed)
+
+- name: "Cerebrum server | The encrypted form Cerebrum wrote, kept with the login (Vault, for rebuilds)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ cerebrum_server_db_login_vault_path }}"
+    vault_secret_force_fields:
+      ini_password_encrypted: "{{ cerebrum_server_ini_password_now }}"   # pragma: allowlist secret
+  when:
+    - cerebrum_server_ini_password_now | length > 0
+    - cerebrum_server_ini_password_now != cerebrum_server_db_login_password
+    - cerebrum_server_ini_password_now != cerebrum_server_db_login_encrypted
+
+- name: "Cerebrum server | Report"
+  ansible.builtin.debug:
+    msg: >-
+      CEREBRUM_INI {{ inventory_hostname }}: {{ 'created' if cerebrum_server_ini_header is changed else 'present' }};
+      lines changed: {{ (cerebrum_server_ini_lines.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.key') | list
+                          + (['SQL:LOGIN_PASSWORD'] if cerebrum_server_ini_password is changed else [])) | join(', ') or 'none' }} —
+      {{ cerebrum_server_db_login }} → {{ cerebrum_server_ini_settings['SQL:PRIMARY_CONNECTION'] }} / {{ cerebrum_server_db_database }};
+      password line: {{ ('kept, encrypted by Cerebrum' ~ ('; now in Vault' if cerebrum_server_ini_password_now not in [cerebrum_server_db_login_encrypted, cerebrum_server_db_login_password] else ''))
+                        if cerebrum_server_ini_password_now | length > 0
+                        else ('written from the captured encrypted form' if cerebrum_server_db_login_encrypted | length > 0 else 'not written: type it once in the SQL tab, the next run captures it') }}

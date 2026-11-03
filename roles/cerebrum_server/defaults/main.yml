@@ -56,6 +56,30 @@ cerebrum_server_redundant: false                # SQL:REDUNDANT; the pair comes 
 cerebrum_server_secondary_connection: ""        # SQL:SECONDARY_CONNECTION of the pair
 cerebrum_server_disable_crash_dump: 0
 cerebrum_server_demo_key: ""                    # License:Demonstration_Key — empty on a licensed server
+# Cerebrum.ini, one line per setting (roles/cerebrum_server tasks/ini.yml): each declared key is set to
+# its value and every other line, Cerebrum's own, stays. The lines and their values follow what Cerebrum
+# writes itself through its SQL tab (vm-winapp-01, 2026-11-03) and the vendor's role (Cerebrum.ini.j2).
+# The secondary lines of a non-redundant server keep Cerebrum's own defaults. CORTEX:RUNNING is
+# Cerebrum's run-time flag: not declared.
+cerebrum_server_ini_unused_secondary_connection: 'localhost\CEREBRUMSQL'
+cerebrum_server_ini_unused_secondary_database: Cortex
+cerebrum_server_ini_settings:
+  "CORTEX:DISABLE_CRASH_DUMP": "{{ cerebrum_server_disable_crash_dump }}"
+  "SQL:USE_DEFAULT": 0
+  "SQL:LOGIN_CREDENTIALS": 2
+  "SQL:LOGIN_USERNAME": "{{ cerebrum_server_db_login }}"
+  "SQL:PRIMARY_CONNECTION": "{{ cerebrum_server_db_address }}\\{{ cerebrum_server_db_instance }},{{ cerebrum_server_db_port }}"
+  "SQL:REDUNDANT": "{{ 1 if cerebrum_server_redundant | bool else 0 }}"
+  "SQL:SECONDARY_CONNECTION": "{{ cerebrum_server_secondary_connection if cerebrum_server_redundant | bool else cerebrum_server_ini_unused_secondary_connection }}"
+  "SQL:DATABASE": "{{ cerebrum_server_db_database }}"
+  "SQL:SECONDARY_DATABASE": "{{ cerebrum_server_db_database if cerebrum_server_redundant | bool else cerebrum_server_ini_unused_secondary_database }}"
+  "SQL:USE_MULTI_SUBNET_CLUSTERING": 0
+  "IP:PRIMARY": 0
+# More lines from the inventory: the bind addresses once the media networks exist
+# ("VIRTUAL:BIND_ADDRESS", "VIRTUAL:SECOND_BIND_ADDRESS", "COR_LINK:BIND_ADDRESS", …).
+cerebrum_server_ini_settings_extra: {}
+# sqlcmd on the database host (roles/cerebrum_db installs it): reads the application's own tables.
+cerebrum_server_db_sqlcmd: 'C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\180\Tools\Binn\SQLCMD.EXE'
 
 # --- the application's administrator (Cerebrum asks for it at its first start) --------------------
 # Cerebrum's own Admin user, kept in its database: not a Windows or SQL account. Vault, created on

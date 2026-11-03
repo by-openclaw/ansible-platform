@@ -1,0 +1,50 @@
+---
+# Recovery: Cerebrum keeps its Admin password encrypted in its own table (_Users.PasswordEncrypt,
+# 97 characters, not a plain hash: it cannot be produced from the clear password). Once the owner has
+# set it at the first start, its encrypted form joins the clear one in Vault (`password_encrypted`):
+# a rebuilt database gets the row back the vendor's own way (their test-mssql.yml) instead of the dialog.
+- name: "Cerebrum server | The encrypted Admin row, read on the database host (value not shown)"
+  ansible.windows.win_command:
+    argv:
+      - "{{ cerebrum_server_db_sqlcmd }}"
+      - -E
+      - -C
+      - -S
+      - ".\\{{ cerebrum_server_db_instance }}"
+      - -b
+      - -h
+      - "-1"
+      - -W
+      - -Q
+      - >-
+        SET NOCOUNT ON; IF OBJECT_ID(N'[{{ cerebrum_server_db_database }}].dbo._Users') IS NOT NULL
+        SELECT PasswordEncrypt FROM [{{ cerebrum_server_db_database }}].dbo._Users WHERE Name = N'{{ cerebrum_server_admin_user }}'
+  delegate_to: "{{ cerebrum_server_db_host }}"
+  register: cerebrum_server_admin_row
+  changed_when: false
+  check_mode: false   # read-only
+  no_log: true
+
+- name: "Cerebrum server | The encrypted form, when Cerebrum has set it"
+  ansible.builtin.set_fact:
+    cerebrum_server_admin_encrypted: "{{ cerebrum_server_admin_row.stdout_lines | map('trim') | select | first | default('') }}"
+  no_log: true
+
+- name: "Cerebrum server | Stored next to the clear password (Vault), when new or different"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ cerebrum_server_admin_vault_path }}"
+    vault_secret_force_fields:
+      password_encrypted: "{{ cerebrum_server_admin_encrypted }}"   # pragma: allowlist secret
+  when:
+    - cerebrum_server_admin_encrypted | length > 0
+    - cerebrum_server_admin_encrypted != (cerebrum_server_admin_doc.password_encrypted | default(''))
+
+- name: "Cerebrum server | Report"
+  ansible.builtin.debug:
+    msg: >-
+      CEREBRUM_ADMIN {{ inventory_hostname }}: {{ cerebrum_server_admin_vault_path }} —
+      {{ 'encrypted form not set yet (Cerebrum has not asked for it)' if cerebrum_server_admin_encrypted | length == 0
+         else ('encrypted form stored' if cerebrum_server_admin_encrypted != (cerebrum_server_admin_doc.password_encrypted | default(''))
+               else 'encrypted form already in Vault') }}
