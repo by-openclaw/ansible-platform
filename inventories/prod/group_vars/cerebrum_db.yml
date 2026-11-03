@@ -1,13 +1,20 @@
 ---
 # ==============================================================================
-# cerebrum_db — the SQL instance of the Cerebrum platform (roles/cerebrum_db). The installers
-# live on the platform object store; their checksums are the pin. Empty values stop the role.
+# cerebrum_db — the SQL instance of the Cerebrum platform (roles/cerebrum_db). Installers pinned by
+# sha256; empty values stop the role.
 # ==============================================================================
-cerebrum_db_version: "2019"
-cerebrum_db_installer_url: "https://s3.{{ platform_domain }}/installers/mssql/SQLEXPR_x64_ENU_2019.exe"
-cerebrum_db_installer_sha256: ""          # to fill when the file is on the store (owner uploads the vendor's SQL Express)
-cerebrum_db_odbc_msi_url: "https://s3.{{ platform_domain }}/installers/mssql/msodbcsql_17.msi"
-cerebrum_db_odbc_msi_sha256: ""
-cerebrum_db_sqlcmd_msi_url: "https://s3.{{ platform_domain }}/installers/mssql/MsSqlCmdLnUtils_15.msi"
-cerebrum_db_sqlcmd_msi_sha256: ""
-cerebrum_db_database: Cortex              # what the lab's Cerebrum created; the server's ini names it
+cerebrum_db_version: "2025"
+cerebrum_db_instance: BY_CEREBRUM               # the owner's name (2026-11-03): letters, digits and _ only, 16 at most
+# SQL Server 2025 Express (17.0.1000.7). Microsoft publishes it only through its web installer, so the
+# media is the one that installer downloaded on vm-winsql-01 (2026-11-03); the object store will hold
+# the same file under this name, and the staged copy then goes.
+cerebrum_db_installer_url: "https://s3.{{ platform_domain }}/installers/mssql/SQLEXPR_x64_ENU_2025.exe"
+cerebrum_db_installer_sha256: "74aa90c11202a5524e769b9bc22531baef22d91e9b2d2e8c3cb99e89a65c5297"   # pragma: allowlist secret (a checksum)
+cerebrum_db_installer_staged_path: 'C:\Users\by-research\Downloads\SQLEXPR_x64_ENU.exe'
+# Microsoft Command Line Utilities 17.0.4055.5 (sqlcmd, 2026-06-30), from Microsoft's download centre.
+cerebrum_db_sqlcmd_msi_url: "https://download.microsoft.com/download/6f8fa386-26c0-4376-b779-66d2e22378e8/SqlCmdLnUtils17.0.4055.5/amd64/1033/MsSqlCmdLnUtils.msi"
+cerebrum_db_sqlcmd_msi_sha256: "25c7208cd5ba98beae4f1a464625a78d3607498e990fdde40fe59e747f2b8bac"   # pragma: allowlist secret (a checksum)
+# sa keeps the password the owner recorded at the manual install, and stays enabled until each
+# Cerebrum instance signs in with its own login (then false: CIS 2.14).
+cerebrum_db_sa_vault_copy_from: "dev/windows/vm-winsql-01/sqlexpress"
+cerebrum_db_sa_enabled: true

@@ -1,7 +1,8 @@
 ---
 # CIS Microsoft SQL Server 2019 Benchmark, the server-level options (section 2) and login auditing
 # (5.1). sa is handled in post_install.yml (disabled, 2.14); BUILTIN\Administrators stays the
-# management door of this dedicated host (documented exception to 3.x), nothing else is a sysadmin.
+# management door of this dedicated host (documented exception to 3.x); the other sysadmins are the
+# Cerebrum instances' own logins, the owner's documented exception (the vendor's default is sa itself).
 - name: "Cerebrum DB | The hardening statements (no secret inside)"
   ansible.windows.win_template:
     src: hardening.sql.j2
@@ -9,7 +10,7 @@
 
 - name: "Cerebrum DB | Server options as declared (Windows authentication)"
   ansible.windows.win_command:
-    argv: ["{{ cerebrum_db_sqlcmd }}", -E, -S, ".\\{{ cerebrum_db_instance }}", -b, -i, "{{ cerebrum_db_state_dir }}\\hardening.sql"]
+    argv: ["{{ cerebrum_db_sqlcmd }}", -E, -C, -S, ".\\{{ cerebrum_db_instance }}", -b, -i, "{{ cerebrum_db_state_dir }}\\hardening.sql"]
   register: cerebrum_db_hardening_run
   changed_when: "'CHANGED' in cerebrum_db_hardening_run.stdout"
   failed_when: cerebrum_db_hardening_run.rc != 0 or 'DONE' not in cerebrum_db_hardening_run.stdout

@@ -1,0 +1,26 @@
+---
+# ==============================================================================
+# EVS Cerebrum — the database and the Cerebrum servers, one playbook (owner 2026-11-03).
+#   1. the SQL Server instance (roles/cerebrum_db) on the `cerebrum_db` hosts: pinned media, sa
+#      from Vault, static port, one database and one login per Cerebrum instance, nightly backup,
+#      the firewall rule for the Cerebrum servers. Cerebrum creates its database at first start.
+#      A Cerebrum server that carries its own instance is in both groups (the "local" layout).
+#   2. the Cerebrum servers (`cerebrum_server`, each with its `cerebrum_instance`): the ODBC driver
+#      Cerebrum's SQL tester looks for (roles/mssql_odbc).
+# Runs after the guest baseline (playbooks/windows-guests.yml). SQL setup may ask for a restart of
+# the database host: the role restarts it then — announce the run first.
+#
+#   Dry run: ansible-playbook playbooks/cerebrum.yml --check --diff
+#   Apply:   ansible-playbook playbooks/cerebrum.yml [--limit vm-x]
+# ==============================================================================
+- name: "Cerebrum | the SQL Server instance"
+  hosts: cerebrum_db
+  gather_facts: false
+  roles:
+    - cerebrum_db
+
+- name: "Cerebrum | the Cerebrum servers: ODBC driver"
+  hosts: cerebrum_server
+  gather_facts: false
+  roles:
+    - mssql_odbc

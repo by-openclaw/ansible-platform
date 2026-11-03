@@ -44,8 +44,11 @@ cerebrum_server_db_host: "{{ inventory_hostname if cerebrum_server_sql_bundled |
 cerebrum_server_db_address: "{{ 'localhost' if cerebrum_server_sql_bundled | bool else hostvars[cerebrum_server_db_host].ansible_host }}"
 cerebrum_server_db_instance: "{{ hostvars[cerebrum_server_db_host].cerebrum_db_instance | default('CEREBRUMSQL') }}"
 cerebrum_server_db_port: "{{ hostvars[cerebrum_server_db_host].cerebrum_db_port | default(1433) }}"
-cerebrum_server_db_database: "{{ hostvars[cerebrum_server_db_host].cerebrum_db_database | default('Cerebrum') }}"
-cerebrum_server_db_login_vault_path: "{{ cerebrum_server_env }}/cerebrum/{{ cerebrum_server_db_host }}/app-login"   # written by roles/cerebrum_db
+# One database and one login per Cerebrum instance (`cerebrum_instance` in the inventory), both made by
+# roles/cerebrum_db: Cerebrum_<n> and cerebrum_<n>, its password in the instance's Vault folder.
+cerebrum_server_db_database: "Cerebrum_{{ cerebrum_instance }}"
+cerebrum_server_db_login: "cerebrum_{{ cerebrum_instance }}"
+cerebrum_server_db_login_vault_path: "{{ cerebrum_server_env }}/mssql/{{ cerebrum_server_db_host }}/{{ cerebrum_server_db_instance }}/{{ cerebrum_server_db_login }}"   # written by roles/cerebrum_db
 cerebrum_server_ini: "{{ cerebrum_server_install_dir }}\\Cerebrum.ini"
 cerebrum_server_bind_address: "0.0.0.0"         # VIRTUAL:BIND_ADDRESS … FOURTH and COR_LINK:BIND_ADDRESS: the server's own address, or 0.0.0.0
 cerebrum_server_bind_addresses: ["{{ cerebrum_server_bind_address }}", "0.0.0.0", "0.0.0.0", "0.0.0.0"]

@@ -1,0 +1,51 @@
+---
+# Microsoft's media in the download folder, verified: from the object store, or from a copy already on
+# the host (a manual download) checked against the same sha256. Used by install.yml and absent.yml.
+- name: "Cerebrum DB | The media is pinned (sha256, and the object store URL or a staged copy)"
+  ansible.builtin.assert:
+    that:
+      - cerebrum_db_installer_sha256 | length == 64
+      - (cerebrum_db_installer_url | length > 0) or (cerebrum_db_installer_staged_path | length > 0)
+    fail_msg: >-
+      cerebrum_db: name SQLEXPR_x64_ENU.exe on the object store (or a staged copy on the host) with its
+      sha256 (inventory group_vars/cerebrum_db.yml) — the role installs nothing unpinned
+    quiet: true
+
+- name: "Cerebrum DB | Download folder"
+  ansible.windows.win_file:
+    path: "{{ cerebrum_db_download_dir }}"
+    state: directory
+
+- name: "Cerebrum DB | The media from the object store, verified against its checksum"
+  ansible.windows.win_get_url:
+    url: "{{ cerebrum_db_installer_url }}"
+    dest: "{{ cerebrum_db_download_dir }}\\SQLEXPR_x64_ENU_{{ cerebrum_db_version }}.exe"
+    checksum: "{{ cerebrum_db_installer_sha256 }}"
+    checksum_algorithm: sha256
+  when: cerebrum_db_installer_staged_path | length == 0
+
+- name: "Cerebrum DB | The staged copy's checksum"
+  ansible.windows.win_stat:
+    path: "{{ cerebrum_db_installer_staged_path }}"
+    get_checksum: true
+    checksum_algorithm: sha256
+  register: cerebrum_db_staged
+  when: cerebrum_db_installer_staged_path | length > 0
+
+- name: "Cerebrum DB | The staged copy is the pinned media"
+  ansible.builtin.assert:
+    that:
+      - cerebrum_db_staged.stat.exists
+      - cerebrum_db_staged.stat.checksum | lower == cerebrum_db_installer_sha256 | lower
+    fail_msg: >-
+      cerebrum_db: {{ cerebrum_db_installer_staged_path }} is
+      {{ 'absent' if not cerebrum_db_staged.stat.exists else 'not the pinned media (sha256 ' ~ cerebrum_db_staged.stat.checksum ~ ')' }}
+    quiet: true
+  when: cerebrum_db_installer_staged_path | length > 0
+
+- name: "Cerebrum DB | The staged copy into the download folder"
+  ansible.windows.win_copy:
+    src: "{{ cerebrum_db_installer_staged_path }}"
+    dest: "{{ cerebrum_db_download_dir }}\\SQLEXPR_x64_ENU_{{ cerebrum_db_version }}.exe"
+    remote_src: true
+  when: cerebrum_db_installer_staged_path | length > 0

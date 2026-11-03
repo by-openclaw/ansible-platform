@@ -1,0 +1,42 @@
+---
+# roles/mssql_odbc — see defaults/main.yml. Pinned MSI → installed (the MSI's product code decides,
+# so a second run changes nothing) → the driver is registered under its name.
+- name: "ODBC | The installer is pinned (URL + sha256)"
+  ansible.builtin.assert:
+    that:
+      - mssql_odbc_msi_url | length > 0
+      - mssql_odbc_msi_sha256 | length == 64
+    fail_msg: "mssql_odbc: name msodbcsql.msi {{ mssql_odbc_version }} with its sha256 (inventory)"
+    quiet: true
+
+- name: "ODBC | Download folder"
+  ansible.windows.win_file:
+    path: "{{ mssql_odbc_download_dir }}"
+    state: directory
+
+- name: "ODBC | The installer, verified against its checksum"
+  ansible.windows.win_get_url:
+    url: "{{ mssql_odbc_msi_url }}"
+    dest: "{{ mssql_odbc_download_dir }}\\msodbcsql_{{ mssql_odbc_version }}.msi"
+    checksum: "{{ mssql_odbc_msi_sha256 }}"
+    checksum_algorithm: sha256
+
+- name: "ODBC | {{ mssql_odbc_driver_name }} {{ mssql_odbc_version }}"
+  ansible.windows.win_package:
+    path: "{{ mssql_odbc_download_dir }}\\msodbcsql_{{ mssql_odbc_version }}.msi"
+    arguments: "/qn IACCEPTMSODBCSQLLICENSETERMS=YES"
+    state: present
+  register: mssql_odbc_pkg
+
+- name: "ODBC | The driver is registered under its name"
+  ansible.windows.win_reg_stat:
+    path: 'HKLM:\SOFTWARE\ODBC\ODBCINST.INI\{{ mssql_odbc_driver_name }}'
+    name: Driver
+  register: mssql_odbc_reg
+
+- name: "ODBC | Report"
+  ansible.builtin.assert:
+    that: mssql_odbc_reg.exists
+    fail_msg: "mssql_odbc: '{{ mssql_odbc_driver_name }}' is not registered after the install"
+    success_msg: "MSSQL_ODBC {{ inventory_hostname }}: {{ mssql_odbc_driver_name }} {{ mssql_odbc_version }} → {{ mssql_odbc_reg.value | default('') }}"
+  when: not (ansible_check_mode and mssql_odbc_pkg is changed)   # a dry run installs nothing to find

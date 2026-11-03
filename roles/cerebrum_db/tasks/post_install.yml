@@ -67,6 +67,7 @@
         path: "{{ cerebrum_db_state_dir }}\\logins.sql"
         state: absent
         reorganize: false
+      when: not ansible_check_mode   # the rendered file exists only on a real run
     - name: "Cerebrum DB | The logins script: Administrators and SYSTEM only"
       ansible.windows.win_acl:
         path: "{{ cerebrum_db_state_dir }}\\logins.sql"
@@ -75,9 +76,10 @@
         type: allow
         state: present
       loop: [Administrators, SYSTEM]
+      when: not ansible_check_mode   # the rendered file exists only on a real run
     - name: "Cerebrum DB | Logins, roles, sa, the application's database grants (Windows authentication)"
       ansible.windows.win_command:
-        argv: ["{{ cerebrum_db_sqlcmd }}", -E, -S, ".\\{{ cerebrum_db_instance }}", -b, -i, "{{ cerebrum_db_state_dir }}\\logins.sql"]
+        argv: ["{{ cerebrum_db_sqlcmd }}", -E, -C, -S, ".\\{{ cerebrum_db_instance }}", -b, -i, "{{ cerebrum_db_state_dir }}\\logins.sql"]
       register: cerebrum_db_logins_run
       changed_when: "'CHANGED' in cerebrum_db_logins_run.stdout"
       failed_when: cerebrum_db_logins_run.rc != 0 or 'DONE' not in cerebrum_db_logins_run.stdout
@@ -96,15 +98,15 @@
 - name: "Cerebrum DB | The backup statement (no secret inside)"
   ansible.windows.win_template:
     src: backup.sql.j2
-    dest: "{{ cerebrum_db_state_dir }}\\backup.sql"
+    dest: "{{ cerebrum_db_state_dir }}\\backup-{{ cerebrum_db_instance }}.sql"
 
 - name: "Cerebrum DB | The nightly backup task, as SYSTEM, at {{ cerebrum_db_backup_time }}"
   community.windows.win_scheduled_task:
     name: "{{ cerebrum_db_backup_task }}"
-    description: "roles/cerebrum_db: full backup of {{ cerebrum_db_database }} to {{ cerebrum_db_backup_dir }} (seven rotating files)"
+    description: "roles/cerebrum_db: full backup of {{ cerebrum_db_databases | join(', ') }} on {{ cerebrum_db_instance }} to {{ cerebrum_db_backup_dir }} (seven rotating files each)"
     actions:
       - path: "{{ cerebrum_db_sqlcmd }}"
-        arguments: "-E -S .\\{{ cerebrum_db_instance }} -b -i \"{{ cerebrum_db_state_dir }}\\backup.sql\""
+        arguments: "-E -C -S .\\{{ cerebrum_db_instance }} -b -i \"{{ cerebrum_db_state_dir }}\\backup-{{ cerebrum_db_instance }}.sql\""
     triggers:
       - type: daily
         start_boundary: "2026-01-01T{{ cerebrum_db_backup_time }}:00"
@@ -136,7 +138,7 @@
       CEREBRUM_DB {{ inventory_hostname }}: instance {{ cerebrum_db_instance }} ({{ cerebrum_db_instance_id.value }})
       on tcp {{ cerebrum_db_port }}; logins {{ cerebrum_db_logins | map(attribute='name') | join(', ') }} + SYSTEM (backups);
       sa {{ 'enabled' if cerebrum_db_sa_enabled | bool else 'disabled' }};
-      database {{ cerebrum_db_database }}
-      {{ 'present' if ('no database yet' not in (cerebrum_db_logins_run.stdout | default(''))) else 'not yet created by Cerebrum' }};
+      databases {{ cerebrum_db_databases | join(', ') }}
+      (not yet created by Cerebrum: {{ cerebrum_db_logins_run.stdout | default('') | regex_findall('ABSENT database (\\S+)') | join(', ') or 'none' }});
       backup {{ cerebrum_db_backup_time }} → {{ cerebrum_db_backup_dir }};
       firewall from {{ cerebrum_db_allowed_from | join(', ') or 'nobody (no cerebrum_server host)' }}
