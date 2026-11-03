@@ -10,6 +10,13 @@
     chdir: "{{ mailcow_install_dir }}"
   changed_when: true
 
+# mailcow's guide restarts the three together after a size change.
+- name: Restart mailcow message size
+  ansible.builtin.command:
+    cmd: docker compose restart postfix-mailcow rspamd-mailcow clamd-mailcow
+    chdir: "{{ mailcow_install_dir }}"
+  changed_when: true
+
 - name: Restart mailcow unbound
   ansible.builtin.command:
     cmd: docker compose restart unbound-mailcow

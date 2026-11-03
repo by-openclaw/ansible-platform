@@ -1,0 +1,75 @@
+---
+# ==============================================================================
+# Role: mailcow — message size: Postfix, Rspamd and ClamAV changed together, as mailcow's guide
+# does (manual-guides/Postfix/u_e-postfix-attachment_size). Postfix refuses above its limit and
+# the sender is told. Rspamd and clamd skip the scan above theirs without a word, so those two
+# stay above the mail limit: a mail Postfix accepts is a mail that is scanned (services/0002).
+# Rspamd's block lives in override.d: mailcow's guide warns that an update can overwrite
+# local.d/antivirus.conf, and override.d is ignored by its git. It parses before the restart.
+# ==============================================================================
+- name: "limits | The antivirus limit stays above the mail limit"
+  ansible.builtin.assert:
+    that: (mailcow_antivirus_limit_mb | int) > (mailcow_message_size_limit_mb | int)
+    fail_msg: >-
+      mailcow_antivirus_limit_mb ({{ mailcow_antivirus_limit_mb }}) must stay above
+      mailcow_message_size_limit_mb ({{ mailcow_message_size_limit_mb }}): mail between the two
+      would be accepted and not scanned
+    quiet: true
+
+- name: "limits | Postfix message size (extra.cf, mailcow's own place for overrides)"
+  ansible.builtin.blockinfile:
+    path: "{{ mailcow_install_dir }}/data/conf/postfix/extra.cf"
+    marker: "# {mark} ANSIBLE MANAGED — message size"
+    block: |
+      message_size_limit = {{ mailcow_message_size_limit_mb | int * 1048576 }}
+  notify: Restart mailcow message size
+
+- name: "limits | ClamAV scan limits (clamd.conf)"
+  ansible.builtin.lineinfile:
+    path: "{{ mailcow_install_dir }}/data/conf/clamav/clamd.conf"
+    regexp: "^{{ item.key }} "
+    line: "{{ item.key }} {{ item.value }}M"
+  loop:
+    - {key: StreamMaxLength, value: "{{ mailcow_antivirus_limit_mb }}"}
+    - {key: MaxFileSize, value: "{{ mailcow_antivirus_limit_mb }}"}
+    - {key: MaxScanSize, value: "{{ mailcow_antivirus_scan_size_mb }}"}
+  loop_control:
+    label: "{{ item.key }}"
+  notify: Restart mailcow message size
+
+- name: "limits | Rspamd's ClamAV check (override.d)"
+  ansible.builtin.template:
+    src: rspamd-antivirus.conf.j2
+    dest: "{{ mailcow_rspamd_antivirus_conf }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: mailcow_rspamd_antivirus
+  notify: Restart mailcow message size
+
+- name: "limits | Parse the Rspamd configuration"
+  when:
+    - not ansible_check_mode      # under --check the file was not written: nothing to parse
+    - mailcow_rspamd_antivirus is changed
+  block:
+    - name: "limits | The configuration parses with it"
+      community.docker.docker_container_exec:
+        container: "{{ mailcow_rspamd_container }}"
+        argv: [rspamadm, configtest]
+      register: mailcow_rspamd_parse
+      changed_when: false
+      failed_when: false
+
+    - name: "limits | Take the file back when the configuration does not parse"
+      ansible.builtin.file:
+        path: "{{ mailcow_rspamd_antivirus_conf }}"
+        state: absent
+      when: mailcow_rspamd_parse.rc != 0
+
+    - name: "limits | It parses"
+      ansible.builtin.assert:
+        that: mailcow_rspamd_parse.rc == 0
+        fail_msg: >-
+          Rspamd does not accept {{ mailcow_rspamd_antivirus_conf }} (the file was taken back):
+          {{ (mailcow_rspamd_parse.stderr | default('')) | truncate(400) }}
+        quiet: true

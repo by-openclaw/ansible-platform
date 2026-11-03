@@ -22,3 +22,7 @@ Catalog row: `inventories/prod/group_vars/all/services.yml` (`name: mailcow`). R
 ## Backup (infra/0008)
 
 Class B (`docs/backup.md`): mailcow's own app-consistent set daily at 01:00 (`mailcow-backup.timer`: vmail, MariaDB, Redis, conf), archived and pushed to the platform S3 by the same timer (pinned rclone, 7-day retention local + bucket), the whole VM in PBS daily (vmid 102).
+
+## Attachments (services/0002)
+
+One decision for three limits (`roles/mailcow/tasks/limits.yml`). Postfix refuses mail above 35 MiB, about 25 MB of attachments, with `552 5.3.4 Message size exceeds fixed limit`: the recipient sees nothing and the sender's mail system reports the failure. Rspamd's ClamAV check and clamd stop at 40 MiB. Above their own limit they skip the scan without a word, so they stay above the mail limit and every mail Postfix accepts is scanned. Larger files travel through Nextcloud (`docs/services/nextcloud.md`). Proof after a change: `rspamc` on a message just under the limit with the EICAR test file reports `VIRUS_FOUND`.
