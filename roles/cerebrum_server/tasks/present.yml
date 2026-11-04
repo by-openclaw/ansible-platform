@@ -2,15 +2,16 @@
 # roles/cerebrum_server — state present: pinned installers → WebView2 → Cerebrum (install or upgrade
 # by the version pin) → the bundled SQL taken over when declared → the run account → Cerebrum.ini →
 # device files → the project → the logon task → firewall → housekeeping → first start → report.
-- name: "Cerebrum server | The WebView2 runtime is pinned (object store URL + sha256)"
+- name: "Cerebrum server | The WebView2 runtime is pinned (installer store or URL, + sha256)"
   ansible.builtin.assert:
     that:
-      - cerebrum_server_webview2_url | length > 0
+      - (cerebrum_server_webview2_src | length > 0) or (cerebrum_server_webview2_url | length > 0)
       - cerebrum_server_webview2_sha256 | length == 64
       - (cerebrum_server_sql_bundled | bool) or (groups['cerebrum_db'] | default([]) | length > 0)
     fail_msg: >-
-      cerebrum_server: name the WebView2 runtime on the object store with its sha256 (inventory
-      group_vars/cerebrum_server.yml); a multi-VM layout also needs a cerebrum_db host, a standalone one sets cerebrum_server_sql_bundled
+      cerebrum_server: name the WebView2 runtime (cerebrum_server_webview2_src in the installer store, or
+      cerebrum_server_webview2_url) with its sha256 (inventory group_vars/cerebrum_server.yml); a multi-VM layout
+      also needs a cerebrum_db host, a standalone one sets cerebrum_server_sql_bundled
     quiet: true
 
 - name: "Cerebrum server | Download folder"
@@ -18,19 +19,50 @@
     path: "{{ cerebrum_server_download_dir }}"
     state: directory
 
-- name: "Cerebrum server | The WebView2 runtime, verified against its checksum"
-  ansible.windows.win_get_url:
-    url: "{{ cerebrum_server_webview2_url }}"
-    dest: "{{ cerebrum_server_download_dir }}\\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
-    checksum: "{{ cerebrum_server_webview2_sha256 }}"
-    checksum_algorithm: sha256
+# Evergreen: once installed, the runtime updates itself (Microsoft Edge Update). The installer travels only to a
+# host that lacks it (215 MB).
+- name: "Cerebrum server | Is the WebView2 runtime installed?"
+  ansible.windows.win_reg_stat:
+    path: "{{ cerebrum_server_webview2_uninstall_key }}"
+  register: cerebrum_server_webview2_installed
 
-- name: "Cerebrum server | Microsoft Edge WebView2 runtime (the installer's dependency)"
-  ansible.windows.win_package:
-    path: "{{ cerebrum_server_download_dir }}\\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
-    product_id: "Microsoft EdgeWebView"
-    arguments: /silent /install
-    state: present
+- name: "Cerebrum server | The WebView2 runtime where it is missing"
+  when: not cerebrum_server_webview2_installed.exists
+  block:
+    - name: "Cerebrum server | The WebView2 installer, from the installer store"
+      ansible.windows.win_copy:
+        src: "{{ cerebrum_server_webview2_src }}"
+        dest: "{{ cerebrum_server_webview2_installer_path }}"
+      when: cerebrum_server_webview2_src | length > 0
+
+    - name: "Cerebrum server | The WebView2 installer, from its URL"
+      ansible.windows.win_get_url:
+        url: "{{ cerebrum_server_webview2_url }}"
+        dest: "{{ cerebrum_server_webview2_installer_path }}"
+        checksum: "{{ cerebrum_server_webview2_sha256 }}"
+        checksum_algorithm: sha256
+      when: cerebrum_server_webview2_src | length == 0
+
+    - name: "Cerebrum server | The WebView2 installer's checksum"
+      ansible.windows.win_stat:
+        path: "{{ cerebrum_server_webview2_installer_path }}"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: cerebrum_server_webview2_stat
+
+    - name: "Cerebrum server | The WebView2 installer is the pinned one"
+      ansible.builtin.assert:
+        that: cerebrum_server_webview2_stat.stat.checksum | default('') | lower == cerebrum_server_webview2_sha256 | lower
+        fail_msg: "{{ cerebrum_server_webview2_installer_path }}: not the pinned sha256"
+        quiet: true
+      when: not ansible_check_mode
+
+    - name: "Cerebrum server | Microsoft Edge WebView2 runtime (the installer's dependency)"
+      ansible.windows.win_package:
+        path: "{{ cerebrum_server_webview2_installer_path }}"
+        product_id: "Microsoft EdgeWebView"
+        arguments: /silent /install
+        state: present
 
 # The first start comes at the end of this file: no restart after a first install.
 - name: "Cerebrum server | Cerebrum installed or upgraded to the version pin"

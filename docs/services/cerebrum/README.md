@@ -147,8 +147,8 @@ by hand with its registry's address (no mDNS / DNS-SD).
    points, SNMP (200 devices), salvos, Tally Manager, Scheduler (5 timelines), Resource Manager (250),
    Assignment Engine (1), Package Router (1), external log server, federation.
 6. The permanent licence: EVS issues it from each server's **Sentinel RMS locking code** (Help → About).
-   Instance 02 (vm-winapp-02): `*1S5PVJQ2WKCEQA2`. Instance 01: to read from its About dialog (Cerebrum
-   writes the code to no file).
+   Instance 01 (vm-winapp-01): `*1HXHUR8EJAK5SG2`; instance 02 (vm-winapp-02): `*1S5PVJQ2WKCEQA2` (both read
+   2026-11-04, the same trial and options on both; Cerebrum writes the code to no file).
 
 ### 3.4 Client and Designer test (step 19)
 
@@ -380,7 +380,7 @@ Cerebrum user, `wss://` support (to check in the protocol specification).
 | Item | Owner / next |
 |---|---|
 | Cerebrum stops at its trial key dialog at every start (key pre-filled; OK through the bastion's `cerebrum` connection): an unattended start for a licensed server | EVS |
-| Permanent licences before the trial ends (about 2027-07-01): the locking codes to EVS (§3.3: instance 02 recorded, instance 01 to read) | owner → EVS |
+| Permanent licences before the trial ends (about 2027-07-01): the two locking codes to EVS (§3.3) | owner → EVS |
 | Multicast group for C-Link | EVS, then rows + NetBox (after lib-netbox) |
 | Encrypted SQL/Admin passwords: EVS's method, or worked out from the captured pairs | EVS / owner |
 | VIA Foundation's Keycloak with Authentik as identity provider | EVS |
@@ -390,7 +390,7 @@ Cerebrum user, `wss://` support (to check in the protocol specification).
 | Web client + RCP over TLS (step 20) | after the licence |
 | Syslog to Loki, SNMP hardening, email, alarm/audit settings, project folder | later |
 | Windows base on these guests (CIS L1 with EVS's exceptions: UAC Never Notify, Defender exclusions; per-guest SSH host keys — all three share the template's; monitoring flag `platform_guest_stopped` still set) | pending |
-| Installer store: **one place, the controller** (`platform_installer_store` = `~/repos/_incoming/installers/`, outside git, one folder per product and version with `SHA256SUMS` + `SOURCE.txt`): SQL 2025 Express, sqlcmd 17.0.4055.5, ODBC 17.11.1.1, Cerebrum 2.9.3 and 2.9.5 (+ release notes, manuals), Bonjour 2.0.2. Cerebrum installs from it (step 10a); the object store's route refuses the dev guests (403): the move comes with the new infrastructure, one value to change (owner 2026-11-04) | with the new infrastructure |
+| Installer store: **one place, the controller** (`platform_installer_store` = `~/repos/_incoming/installers/`, outside git, one folder per product and version with `SHA256SUMS` + `SOURCE.txt`): SQL 2025 Express, sqlcmd 17.0.4055.5, ODBC 17.11.1.1, Cerebrum 2.9.3 and 2.9.5 (+ release notes, manuals), Bonjour 2.0.2, WebView2 Evergreen x64 (2026-11-04). Cerebrum installs from it (step 10a), WebView2 too where it is missing (it then updates itself); the object store's route refuses the dev guests (403): the move comes with the new infrastructure, one value to change (owner 2026-11-04) | with the new infrastructure |
 
 ## 13. Troubleshooting (seen live)
 
