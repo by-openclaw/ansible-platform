@@ -15,6 +15,16 @@ cerebrum_server_webview2_sha256: ""
 # cerebrum_witness, cerebrum_database_mirror_creator, cerebrum_sdn.
 cerebrum_server_components: ['cerebrum', 'cerebrum\cerebrum_watchdog', 'cerebrum_designer', 'cerebrum_client', 'cerebrum_service_manager', 'cerebrum_federation', 'gilze_clfs']
 cerebrum_server_sentinel: install           # Sentinel driver 7.6.1 is installed (the owner: no demo licence without it)
+
+# EVS manual §3.5 "UAC: Never Notify" (owner 2026-11-04: "follow EVS user manual"): roles/cerebrum_server
+# (tasks/windows.yml) sets these two; roles/windows_hardening leaves them on this group. UAC itself stays on.
+windows_hardening_registry_vendor_owned:
+  - path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+    name: ConsentPromptBehaviorAdmin
+    why: "EVS §3.5 UAC Never Notify (0); CIS 2.3.17.2"
+  - path: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+    name: PromptOnSecureDesktop
+    why: "EVS §3.5 UAC Never Notify (0); CIS 2.3.17.7"
 cerebrum_server_device_cidrs: []            # the device ranges (ACP, traps) once the media zones are declared
 
 # --- the ODBC driver Cerebrum's SQL tester looks for (roles/mssql_odbc), Microsoft's download centre ---

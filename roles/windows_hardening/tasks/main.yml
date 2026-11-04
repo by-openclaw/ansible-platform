@@ -34,13 +34,24 @@
   loop_control:
     label: "{{ item.name }} = {{ item.users | join(', ') }}"
 
+- name: "Win hardening | The registry controls, less the rows a vendor's manual sets on this host's group"
+  ansible.builtin.set_fact:
+    windows_hardening_registry_applied: >-
+      {%- set vendor = [] -%}
+      {%- for e in windows_hardening_registry_vendor_owned -%}{%- set _ = vendor.append(e.path ~ '\\' ~ e.name) -%}{%- endfor -%}
+      {%- set out = [] -%}
+      {%- for r in windows_hardening_registry -%}
+        {%- if (r.path ~ '\\' ~ r.name) not in vendor -%}{%- set _ = out.append(r) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
 - name: "Win hardening | Security options + administrative templates (registry)"
   ansible.windows.win_regedit:
     path: "{{ item.path }}"
     name: "{{ item.name }}"
     data: "{{ item.data }}"
     type: "{{ item.type }}"
-  loop: "{{ windows_hardening_registry }}"
+  loop: "{{ windows_hardening_registry_applied }}"
   loop_control:
     label: "{{ item.path | regex_replace('^HKLM:\\\\\\\\', '') | regex_replace('^.*\\\\\\\\', '') }}\\{{ item.name }}={{ item.data }}"
 
@@ -65,6 +76,7 @@
 - name: "Win hardening | Report"
   ansible.builtin.debug:
     msg: >-
-      WIN_HARDENING {{ inventory_hostname }}: CIS L1 — {{ windows_hardening_registry | length }} registry controls,
+      WIN_HARDENING {{ inventory_hostname }}: CIS L1 — {{ windows_hardening_registry_applied | length }} registry controls
+      {%- if windows_hardening_registry_vendor_owned | length > 0 %} ({{ windows_hardening_registry_vendor_owned | map(attribute='name') | join(', ') }}: the vendor's value, set by its role){% endif %},
       {{ windows_hardening_audit_policies | length }} audit subcategories, {{ windows_hardening_user_rights | length }} user rights,
       {{ windows_hardening_asr_rules | length }} ASR rules, {{ windows_hardening_disabled_services | length }} services off
