@@ -1,0 +1,27 @@
+---
+# ==============================================================================
+# Role: cerebrum_nmos — what a Cerebrum NMOS IS-04/05 registry needs on its Windows host.
+#
+# EVS "NMOS IS-04-5 Help": registration mode depends on Bonjour for Windows (mDNS / DNS-SD); the
+# registry's two URLs must be reserved for HTTP.sys; the firewall must let the nodes in. Registration
+# here is manual (owner, 2026-11-03: no mDNS / DNS-SD discovery, every node is pointed at its registry),
+# so no mDNS port is opened. The registry itself is a "Network Media Server" device that Cerebrum hosts on
+# a device service (nmos-registry-<n>); that device and its port live in Cerebrum's configuration (.ccf).
+# Port: 8090, not EVS's example 8080 — RCP keeps 8080/8081 on the same server and no NMOS specification
+# fixes the registry's port (owner, 2026-11-04).
+# ==============================================================================
+cerebrum_nmos_registry_port: 8090
+cerebrum_nmos_registry_urls:                    # registration and query, one port (EVS's registry serves both)
+  - "http://*:{{ cerebrum_nmos_registry_port }}/x-nmos/registration/"
+  - "http://*:{{ cerebrum_nmos_registry_port }}/x-nmos/query/"
+cerebrum_nmos_url_sddl: "D:(A;;GA;;;WD)"         # Everyone by SID (the name is localised), listen + delegate as EVS asks
+cerebrum_nmos_registry_from: "{{ platform_mgmt_cidrs }}"   # the nodes that register (device networks join once declared)
+cerebrum_nmos_firewall_profiles: [domain, private, public]
+
+# --- Bonjour for Windows: Apple's Bonjour Print Services 2.0.2 (the link in EVS's document), pinned ------
+cerebrum_nmos_download_dir: 'C:\ProgramData\platform\installers'
+cerebrum_nmos_bonjour_url: "https://download.info.apple.com/Mac_OS_X/061-8098.20100603.gthyu/BonjourPSSetup.exe"
+cerebrum_nmos_bonjour_sha256: ""                # REQUIRED (inventory)
+cerebrum_nmos_bonjour_signer: "Apple Inc."      # the Authenticode signer the download must carry
+cerebrum_nmos_bonjour_msi: Bonjour64.msi        # the 64-bit service only (Cerebrum is 64-bit), not the printer wizard
+cerebrum_nmos_bonjour_service: "Bonjour Service"
