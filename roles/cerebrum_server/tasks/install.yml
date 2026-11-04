@@ -1,0 +1,174 @@
+---
+# Cerebrum installed, or upgraded to the version pin: the vendor's installer (Inno Setup), silent. An upgrade
+# re-installs exactly the components the host already has (the installer's own record, "Inno Setup: Selected
+# Components") — never one more — over the same folder (release notes, Warnings), without the Sentinel driver
+# or the bundled SQL Server again. Cerebrum, its Watchdog and its service are stopped first (the vendor's own
+# stop is a forced one); the host restarts after, and the run account's sign-in starts Cerebrum (startup.yml).
+- name: "Cerebrum server | The installer is pinned (version, sha256, a source)"
+  ansible.builtin.assert:
+    that:
+      - cerebrum_server_version | length > 0
+      - cerebrum_server_installer_sha256 | length == 64
+      - (cerebrum_server_installer_src | length > 0) or (cerebrum_server_installer_url | length > 0)
+    fail_msg: >-
+      cerebrum_server: pin the installer (cerebrum_server_version, cerebrum_server_installer_sha256) and name
+      where it comes from: cerebrum_server_installer_src (the installer store) or cerebrum_server_installer_url
+    quiet: true
+
+- name: "Cerebrum server | What is installed (the vendor's uninstall key)"
+  ansible.windows.win_reg_stat:
+    path: "{{ cerebrum_server_uninstall_key }}"
+  register: cerebrum_server_installed
+
+- name: "Cerebrum server | Version and components today"
+  ansible.builtin.set_fact:
+    cerebrum_server_installed_version: "{{ cerebrum_server_installed.properties.DisplayVersion.value | default('') }}"
+    cerebrum_server_install_components: >-
+      {{ (cerebrum_server_installed.properties['Inno Setup: Selected Components'].value | split(','))
+         if cerebrum_server_installed.exists else cerebrum_server_components }}
+
+- name: "Cerebrum server | Install or upgrade to {{ cerebrum_server_version }}"
+  when: cerebrum_server_installed_version != cerebrum_server_version
+  block:
+    - name: "Cerebrum server | Download folder"
+      ansible.windows.win_file:
+        path: "{{ cerebrum_server_download_dir }}"
+        state: directory
+
+    - name: "Cerebrum server | The installer, from the installer store"
+      ansible.windows.win_copy:
+        src: "{{ cerebrum_server_installer_src }}"
+        dest: "{{ cerebrum_server_installer_path }}"
+      when: cerebrum_server_installer_src | length > 0
+
+    - name: "Cerebrum server | The installer, from its URL"
+      ansible.windows.win_get_url:
+        url: "{{ cerebrum_server_installer_url }}"
+        dest: "{{ cerebrum_server_installer_path }}"
+        checksum: "{{ cerebrum_server_installer_sha256 }}"
+        checksum_algorithm: sha256
+      when: cerebrum_server_installer_src | length == 0
+
+    - name: "Cerebrum server | The installer's checksum"
+      ansible.windows.win_stat:
+        path: "{{ cerebrum_server_installer_path }}"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: cerebrum_server_installer_stat
+
+    - name: "Cerebrum server | The installer is the pinned one"
+      ansible.builtin.assert:
+        that: cerebrum_server_installer_stat.stat.checksum | default('') | lower == cerebrum_server_installer_sha256 | lower
+        fail_msg: >-
+          {{ cerebrum_server_installer_path }}: sha256 {{ cerebrum_server_installer_stat.stat.checksum | default('missing') }},
+          pinned {{ cerebrum_server_installer_sha256 }}
+        quiet: true
+      when: not ansible_check_mode or cerebrum_server_installer_stat.stat.exists
+
+    - name: "Cerebrum server | Cerebrum's services (state before the upgrade)"
+      ansible.windows.win_service_info:
+        name: "{{ item }}"
+      loop: "{{ cerebrum_server_services }}"
+      register: cerebrum_server_services_before
+
+    - name: "Cerebrum server | Cerebrum's services stopped"
+      ansible.windows.win_service:
+        name: "{{ item.item }}"
+        state: stopped
+      loop: "{{ cerebrum_server_services_before.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.exists
+
+    # The Watchdog first, or it starts Cerebrum again. Forced: Cerebrum runs elevated in another session
+    # and asks before it closes (the vendor's stop playbook forces it too). No match is not an error.
+    - name: "Cerebrum server | Cerebrum's programs stopped (the Watchdog first)"
+      ansible.windows.win_command:
+        argv: [taskkill.exe, /F, /FI, "IMAGENAME eq {{ item }}"]
+      loop: "{{ cerebrum_server_stop_images }}"
+      register: cerebrum_server_stop
+      changed_when: "'SUCCESS' in (cerebrum_server_stop.stdout | default(''))"
+
+    - name: "Cerebrum server | Installed with the components it had: {{ cerebrum_server_install_components | join(',') }}"
+      ansible.windows.win_command:
+        argv:
+          - "{{ cerebrum_server_installer_path }}"
+          - "/InstallSentinel={{ 'Install' if (cerebrum_server_sentinel == 'install' and not cerebrum_server_installed.exists) else 'Skip' }}"
+          - "/InstallSQL={{ 'Install' if (cerebrum_server_sql_bundled | bool and not cerebrum_server_installed.exists) else 'Skip' }}"
+          - /VERYSILENT
+          - /SUPPRESSMSGBOXES
+          - /NORESTART
+          - /SP-
+          - "/DIR={{ cerebrum_server_install_dir }}"
+          - "/COMPONENTS={{ cerebrum_server_install_components | join(',') }}"
+          - "/LOG={{ cerebrum_server_download_dir }}\\Cerebrum_{{ cerebrum_server_version }}_install.log"
+      register: cerebrum_server_install_run
+      changed_when: true
+
+    - name: "Cerebrum server | What is installed now"
+      ansible.windows.win_reg_stat:
+        path: "{{ cerebrum_server_uninstall_key }}"
+      register: cerebrum_server_installed_after
+
+    - name: "Cerebrum server | The pinned version, and not one component more"
+      ansible.builtin.assert:
+        that:
+          - cerebrum_server_installed_after.properties.DisplayVersion.value == cerebrum_server_version
+          - >-
+            (cerebrum_server_installed_after.properties['Inno Setup: Selected Components'].value | split(',') | sort)
+            == (cerebrum_server_install_components | sort)
+        fail_msg: >-
+          Cerebrum {{ cerebrum_server_installed_after.properties.DisplayVersion.value | default('?') }} with
+          {{ cerebrum_server_installed_after.properties['Inno Setup: Selected Components'].value | default('?') }}
+          after the installer (exit {{ cerebrum_server_install_run.rc }}); log
+          {{ cerebrum_server_download_dir }}\Cerebrum_{{ cerebrum_server_version }}_install.log
+        quiet: true
+      when: not ansible_check_mode
+
+    - name: "Cerebrum server | Cerebrum's services as they were"
+      ansible.windows.win_service:
+        name: "{{ item.item }}"
+        state: started
+      loop: "{{ cerebrum_server_services_before.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.exists and item.services[0].state == 'started'
+
+    # Cerebrum reads its ini, its rows and its licence at start; the run account's sign-in at boot starts it.
+    - name: "Cerebrum server | Restart: Cerebrum comes back through the run account's sign-in"
+      ansible.windows.win_reboot:
+        reboot_timeout: 900
+      when: cerebrum_server_install_reboot | bool
+
+    # The sign-in at boot starts Cerebrum. In trial licence mode (GUI/DEMO_MODE_LOGON) Cerebrum then waits at its
+    # "Cerebrum Trial Key" dialog, the key pre-filled from the ini, until someone confirms it: its port stays
+    # closed until then (vm-winapp-02, 2026-11-04). So the process is the proof; the port is reported.
+    - name: "Cerebrum server | Cerebrum started by the sign-in"
+      ansible.windows.win_command:
+        argv: [tasklist.exe, /NH, /FI, "IMAGENAME eq {{ cerebrum_server_exe | win_basename }}"]
+      register: cerebrum_server_after_boot
+      changed_when: false
+      retries: 20
+      delay: 15
+      until: (cerebrum_server_exe | win_basename) in cerebrum_server_after_boot.stdout
+      when: cerebrum_server_install_reboot | bool
+
+    - name: "Cerebrum server | Its port 40001 (closed while the trial key dialog waits)"
+      ansible.windows.win_wait_for:
+        port: 40001
+        timeout: 60
+      register: cerebrum_server_port_after_boot
+      failed_when: false
+      when: cerebrum_server_install_reboot | bool
+
+- name: "Cerebrum server | Report"
+  ansible.builtin.debug:
+    msg: >-
+      CEREBRUM_INSTALL {{ inventory_hostname }}: {{ cerebrum_server_installed_version or 'none' }} →
+      {{ cerebrum_server_version if cerebrum_server_installed_version != cerebrum_server_version else 'unchanged' }};
+      components {{ cerebrum_server_install_components | join(', ') }}
+      {%- if cerebrum_server_port_after_boot is defined and cerebrum_server_port_after_boot is not skipped %};
+      after the restart: Cerebrum running, port 40001 {{ 'closed (the trial key dialog waits for OK on the console)'
+      if 'timeout' in (cerebrum_server_port_after_boot.msg | default('')) else 'open' }}{% endif %}
+      {%- if cerebrum_server_components | difference(cerebrum_server_install_components) | length > 0 %};
+      declared but not installed, not added: {{ cerebrum_server_components | difference(cerebrum_server_install_components) | join(', ') }}{% endif %}

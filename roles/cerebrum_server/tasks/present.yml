@@ -2,18 +2,15 @@
 # roles/cerebrum_server — state present: pinned installers → WebView2 → Cerebrum (install or upgrade
 # by the version pin) → the bundled SQL taken over when declared → the run account → Cerebrum.ini →
 # device files → the project → the logon task → firewall → housekeeping → first start → report.
-- name: "Cerebrum server | The installers are pinned (object store URL + sha256)"
+- name: "Cerebrum server | The WebView2 runtime is pinned (object store URL + sha256)"
   ansible.builtin.assert:
     that:
-      - cerebrum_server_installer_url | length > 0
-      - cerebrum_server_installer_sha256 | length == 64
       - cerebrum_server_webview2_url | length > 0
       - cerebrum_server_webview2_sha256 | length == 64
       - (cerebrum_server_sql_bundled | bool) or (groups['cerebrum_db'] | default([]) | length > 0)
     fail_msg: >-
-      cerebrum_server: name the Cerebrum installer and the WebView2 runtime on the object store with
-      their sha256 (inventory group_vars/cerebrum_server.yml); a multi-VM layout also needs a
-      cerebrum_db host, a standalone one sets cerebrum_server_sql_bundled
+      cerebrum_server: name the WebView2 runtime on the object store with its sha256 (inventory
+      group_vars/cerebrum_server.yml); a multi-VM layout also needs a cerebrum_db host, a standalone one sets cerebrum_server_sql_bundled
     quiet: true
 
 - name: "Cerebrum server | Download folder"
@@ -21,21 +18,12 @@
     path: "{{ cerebrum_server_download_dir }}"
     state: directory
 
-- name: "Cerebrum server | The installers, verified against their checksums"
+- name: "Cerebrum server | The WebView2 runtime, verified against its checksum"
   ansible.windows.win_get_url:
-    url: "{{ item.url }}"
-    dest: "{{ cerebrum_server_download_dir }}\\{{ item.file }}"
-    checksum: "{{ item.sha256 }}"
+    url: "{{ cerebrum_server_webview2_url }}"
+    dest: "{{ cerebrum_server_download_dir }}\\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+    checksum: "{{ cerebrum_server_webview2_sha256 }}"
     checksum_algorithm: sha256
-  loop:
-    - file: MicrosoftEdgeWebView2RuntimeInstallerX64.exe
-      url: "{{ cerebrum_server_webview2_url }}"
-      sha256: "{{ cerebrum_server_webview2_sha256 }}"
-    - file: "Cerebrum_{{ cerebrum_server_version }}_Installer.exe"
-      url: "{{ cerebrum_server_installer_url }}"
-      sha256: "{{ cerebrum_server_installer_sha256 }}"
-  loop_control:
-    label: "{{ item.file }}"
 
 - name: "Cerebrum server | Microsoft Edge WebView2 runtime (the installer's dependency)"
   ansible.windows.win_package:
@@ -44,28 +32,11 @@
     arguments: /silent /install
     state: present
 
-- name: "Cerebrum server | The installed version (the vendor's uninstall key)"
-  ansible.windows.win_reg_stat:
-    path: "{{ cerebrum_server_uninstall_key }}"
-    name: DisplayVersion
-  register: cerebrum_server_installed
-
-# An upgrade is the same silent install over the existing one (Inno Setup); the version pin decides.
-- name: "Cerebrum server | Installed or upgraded with the declared components, version {{ cerebrum_server_version }}"
-  ansible.windows.win_command:
-    argv:
-      - "{{ cerebrum_server_download_dir }}\\Cerebrum_{{ cerebrum_server_version }}_Installer.exe"
-      - "/InstallSentinel={{ 'Install' if cerebrum_server_sentinel == 'install' else 'Skip' }}"
-      - "/InstallSQL={{ 'Install' if cerebrum_server_sql_bundled | bool else 'Skip' }}"
-      - /VERYSILENT
-      - /SUPPRESSMSGBOXES
-      - /NORESTART
-      - /SP-
-      - "/COMPONENTS={{ cerebrum_server_components | join(',') }}"
-      - "/LOG={{ cerebrum_server_download_dir }}\\Cerebrum_{{ cerebrum_server_version }}_install.log"
-  register: cerebrum_server_install_run
-  changed_when: true
-  when: not cerebrum_server_installed.exists or (cerebrum_server_installed.value | default('')) is not search('^' ~ (cerebrum_server_version | regex_escape))
+# The first start comes at the end of this file: no restart after a first install.
+- name: "Cerebrum server | Cerebrum installed or upgraded to the version pin"
+  ansible.builtin.include_tasks: install.yml
+  vars:
+    cerebrum_server_install_reboot: false
 
 # --- standalone: the bundled SQL Express taken over (sa from Vault, port, logins, backup) ---------------
 - name: "Cerebrum server | The bundled instance taken over by roles/cerebrum_db"
