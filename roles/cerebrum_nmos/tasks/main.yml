@@ -1,0 +1,115 @@
+---
+# roles/cerebrum_nmos — see defaults/main.yml. Bonjour (pinned, signature checked, the 64-bit service only)
+# → the registry's URL reservations → the firewall rule → report.
+- name: "NMOS | Bonjour's installer is pinned (sha256)"
+  ansible.builtin.assert:
+    that: cerebrum_nmos_bonjour_sha256 | length == 64
+    fail_msg: "cerebrum_nmos: name BonjourPSSetup.exe's sha256 (inventory)"
+    quiet: true
+
+- name: "NMOS | Is the Bonjour service installed?"
+  ansible.windows.win_service_info:
+    name: "{{ cerebrum_nmos_bonjour_service }}"
+  register: cerebrum_nmos_bonjour_svc
+
+- name: "NMOS | Bonjour, when absent"
+  when: cerebrum_nmos_bonjour_svc.services | length == 0
+  block:
+    - name: "NMOS | Download folder"
+      ansible.windows.win_file:
+        path: "{{ cerebrum_nmos_download_dir }}\\bonjour"
+        state: directory
+
+    - name: "NMOS | Apple's installer, verified against its checksum"
+      ansible.windows.win_get_url:
+        url: "{{ cerebrum_nmos_bonjour_url }}"
+        dest: "{{ cerebrum_nmos_download_dir }}\\BonjourPSSetup.exe"
+        checksum: "{{ cerebrum_nmos_bonjour_sha256 }}"
+        checksum_algorithm: sha256
+
+    - name: "NMOS | Its Authenticode signature (read)"
+      ansible.windows.win_powershell:
+        parameters:
+          path: "{{ cerebrum_nmos_download_dir }}\\BonjourPSSetup.exe"
+        script: |
+          param($path)
+          $s = Get-AuthenticodeSignature -FilePath $path
+          $Ansible.Changed = $false
+          [pscustomobject]@{ status = [string]$s.Status; signer = [string]$s.SignerCertificate.Subject }
+      register: cerebrum_nmos_bonjour_sig
+
+      when: not ansible_check_mode   # a dry run downloads nothing to check or install
+    - name: "NMOS | Signed by Apple and valid"
+      ansible.builtin.assert:
+        that:
+          - cerebrum_nmos_bonjour_sig.output[0].status == 'Valid'
+          - cerebrum_nmos_bonjour_sig.output[0].signer is search(cerebrum_nmos_bonjour_signer | regex_escape)
+        fail_msg: "BonjourPSSetup.exe: signature {{ cerebrum_nmos_bonjour_sig.output[0].status }} by {{ cerebrum_nmos_bonjour_sig.output[0].signer }}"
+        quiet: true
+
+      when: not ansible_check_mode   # a dry run downloads nothing to check or install
+    - name: "NMOS | Apple's packages unpacked (the bootstrapper's /extract)"
+      ansible.windows.win_command:
+        argv: ["{{ cerebrum_nmos_download_dir }}\\BonjourPSSetup.exe", /extract, "{{ cerebrum_nmos_download_dir }}\\bonjour"]
+        creates: "{{ cerebrum_nmos_download_dir }}\\bonjour\\{{ cerebrum_nmos_bonjour_msi }}"
+
+      when: not ansible_check_mode   # a dry run downloads nothing to check or install
+    - name: "NMOS | The Bonjour service ({{ cerebrum_nmos_bonjour_msi }}, unattended)"
+      ansible.windows.win_package:
+        path: "{{ cerebrum_nmos_download_dir }}\\bonjour\\{{ cerebrum_nmos_bonjour_msi }}"
+        arguments: /qn /norestart
+        state: present
+
+      when: not ansible_check_mode   # a dry run downloads nothing to check or install
+- name: "NMOS | Dry run: what would be installed"
+  ansible.builtin.debug:
+    msg: "would download, check (Apple signature) and install Bonjour ({{ cerebrum_nmos_bonjour_msi }})"
+  when:
+    - ansible_check_mode
+    - cerebrum_nmos_bonjour_svc.services | length == 0
+
+- name: "NMOS | Bonjour runs and starts with Windows"
+  ansible.windows.win_service:
+    name: "{{ cerebrum_nmos_bonjour_service }}"
+    start_mode: auto
+    state: started
+  when: not ansible_check_mode or cerebrum_nmos_bonjour_svc.services | length > 0
+
+# --- the registry's URLs, reserved for HTTP.sys --------------------------------------------------------
+- name: "NMOS | The registry's address reservations today"
+  ansible.windows.win_command:
+    argv: [netsh, http, show, urlacl, "url={{ item }}"]
+  loop: "{{ cerebrum_nmos_registry_urls }}"
+  register: cerebrum_nmos_urlacl_now
+  changed_when: false
+  failed_when: false
+  check_mode: false   # read-only
+
+- name: "NMOS | The missing reservations added (Everyone by SID: listen + delegate)"
+  ansible.windows.win_command:
+    argv: [netsh, http, add, urlacl, "url={{ item.item }}", "sddl={{ cerebrum_nmos_url_sddl }}"]
+  loop: "{{ cerebrum_nmos_urlacl_now.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stdout is not search('Reserved URL')
+  changed_when: true
+
+# --- the firewall: the nodes register over HTTP; the registry runs inside a Cerebrum device service ----
+- name: "NMOS | The registry's port, open to the registering nodes"
+  community.windows.win_firewall_rule:
+    name: "CEREBRUM-In-NMOS-Registry"
+    direction: in
+    action: allow
+    protocol: tcp
+    localport: "{{ cerebrum_nmos_registry_port }}"
+    remoteip: "{{ cerebrum_nmos_registry_from | join(',') }}"
+    profiles: "{{ cerebrum_nmos_firewall_profiles }}"
+    enabled: true
+    state: present
+
+- name: "NMOS | Report"
+  ansible.builtin.debug:
+    msg: >-
+      CEREBRUM_NMOS {{ inventory_hostname }}: registry {{ cerebrum_nmos_registry | default('?') }} on tcp {{ cerebrum_nmos_registry_port }}
+      ({{ cerebrum_nmos_registry_urls | join(', ') }}); Bonjour {{ 'present' if cerebrum_nmos_bonjour_svc.services | length > 0 else ('would be installed (dry run)' if ansible_check_mode else 'installed now') }};
+      firewall from {{ cerebrum_nmos_registry_from | join(', ') }}
