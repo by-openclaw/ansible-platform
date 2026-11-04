@@ -24,8 +24,9 @@
 # create: the asset has no account of that name · rekey: the mark differs · privileged: the flag
 # differs · stale: an account the catalog no longer declares for a managed asset (it cannot log
 # in anyway: the connect dialog must offer only what works).
-# Password accounts (Windows RDP assets): one break-glass password per tier, read once
-# with its KV version — the version is the account's mark (rekey when Vault rotated it).
+# Password accounts (Windows RDP assets): each Vault document read once (the tier's break-glass
+# and user passwords, each guest's Administrator) with its KV version — the version is the
+# account's mark (rekey when Vault rotated it).
 - name: "JumpServer accounts | Each password account's Vault doc, read once with its KV version"
   ansible.builtin.include_tasks: api_accounts_password.yml
   loop: >-
@@ -36,7 +37,7 @@
     label: "{{ jumpserver_pw_path }}"
 
 # Per asset, the DECLARED account list (Linux: the one break-glass key account; Windows: the
-# <org> admin and the <org>-user session, both passwords). create: not there · rekey: the mark
+# <org> admin, the <org>-user session and the built-in Administrator, all passwords). create: not there · rekey: the mark
 # differs · privileged: the flag · stale: an account the catalog does not declare.
 - name: "JumpServer accounts | Plan"
   ansible.builtin.set_fact:

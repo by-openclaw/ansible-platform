@@ -140,7 +140,7 @@ jumpserver_asset_key_passphrase_vault_path: "{{ platform_env }}/break-glass/ssh-
 # does not name is still registered, under jumpserver_asset_default_node: until 2026-10-10 such
 # a host was silently left out (15 of 39: the cluster replicas and eight newer services).
 jumpserver_asset_groups:
-  Databases:     [postgresql, postgresql_replicas, pg_endpoint, redis, redis_replicas, pgadmin]
+  Databases:     [postgresql, postgresql_replicas, pg_endpoint, redis, redis_replicas, pgadmin, cerebrum_db]   # cerebrum_db: the SQL Server guest (owner 2026-11-04)
   Identity:      [authentik, authentik_replicas, vault, vault_replicas, vaultwarden, step_ca]
   Storage:       [seaweedfs, pbs, nextcloud, collab]
   Networking:    [traefik, netbird, adguard, opnsense]
@@ -163,6 +163,12 @@ jumpserver_windows_groups: [windows_guests]
 jumpserver_windows_protocol: rdp
 jumpserver_windows_port: 3389
 jumpserver_windows_secret_type: "password"   # pragma: allowlist secret
+# The built-in Administrator of every Windows guest, a third account beside <org> and <org>-user
+# (owner 2026-11-04: "a second link but admin for all the winserver"): the account that signs in
+# at boot where an application starts in a session (roles/cerebrum_server), so that session and
+# its dialogs are reachable through the bastion. Its own password per guest (roles/windows_guest,
+# Vault <tier>/windows/<host>/administrator).
+jumpserver_windows_admin_account: "Administrator"
 
 # The bastion does not register itself.
 jumpserver_asset_exclude: ["{{ inventory_hostname }}"]
@@ -194,6 +200,10 @@ jumpserver_assets: >-   # pragma: allowlist secret
                                                {'username': jumpserver_asset_default_account ~ '-user',
                                                 'secret_type': jumpserver_windows_secret_type,
                                                 'vault_path': tier ~ '/break-glass/os-user',
+                                                'privileged': false},
+                                               {'username': jumpserver_windows_admin_account,
+                                                'secret_type': jumpserver_windows_secret_type,
+                                                'vault_path': tier ~ '/windows/' ~ h ~ '/administrator',
                                                 'privileged': false}]}) -%}
           {%- else -%}
           {%- set _ = out.append({'name': h,
