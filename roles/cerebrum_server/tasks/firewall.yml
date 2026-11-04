@@ -1,0 +1,20 @@
+---
+# The host firewall of a Cerebrum server: one inbound rule per use, bound to Cerebrum.exe, open to the
+# sources the inventory names (an empty source list leaves the rule present but disabled). The guest's
+# default stays "block inbound" (roles/windows_firewall); only these doors open.
+- name: "Cerebrum server | The firewall rules of the application"
+  community.windows.win_firewall_rule:
+    name: "{{ item.name }}"
+    direction: "{{ item.direction }}"
+    action: allow
+    protocol: "{{ item.protocol }}"
+    localport: "{{ item.localport | default(omit) }}"
+    remoteport: "{{ item.remoteport | default(omit) }}"
+    remoteip: "{{ (item.remoteip | join(',')) if (item.remoteip | length > 0) else omit }}"
+    program: "{{ item.program }}"
+    profiles: "{{ cerebrum_server_firewall_profiles }}"
+    enabled: "{{ item.remoteip | length > 0 }}"
+    state: present
+  loop: "{{ cerebrum_server_firewall_rules }}"
+  loop_control:
+    label: "{{ item.name }}"

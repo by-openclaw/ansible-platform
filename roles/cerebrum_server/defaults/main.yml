@@ -133,23 +133,30 @@ cerebrum_server_device_cidrs: []                            # the controlled dev
 cerebrum_server_monitoring_host: "{{ hostvars[groups['monitoring'] | first].ansible_host }}"
 cerebrum_server_api_cidrs: "{{ [cerebrum_server_monitoring_host] + platform_mgmt_cidrs }}"   # the Northbound API (the watch, the ops playbook)
 cerebrum_server_firewall_profiles: [domain, private, public]
+# Cerebrum's own SNMP agent (UDP 1161) answers with the vendor's communities (public / private) until the
+# SNMP settings are hardened (owner: "SNMP later", 2026-11-03): its rule stays present and disabled.
+cerebrum_server_snmp_agent_from: []
+# C-Link ports (Configuration > C-Link, 2026-11-03): 40001 multicast/TCP, 40002 client unicast,
+# 40003 Designer unicast, 40004/40005 second unicast ports of non-multicast clients and Designers.
+cerebrum_server_clink_ports: "40001-40005"
+cerebrum_server_northbound_port: 40007           # the "Cerebrum XML" control interface (DHS), vendor default; the lab ran 40009
 cerebrum_server_firewall_rules:
   - name: "CEREBRUM-In-Server-TCP"
     direction: in
     protocol: tcp
-    localport: "40001,40002"
+    localport: "{{ cerebrum_server_clink_ports }}"
     remoteip: "{{ cerebrum_server_client_cidrs }}"
     program: "{{ cerebrum_server_exe }}"
   - name: "CEREBRUM-In-Server-UDP"
     direction: in
     protocol: udp
-    localport: "40001,40002"
+    localport: "{{ cerebrum_server_clink_ports }}"
     remoteip: "{{ cerebrum_server_client_cidrs }}"
     program: "{{ cerebrum_server_exe }}"
   - name: "CEREBRUM-In-Northbound"
     direction: in
     protocol: tcp
-    localport: "40009"
+    localport: "{{ cerebrum_server_northbound_port }}"
     remoteip: "{{ cerebrum_server_api_cidrs }}"
     program: "{{ cerebrum_server_exe }}"
   - name: "CEREBRUM-In-ACP"
@@ -168,7 +175,7 @@ cerebrum_server_firewall_rules:
     direction: in
     protocol: udp
     localport: "1161"
-    remoteip: ["{{ cerebrum_server_monitoring_host }}"]
+    remoteip: "{{ cerebrum_server_snmp_agent_from }}"
     program: "{{ cerebrum_server_exe }}"
   - name: "CEREBRUM-Out-SQL"
     direction: out
