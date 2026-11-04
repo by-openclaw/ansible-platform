@@ -9,12 +9,13 @@
 #      Cerebrum's SQL tester looks for (roles/mssql_odbc); Cerebrum.ini with the instance's SQL connection
 #      (created once, before the first start); the application Admin password Cerebrum asks for at its
 #      first start, in Vault, and its encrypted form once set (roles/cerebrum_server ini, admin_password,
-#      admin_capture).
+#      admin_capture). `install` brings Cerebrum to the version pin: the components the host has, never
+#      one more; an upgrade stops Cerebrum and restarts the host — announce the run first.
 # Runs after the guest baseline (playbooks/windows-guests.yml). SQL setup may ask for a restart of
 # the database host: the role restarts it then — announce the run first.
 #
 #   Dry run: ansible-playbook playbooks/cerebrum.yml --check --diff
-#   One step: --tags sql | sql-certificate | odbc | firewall | rcp | certificate | windows | startup | sentinel | ini | settings | admin
+#   One step: --tags sql | sql-certificate | odbc | firewall | rcp | certificate | windows | startup | install | sentinel | ini | settings | admin
 #   Apply:   ansible-playbook playbooks/cerebrum.yml [--limit vm-x]
 # ==============================================================================
 - name: "Cerebrum | the SQL Server instance"
@@ -78,6 +79,13 @@
         apply:
           tags: [startup]
       tags: [startup]
+    - name: "Cerebrum | Cerebrum at the version pin (after the start at boot: an upgrade stops it, the restart brings it back)"
+      ansible.builtin.include_role:
+        name: cerebrum_server
+        tasks_from: install.yml
+        apply:
+          tags: [install]
+      tags: [install]
     - name: "Cerebrum | Sentinel persistence (Cerebrum refuses a licence without it)"
       ansible.builtin.include_role:
         name: cerebrum_server

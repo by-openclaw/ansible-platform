@@ -44,3 +44,10 @@ platform_windows_egress_open: true
 # seeded on the first guests and which a converged guest keeps. Nothing else stays in that file.
 platform_windows_admin_keys_extra:
   - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFJ8rXlV8+/e20imHW/hTry2DbqQ9bIpwslC4MIINlJW by-systems@ws-win11-ref"
+
+# --- the vendor installers' store (owner 2026-11-04) -------------------------------------------
+# ONE place until the new infrastructure: the object store's route refuses the dev guests (403, they
+# sit outside its allow-list), so the installers stay on the controller, one folder per product and
+# version with its SHA256SUMS and SOURCE.txt, never in git. A role copies from here and checks the
+# pinned checksum on the guest; the move to the object store is a change of this one value.
+platform_installer_store: "{{ lookup('env', 'HOME') }}/repos/_incoming/installers"

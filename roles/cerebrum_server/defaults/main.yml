@@ -17,7 +17,10 @@ cerebrum_server_state: present                  # absent: the application uninst
 cerebrum_server_download_dir: 'C:\ProgramData\platform\installers'
 cerebrum_server_version: "2.9.3"
 cerebrum_server_installer_url: ""               # Cerebrum_<version>_Installer.exe on the object store (inventory)
+# Or the installer store on the controller (inventory platform_installer_store): copied from there when set.
+cerebrum_server_installer_src: ""
 cerebrum_server_installer_sha256: ""            # REQUIRED
+cerebrum_server_installer_path: "{{ cerebrum_server_download_dir }}\\Cerebrum_{{ cerebrum_server_version }}_Installer.exe"
 cerebrum_server_webview2_url: ""                # Microsoft Edge WebView2 runtime (the installer's dependency)
 cerebrum_server_webview2_sha256: ""             # REQUIRED
 cerebrum_server_product_id: "{B1E6A442-4B28-479A-92CC-AF039E047927}_is1"   # the vendor's uninstall key (same across versions)
@@ -33,7 +36,14 @@ cerebrum_server_components: [cerebrum, cerebrum_watchdog]
 # cerebrum_db group names the dedicated database host(s).
 cerebrum_server_sql_bundled: false              # the owner's rule (2026-10-22): SQL from Microsoft's media even on a standalone server
                                                 #   (the cerebrum_db group then holds this host too); the bundle stays available, not used
-cerebrum_server_uninstall_key: 'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{{ cerebrum_server_product_id }}'
+# The installer is 64-bit (release notes: "All the Cerebrum applications are 64-bit"): its uninstall key is in
+# the 64-bit hive, not under WOW6432Node (measured 2026-11-04 on both servers).
+cerebrum_server_uninstall_key: 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{{ cerebrum_server_product_id }}'
+# An upgrade (tasks/install.yml) stops these first and brings back the ones that ran: the Service Manager
+# (ServiceInstall.bat, EVS §3.6), then every program of the installer, the Watchdog before Cerebrum.
+cerebrum_server_services: [CerebrumServiceManager]
+cerebrum_server_stop_images: ["Cerebrum Watchdog.exe", "Cerebrum*"]
+cerebrum_server_install_reboot: true            # restart after an upgrade: the run account's sign-in starts Cerebrum
 # The licence: Cerebrum reads a Sentinel key. `install` adds the Sentinel driver (a hardware key);
 # `skip` leaves it out (demo key, or a software licence applied through the application).
 cerebrum_server_sentinel: skip
