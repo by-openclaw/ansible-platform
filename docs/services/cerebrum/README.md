@@ -372,7 +372,7 @@ Cerebrum user, `wss://` support (to check in the protocol specification).
 | Web client + RCP over TLS (step 20) | after the licence |
 | Syslog to Loki, SNMP hardening, email, alarm/audit settings, project folder | later |
 | Windows base on these guests (CIS L1 with EVS's exceptions: UAC Never Notify, Defender exclusions; per-guest SSH host keys — all three share the template's; monitoring flag `platform_guest_stopped` still set) | pending |
-| Installer store (SQL media, ODBC, sqlcmd, Bonjour, Cerebrum installer, release notes, manuals) so every playbook installs without internet; Bonjour kept meanwhile in `~/repos/_incoming/installers/bonjour/2.0.2/` | pending, next |
+| Installer store. **Archived** (2026-11-04) on the controller, outside git, one folder per product and version with `SHA256SUMS` + `SOURCE.txt`: `~/repos/_incoming/installers/` — SQL 2025 Express, sqlcmd 17.0.4055.5, ODBC 17.11.1.1 (each = the inventory's pin), Cerebrum 2.9.3 + release notes + manuals (pin #1107), Bonjour 2.0.2. **Not yet served**: the inventory's URLs point at `https://s3.<domain>/installers/…`, but the object store's route refuses the dev guests (Traefik IP allow-list, measured 403) — admitting the dev tier to it is a cross-tier decision; until then a single copy lives on the controller | owner: store route; then upload |
 | Steps 9 and 10 (UAC, Defender, run as administrator, hosts file, start at boot) | owner pastes them; then restart both servers |
 | Certificate renewals: a weekly job running step 21 | next |
 
