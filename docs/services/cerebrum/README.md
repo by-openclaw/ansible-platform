@@ -20,29 +20,47 @@ All three: Windows Server 2025 (owner's choice; the manual lists 2019/2022, the 
 EVS), on `br-pmox-03`, bridge `vmbr0`, VLAN 600 (`MGMT_CTRL`, 10.6.224.0/20). People reach them through
 JumpServer (RDP). Each instance has its own database (`Cerebrum_<n>`) and SQL login (`cerebrum_<n>`).
 
-## 2. What is automated, what is not
+## 2. Install, step by step
 
-| Part | How | State |
-|---|---|---|
-| SQL instance, logins, backup, CIS options, firewall | `roles/cerebrum_db` | done |
-| ODBC Driver 17 on the Cerebrum servers | `roles/mssql_odbc` | done |
-| Cerebrum firewall rules (bound to `Cerebrum.exe`) | `roles/cerebrum_server` `firewall.yml` | done |
-| Sentinel RMS persistence (licence prerequisite) | `roles/cerebrum_server` `sentinel.yml` | done |
-| `Cerebrum.ini` SQL lines | `roles/cerebrum_server` `ini.yml` | done |
-| Settings (`_Config` rows), the applied set | `roles/cerebrum_server` `config.yml` | done |
-| RCP address reservations (8080 `/v1`, `/v2`) | `roles/cerebrum_server` `http_reservations.yml` | done |
-| NMOS registry host: Bonjour, reservations and firewall on 8090 | `roles/cerebrum_nmos`, `playbooks/cerebrum-nmos.yml` | done |
-| NMOS registry itself (device service `nmos-registry-<n>`, "Network Media Server" device, port 8090) | Cerebrum (`.ccf`) | **manual** |
-| Admin password in Vault, encrypted forms captured | `roles/cerebrum_server` `admin_password.yml`, `admin_capture.yml` | done |
-| Cerebrum installer (components, Sentinel) | the vendor's installer | **manual** (done with EVS); the role's unattended install exists, its pins are pending (installer store) |
-| SQL password in the SQL tab, Admin password at first start | the Cerebrum UI | **manual, once per new instance**: Cerebrum stores both encrypted with an unpublished method (§9) |
-| Trial licence key | EVS support | **manual**: public key → EVS → key number |
-| System configuration (devices, control interfaces, routes, users, groups) | `.ccf` / `_SystemConfig` | **manual** for now (§8) |
-| Split DNS names | AdGuard | pending |
-| Certificates (web client, RCP) | lego (Let's Encrypt) → Vault → role | pending |
-| JumpServer: SQL instance as a database asset | `roles/jumpserver` | pending |
-| C-Link multicast group | `_Config` rows | pending: range to confirm with EVS |
-| Windows base (route, accounts, CIS L1, logging) | `playbooks/windows-guests.yml` | pending: not applied to these guests yet (§10) |
+Every command runs from the repository root after this once per terminal:
+
+```
+cd ~/repos/ansible-platform && export SSH_AUTH_SOCK=~/.ssh/rune-agent.sock
+```
+
+Dry run of any step: add `--check --diff`. Each step is idempotent: run it again, it must say `changed=0`.
+**Done** = applied and proven on the live hosts (2026-11-04).
+
+| # | Step | Command | Status |
+|---|---|---|---|
+| 1 | Split DNS: the dev-zone names on the firewall's Unbound | `ansible-playbook playbooks/opnsense-unbound-overrides.yml` | **to run** (dry run proven, PR #1103) |
+| 2 | The dev zone wildcard `*.dev.<domain>`, issued on the cert-authority host | `ansible-playbook playbooks/traefik.yml --tags cert` | done |
+| 3 | SQL Server instance, logins, backup, firewall | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_db --tags sql` | done |
+| 4 | SQL Server certificate (restarts the instance when it changes) | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_db --tags sql-certificate` | done |
+| 5 | ODBC Driver 17 on the Cerebrum servers | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags odbc` | done |
+| 6 | Windows firewall: Cerebrum's doors | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags firewall` | done |
+| 7 | RCP address reservations (8080 `/v1`, `/v2`) | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags rcp` | done |
+| 8 | Certificate on the Cerebrum servers (files, machine store, Security rows) | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags certificate` | done |
+| 9 | EVS §3.5 on Windows: UAC Never Notify, run as administrator, Defender exclusions, hosts file | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags windows` | **to run**, then restart both servers |
+| 10 | Start at boot: auto sign-in, Watchdog then Cerebrum, elevated | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags startup` | **to run**, then restart both servers |
+| 11 | Sentinel persistence (licence prerequisite) | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags sentinel` | done |
+| 12 | `Cerebrum.ini`: the instance's SQL connection | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags ini` | done |
+| 13 | Settings rows (`_Config`) | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags settings` | done |
+| 14 | Admin password in Vault; its encrypted form captured | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags admin` | done |
+| 15 | NMOS registry hosts: Bonjour, 8090 reservations, firewall | `ansible-playbook playbooks/cerebrum-nmos.yml` | done |
+| 16 | NMOS registry device in Cerebrum (§3.1) | Cerebrum UI, on each server | **manual, to do** |
+| 17 | NMOS registry answers | `ansible-playbook playbooks/cerebrum-nmos.yml --tags validate` | after 16 |
+| 18 | Trial licence: public key → EVS → key number (§3.3) | Cerebrum UI + support@evs.com | waiting for EVS |
+| 19 | Client and Designer, each server to the other (§3.4) | Cerebrum Client / Designer | after 18 |
+| 20 | Web client and RCP over TLS (`USE_SSL`, `RCP/USE_SSL`; certificate rows already set) | Cerebrum UI, then a settings row | after 19 (plain first) |
+| 21 | Certificate renewals reach every copy (weekly; Let's Encrypt renews at 60 days) | `ansible-playbook playbooks/certs-sync.yml` | scheduled job to add |
+
+Steps 1, 9 and 10 change the firewall, UAC/Defender and sign-in: the automation's guard does not run them
+unattended, so they are yours to paste. Steps 9 and 10 take effect after a restart of each server.
+
+What stays manual, and why: the NMOS registry device and the system configuration live in Cerebrum's
+binary configuration block (`.ccf`, §8); the SQL and Admin passwords are typed once per new instance
+because Cerebrum encrypts them with an unpublished method (§3.2); the licence key comes from EVS.
 
 ## 2a. Compliance with EVS's recommendations
 
@@ -82,54 +100,21 @@ way); **Check** = where anyone can verify it.
 | NMOS | Registry URL reservations (`netsh http add urlacl`) | `http://*:8090/x-nmos/registration/` and `/x-nmos/query/` | ok (port 8090, §9.1) | `netsh http show urlacl` |
 | NMOS | Registry port open in the firewall | `CEREBRUM-In-NMOS-Registry` TCP 8090 | ok | `wf.msc` |
 
-The gaps marked **gap** are the Windows deployment step (§12): UAC, Defender exclusions, run as
+The gaps marked **gap** are closed by steps 9 and 10 (§2): UAC, Defender exclusions, run as
 administrator, start-up, hosts file — each set by a role, each a recorded exception to the platform's
 CIS baseline where it conflicts.
 
-## 3. Runbook
+## 3. The manual steps in detail
 
-Run from the repository root, key agent loaded (`SSH_AUTH_SOCK=~/.ssh/rune-agent.sock`). Every play:
-dry run first (`--check --diff`), then apply, then apply again: the second run must say `changed=0`.
+### 3.1 NMOS registry device (step 16)
 
-### 3.1 SQL Server (`vm-winsql-01`)
-
-```
-ansible-playbook playbooks/cerebrum.yml --limit vm-winsql-01 --check --diff
-ansible-playbook playbooks/cerebrum.yml --limit vm-winsql-01
-```
-
-- A first install may restart `vm-winsql-01` twice (a pending restart before setup, setup's own 3010).
-  Announce it first.
-- Report line to read: instance, port, logins, `sa` state, the databases Cerebrum has not created yet,
-  backup, firewall sources.
-- Removing an instance (data files kept): `-e cerebrum_db_state=absent -e cerebrum_db_instance=<NAME>
-  -e cerebrum_db_features=<FEATURES>`; a restart follows before the next install.
-
-### 3.2 Cerebrum servers (`vm-winapp-01`, `vm-winapp-02`)
-
-```
-ansible-playbook playbooks/cerebrum.yml --limit vm-winapp-01,vm-winapp-02 --check --diff
-ansible-playbook playbooks/cerebrum.yml --limit vm-winapp-01,vm-winapp-02
-```
-
-In order: ODBC driver → firewall → Sentinel → `Cerebrum.ini` → settings rows → Admin password in Vault →
-capture of the encrypted forms. No restart by Ansible; Cerebrum reads the ini and the rows at start, so
-**restart Cerebrum** after a run that changed them.
-
-### 3.2a NMOS registry hosts
-
-```
-ansible-playbook playbooks/cerebrum-nmos.yml --check --diff
-ansible-playbook playbooks/cerebrum-nmos.yml
-```
-
-Bonjour (Apple, pinned, signature checked), the 8090 reservations, the firewall rule. Then in Cerebrum:
+After step 15 (Bonjour, the 8090 reservations, the firewall rule), in Cerebrum:
 Cerebrum device → 02:Services → add the Service Manager → Create New Service `nmos-registry-<n>` (and
 `third-party-<n>`); on `nmos-registry-<n>` add the "Network Media Server" device (NMOS IS-04/5) with port
 **8090**. Check: `http://127.0.0.1:8090/x-nmos/registration` lists the versions; every node is registered
 by hand with its registry's address (no mDNS / DNS-SD).
 
-### 3.3 First start of a new instance (manual, once)
+### 3.2 First start of a new instance (once per instance)
 
 1. Start Cerebrum. Open Configuration → **SQL**: the connection, database and user are already filled in
    by the ini. In **Password**: Ctrl+A, Delete, then paste the login's password from Vault
@@ -137,25 +122,25 @@ by hand with its registry's address (no mDNS / DNS-SD).
    Correct", database does not exist yet), then Apply → OK. Five wrong passwords lock the login (§9).
 2. Restart Cerebrum: it creates `Cerebrum_<n>` and asks for its Admin password: paste it from
    `secret/dev/cerebrum/<host>/app-admin`.
-3. Run 3.2 again: it stores both encrypted forms in Vault (`ini_password_encrypted`,
+3. Run step 14 again: it stores both encrypted forms in Vault (`ini_password_encrypted`,
    `password_encrypted`). From then on a rebuild of that instance needs no typing.
 
-### 3.4 Licence (manual)
+### 3.3 Licence (step 18)
 
-1. Sentinel must be initialised (3.2 does it; Help → About otherwise asks for `SentinelPersistanceInstall.bat`).
+1. Sentinel must be initialised (step 11 does it; Help → About otherwise asks for `SentinelPersistanceInstall.bat`).
 2. With Trial License Mode on (`GUI/DEMO_MODE_LOGON = 1`), Cerebrum shows its **public key** at start
    (instance 01: `111bf115`). Send it to support@evs.com.
 3. Paste the key number EVS returns. Then it goes to Vault `secret/dev/cerebrum/<host>/license`
    (`public_key`, `key_number`) — pending: the role writing `License:Demonstration_Key` from there.
 
-### 3.5 Client and Designer test
+### 3.4 Client and Designer test (step 19)
 
 On each server, the Client logs on to the **other** server (srv1 → srv2 and back), then the Designer.
-Values in §7.6. Proves the firewall, C-Link and the logins.
+Values in §10.1. Proves the firewall, C-Link and the logins.
 
-### 3.6 Rebuild of an existing instance
+### 3.5 Rebuild of an existing instance
 
-The playbook replays everything, including the two encrypted passwords captured in 3.3 (the ini line
+The playbook replays everything, including the two encrypted passwords captured in 3.2 (the ini line
 from `ini_password_encrypted`; the Admin row of `_Users` from `password_encrypted`, EVS's own method —
 the replay of the Admin row is pending, the capture is done). The `.ccf` restores the system
 configuration (§8).
@@ -292,15 +277,35 @@ specification fixes the registry's port), SNMP agent 1161 (closed).
   unicast only.
 - Cerebrum listens on TCP/UDP 40001, UDP 40002, TCP 40007, UDP 1161 (all addresses).
 
-### 9.3 Names and certificates — pending
+### 9.3 Names and certificates (steps 1, 2, 4, 8)
 
-- **Split DNS**: `cerebrum-01.dev.<platform_domain>` → .201, `cerebrum-02.dev…` → .202,
-  `cerebrum-db.dev…` → .203, answered by the platform resolver (AdGuard) only, never published.
-- **Certificates**: one per instance name, Let's Encrypt via `roles/lego_cert` (Cloudflare DNS-01) on a
-  platform Linux host, handed over through Vault (the Cloudflare token never reaches a Windows guest);
-  the role writes the `.crt`/`.key` to a folder Administrators and SYSTEM only, imports into the machine
-  store, sets `SECURITY/CERTIFICATE`, `KEY`, `CERT_HASH`. No certificate is installed today (the rows name
-  EVS's default files, which do not exist).
+Split DNS (naming/0001 §7: the env sub-domain), on the firewall's Unbound — the resolver the guests use
+(10.1.3.1) — never published; catalog `inventories/prod/group_vars/opnsense.yml`, tier and address from
+the inventory:
+
+| Name | Answer | Kind |
+|---|---|---|
+| `vm-winapp-01.dev.<domain>`, `vm-winapp-02.dev.<domain>`, `vm-winsql-01.dev.<domain>` | .201, .202, .203 | asset (A + PTR) |
+| `cerebrum-01.dev.<domain>`, `cerebrum-02.dev.<domain>` | .201, .202 | instance (service) |
+| `cerebrum-db.dev.<domain>` | .203 | SQL instance `BY_CEREBRUM` (service) |
+| `nmos-registry-01.dev.<domain>`, `nmos-registry-02.dev.<domain>` | .201, .202 | NMOS registry (service) |
+
+No AAAA: the guests have no static ULA address yet.
+
+Certificate: **one zone wildcard `*.dev.<domain>`** (naming/0001 §8), not the prod one (a dev host would
+hold the prod key). Let's Encrypt, RSA 2048 (EVS manual §5.2.3), issued once on the cert-authority host
+(`roles/traefik` `traefik_zone_wildcards: [dev]`, its own timer `lego-renew-zone-dev`); the Cloudflare
+token never leaves that host. Copies, by `roles/tls_cert` `windows.yml`:
+
+| Where | What | Check |
+|---|---|---|
+| `C:\ProgramData\<org>\tls\` on the three guests | `wildcard.crt`, `wildcard.key`, `wildcard.pfx` — folder SYSTEM + Administrators only | `icacls C:\ProgramData\<org>\tls` |
+| Machine store `LocalMachine\My` | `CN=*.dev.<domain>`, key in machine storage, non-exportable; older ones of the name removed | `certlm.msc` → Personal |
+| Cerebrum rows (both instances) | `SECURITY/CERTIFICATE`, `KEY` (the files above), `CERT_HASH` (the thumbprint) | Configuration → Security; TLS itself stays off until step 20 |
+| SQL Server `BY_CEREBRUM` | `SuperSocketNetLib\Certificate` = thumbprint; key readable by `NT SERVICE\MSSQL$BY_CEREBRUM`; encryption not forced | ERRORLOG: "The certificate … was successfully loaded for encryption" |
+
+A renewal (every 60 days) reaches the copies with step 21; Cerebrum reads the new thumbprint at its next
+start, SQL Server is restarted by the step.
 
 ## 10. Client, Designer, users, access
 
@@ -326,8 +331,12 @@ The Designer connects the same way; it also needs the project folder once it is 
 - No OIDC/SAML in Cerebrum: group mapping works with Windows Active Directory only (none here), web SSO
   only through EVS VIA Foundation (Keycloak). Access goes through Authentik anyway: JumpServer for the
   desktop, Traefik + Authentik forwardAuth for the web client. To record as an ADR exception.
-- JumpServer: the servers are RDP assets (Windows node); the SQL instance as a **database asset**
-  (Databases node, account `jumpserver_editor`, `admin_*` rights) is pending, with its main-firewall rule.
+- JumpServer: the three servers are RDP assets (Windows node). A **database asset for SQL Server is not
+  possible on JumpServer CE** (measured 2026-11-04: its database platforms are MariaDB, MongoDB, MySQL,
+  PostgreSQL, Redis; SQL Server is an Enterprise feature). The login `jumpserver_editor` exists
+  (db_datareader + db_datawriter). Open choice: an RDP session to a host with SSMS, JumpServer EE, or a
+  web SQL client behind Traefik + Authentik. The bastion reaches the guests with its own address
+  (10.1.3.221, no address translation): admitting it to SQL is one entry in `cerebrum_db_allowed_from`.
 
 ### 10.3 DHS and RCP
 
@@ -358,11 +367,14 @@ Cerebrum user, `wss://` support (to check in the protocol specification).
 | VIA Foundation's Keycloak with Authentik as identity provider | EVS |
 | Northbound API over `wss://` | protocol specification (go-acp) |
 | Silent `.ccf` import | EVS / manual |
-| JumpServer SQL asset, split DNS, certificates, web client + RCP over TLS | pending (one PR each) |
+| Split DNS: apply step 1 (built and dry-run proven, #1103) | owner |
+| SQL access through the bastion: JumpServer CE has no SQL Server (§10.2) | owner's choice |
+| Web client + RCP over TLS (step 20) | after the licence |
 | Syslog to Loki, SNMP hardening, email, alarm/audit settings, project folder | later |
 | Windows base on these guests (CIS L1 with EVS's exceptions: UAC Never Notify, Defender exclusions; per-guest SSH host keys — all three share the template's; monitoring flag `platform_guest_stopped` still set) | pending |
 | Installer store (SQL media, ODBC, sqlcmd, Bonjour, Cerebrum installer, release notes, manuals) so every playbook installs without internet; Bonjour kept meanwhile in `~/repos/_incoming/installers/bonjour/2.0.2/` | pending, next |
-| Cerebrum + Watchdog started at sign-in as administrator | pending |
+| Steps 9 and 10 (UAC, Defender, run as administrator, hosts file, start at boot) | owner pastes them; then restart both servers |
+| Certificate renewals: a weekly job running step 21 | next |
 
 ## 13. Troubleshooting (seen live)
 
