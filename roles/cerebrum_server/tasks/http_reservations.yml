@@ -1,0 +1,23 @@
+---
+# HTTP.sys address reservations Cerebrum's own listeners need (RCP on 8080 /v1 and /v2). Cerebrum asks for
+# them in its log when it cannot reserve them itself ("AddURL 'http://*:8080/v1' Failed: … netsh http add
+# urlacl … user=EVERYONE listen=yes delegate=yes", both servers, 2026-11-04): it runs without
+# administrator rights while UAC prompts. Reserved here for Everyone by its SID (S-1-1-0, "WD"), not by
+# name: the name is localised ("Tout le monde"). GA = listen + delegate, as the vendor's command asks.
+- name: "Cerebrum server | The address reservations today"
+  ansible.windows.win_command:
+    argv: [netsh, http, show, urlacl, "url={{ item }}"]
+  loop: "{{ cerebrum_server_http_reservations }}"
+  register: cerebrum_server_urlacl_now
+  changed_when: false
+  failed_when: false
+  check_mode: false   # read-only
+
+- name: "Cerebrum server | The missing reservations added (Everyone by SID: listen + delegate)"
+  ansible.windows.win_command:
+    argv: [netsh, http, add, urlacl, "url={{ item.item }}", "sddl={{ cerebrum_server_http_reservation_sddl }}"]
+  loop: "{{ cerebrum_server_urlacl_now.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stdout is not search('Reserved URL')
+  changed_when: true

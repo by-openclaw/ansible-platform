@@ -132,6 +132,11 @@ cerebrum_server_client_cidrs: "{{ platform_mgmt_cidrs }}"     # clients and pane
 cerebrum_server_device_cidrs: []                            # the controlled devices (ACP, traps)
 cerebrum_server_monitoring_host: "{{ hostvars[groups['monitoring'] | first].ansible_host }}"
 cerebrum_server_api_cidrs: "{{ [cerebrum_server_monitoring_host] + platform_mgmt_cidrs }}"   # the Northbound API (the watch, the ops playbook)
+# RCP (Remote Control Protocol, Configuration > Hosting): HTTP 8080, WebSocket 8081; the platform's
+# connector DHS controls RouteMaster, Cerebrum and devices through it.
+cerebrum_server_rcp_ports: "8080,8081"
+cerebrum_server_http_reservations: ["http://*:8080/v1/", "http://*:8080/v2/"]
+cerebrum_server_http_reservation_sddl: "D:(A;;GA;;;WD)"   # Everyone (S-1-1-0), listen + delegate
 cerebrum_server_firewall_profiles: [domain, private, public]
 # Cerebrum's own SNMP agent (UDP 1161) answers with the vendor's communities (public / private) until the
 # SNMP settings are hardened (owner: "SNMP later", 2026-11-03): its rule stays present and disabled.
@@ -152,6 +157,12 @@ cerebrum_server_firewall_rules:
     protocol: udp
     localport: "{{ cerebrum_server_clink_ports }}"
     remoteip: "{{ cerebrum_server_client_cidrs }}"
+    program: "{{ cerebrum_server_exe }}"
+  - name: "CEREBRUM-In-RCP"
+    direction: in
+    protocol: tcp
+    localport: "{{ cerebrum_server_rcp_ports }}"
+    remoteip: "{{ cerebrum_server_api_cidrs }}"
     program: "{{ cerebrum_server_exe }}"
   - name: "CEREBRUM-In-Northbound"
     direction: in
