@@ -2755,6 +2755,18 @@ opn_unbound:
   - {hostname: vm-gitlab-runner-01, domain: "{{ platform_domain }}", rr: A,  server: 10.1.3.211}
   - {hostname: vm-pbs-01,         domain: "{{ platform_domain }}", rr: A,    server: 10.1.3.222}
   - {hostname: srv-proxmox-poc-01, domain: "{{ platform_domain }}", rr: A,   server: 10.6.224.105}
+  # --- EVS Cerebrum, dev tier: the env sub-domain from the host's `env` (naming/0001 §7), the address
+  #     from the inventory. Asset FQDNs own the PTR; the service names are direct-served (C-Link, the
+  #     Northbound API, RCP, NMOS and SQL are not behind Traefik) → the asset's address, no PTR. No
+  #     AAAA: the guests have no static ULA yet (NetBox gap, rule above).
+  - {hostname: vm-winapp-01, domain: "{{ hostvars['vm-winapp-01'].env }}.{{ platform_domain }}", rr: A, server: "{{ hostvars['vm-winapp-01'].ansible_host }}"}
+  - {hostname: vm-winapp-02, domain: "{{ hostvars['vm-winapp-02'].env }}.{{ platform_domain }}", rr: A, server: "{{ hostvars['vm-winapp-02'].ansible_host }}"}
+  - {hostname: vm-winsql-01, domain: "{{ hostvars['vm-winsql-01'].env }}.{{ platform_domain }}", rr: A, server: "{{ hostvars['vm-winsql-01'].ansible_host }}"}
+  - {hostname: cerebrum-01, domain: "{{ hostvars['vm-winapp-01'].env }}.{{ platform_domain }}", rr: A, server: "{{ hostvars['vm-winapp-01'].ansible_host }}"}           # Cerebrum instance 01
+  - {hostname: cerebrum-02, domain: "{{ hostvars['vm-winapp-02'].env }}.{{ platform_domain }}", rr: A, server: "{{ hostvars['vm-winapp-02'].ansible_host }}"}           # Cerebrum instance 02
+  - {hostname: cerebrum-db, domain: "{{ hostvars['vm-winsql-01'].env }}.{{ platform_domain }}", rr: A, server: "{{ hostvars['vm-winsql-01'].ansible_host }}"}           # SQL instance BY_CEREBRUM
+  - {hostname: "{{ hostvars['vm-winapp-01'].cerebrum_nmos_registry }}", domain: "{{ hostvars['vm-winapp-01'].env }}.{{ platform_domain }}", rr: A, server: "{{ hostvars['vm-winapp-01'].ansible_host }}", addptr: false}   # NMOS registry, instance 01's device service
+  - {hostname: "{{ hostvars['vm-winapp-02'].cerebrum_nmos_registry }}", domain: "{{ hostvars['vm-winapp-02'].env }}.{{ platform_domain }}", rr: A, server: "{{ hostvars['vm-winapp-02'].ansible_host }}", addptr: false}   # NMOS registry, instance 02's device service
   # (20 stale probe-fleet overrides pruned 2026-06-06 — never-built hosts.)
   # Query Forwarding — chain step: Unbound → dnscrypt-proxy on loopback.
   # Empty domain = catch-all → Unbound creates a `forward-zone "."` from these entries.
