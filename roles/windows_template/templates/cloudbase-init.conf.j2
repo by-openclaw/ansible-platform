@@ -1,16 +1,17 @@
 # Managed by Ansible (roles/windows_template): cloudbase-init on every clone reads the Proxmox
-# cloud-init drive (configdrive) — hostname, the administrator's password, static addresses.
+# cloud-init drive (configdrive) — hostname, static addresses. Never the administrator's password:
+# roles/windows_guest sets it from Vault (platform_windows_cloudbase_plugins, group_vars/all/windows.yml).
 [DEFAULT]
 username=Administrator
 groups=Administrators
-# The clone takes its password from its cloud-init drive. NOTHING may follow the value:
+# cloudbase-init never sets the password (false, and no SetUserPasswordPlugin). NOTHING may follow the value:
 # oslo.config does not strip inline comments — "true  # ..." fails the boolean parse and
 # the service dies on start (exit 1067) before it even opens its log (seen live 2026-10-14).
 # A boolean option name, no secret. Nothing Jinja may share the value's line: Ansible
 # templates with trim_blocks, and an inline {# comment #} eats the newline — the next
 # option gets GLUED onto the value (2026-10-14, second broken template from this line).
 # pragma: allowlist nextline secret
-inject_user_password=true
+inject_user_password=false
 first_logon_behaviour=no
 rename_admin_user=false
 config_drive_types=vfat,iso
@@ -20,7 +21,7 @@ metadata_services=cloudbaseinit.metadata.services.configdrive.ConfigDriveService
 # sshd ignores for Administrators (and it crashes while the admin has never logged on,
 # profile-less). The key lands in administrators_authorized_keys via the clone's
 # user-data script (modules/vm-windows) — the file sshd actually reads for admins.
-plugins=cloudbaseinit.plugins.common.mtu.MTUPlugin,cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin,cloudbaseinit.plugins.common.setuserpassword.SetUserPasswordPlugin,cloudbaseinit.plugins.common.networkconfig.NetworkConfigPlugin,cloudbaseinit.plugins.common.userdata.UserDataPlugin,cloudbaseinit.plugins.windows.extendvolumes.ExtendVolumesPlugin
+plugins={{ platform_windows_cloudbase_plugins | join(',') }}
 # SetHostName applies at a reboot: allow cloudbase its one reboot so a clone's first
 # boot ends with the right name (it was pending forever with false, seen 2026-10-14).
 allow_reboot=true

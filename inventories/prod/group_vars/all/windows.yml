@@ -45,6 +45,18 @@ platform_windows_egress_open: true
 platform_windows_admin_keys_extra:
   - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFJ8rXlV8+/e20imHW/hTry2DbqQ9bIpwslC4MIINlJW by-systems@ws-win11-ref"
 
+# --- cloudbase-init's plugins: the template's conf and every live guest's -----------------------
+# No SetUserPasswordPlugin (owner 2026-11-04: "cloudbase will not manage password admin"): with no
+# password on the cloud-init drive it set a RANDOM Administrator password at a boot where the drive had
+# changed (2026-10-25 winapp-01/02, 2026-10-30 winsql-01), and Vault no longer opened the account.
+# roles/windows_guest owns that password (Vault); its rotation comes later, from Vault.
+platform_windows_cloudbase_plugins:
+  - cloudbaseinit.plugins.common.mtu.MTUPlugin
+  - cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin
+  - cloudbaseinit.plugins.common.networkconfig.NetworkConfigPlugin
+  - cloudbaseinit.plugins.common.userdata.UserDataPlugin
+  - cloudbaseinit.plugins.windows.extendvolumes.ExtendVolumesPlugin
+
 # --- the vendor installers' store (owner 2026-11-04) -------------------------------------------
 # ONE place until the new infrastructure: the object store's route refuses the dev guests (403, they
 # sit outside its allow-list), so the installers stay on the controller, one folder per product and

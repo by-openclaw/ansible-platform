@@ -15,6 +15,13 @@ windows_guest_env: "{{ env | default(platform_env) }}"
 # One doc per guest: <env>/windows/<host>/administrator {password}
 windows_guest_admin_vault_path: "{{ windows_guest_env }}/windows/{{ inventory_hostname }}/administrator"
 
+# cloudbase-init's conf on the live guest, the same lines as the template's (roles/windows_template): it never
+# sets the Administrator password (platform_windows_cloudbase_plugins, group_vars/all/windows.yml).
+windows_guest_cloudbase_conf: 'C:\Program Files\Cloudbase Solutions\Cloudbase-Init\conf\cloudbase-init.conf'
+windows_guest_cloudbase_lines:
+  - {regexp: '^plugins=', line: "plugins={{ platform_windows_cloudbase_plugins | join(',') }}"}
+  - {regexp: '^inject_user_password=', line: "inject_user_password=false"}   # pragma: allowlist secret (a flag)
+
 # The platform LAN, via the firewall's OOB leg (inventory values, no literals here).
 windows_guest_routes:
   - destination: "{{ platform_internal_cidr4 }}"
