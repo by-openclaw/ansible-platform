@@ -57,3 +57,9 @@
     canonical_name: "{{ item }}"
     state: present
   loop: "{{ (groups['cerebrum_server'] | default([])) + (groups['cerebrum_db'] | default([])) }}"
+  register: cerebrum_server_hosts_entry
+  # The module rewrites the whole file per entry; a scan of the previous write (Defender) makes the next
+  # one fail with "Stream was not readable" (vm-winapp-01, 2026-11-04, a different entry on each run).
+  retries: 3
+  delay: 3
+  until: cerebrum_server_hosts_entry is not failed
