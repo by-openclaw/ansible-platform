@@ -7,9 +7,18 @@
 #
 #   Dry run: ansible-playbook playbooks/cerebrum-nmos.yml --check --diff
 #   Apply:   ansible-playbook playbooks/cerebrum-nmos.yml [--limit vm-x]
+#   Check:   ansible-playbook playbooks/cerebrum-nmos.yml --tags validate
 # ==============================================================================
 - name: "Cerebrum NMOS | registry prerequisites"
   hosts: cerebrum_nmos
   gather_facts: false
   roles:
     - cerebrum_nmos
+  tasks:
+    - name: "Cerebrum NMOS | Validation (read-only; --tags validate runs only this)"
+      ansible.builtin.include_role:
+        name: cerebrum_nmos
+        tasks_from: validate.yml
+        apply:
+          tags: [validate]
+      tags: [validate, always]

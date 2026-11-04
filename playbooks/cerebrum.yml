@@ -14,45 +14,83 @@
 # the database host: the role restarts it then — announce the run first.
 #
 #   Dry run: ansible-playbook playbooks/cerebrum.yml --check --diff
+#   One step: --tags sql | odbc | firewall | rcp | windows | startup | sentinel | ini | settings | admin
 #   Apply:   ansible-playbook playbooks/cerebrum.yml [--limit vm-x]
 # ==============================================================================
 - name: "Cerebrum | the SQL Server instance"
   hosts: cerebrum_db
   gather_facts: false
   roles:
-    - cerebrum_db
+    - role: cerebrum_db
+      tags: [sql]
 
 - name: "Cerebrum | the Cerebrum servers: ODBC driver, Cerebrum.ini, the application Admin in Vault"
   hosts: cerebrum_server
   gather_facts: false
   roles:
-    - mssql_odbc
+    - role: mssql_odbc
+      tags: [odbc]
   tasks:
     - name: "Cerebrum | The host firewall: Cerebrum's doors, bound to the program"
       ansible.builtin.include_role:
         name: cerebrum_server
         tasks_from: firewall.yml
+        apply:
+          tags: [firewall]
+      tags: [firewall]
     - name: "Cerebrum | HTTP address reservations of Cerebrum's listeners (RCP)"
       ansible.builtin.include_role:
         name: cerebrum_server
         tasks_from: http_reservations.yml
+        apply:
+          tags: [rcp]
+      tags: [rcp]
+    - name: "Cerebrum | EVS §3.5 on Windows: UAC, run as administrator, Defender exclusions, hosts file"
+      ansible.builtin.include_role:
+        name: cerebrum_server
+        tasks_from: windows.yml
+        apply:
+          tags: [windows]
+      tags: [windows]
+    - name: "Cerebrum | Start at boot: the run account signs in, Watchdog then Cerebrum, elevated"
+      ansible.builtin.include_role:
+        name: cerebrum_server
+        tasks_from: startup.yml
+        apply:
+          tags: [startup]
+      tags: [startup]
     - name: "Cerebrum | Sentinel persistence (Cerebrum refuses a licence without it)"
       ansible.builtin.include_role:
         name: cerebrum_server
         tasks_from: sentinel.yml
+        apply:
+          tags: [sentinel]
+      tags: [sentinel]
     - name: "Cerebrum | Cerebrum.ini: the instance's SQL connection, before the first start"
       ansible.builtin.include_role:
         name: cerebrum_server
         tasks_from: ini.yml
+        apply:
+          tags: [ini]
+      tags: [ini]
     - name: "Cerebrum | Cerebrum's settings rows (_Config), written where they differ"
       ansible.builtin.include_role:
         name: cerebrum_server
         tasks_from: config.yml
+        apply:
+          tags: [settings]
+      tags: [settings]
     - name: "Cerebrum | The application Admin password (Vault)"
       ansible.builtin.include_role:
         name: cerebrum_server
         tasks_from: admin_password.yml
+        apply:
+          tags: [admin]
+      tags: [admin]
     - name: "Cerebrum | The Admin password's encrypted form, once Cerebrum has set it (Vault, for recovery)"
       ansible.builtin.include_role:
         name: cerebrum_server
         tasks_from: admin_capture.yml
+        apply:
+          tags: [admin]
+      tags: [admin]

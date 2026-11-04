@@ -1,0 +1,41 @@
+---
+# Validation of an NMOS registry host (read-only): Bonjour runs, the registry's URLs are reserved and its
+# port open, and — once the "Network Media Server" device runs on the device service — the registry
+# answers on its registration URL with the versions it serves (EVS "NMOS IS-04-5 Help").
+- name: "NMOS check | Bonjour service"
+  ansible.windows.win_service_info:
+    name: "{{ cerebrum_nmos_bonjour_service }}"
+  register: cerebrum_nmos_v_bonjour
+
+- name: "NMOS check | Reservations"
+  ansible.windows.win_command:
+    argv: [netsh, http, show, urlacl, "url={{ item }}"]
+  loop: "{{ cerebrum_nmos_registry_urls }}"
+  register: cerebrum_nmos_v_urlacl
+  changed_when: false
+  check_mode: false
+
+- name: "NMOS check | The registry answers (versions list)"
+  ansible.windows.win_uri:
+    url: "http://127.0.0.1:{{ cerebrum_nmos_registry_port }}/x-nmos/registration/"
+    return_content: true
+    timeout: 5
+  register: cerebrum_nmos_v_http
+  failed_when: false
+  check_mode: false
+
+- name: "NMOS check | Result"
+  ansible.builtin.assert:
+    that:
+      - cerebrum_nmos_v_bonjour.services | length > 0
+      - cerebrum_nmos_v_bonjour.services[0].state == 'started'
+      - cerebrum_nmos_v_urlacl.results | map(attribute='stdout') | select('search', 'Reserved URL') | list | length == cerebrum_nmos_registry_urls | length
+      - (cerebrum_nmos_v_http.status_code | default(0)) == 200
+    success_msg: >-
+      NMOS_OK {{ inventory_hostname }}: Bonjour running, {{ cerebrum_nmos_registry_urls | length }} reservations,
+      registry answers on {{ cerebrum_nmos_registry_port }}: {{ cerebrum_nmos_v_http.content | default('') | trim | truncate(80) }}
+    fail_msg: >-
+      NMOS_NOT_READY {{ inventory_hostname }}: Bonjour {{ (cerebrum_nmos_v_bonjour.services[0].state | default('absent')) if cerebrum_nmos_v_bonjour.services else 'absent' }},
+      reservations {{ cerebrum_nmos_v_urlacl.results | map(attribute='stdout') | select('search', 'Reserved URL') | list | length }}/{{ cerebrum_nmos_registry_urls | length }},
+      registry on {{ cerebrum_nmos_registry_port }}: {{ cerebrum_nmos_v_http.status_code | default('no answer') }}
+      {{ '(create the device service and its Network Media Server device on port ' ~ cerebrum_nmos_registry_port ~ ' in Cerebrum)' if (cerebrum_nmos_v_http.status_code | default(0)) != 200 else '' }}

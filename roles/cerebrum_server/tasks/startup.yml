@@ -1,0 +1,63 @@
+---
+# The vendor's start (EVS §3.5 "Automatic Startup", "Run as Administrator"): Cerebrum and its Watchdog
+# start at a session's sign-in, elevated. A dedicated local account signs in automatically at boot (its
+# password from Vault, kept by Windows as an LSA secret, never in the registry in clear) and its sign-in
+# starts the Watchdog, then Cerebrum — the Startup-folder behaviour, bound to that one account so an
+# administrator's own RDP session never starts a second Cerebrum.
+- name: "Cerebrum server | The run account's password (Vault, created on first contact)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ cerebrum_server_run_user_vault_path }}"
+    vault_secret_init:
+      user: "{{ cerebrum_server_run_user }}"
+      password: >-   # pragma: allowlist secret
+        {{ lookup('ansible.builtin.password', '/dev/null', length=cerebrum_server_password_length, chars=['ascii_letters', 'digits']) }}
+    vault_secret_metadata_put:
+      origin: "roles/cerebrum_server (the local account whose sign-in starts Cerebrum on {{ inventory_hostname }})"
+
+- name: "Cerebrum server | The run account carries Vault's password (module payload, never argv)"
+  ansible.windows.win_user:
+    name: "{{ cerebrum_server_run_user }}"
+    password: "{{ vault_secret_result.password }}"
+    update_password: always   # pragma: allowlist secret
+    groups: "{{ cerebrum_server_run_user_groups }}"
+    groups_action: replace
+    password_never_expires: true
+    user_cannot_change_password: true
+    account_disabled: false
+    description: "roles/cerebrum_server: the session that hosts the Cerebrum server and its Watchdog"
+    state: present
+  register: cerebrum_server_run_account
+  no_log: true
+
+- name: "Cerebrum server | The run account signs in at boot (LSA secret)"
+  ansible.windows.win_auto_logon:
+    username: "{{ cerebrum_server_run_user }}"
+    password: "{{ vault_secret_result.password }}"
+    state: present
+  no_log: true
+  when: not (ansible_check_mode and cerebrum_server_run_account is changed)   # a dry run creates no account to sign in
+
+- name: "Cerebrum server | Watchdog and Cerebrum start at the run account's sign-in (highest rights, one instance)"
+  community.windows.win_scheduled_task:
+    name: "{{ cerebrum_server_task_name }}"
+    description: "roles/cerebrum_server: the Watchdog and the server at the sign-in of {{ cerebrum_server_run_user }} (EVS §3.5)"
+    actions:
+      - path: "{{ cerebrum_server_watchdog_exe }}"
+        working_directory: "{{ cerebrum_server_install_dir }}"
+      - path: "{{ cerebrum_server_exe }}"
+        working_directory: "{{ cerebrum_server_install_dir }}"
+    triggers:
+      - type: logon
+        user_id: "{{ cerebrum_server_run_user }}"
+        enabled: true
+    username: "{{ cerebrum_server_run_user }}"
+    logon_type: interactive_token
+    run_level: highest
+    multiple_instances: 2
+    disallow_start_if_on_batteries: false
+    stop_if_going_on_batteries: false
+    enabled: true
+    state: present
+  when: not (ansible_check_mode and cerebrum_server_run_account is changed)
