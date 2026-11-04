@@ -164,11 +164,15 @@ jumpserver_windows_protocol: rdp
 jumpserver_windows_port: 3389
 jumpserver_windows_secret_type: "password"   # pragma: allowlist secret
 # The built-in Administrator of every Windows guest, a third account beside <org> and <org>-user
-# (owner 2026-11-04: "a second link but admin for all the winserver"): the account that signs in
-# at boot where an application starts in a session (roles/cerebrum_server), so that session and
-# its dialogs are reachable through the bastion. Its own password per guest (roles/windows_guest,
-# Vault <tier>/windows/<host>/administrator).
+# (owner 2026-11-04: "a second link but admin for all the winserver"). Its own password per guest
+# (roles/windows_guest, Vault <tier>/windows/<host>/administrator).
 jumpserver_windows_admin_account: "Administrator"
+# The account whose session hosts an application, signed in at boot (roles/cerebrum_server), on the
+# guests of its group: the bastion brokers it too, and a connection resumes that running session
+# (one session per user) — the application's dialogs in reach, never a second instance. vault_doc
+# is under <tier>/, {host} the guest's name.
+jumpserver_windows_session_accounts:
+  - {group: cerebrum_server, username: cerebrum, vault_doc: "cerebrum/{host}/run-user"}
 
 # The bastion does not register itself.
 jumpserver_asset_exclude: ["{{ inventory_hostname }}"]
@@ -187,24 +191,31 @@ jumpserver_assets: >-   # pragma: allowlist secret
           {%- set _ = seen.append(h) -%}
           {%- if hostvars[h].ansible_shell_type | default('') == 'powershell' -%}
           {%- set tier = hostvars[h].env | default(platform_env) -%}
+          {%- set accounts = [{'username': jumpserver_asset_default_account,
+                               'secret_type': jumpserver_windows_secret_type,
+                               'vault_path': tier ~ '/break-glass/os',
+                               'privileged': false},
+                              {'username': jumpserver_asset_default_account ~ '-user',
+                               'secret_type': jumpserver_windows_secret_type,
+                               'vault_path': tier ~ '/break-glass/os-user',
+                               'privileged': false},
+                              {'username': jumpserver_windows_admin_account,
+                               'secret_type': jumpserver_windows_secret_type,
+                               'vault_path': tier ~ '/windows/' ~ h ~ '/administrator',
+                               'privileged': false}] -%}
+          {%- for s in jumpserver_windows_session_accounts if h in groups.get(s.group, []) -%}
+            {%- set _ = accounts.append({'username': s.username,
+                                         'secret_type': jumpserver_windows_secret_type,
+                                         'vault_path': tier ~ '/' ~ (s.vault_doc | replace('{host}', h)),
+                                         'privileged': false}) -%}
+          {%- endfor -%}
           {%- set _ = out.append({'name': h,
                                   'address': hostvars[h].ansible_host,
                                   'node': node,
                                   'platform': 'Windows',
                                   'protocol': jumpserver_windows_protocol,
                                   'port': jumpserver_windows_port,
-                                  'accounts': [{'username': jumpserver_asset_default_account,
-                                                'secret_type': jumpserver_windows_secret_type,
-                                                'vault_path': tier ~ '/break-glass/os',
-                                                'privileged': false},
-                                               {'username': jumpserver_asset_default_account ~ '-user',
-                                                'secret_type': jumpserver_windows_secret_type,
-                                                'vault_path': tier ~ '/break-glass/os-user',
-                                                'privileged': false},
-                                               {'username': jumpserver_windows_admin_account,
-                                                'secret_type': jumpserver_windows_secret_type,
-                                                'vault_path': tier ~ '/windows/' ~ h ~ '/administrator',
-                                                'privileged': false}]}) -%}
+                                  'accounts': accounts}) -%}
           {%- else -%}
           {%- set _ = out.append({'name': h,
                                   'address': hostvars[h].ansible_host,

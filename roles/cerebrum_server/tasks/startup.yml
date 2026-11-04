@@ -3,7 +3,10 @@
 # start at a session's sign-in, elevated. A dedicated local account signs in automatically at boot (its
 # password from Vault, kept by Windows as an LSA secret, never in the registry in clear) and its sign-in
 # starts Cerebrum, then its Watchdog — the Startup-folder behaviour, bound to that one account so an
-# administrator's own RDP session never starts a second Cerebrum.
+# administrator's own RDP session never starts a second Cerebrum. Not a Startup-folder shortcut: with UAC on
+# (CIS 2.3.17.6), Windows does not start a program that runs as administrator from the Startup folder
+# (vm-winapp-02, 2026-11-04); EVS's own role starts it the same way at its sites, a logon task, highest rights.
+# The bastion brokers this account (roles/jumpserver): a connection resumes the session signed in at boot.
 - name: "Cerebrum server | The run account's password (Vault, created on first contact)"
   ansible.builtin.include_role:
     name: vault_secret
@@ -36,10 +39,20 @@
     username: "{{ cerebrum_server_run_user }}"
     password: "{{ vault_secret_result.password }}"
     state: present
+  register: cerebrum_server_autologon
   no_log: true
   when: not (ansible_check_mode and cerebrum_server_run_account is changed)   # a dry run creates no account to sign in
 
-- name: "Cerebrum server | Cerebrum, then its Watchdog, start at the run account's sign-in (highest rights, one instance)"
+# One session per user (the Windows default, pinned): the bastion's connection as the run account resumes the
+# session signed in at boot, where Cerebrum runs, instead of opening a second one.
+- name: "Cerebrum server | One session per user: a connection resumes the running session"
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+    name: fSingleSessionPerUser
+    data: 1
+    type: dword
+
+- name: "Cerebrum server | Cerebrum, then its Watchdog, start at the run account's sign-in (highest rights, one instance, no time limit)"
   community.windows.win_scheduled_task:
     name: "{{ item.name }}"
     description: "roles/cerebrum_server: {{ item.exe | win_basename }} at the sign-in of {{ cerebrum_server_run_user }} (EVS §3.5)"
@@ -52,6 +65,7 @@
     logon_type: interactive_token
     run_level: highest
     multiple_instances: 2
+    execution_time_limit: PT0S   # no limit: Windows' default (72 h) stops the program after three days
     disallow_start_if_on_batteries: false
     stop_if_going_on_batteries: false
     enabled: true
@@ -59,4 +73,22 @@
   loop: "{{ cerebrum_server_logon_tasks }}"
   loop_control:
     label: "{{ item.name }}"
+  register: cerebrum_server_logon_tasks_set
   when: not (ansible_check_mode and cerebrum_server_run_account is changed)
+
+# Retired 2026-11-04: the Startup-folder shortcuts of an abandoned attempt in Administrator's session (vm-winapp-02).
+- name: "Cerebrum server | Retired start files gone"
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ cerebrum_server_retired_start_files }}"
+  register: cerebrum_server_retired_gone
+
+- name: "Cerebrum server | The start takes effect at the next sign-in: restart (tasks/boot.yml)"
+  ansible.builtin.include_tasks: boot.yml
+  when:
+    - cerebrum_server_startup_reboot | bool
+    - not ansible_check_mode
+    - >-
+      cerebrum_server_run_account is changed or cerebrum_server_autologon is changed
+      or cerebrum_server_logon_tasks_set is changed or cerebrum_server_retired_gone is changed

@@ -1,0 +1,31 @@
+---
+# The start is the run account's sign-in at boot (tasks/startup.yml): a restart, then the proof. In trial licence
+# mode (GUI/DEMO_MODE_LOGON) Cerebrum waits at its "Cerebrum Trial Key" dialog, the key pre-filled from the ini,
+# until someone confirms it in that session (the bastion's connection as the run account): its port stays closed
+# until then (vm-winapp-02, 2026-11-04). So the process in the run account's session is the proof; the port is
+# reported.
+- name: "Cerebrum server | Restart: the run account's sign-in starts Cerebrum"
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+
+- name: "Cerebrum server | Cerebrum started in the run account's session"
+  ansible.windows.win_command:
+    argv:
+      - tasklist.exe
+      - /NH
+      - /FI
+      - "IMAGENAME eq {{ cerebrum_server_exe | win_basename }}"
+      - /FI
+      - "USERNAME eq {{ cerebrum_server_run_user_qualified }}"
+  register: cerebrum_server_after_boot
+  changed_when: false
+  retries: 20
+  delay: 15
+  until: (cerebrum_server_exe | win_basename) in cerebrum_server_after_boot.stdout
+
+- name: "Cerebrum server | Its port 40001 (closed while the trial key dialog waits)"
+  ansible.windows.win_wait_for:
+    port: 40001
+    timeout: 60
+  register: cerebrum_server_port_after_boot
+  failed_when: false

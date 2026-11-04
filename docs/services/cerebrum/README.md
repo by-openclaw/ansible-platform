@@ -42,7 +42,7 @@ Dry run of any step: add `--check --diff`. Each step is idempotent: run it again
 | 7 | RCP address reservations (8080 `/v1`, `/v2`) | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags rcp` | done |
 | 8 | Certificate on the Cerebrum servers (files, machine store, Security rows) | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags certificate` | done |
 | 9 | EVS §3.5 on Windows: UAC Never Notify, run as administrator, Defender exclusions, hosts file | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags windows` | done |
-| 10 | Start at boot: auto sign-in, Cerebrum then its Watchdog 40 s later, elevated | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags startup` | done |
+| 10 | Start at boot: `cerebrum` (Administrators) signs in automatically; its sign-in starts Cerebrum, the Watchdog 40 s later, elevated, no time limit; a change restarts the server | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags startup` | done |
 | 10a | Cerebrum at the version pin (2.9.5), with the components it has, never one more; an upgrade stops Cerebrum and restarts the server | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags install` | done |
 | 11 | Sentinel persistence (licence prerequisite) | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags sentinel` | done |
 | 12 | `Cerebrum.ini`: the instance's SQL connection | `ansible-playbook playbooks/cerebrum.yml --limit cerebrum_server --tags ini` | done |
@@ -56,7 +56,8 @@ Dry run of any step: add `--check --diff`. Each step is idempotent: run it again
 | 20 | Web client and RCP over TLS (`USE_SSL`, `RCP/USE_SSL`; certificate rows already set) | Cerebrum UI, then a settings row | after 19 (plain first) |
 | 21 | Certificate renewals reach every copy (Let's Encrypt renews at 60 days) | `ansible-playbook playbooks/certs-sync.yml` | done: the controller's weekly job `controller-job-certs-sync` (Monday 11:00 UTC) runs it |
 
-Restarts: step 10a restarts a server after an upgrade (Cerebrum comes back through the auto sign-in);
+Restarts: step 10 restarts a server when its start changes, step 10a after an upgrade (Cerebrum comes back
+through the auto sign-in);
 steps 4 and 21 restart the SQL Server instance when its certificate changes. Settings rows, the ini and the
 licence are read by Cerebrum at its start.
 
@@ -95,7 +96,7 @@ way); **Check** = where anyone can verify it.
 | 3.5 | NIC power management off | not supported by the VirtIO adapter | n/a | Device Manager |
 | 3.5 | Anti-virus: exclude Cerebrum processes and folders | Defender on, Cerebrum's programs, Bonjour, the install and backup folders excluded (step 9) | ok | `Get-MpPreference` |
 | 3.5 | Run Cerebrum and Watchdog as administrator | set (step 9) | ok | file properties → Compatibility |
-| 3.5 | Startup folder: Cerebrum, Watchdog, Witness | the run account `cerebrum` signs in at boot; its sign-in starts Cerebrum, then the Watchdog 40 s later (two logon tasks, highest rights; step 10); no Witness (not installed) | ok | Task Scheduler → `PLATFORM-cerebrum-*` |
+| 3.5 | Startup folder: Cerebrum, Watchdog, Witness | `cerebrum` (Administrators) signs in at boot; its sign-in starts Cerebrum, then the Watchdog 40 s later: two logon tasks, highest rights, no time limit (step 10), as EVS's own role starts it. Not a Startup-folder shortcut: with UAC on (CIS 2.3.17.6) Windows does not start a run-as-administrator program from it (measured on vm-winapp-02). No Witness (not installed). The bastion's `cerebrum` connection resumes that session | ok | Task Scheduler → `PLATFORM-cerebrum-*` |
 | 3.5 | Hosts file entries on every Cerebrum server | both servers and the database host (step 9, the file written whole) | ok | `C:\Windows\System32\drivers\etc\hosts` |
 | 3.5 | Explorer: extensions and hidden files shown | not set | gap (cosmetic) | Explorer options |
 | 3.6 | Service Manager installed (`ServiceInstall.bat`) | `CerebrumServiceManager` Running / Automatic | ok | `services.msc` |
@@ -137,8 +138,17 @@ by hand with its registry's address (no mDNS / DNS-SD).
    (`License:Demonstration_Key`, the line the vendor's own role writes), never shown.
 4. At every start Cerebrum shows its **Cerebrum Trial Key** dialog, the key pre-filled from the ini, and
    waits for **OK** before it opens its ports (2.9.3 did the same). Confirm it on the server's console
-   (Proxmox console of the VM: the run account's session). Open with EVS: whether a licensed server can
-   start without the dialog (Trial License Mode off once the key is permanent?).
+   (the bastion's `cerebrum` connection resumes the session Cerebrum runs in). Open with EVS: whether a licensed
+   server can start without the dialog (Trial License Mode off once the key is permanent?).
+5. Accepted: Help → About on instance 02 (2026-11-04) reads "Cerebrum Date Limited Trial License Enabled
+   (239 days of trial left to run)", i.e. until about **2027-07-01**, with the options EVS granted: redundant
+   server, 4 Service Managers, 10 Client, 10 Web-Client and 10 XML licences, Router Control, Route Master
+   (250 000 destinations, tie-lines, 4096 IP destinations, IP-Shuffle 128, IP-NMS off), 500 device protocol
+   points, SNMP (200 devices), salvos, Tally Manager, Scheduler (5 timelines), Resource Manager (250),
+   Assignment Engine (1), Package Router (1), external log server, federation.
+6. The permanent licence: EVS issues it from each server's **Sentinel RMS locking code** (Help → About).
+   Instance 02 (vm-winapp-02): `*1S5PVJQ2WKCEQA2`. Instance 01: to read from its About dialog (Cerebrum
+   writes the code to no file).
 
 ### 3.4 Client and Designer test (step 19)
 
@@ -184,7 +194,7 @@ configuration (§8).
 | Sentinel driver | Sentinel System Driver Installer 7.6.1 | not on the SQL server |
 | Sentinel RMS persistence | `Sentinel_Init.exe`, then marker `HKLM\SOFTWARE\WOW6432Node\EVS Broadcast Equipment\Cerebrum\Sentinel` `installed=1` | the vendor's `SentinelPersistanceInstall.bat` pauses and does not wait; the role waits and marks |
 | ODBC | Driver 17 for SQL Server 17.11.1.1 | Cerebrum's SQL tester looks up 17, 13, 11, Native Client by name, not 18 |
-| Start | at boot: auto sign-in of `cerebrum`, then Cerebrum, the Watchdog 40 s later, elevated (step 10) | then the trial key dialog (§3.3) |
+| Start | at boot: auto sign-in of `cerebrum`, then Cerebrum, the Watchdog 40 s later, elevated, no time limit (step 10) | then the trial key dialog (§3.3); the bastion's `cerebrum` connection resumes that session |
 
 ## 6. `Cerebrum.ini` — `ini.yml` (done)
 
@@ -362,13 +372,15 @@ Cerebrum user, `wss://` support (to check in the protocol specification).
 | `dev/mssql/vm-winsql-01/BY_CEREBRUM/cerebrum_federated`, `jumpserver_editor` | `user`, `password` | `cerebrum_db` |
 | `dev/cerebrum/<host>/app-admin` | `username`, `password`, `password_encrypted`, `service`, `instance`, `host`, `database`, `_note` | `cerebrum_server` |
 | `dev/cerebrum/<host>/license` | `key_number` | imported once from EVS's file (2026-11-04); read by `cerebrum_server` (step 18) |
-| `dev/windows/<host>/administrator` | `password` | `windows_guest` (not applied yet) |
+| `dev/cerebrum/<host>/run-user` | `user`, `password` | `cerebrum_server` (the account that signs in at boot); read by the bastion (`cerebrum` connection) |
+| `dev/windows/<host>/administrator` | `password` | `windows_guest`; read by the bastion (`Administrator` connection) |
 
 ## 12. Open items
 
 | Item | Owner / next |
 |---|---|
-| Cerebrum stops at its trial key dialog at every start (key pre-filled; OK on the console): an unattended start for a licensed server | EVS |
+| Cerebrum stops at its trial key dialog at every start (key pre-filled; OK through the bastion's `cerebrum` connection): an unattended start for a licensed server | EVS |
+| Permanent licences before the trial ends (about 2027-07-01): the locking codes to EVS (§3.3: instance 02 recorded, instance 01 to read) | owner → EVS |
 | Multicast group for C-Link | EVS, then rows + NetBox (after lib-netbox) |
 | Encrypted SQL/Admin passwords: EVS's method, or worked out from the captured pairs | EVS / owner |
 | VIA Foundation's Keycloak with Authentik as identity provider | EVS |
@@ -391,5 +403,8 @@ Cerebrum user, `wss://` support (to check in the protocol specification).
 | Cerebrum SQL tester: "ODBC Driver 13 … (or later)" missing | only the legacy driver | `mssql_odbc` (Driver 17) |
 | A task file missing on `main` | `.gitignore` rule `*secret*` | never name a task file `*secret*`; check `git ls-files` |
 | After a restart the Watchdog runs, Cerebrum does not | one logon task with two actions: Task Scheduler waits for the first (the Watchdog) to end | two logon tasks (step 10, #1110) |
-| Port 40001 closed although `Cerebrum.exe` runs (34 MB, idle) | the **Cerebrum Trial Key** dialog waits for OK on the console session | OK on the Proxmox console (§3.3) |
+| Port 40001 closed although `Cerebrum.exe` runs (34 MB, idle) | the **Cerebrum Trial Key** dialog waits for OK in `cerebrum`'s session | OK through the bastion's `cerebrum` connection (§3.3) |
+| "Only one instance of this application may be run on a PC at a time" | Cerebrum already runs in `cerebrum`'s session; it was started again from another session (`<org>`, `Administrator`) | connect as `cerebrum` on the bastion: the connection resumes the running session |
+| Cerebrum and its Watchdog stop three days after a start | Windows' default task time limit (72 h) | `execution_time_limit: PT0S` (step 10) |
+| The bastion's `Administrator` login refused | the guest's password differs from Vault: cloudbase-init's password plugin reset it at a boot (2026-10-25, 2026-10-30) | `roles/windows_guest` sets Vault's password again |
 | Hosts file down to a few lines, `win_hosts`: "Stream was not readable" | the module rewrote the file per entry; a failed write after the truncation | the file written whole (step 9, #1110) |
