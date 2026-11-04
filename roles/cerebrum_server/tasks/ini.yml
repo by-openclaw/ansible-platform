@@ -93,13 +93,44 @@
     - cerebrum_server_ini_password_now != cerebrum_server_db_login_password
     - cerebrum_server_ini_password_now != cerebrum_server_db_login_encrypted
 
+# The licence EVS gives per instance (Vault): Cerebrum reads it from its ini at start, on the line the vendor's
+# own role writes (License:Demonstration_Key). Nothing in Vault: the line stays as Cerebrum left it.
+- name: "Cerebrum server | The instance's licence key (Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ cerebrum_server_license_vault_path }}"
+    vault_secret_optional: true
+
+- name: "Cerebrum server | Keep it for the ini (not shown)"
+  ansible.builtin.set_fact:
+    cerebrum_server_license_key: "{{ vault_secret_result.key_number | default('') }}"
+  no_log: true
+
+- name: "Cerebrum server | Cerebrum.ini: the licence key"
+  community.windows.win_lineinfile:
+    path: "{{ cerebrum_server_ini }}"
+    regex: '^License:Demonstration_Key='
+    line: "License:Demonstration_Key={{ cerebrum_server_license_key }}"
+    insertbefore: '^CORTEX:RUNNING='
+    encoding: utf-16
+    newline: windows
+  register: cerebrum_server_ini_license
+  no_log: true
+  when:
+    - cerebrum_server_license_key | length > 0
+    - not (ansible_check_mode and cerebrum_server_ini_header is changed)
+
 - name: "Cerebrum server | Report"
   ansible.builtin.debug:
     msg: >-
       CEREBRUM_INI {{ inventory_hostname }}: {{ 'created' if cerebrum_server_ini_header is changed else 'present' }};
       lines changed: {{ (cerebrum_server_ini_lines.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.key') | list
-                          + (['SQL:LOGIN_PASSWORD'] if cerebrum_server_ini_password is changed else [])) | join(', ') or 'none' }} —
+                          + (['SQL:LOGIN_PASSWORD'] if cerebrum_server_ini_password is changed else [])
+                          + (['License:Demonstration_Key'] if cerebrum_server_ini_license is changed else [])) | join(', ') or 'none' }} —
       {{ cerebrum_server_db_login }} → {{ cerebrum_server_ini_settings['SQL:PRIMARY_CONNECTION'] }} / {{ cerebrum_server_db_database }};
       password line: {{ ('kept, encrypted by Cerebrum' ~ ('; now in Vault' if cerebrum_server_ini_password_now not in [cerebrum_server_db_login_encrypted, cerebrum_server_db_login_password] else ''))
                         if cerebrum_server_ini_password_now | length > 0
                         else ('written from the captured encrypted form' if cerebrum_server_db_login_encrypted | length > 0 else 'not written: type it once in the SQL tab, the next run captures it') }}
+      ; licence: {{ 'from Vault' if cerebrum_server_license_key | length > 0 else 'none in Vault (' ~ cerebrum_server_license_vault_path ~ ')' }}
+      (Cerebrum reads the ini at start)
