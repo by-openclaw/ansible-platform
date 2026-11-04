@@ -2,7 +2,7 @@
 
 JumpServer CE **v4.10.19** on `lxc-jumpserver-01` (per-container, no compose). Authentik OIDC, bundled PG16+Redis7 (named volumes), assets = the fleet with rune-key accounts, session replays → S3 (`seaweedfs`), CrowdSec agent. VPN-only via Traefik.
 
-- Windows guests (RDP): three accounts each — `<org>` (break-glass admin), `<org>-user` (user session) and the built-in `Administrator` (the session that signs in at boot, where Cerebrum runs; its own password per guest, `<tier>/windows/<host>/administrator`). The login test covers `<org>` and `Administrator`.
+- Windows guests (RDP): `<org>` (break-glass admin), `<org>-user` (user session) and the built-in `Administrator` (its own password per guest, `<tier>/windows/<host>/administrator`); on the Cerebrum servers also `cerebrum`, the account signed in at boot whose session runs Cerebrum (`<tier>/cerebrum/<host>/run-user`): a connection resumes that session. The login test covers `<org>` and `Administrator` (not `cerebrum`: a test connection would take over the running session).
 - Vault: `prod/jumpserver/{app,oidc,smtp}`; own mailbox `jumpserver@`.
 - Containers ride journald (recreated 2026-09-02).
 

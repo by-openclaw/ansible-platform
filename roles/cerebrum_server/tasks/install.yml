@@ -135,30 +135,8 @@
       when: item.exists and item.services[0].state == 'started'
 
     # Cerebrum reads its ini, its rows and its licence at start; the run account's sign-in at boot starts it.
-    - name: "Cerebrum server | Restart: Cerebrum comes back through the run account's sign-in"
-      ansible.windows.win_reboot:
-        reboot_timeout: 900
-      when: cerebrum_server_install_reboot | bool
-
-    # The sign-in at boot starts Cerebrum. In trial licence mode (GUI/DEMO_MODE_LOGON) Cerebrum then waits at its
-    # "Cerebrum Trial Key" dialog, the key pre-filled from the ini, until someone confirms it: its port stays
-    # closed until then (vm-winapp-02, 2026-11-04). So the process is the proof; the port is reported.
-    - name: "Cerebrum server | Cerebrum started by the sign-in"
-      ansible.windows.win_command:
-        argv: [tasklist.exe, /NH, /FI, "IMAGENAME eq {{ cerebrum_server_exe | win_basename }}"]
-      register: cerebrum_server_after_boot
-      changed_when: false
-      retries: 20
-      delay: 15
-      until: (cerebrum_server_exe | win_basename) in cerebrum_server_after_boot.stdout
-      when: cerebrum_server_install_reboot | bool
-
-    - name: "Cerebrum server | Its port 40001 (closed while the trial key dialog waits)"
-      ansible.windows.win_wait_for:
-        port: 40001
-        timeout: 60
-      register: cerebrum_server_port_after_boot
-      failed_when: false
+    - name: "Cerebrum server | Restart: Cerebrum comes back through the run account's sign-in (tasks/boot.yml)"
+      ansible.builtin.include_tasks: boot.yml
       when: cerebrum_server_install_reboot | bool
 
 - name: "Cerebrum server | Report"
@@ -168,7 +146,7 @@
       {{ cerebrum_server_version if cerebrum_server_installed_version != cerebrum_server_version else 'unchanged' }};
       components {{ cerebrum_server_install_components | join(', ') }}
       {%- if cerebrum_server_port_after_boot is defined and cerebrum_server_port_after_boot is not skipped %};
-      after the restart: Cerebrum running, port 40001 {{ 'closed (the trial key dialog waits for OK on the console)'
+      after the restart: Cerebrum running, port 40001 {{ 'closed (the trial key dialog waits for OK in the run account session, through the bastion)'
       if 'timeout' in (cerebrum_server_port_after_boot.msg | default('')) else 'open' }}{% endif %}
       {%- if cerebrum_server_components | difference(cerebrum_server_install_components) | length > 0 %};
       declared but not installed, not added: {{ cerebrum_server_components | difference(cerebrum_server_install_components) | join(', ') }}{% endif %}
