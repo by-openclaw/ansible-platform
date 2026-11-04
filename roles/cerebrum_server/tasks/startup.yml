@@ -2,7 +2,7 @@
 # The vendor's start (EVS §3.5 "Automatic Startup", "Run as Administrator"): Cerebrum and its Watchdog
 # start at a session's sign-in, elevated. A dedicated local account signs in automatically at boot (its
 # password from Vault, kept by Windows as an LSA secret, never in the registry in clear) and its sign-in
-# starts the Watchdog, then Cerebrum — the Startup-folder behaviour, bound to that one account so an
+# starts Cerebrum, then its Watchdog — the Startup-folder behaviour, bound to that one account so an
 # administrator's own RDP session never starts a second Cerebrum.
 - name: "Cerebrum server | The run account's password (Vault, created on first contact)"
   ansible.builtin.include_role:
@@ -39,19 +39,15 @@
   no_log: true
   when: not (ansible_check_mode and cerebrum_server_run_account is changed)   # a dry run creates no account to sign in
 
-- name: "Cerebrum server | Watchdog and Cerebrum start at the run account's sign-in (highest rights, one instance)"
+- name: "Cerebrum server | Cerebrum, then its Watchdog, start at the run account's sign-in (highest rights, one instance)"
   community.windows.win_scheduled_task:
-    name: "{{ cerebrum_server_task_name }}"
-    description: "roles/cerebrum_server: the Watchdog and the server at the sign-in of {{ cerebrum_server_run_user }} (EVS §3.5)"
+    name: "{{ item.name }}"
+    description: "roles/cerebrum_server: {{ item.exe | win_basename }} at the sign-in of {{ cerebrum_server_run_user }} (EVS §3.5)"
     actions:
-      - path: "{{ cerebrum_server_watchdog_exe }}"
-        working_directory: "{{ cerebrum_server_install_dir }}"
-      - path: "{{ cerebrum_server_exe }}"
+      - path: "{{ item.exe }}"
         working_directory: "{{ cerebrum_server_install_dir }}"
     triggers:
-      - type: logon
-        user_id: "{{ cerebrum_server_run_user }}"
-        enabled: true
+      - "{{ {'type': 'logon', 'user_id': cerebrum_server_run_user_qualified, 'enabled': true} | combine({'delay': item.delay} if item.delay else {}) }}"
     username: "{{ cerebrum_server_run_user }}"
     logon_type: interactive_token
     run_level: highest
@@ -60,4 +56,7 @@
     stop_if_going_on_batteries: false
     enabled: true
     state: present
+  loop: "{{ cerebrum_server_logon_tasks }}"
+  loop_control:
+    label: "{{ item.name }}"
   when: not (ansible_check_mode and cerebrum_server_run_account is changed)

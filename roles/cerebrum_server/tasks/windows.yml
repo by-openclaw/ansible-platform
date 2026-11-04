@@ -50,10 +50,16 @@
     (cerebrum_server_defender_processes | difference(cerebrum_server_defender_now.output[0].process) | length > 0) or
     (cerebrum_server_defender_paths | difference(cerebrum_server_defender_now.output[0].path) | length > 0)
 
-# Static host entries on every Cerebrum server even with DNS (§3.5): the servers, the database host.
+# Static host entries on every Cerebrum server even with DNS (§3.5): the servers, the database host. The file is
+# written whole, in one copy: win_hosts rewrote it per entry and, on vm-winapp-01, a write that failed after
+# truncating it ("Stream was not readable") left the next entry to read an empty file (2026-11-04: the header
+# and an entry lost). A copy that fails is tried again.
 - name: "Cerebrum server | Hosts file: every Cerebrum server and the database host (EVS §3.5)"
-  ansible.windows.win_hosts:
-    ip_address: "{{ hostvars[item].ansible_host }}"
-    canonical_name: "{{ item }}"
-    state: present
-  loop: "{{ (groups['cerebrum_server'] | default([])) + (groups['cerebrum_db'] | default([])) }}"
+  ansible.windows.win_template:
+    src: hosts.j2
+    dest: 'C:\Windows\System32\drivers\etc\hosts'
+    newline_sequence: "\r\n"
+  register: cerebrum_server_hosts_file
+  retries: 3
+  delay: 3
+  until: cerebrum_server_hosts_file is not failed
