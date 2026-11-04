@@ -2,10 +2,13 @@
 # The application leaves the host: the logon task and the firewall rules go, the processes stop,
 # the vendor's uninstaller runs silently, the run account is disabled (its Vault document and the
 # data folders stay: never delete, archive).
-- name: "Cerebrum server | The logon task gone"
+- name: "Cerebrum server | The logon tasks gone"
   community.windows.win_scheduled_task:
-    name: "{{ cerebrum_server_task_name }}"
+    name: "{{ item.name }}"
     state: absent
+  loop: "{{ cerebrum_server_logon_tasks }}"
+  loop_control:
+    label: "{{ item.name }}"
 
 - name: "Cerebrum server | The firewall rules gone"
   community.windows.win_firewall_rule:

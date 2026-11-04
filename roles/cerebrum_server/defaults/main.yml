@@ -113,6 +113,18 @@ cerebrum_server_run_user_vault_path: "{{ cerebrum_server_env }}/cerebrum/{{ inve
 # HTTPS); without TLS, `Users` is enough — set it per tier.
 cerebrum_server_run_user_groups: [Administrators]
 cerebrum_server_task_name: "PLATFORM-cerebrum-start-at-logon"
+cerebrum_server_watchdog_task_name: "PLATFORM-cerebrum-watchdog-at-logon"
+# One logon task per program: Task Scheduler runs a task's actions one after the other, each waiting for the
+# previous one to end, and the Watchdog never ends, so Cerebrum (the second action) never started
+# (vm-winapp-02, 2026-11-04; the vendor's own role met the same). Cerebrum first, its Watchdog 40 s later:
+# the vendor's order and delay.
+cerebrum_server_logon_tasks:
+  - name: "{{ cerebrum_server_task_name }}"
+    exe: "{{ cerebrum_server_exe }}"
+    delay: ""
+  - name: "{{ cerebrum_server_watchdog_task_name }}"
+    exe: "{{ cerebrum_server_watchdog_exe }}"
+    delay: PT40S
 cerebrum_server_password_length: 28
 
 # --- the first start (Cerebrum creates its database and the default settings rows) -------------------

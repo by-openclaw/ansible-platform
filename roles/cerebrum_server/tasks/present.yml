@@ -174,28 +174,9 @@
     checksum_algorithm: sha256
   when: cerebrum_server_project_url | length > 0
 
-# --- the vendor's start: Watchdog, then the server, at the run account's logon ------------------------------
-- name: "Cerebrum server | Watchdog and server start at the run account's logon (highest rights, one instance)"
-  community.windows.win_scheduled_task:
-    name: "{{ cerebrum_server_task_name }}"
-    description: "roles/cerebrum_server: the Watchdog and the server at the logon of {{ cerebrum_server_run_user }}"
-    actions:
-      - path: "{{ cerebrum_server_watchdog_exe }}"
-        working_directory: "{{ cerebrum_server_install_dir }}"
-      - path: "{{ cerebrum_server_exe }}"
-        working_directory: "{{ cerebrum_server_install_dir }}"
-    triggers:
-      - type: logon
-        user_id: "{{ cerebrum_server_run_user }}"
-        enabled: true
-    username: "{{ cerebrum_server_run_user }}"
-    logon_type: interactive_token
-    run_level: highest
-    multiple_instances: 2
-    disallow_start_if_on_batteries: false
-    stop_if_going_on_batteries: false
-    enabled: true
-    state: present
+# --- the vendor's start: the run account signs in at boot, Cerebrum then its Watchdog -------------------------
+- name: "Cerebrum server | Start at boot (tasks/startup.yml)"
+  ansible.builtin.include_tasks: startup.yml
 
 # --- the host firewall: per port, bound to the program ------------------------------------------------------
 - name: "Cerebrum server | The firewall rules of the application"
@@ -218,9 +199,12 @@
   loop: "{{ (cerebrum_server_old_logs.files | default([])) | map(attribute='path') | list }}"
 
 # --- the first start ------------------------------------------------------------------------------------------
-- name: "Cerebrum server | Start now through the logon task"
+- name: "Cerebrum server | Start now through the logon tasks"
   ansible.windows.win_command:
-    argv: [schtasks.exe, /Run, /TN, "{{ cerebrum_server_task_name }}"]
+    argv: [schtasks.exe, /Run, /TN, "{{ item.name }}"]
+  loop: "{{ cerebrum_server_logon_tasks }}"
+  loop_control:
+    label: "{{ item.name }}"
   when: cerebrum_server_start | bool
   changed_when: true
 
