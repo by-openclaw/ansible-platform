@@ -185,6 +185,18 @@
     state: present
   no_log: true
 
+# cloudbase-init never sets that password: the plugin list and the flag of the template, read at its next start.
+- name: "Win guest | cloudbase-init does not manage the Administrator password"
+  community.windows.win_lineinfile:
+    path: "{{ windows_guest_cloudbase_conf }}"
+    regex: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    newline: unix   # the template's file (LF)
+    state: present
+  loop: "{{ windows_guest_cloudbase_lines }}"
+  loop_control:
+    label: "{{ item.regexp }}"
+
 # --- the OOB / break-glass local admin (identity/0004 §1): <org>, local, Vault-held -------
 - name: "Win guest | The break-glass password of this tier (Vault, created on first contact)"
   ansible.builtin.include_role:
