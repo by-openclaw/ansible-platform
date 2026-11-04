@@ -99,3 +99,18 @@ groups:
 
           description: "The master user opens any mailbox. It is used by Nextcloud's Mail app and by the mail stack itself; this sign-in came from neither."
 {% endif %}
+
+  - name: nextcloud-antivirus
+    interval: {{ loki_rule_interval }}
+    rules:
+      # An upload refused, or a stored file the background scan caught with newer signatures. A
+      # stored file stays where it is (nextcloud_av_infected_action): someone has to look at it.
+      - alert: NextcloudInfectedFile
+        expr: |
+          sum(count_over_time({{ loki_nextcloud_app_selector }} |= "Infected file" [{{ loki_nextcloud_window }}])) > 0
+        for: 0m
+        labels: {severity: warning}
+        annotations:
+          summary: "Nextcloud: the antivirus found an infected file"
+          description: "An upload was refused, or a stored file matched newer signatures. A stored file is not deleted: it stays reachable, through its share links too, until someone removes it."
+          runbook: "Read the entry in nextcloud.log (job nextcloud_app): user, path, signature. Check the sharing of a stored file, then remove it or mark it as a false positive."

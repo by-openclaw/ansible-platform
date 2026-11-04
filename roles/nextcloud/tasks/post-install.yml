@@ -94,6 +94,32 @@
     loop_var: pinned
     label: "{{ pinned.id }} {{ pinned.version }}"
 
+# --- Antivirus ----------------------------------------------------------------
+# Straight after the app is enabled: it blocks uploads by default until it can reach a scanner.
+# occ's test exits 0 on a scan that did not run, so its words are read as well.
+- name: "post-install | Antivirus: ClamAV over its socket, what cannot be scanned is refused"
+  ansible.builtin.command:
+    cmd: >-
+      docker exec -u www-data nextcloud php occ config:app:set files_antivirus
+      {{ item.key }} --value="{{ item.value }}" --type={{ item.type }}
+  loop:
+    - { key: "av_mode", value: "socket", type: "string" }
+    - { key: "av_socket", value: "{{ nextcloud_clamav_socket }}", type: "string" }
+    - { key: "av_stream_max_length", value: "{{ nextcloud_av_stream_max_mb | int * 1048576 }}", type: "integer" }
+    - { key: "av_infected_action", value: "{{ nextcloud_av_infected_action }}", type: "string" }
+    - { key: "av_block_unreachable", value: "{{ nextcloud_av_block_unreachable | bool | lower }}", type: "boolean" }
+    - { key: "av_block_unscannable", value: "{{ nextcloud_av_block_unscannable | bool | lower }}", type: "boolean" }
+  loop_control:
+    label: "{{ item.key }}"
+  changed_when: true
+
+- name: "post-install | Antivirus: the scanner answers and finds the test signature"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ files_antivirus:test
+  register: nextcloud_av_test
+  changed_when: false
+  failed_when: nextcloud_av_test.rc != 0 or 'not scanned' in nextcloud_av_test.stdout or 'could not be scanned' in nextcloud_av_test.stdout
+
 # --- store apps -----------------------------------------------------------------
 - name: "post-install | List installed apps"
   ansible.builtin.command:
@@ -220,6 +246,7 @@
     - { key: "shareapi_internal_expire_after_n_days", value: "{{ nextcloud_share_internal_expire_days | string }}" }
     - { key: "shareapi_enforce_internal_expire_date", value: "{{ 'yes' if nextcloud_share_internal_enforce_expire else 'no' }}" }
     - { key: "shareapi_allow_share_dialog_user_enumeration", value: "yes" }   # colleagues are findable in the share dialog
+    - { key: "shareapi_allow_public_upload", value: "{{ 'yes' if nextcloud_share_allow_public_upload else 'no' }}" }
   loop_control:
     label: "{{ item.key }}"
   changed_when: true
@@ -266,6 +293,13 @@
     - [1, "{{ nextcloud_docker_bridge_cidr }}"]
   loop_control:
     label: "{{ item.1 }}"
+  changed_when: true
+
+# admin_audit writes at INFO, below the default log level: this condition lets it through, for
+# that app alone, into its own audit.log in the data directory (promtail job nextcloud_audit).
+- name: "post-install | Audit entries are written at the default log level"
+  ansible.builtin.command:
+    cmd: docker exec -u www-data nextcloud php occ config:system:set log.condition apps 0 --value=admin_audit
   changed_when: true
 
 # Quota — onedrive-like per-user limit (config:app:set files). New users inherit

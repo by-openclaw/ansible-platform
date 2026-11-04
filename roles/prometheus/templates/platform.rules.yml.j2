@@ -303,6 +303,14 @@ groups:
 
   - name: platform-containers
     rules:
+      - alert: NextcloudVirusScannerDown
+        expr: absent(container_last_seen{name="{{ prometheus_nextcloud_clamav_container }}"}) or (time() - container_last_seen{name="{{ prometheus_nextcloud_clamav_container }}"} > 300)
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Nextcloud's virus scanner is not running"
+          description: "Nextcloud refuses every upload while it cannot reach ClamAV, so files cannot be sent or received."
+          runbook: "On the Nextcloud host: docker logs --tail 50 {{ prometheus_nextcloud_clamav_container }}, then playbooks/nextcloud.yml."
       - alert: ContainerRestarting
         expr: changes(container_start_time_seconds{name!="", name!~"{{ prometheus_timer_job_containers | join('|') }}"}[15m]) > 2
         for: 5m

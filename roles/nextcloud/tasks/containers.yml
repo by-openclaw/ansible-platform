@@ -9,6 +9,14 @@
     service_scaffold_def:
       name: nextcloud
       containers:
+        # First: Docker fills a new volume from the image of the first container that mounts it,
+        # and this image owns the socket directory.
+        - name: "{{ nextcloud_clamav_container }}"
+          image: "{{ nextcloud_clamav_image }}"
+          volumes:
+            - "{{ nextcloud_clamav_db_volume }}:/var/lib/clamav"
+            - "{{ nextcloud_clamav_socket_volume }}:{{ nextcloud_clamav_socket_dir }}"
+          env: "{{ nextcloud_clamav_env }}"
         - name: nextcloud
           image: "{{ nextcloud_image }}"
           published:
@@ -16,6 +24,7 @@
           volumes:
             - "{{ nextcloud_app_volume }}:/var/www/html"
             - "/etc/ssl/certs:/etc/ssl/certs:ro"
+            - "{{ nextcloud_clamav_socket_volume }}:{{ nextcloud_clamav_socket_dir }}:ro"
           env: "{{ nextcloud_env }}"
         - name: nextcloud-cron
           image: "{{ nextcloud_image }}"
@@ -23,6 +32,7 @@
           volumes:
             - "{{ nextcloud_app_volume }}:/var/www/html"
             - "/etc/ssl/certs:/etc/ssl/certs:ro"
+            - "{{ nextcloud_clamav_socket_volume }}:{{ nextcloud_clamav_socket_dir }}:ro"
           env: "{{ nextcloud_env }}"
         # Metrics sidecar: scrapes the serverinfo API through the public FQDN (the only
         # trusted_domain), publishes :{{ nextcloud_metrics_port }} to the monitoring host only.
@@ -56,6 +66,19 @@
     - nextcloud_ready.status == 200
     - "'\"installed\":true' in nextcloud_ready.content"
   changed_when: false
+
+# The socket appears once clamd has loaded the signatures. Uploads are refused while the scanner
+# cannot be reached, so the antivirus settings in post-install wait for it.
+- name: "containers | Wait for the ClamAV socket, seen from Nextcloud"
+  community.docker.docker_container_exec:
+    container: "{{ nextcloud_container }}"
+    argv: [test, -S, "{{ nextcloud_clamav_socket }}"]
+  register: nextcloud_clamav_socket_probe
+  retries: "{{ nextcloud_clamav_wait_retries }}"
+  delay: "{{ nextcloud_clamav_wait_delay }}"
+  until: nextcloud_clamav_socket_probe.rc == 0
+  changed_when: false
+  when: not ansible_check_mode    # under --check the container is not recreated with the volume
 
 - name: "containers | Gather running Nextcloud containers"
   community.docker.docker_host_info:

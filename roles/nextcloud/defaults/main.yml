@@ -98,6 +98,7 @@ nextcloud_apps:
   - user_oidc
   - sharebymail
   - twofactor_totp
+  - admin_audit         # who logged in, opened, shared or deleted what (shipped, off by default)
   # --- groupware / Teams parity (#396 §10, phase 1) ---------------------------
   - calendar            # CalDAV server, shared calendars, Talk rooms in events, appointment booking
   - contacts            # CardDAV server, system address book, shared Company book
@@ -134,6 +135,8 @@ nextcloud_apps_pinned:
      url: "https://github.com/nextcloud-releases/deck/releases/download/v1.18.5/deck-v1.18.5.tar.gz"}
   - {id: drawio, version: "4.3.9", checksum: "sha256:3ac34d75ad538d067c4d119d464281b424c1958a2c7ef114de1d1d52fea8981c",
      url: "https://github.com/arnowelzel/drawio-nextcloud/releases/download/v4.3.9/drawio-v4.3.9.tar.gz"}
+  - {id: files_antivirus, version: "6.5.0", checksum: "sha256:0bfd9652ac412c8ff8532689fd65f9d0b996d02e1ab28e138479b0841817f6f0",
+     url: "https://github.com/nextcloud-releases/files_antivirus/releases/download/v6.5.0/files_antivirus-v6.5.0.tar.gz"}
   - {id: forms, version: "5.4.0", checksum: "sha256:fdf8d4b175623411e4c5c47f0e97e54eb70fd97ba2bf8e3f82ef8f2944378a19",
      url: "https://github.com/nextcloud-releases/forms/releases/download/v5.4.0/forms-v5.4.0.tar.gz"}
   - {id: groupfolders, version: "22.0.6", checksum: "sha256:bfff357b12bbd24257d8d127cf30e83a72256e7659f1cc3e32bd09fe647d2f9b",
@@ -177,6 +180,38 @@ nextcloud_share_enforce_password: true    # public links must carry a password
 nextcloud_share_internal_expire_days: 30  # shares with internal users/groups: default + maximum lifetime (days)
 nextcloud_share_internal_enforce_expire: true
 nextcloud_share_allow_federation: false   # no federated (remote-server) shares; externals get links or the Guests app
+nextcloud_share_allow_public_upload: true # File Drop: how a file larger than mail allows comes in (services/0002)
+
+# --- Antivirus (services/0002 §Large attachments) ---------------------------------------------
+# Every file written goes through ClamAV, which runs next to Nextcloud and is reached over a unix
+# socket in a shared volume. No port, and no user network: on one, the container's peer would
+# leave nextcloud_docker_bridge_cidr and Nextcloud would stop trusting X-Forwarded-For.
+nextcloud_clamav_container: "nextcloud-clamav"
+nextcloud_clamav_image: "clamav/clamav:1.5.4_base-debian13-slim"   # _base: immutable per patch, the signatures live in the volume
+nextcloud_clamav_db_volume: "nextcloud-clamav-db"
+nextcloud_clamav_socket_volume: "nextcloud-clamav-socket"
+nextcloud_clamav_socket_dir: "/run/clamav"
+nextcloud_clamav_socket: "{{ nextcloud_clamav_socket_dir }}/clamd.sock"
+nextcloud_clamav_wait_retries: 60       # the first start downloads the signatures before clamd loads them
+nextcloud_clamav_wait_delay: 10
+# One pass up to PHP's upload limit, so an archive reaches ClamAV whole. Above it, a logged-in
+# upload (chunked, no PHP limit) is scanned in segments that overlap by one chunk. ClamAV's
+# limits must cover one pass; the scan size is what it reads once an archive is unpacked.
+nextcloud_av_stream_max_mb: 512
+nextcloud_av_scan_size_mb: 1024
+nextcloud_clamav_env:
+  CLAMD_CONF_LocalSocket: "{{ nextcloud_clamav_socket }}"
+  CLAMD_CONF_LocalSocketMode: "666"     # the client is www-data of another image; only these containers mount the volume
+  CLAMD_CONF_TCPAddr: "127.0.0.1"       # TCP stays for the image's health check, inside the container
+  CLAMD_CONF_StreamMaxLength: "{{ nextcloud_av_stream_max_mb }}M"
+  CLAMD_CONF_MaxFileSize: "{{ nextcloud_av_stream_max_mb }}M"
+  CLAMD_CONF_MaxScanSize: "{{ nextcloud_av_scan_size_mb }}M"
+# An infected upload is refused whatever this says. It decides what the background scan does with
+# a stored file: `delete` bypasses the trash, so a false positive would destroy the file for good.
+# The file stays and Loki raises NextcloudInfectedFile.
+nextcloud_av_infected_action: "only_log"
+nextcloud_av_block_unreachable: true    # scanner down: refuse the upload, do not store it unscanned
+nextcloud_av_block_unscannable: true
 
 # --- Setup-check hardening (admin "Security & setup warnings") -------------------
 nextcloud_phone_region: "BE"              # default_phone_region (ISO 3166-1 alpha-2)

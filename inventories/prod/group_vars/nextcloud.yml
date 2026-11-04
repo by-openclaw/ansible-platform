@@ -6,10 +6,12 @@ nextcloud_app_volume: nextcloud-app
 # The application log (audit gap 4, docs/audits/nextcloud-2026-10-02.md): Nextcloud writes it into
 # the data directory of the app volume (`log_type` file). Two consumers tail it on the host:
 nextcloud_app_log: "/var/lib/docker/volumes/{{ nextcloud_app_volume }}/_data/data/nextcloud.log"
+nextcloud_audit_log: "/var/lib/docker/volumes/{{ nextcloud_app_volume }}/_data/data/audit.log"   # admin_audit's own file
 
 # promtail → Loki with the `audit` label (login failures, admin actions are in this stream).
 promtail_extra_file_jobs:
   - {name: nextcloud_app, path: "{{ nextcloud_app_log }}", audit: true}
+  - {name: nextcloud_audit, path: "{{ nextcloud_audit_log }}", audit: true}
 promtail_acl_dirs:
   - "/var/lib/docker/volumes/{{ nextcloud_app_volume }}/_data/data"
 promtail_acl_traverse:
