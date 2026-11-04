@@ -14,7 +14,7 @@
 # the database host: the role restarts it then — announce the run first.
 #
 #   Dry run: ansible-playbook playbooks/cerebrum.yml --check --diff
-#   One step: --tags sql | odbc | firewall | rcp | windows | startup | sentinel | ini | settings | admin
+#   One step: --tags sql | odbc | firewall | rcp | certificate | windows | startup | sentinel | ini | settings | admin
 #   Apply:   ansible-playbook playbooks/cerebrum.yml [--limit vm-x]
 # ==============================================================================
 - name: "Cerebrum | the SQL Server instance"
@@ -45,6 +45,13 @@
         apply:
           tags: [rcp]
       tags: [rcp]
+    - name: "Cerebrum | The certificate: the tier's zone wildcard (files + machine store), the Security rows"
+      ansible.builtin.include_role:
+        name: cerebrum_server
+        tasks_from: certificate.yml
+        apply:
+          tags: [certificate]
+      tags: [certificate]
     - name: "Cerebrum | EVS §3.5 on Windows: UAC, run as administrator, Defender exclusions, hosts file"
       ansible.builtin.include_role:
         name: cerebrum_server

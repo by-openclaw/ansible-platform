@@ -54,6 +54,17 @@
         name: pbs
         tasks_from: tls.yml
 
+# The Cerebrum servers (Windows) hold a copy of the dev zone wildcard: files, machine store, the
+# thumbprint in Cerebrum's Security row (Cerebrum reads it at its next start).
+- name: Sync the zone wildcard to the Cerebrum servers
+  hosts: cerebrum_server
+  gather_facts: false
+  tasks:
+    - name: "Refresh the zone wildcard (Cerebrum web client / RCP)"
+      ansible.builtin.include_role:
+        name: cerebrum_server
+        tasks_from: certificate.yml
+
 # The hypervisor addresses the backup server by name and trusts it through its CA store (no pinned
 # fingerprint — pbs-pve-storage.yml); this run converges that and the configuration-export unit.
 # Until 2026-10-26 it re-pinned a fingerprint an hour after the certificate swap: the 26 guests

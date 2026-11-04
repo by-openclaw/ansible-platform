@@ -20,6 +20,7 @@
     src: config.sql.j2
     dest: "{{ cerebrum_server_db_state_dir }}\\config-{{ cerebrum_server_db_database }}.sql"
   delegate_to: "{{ cerebrum_server_db_host }}"
+  throttle: 1           # every instance writes to the one database host: two at once hung there (2026-11-04)
   changed_when: false   # the script is a carrier; the run below reports the real changes
   check_mode: false     # rendered in a dry run too, as a preview that writes nothing
 
@@ -28,6 +29,7 @@
     argv: ["{{ cerebrum_server_db_sqlcmd }}", -E, -C, -S, ".\\{{ cerebrum_server_db_instance }}", -b, -i,
            "{{ cerebrum_server_db_state_dir }}\\config-{{ cerebrum_server_db_database }}.sql"]
   delegate_to: "{{ cerebrum_server_db_host }}"
+  throttle: 1
   register: cerebrum_server_config_run
   check_mode: false     # the preview script (dry run) only reads
   changed_when: "'CHANGED' in cerebrum_server_config_run.stdout"
