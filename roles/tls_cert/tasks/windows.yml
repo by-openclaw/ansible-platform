@@ -1,0 +1,118 @@
+---
+# ==============================================================================
+# tls_cert | Windows: the zone wildcard from the cert-authority host, as PEM files and in the
+# machine's Personal store. Same source and the same idempotence as main.yml: a file is written only
+# when its content differs, the store gets the certificate only when its thumbprint is not there.
+# The folder is Administrators and SYSTEM only before a key lands in it. The consumer reads
+# tls_cert_thumbprint after the include (it changes at each renewal).
+# ==============================================================================
+- name: "TLS | Read the certificate, its key and its PFX from the cert-authority host"
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  delegate_to: "{{ tls_cert_source_host }}"
+  loop: ["{{ tls_cert_source_crt }}", "{{ tls_cert_source_key }}", "{{ tls_cert_source_pfx }}"]
+  register: tls_cert_src
+  no_log: true
+
+- name: "TLS | The certificate's thumbprint and validity (the public part, read on the controller)"
+  community.crypto.x509_certificate_info:
+    content: "{{ tls_cert_src.results[0].content | b64decode }}"
+  delegate_to: localhost
+  register: tls_cert_info
+
+- name: "TLS | The thumbprint the consumer configures"
+  ansible.builtin.set_fact:
+    tls_cert_thumbprint: "{{ tls_cert_info.fingerprints.sha1 | replace(':', '') | upper }}"
+
+- name: "TLS | The destination folder"
+  ansible.windows.win_file:
+    path: "{{ tls_cert_win_dir }}"
+    state: directory
+  register: tls_cert_win_folder
+
+# A dry run on a host without the folder has nothing to set rights on yet.
+- name: "TLS | The folder's rights: Administrators and SYSTEM, inherited by the files"
+  when: not (ansible_check_mode and tls_cert_win_folder is changed)
+  block:
+    - name: "TLS | Administrators and SYSTEM, full control, down to the files"
+      ansible.windows.win_acl:
+        path: "{{ tls_cert_win_dir }}"
+        user: "{{ item }}"
+        rights: FullControl
+        type: allow
+        state: present
+        inherit: ContainerInherit, ObjectInherit
+        propagation: None
+      loop: "{{ tls_cert_win_owners }}"
+
+    - name: "TLS | Nothing inherited from ProgramData (Users can read there)"
+      ansible.windows.win_acl_inheritance:
+        path: "{{ tls_cert_win_dir }}"
+        state: absent
+        reorganize: false
+
+- name: "TLS | The certificate and its key (PEM)"
+  ansible.windows.win_copy:
+    content: "{{ item.content | b64decode }}"
+    dest: "{{ item.dest }}"
+  loop:
+    - {content: "{{ tls_cert_src.results[0].content }}", dest: "{{ tls_cert_win_crt }}"}
+    - {content: "{{ tls_cert_src.results[1].content }}", dest: "{{ tls_cert_win_key }}"}
+  loop_control:
+    label: "{{ item.dest }}"
+  no_log: true
+
+# The PFX is binary: it travels as its base64 text and is decoded on the host (certutil, in the box).
+- name: "TLS | The PFX, as base64 text"
+  ansible.windows.win_copy:
+    content: "{{ tls_cert_src.results[2].content }}"
+    dest: "{{ tls_cert_win_pfx }}.b64"
+  register: tls_cert_win_pfx_b64
+  no_log: true
+
+- name: "TLS | Is the PFX there"
+  ansible.windows.win_stat:
+    path: "{{ tls_cert_win_pfx }}"
+  register: tls_cert_win_pfx_stat
+
+- name: "TLS | The PFX decoded (only when its text changed)"
+  ansible.windows.win_command:
+    argv: [certutil, -f, -decode, "{{ tls_cert_win_pfx }}.b64", "{{ tls_cert_win_pfx }}"]
+  when: tls_cert_win_pfx_b64 is changed or not tls_cert_win_pfx_stat.stat.exists
+
+# Machine key storage (an HTTP.sys binding reads it), non-exportable. As SYSTEM: a key-based SSH
+# session has no user DPAPI key to protect an imported private key with.
+- name: "TLS | The certificate with its key in the machine's Personal store"
+  ansible.windows.win_certificate_store:
+    path: "{{ tls_cert_win_pfx }}"
+    password: "{{ tls_cert_win_pfx_password }}"
+    file_type: pkcs12
+    store_location: LocalMachine
+    store_name: My
+    key_storage: machine
+    key_exportable: false
+    state: present
+  vars:
+    ansible_become: true
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: SYSTEM
+  when: not (ansible_check_mode and not tls_cert_win_pfx_stat.stat.exists)   # nothing to import in a first dry run
+  no_log: true
+
+# A renewal leaves the previous certificate of the same name behind: removed, the current one kept.
+- name: "TLS | The certificates of this name in the machine store"
+  ansible.windows.win_certificate_info:
+    store_location: LocalMachine
+    store_name: My
+  register: tls_cert_win_store
+
+- name: "TLS | Previous certificates of this name removed"
+  ansible.windows.win_certificate_store:
+    thumbprint: "{{ item.thumbprint }}"
+    store_location: LocalMachine
+    store_name: My
+    state: absent
+  loop: "{{ tls_cert_win_store.certificates | selectattr('subject', 'equalto', 'CN=*.' ~ tls_cert_domain)
+            | rejectattr('thumbprint', 'equalto', tls_cert_thumbprint) | list }}"
+  loop_control:
+    label: "{{ item.thumbprint }} (expires {{ item.valid_to_iso8601 | default(item.valid_to) }})"

@@ -82,6 +82,13 @@ traefik_cf_vault_path: "{{ platform_env }}/cloudflare/{{ platform_domain | repla
 traefik_cert_crt: "/etc/lego/cert/certificates/_.{{ traefik_domain }}.crt"
 traefik_cert_key: "/etc/lego/cert/certificates/_.{{ traefik_domain }}.key"
 
+# The other tiers' zone wildcards (naming/0001 §8: one per zone, *.<tier>.<domain>), issued here, on the
+# cert-authority host, for the devices of that tier that terminate their own TLS (security/0004 §Device
+# certificates) and copy the files through roles/tls_cert. Traefik does not serve them. Each has its
+# own renewal timer; the devices take a renewal at playbooks/certs-sync.yml.
+traefik_zone_wildcards: []                  # tiers, e.g. [dev]
+traefik_zone_wildcard_key_type: rsa2048     # what the devices' vendors name (EVS Cerebrum manual §5.2.3)
+
 # --- CrowdSec Traefik bouncer (Layer-7 IP remediation) --------------------------
 # Blocks IPs with an active CrowdSec decision at the HTTP layer, before requests
 # reach the web apps. Complements the OPNsense firewall bouncer (L3/4). Plugin:

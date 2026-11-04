@@ -26,3 +26,17 @@ tls_cert_group: "root"
 tls_cert_dir_mode: "0755"
 tls_cert_crt_mode: "0644"
 tls_cert_key_mode: "0640"
+
+# --- Windows (tasks/windows.yml) ----------------------------------------------------
+# The same certificate on a Windows host: PEM files for an application that reads cert + key files,
+# and the certificate with its key in the machine's Personal store (an application that takes a
+# thumbprint, an HTTP.sys binding). The PFX is the one lego writes beside the PEM files
+# (lego_cert_pfx); its password is lego's default and protects nothing the PEM key beside it does not:
+# the folder holds both, Administrators and SYSTEM only, and the store keeps the key non-exportable.
+tls_cert_source_pfx: "/etc/lego/cert/certificates/_.{{ tls_cert_domain }}.pfx"
+tls_cert_win_dir: "C:\\ProgramData\\{{ platform_org }}\\tls"
+tls_cert_win_crt: "{{ tls_cert_win_dir }}\\wildcard.crt"
+tls_cert_win_key: "{{ tls_cert_win_dir }}\\wildcard.key"
+tls_cert_win_pfx: "{{ tls_cert_win_dir }}\\wildcard.pfx"
+tls_cert_win_owners: [Administrators, SYSTEM]
+tls_cert_win_pfx_password: "changeit"   # pragma: allowlist secret  (lego's default --pfx.pass, see above)

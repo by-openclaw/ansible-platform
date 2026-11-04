@@ -1,0 +1,23 @@
+---
+# The certificate of the web client and of RCP (EVS manual §5.2.3, "How to configure SSL/TLS"): the
+# tier's zone wildcard *.<tier>.<domain> (covers cerebrum-<n>.<tier>.<domain> of the split DNS) from the
+# cert-authority host, through roles/tls_cert: PEM files and the machine's Personal store. Then the three
+# Security rows point Cerebrum at it: certificate file, key file, thumbprint — in Cerebrum's own spelling
+# (upper-case paths, lower-case thumbprint), so a save in its dialog does not undo them. TLS itself
+# stays off (USE_SSL, RCP/USE_SSL): plain first, then TLS (owner 2026-11-04), a test step.
+- name: "Cerebrum server | The zone wildcard: PEM files + machine store"
+  ansible.builtin.include_role:
+    name: tls_cert
+    tasks_from: windows.yml
+    public: true          # its file paths, for the rows below
+  vars:
+    tls_cert_domain: "{{ cerebrum_server_tls_zone }}"
+
+- name: "Cerebrum server | Security rows: the certificate, its key, its thumbprint"
+  ansible.builtin.include_tasks: config.yml
+  vars:
+    cerebrum_server_config: {}
+    cerebrum_server_config_host:
+      "SECURITY/CERTIFICATE": "{{ tls_cert_win_crt | upper }}"
+      "SECURITY/KEY": "{{ tls_cert_win_key | upper }}"
+      "SECURITY/CERT_HASH": "{{ tls_cert_thumbprint | lower }}"
