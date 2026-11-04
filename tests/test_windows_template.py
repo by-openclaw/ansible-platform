@@ -54,12 +54,19 @@ def test_the_build_ends_generalised_and_off():
     assert text.index("qemu-ga.msi") < text.index("CloudbaseInitSetup.msi") < text.index("sysprep.exe")
 
 
+def _cloudbase_plugins():
+    yaml = pytest.importorskip("yaml")
+    windows = ROOT / "inventories" / "prod" / "group_vars" / "all" / "windows.yml"
+    return yaml.safe_load(windows.read_text())["platform_windows_cloudbase_plugins"]
+
+
 def _render_conf():
     # Ansible's templating runs with trim_blocks=True (and the platform's lstrip default):
     # render EXACTLY like that, or a passing test hides a glued-lines template (an inline
     # Jinja comment ate the newline after a value — two broken templates, 2026-10-14).
     conf_tpl = (ROOT / "roles" / "windows_template" / "templates" / "cloudbase-init.conf.j2").read_text()
-    return jinja2.Environment(trim_blocks=True).from_string(conf_tpl).render()
+    return jinja2.Environment(trim_blocks=True).from_string(conf_tpl).render(
+        platform_windows_cloudbase_plugins=_cloudbase_plugins())
 
 
 def test_cloudbase_conf_every_line_is_whole():
@@ -67,8 +74,18 @@ def test_cloudbase_conf_every_line_is_whole():
         assert line == "" or line.startswith(("#", "[")) or line.count("=") >= 1, line
     # the glued-lines regression: each known option sits alone on its line
     lines = _render_conf().splitlines()
-    assert "inject_user_password=true" in lines  # pragma: allowlist secret — a boolean option name
+    assert "inject_user_password=false" in lines  # pragma: allowlist secret — a boolean option name
     assert "first_logon_behaviour=no" in lines
+
+
+def test_cloudbase_never_sets_the_administrator_password():
+    # With no password on the cloud-init drive, SetUserPasswordPlugin set a RANDOM Administrator
+    # password at a boot where the drive had changed (2026-10-25, 2026-10-30): Vault no longer
+    # opened the account. roles/windows_guest owns that password.
+    plugins = [line for line in _render_conf().splitlines() if line.startswith("plugins=")]
+    assert plugins == ["plugins=" + ",".join(_cloudbase_plugins())]
+    assert "SetUserPasswordPlugin" not in plugins[0]
+    assert "cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin" in plugins[0]
 
 
 def test_cloudbase_conf_values_carry_no_inline_comments():
@@ -83,7 +100,7 @@ def test_cloudbase_conf_values_carry_no_inline_comments():
     parser.read_string(text)
     for key, value in parser["DEFAULT"].items():
         assert "#" not in value, f"{key} carries an inline comment into its value: {value!r}"
-    assert parser["DEFAULT"]["inject_user_password"] == "true"  # pragma: allowlist secret — a boolean option name
+    assert parser["DEFAULT"]["inject_user_password"] == "false"  # pragma: allowlist secret — a boolean option name
 
 
 def test_cloudbase_conf_logdir_exists_in_the_image():
