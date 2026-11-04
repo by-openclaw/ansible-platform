@@ -105,6 +105,9 @@ cerebrum_server_admin_user: Admin
 
 # --- the account that hosts the application (the vendor starts both at its logon) ------------------
 cerebrum_server_run_user: cerebrum
+# The same account as Windows records it in a task trigger (COMPUTER\user): the bare name made the logon task
+# report a change on every run.
+cerebrum_server_run_user_qualified: "{{ inventory_hostname | upper }}\\{{ cerebrum_server_run_user }}"
 cerebrum_server_run_user_vault_path: "{{ cerebrum_server_env }}/cerebrum/{{ inventory_hostname }}/run-user"
 # Administrators: the vendor requires the application elevated for its TLS binding (web client over
 # HTTPS); without TLS, `Users` is enough — set it per tier.
@@ -156,6 +159,8 @@ cerebrum_server_defender_processes:
 cerebrum_server_defender_paths:
   - "{{ cerebrum_server_install_dir }}"
   - 'C:\Backup\Cerebrum'
+# The hosts file (tasks/windows.yml): every Cerebrum server and the database host.
+cerebrum_server_hosts_entries: "{{ (groups['cerebrum_server'] | default([])) + (groups['cerebrum_db'] | default([])) }}"
 # Cerebrum's own SNMP agent (UDP 1161) answers with the vendor's communities (public / private) until the
 # SNMP settings are hardened (owner: "SNMP later", 2026-11-03): its rule stays present and disabled.
 cerebrum_server_snmp_agent_from: []
