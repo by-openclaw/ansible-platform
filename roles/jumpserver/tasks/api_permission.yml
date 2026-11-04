@@ -20,7 +20,12 @@
       - name: "{{ jumpserver_users_permission_name }}"
         group_id: "{{ jumpserver_users_group_id | default('') }}"
         accounts: "{{ jumpserver_users_permission_accounts }}"
-        node_ids: "{{ jumpserver_assets | selectattr('platform', 'defined') | selectattr('platform', 'equalto', 'Windows') | map(attribute='node') | unique | map('extract', jumpserver_node_ids) | list }}"
+        # Only the nodes that hold Windows guests alone: a Windows guest in a shared node (the SQL Server
+        # guest under Databases) is granted by its asset, not by its node.
+        node_ids: >-
+          {{ jumpserver_assets | selectattr('platform', 'defined') | selectattr('platform', 'equalto', 'Windows') | map(attribute='node') | unique
+             | difference(jumpserver_assets | rejectattr('platform', 'defined') | map(attribute='node') | unique)
+             | map('extract', jumpserver_node_ids) | list }}
         asset_ids: "{{ jumpserver_assets | selectattr('platform', 'defined') | selectattr('platform', 'equalto', 'Windows') | map(attribute='name') | map('extract', jumpserver_host_ids) | list }}"
 
 - name: "JumpServer permission | Each one"
