@@ -14,7 +14,7 @@
 # the database host: the role restarts it then — announce the run first.
 #
 #   Dry run: ansible-playbook playbooks/cerebrum.yml --check --diff
-#   One step: --tags sql | odbc | firewall | rcp | certificate | windows | startup | sentinel | ini | settings | admin
+#   One step: --tags sql | sql-certificate | odbc | firewall | rcp | certificate | windows | startup | sentinel | ini | settings | admin
 #   Apply:   ansible-playbook playbooks/cerebrum.yml [--limit vm-x]
 # ==============================================================================
 - name: "Cerebrum | the SQL Server instance"
@@ -23,6 +23,18 @@
   roles:
     - role: cerebrum_db
       tags: [sql]
+
+- name: "Cerebrum | the SQL Server instance's certificate (restarts the instance when it changes)"
+  hosts: cerebrum_db
+  gather_facts: false
+  tasks:
+    - name: "Cerebrum | The tier's zone wildcard on the instance"
+      ansible.builtin.include_role:
+        name: cerebrum_db
+        tasks_from: certificate.yml
+        apply:
+          tags: [sql-certificate]
+      tags: [sql-certificate]
 
 - name: "Cerebrum | the Cerebrum servers: ODBC driver, Cerebrum.ini, the application Admin in Vault"
   hosts: cerebrum_server

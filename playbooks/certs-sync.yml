@@ -65,6 +65,17 @@
         name: cerebrum_server
         tasks_from: certificate.yml
 
+# The SQL Server instance of Cerebrum: the same zone wildcard; a new one restarts the instance (it reads
+# the certificate at start) — both Cerebrum instances lose their database for those seconds.
+- name: Sync the zone wildcard to the Cerebrum SQL Server instance
+  hosts: cerebrum_db
+  gather_facts: false
+  tasks:
+    - name: "Refresh the zone wildcard (SQL Server instance)"
+      ansible.builtin.include_role:
+        name: cerebrum_db
+        tasks_from: certificate.yml
+
 # The hypervisor addresses the backup server by name and trusts it through its CA store (no pinned
 # fingerprint — pbs-pve-storage.yml); this run converges that and the configuration-export unit.
 # Until 2026-10-26 it re-pinned a fingerprint an hour after the certificate swap: the 26 guests

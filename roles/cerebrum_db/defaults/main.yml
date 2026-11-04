@@ -113,3 +113,6 @@ cerebrum_db_backup_task: "PLATFORM-cerebrum-db-backup-{{ cerebrum_db_instance }}
 cerebrum_db_allowed_from: "{{ groups['cerebrum_server'] | default([]) | map('extract', hostvars, 'ansible_host') | list }}"
 cerebrum_db_firewall_rule: "CEREBRUM-DB-In-SQL-{{ cerebrum_db_instance }}"
 cerebrum_db_firewall_profiles: [domain, private, public]
+
+# --- the instance's certificate (tasks/certificate.yml): the zone wildcard of this host's tier -------
+cerebrum_db_tls_zone: "{{ platform_domain if env == 'prod' else env ~ '.' ~ platform_domain }}"
