@@ -1,0 +1,89 @@
+---
+# roles/windows_data_disk — see defaults/main.yml. Idempotent: a disk already initialised and formatted
+# is only checked; the format step never runs again on a volume that carries NTFS.
+- name: "Data disk | The disks Windows sees"
+  community.windows.win_disk_facts:
+
+- name: "Data disk | The second disk"
+  ansible.builtin.set_fact:
+    windows_data_disk_info: "{{ ansible_facts.disks | selectattr('number', 'equalto', windows_data_disk_number | int) | first | default({}) }}"
+
+- name: "Data disk | Present (Terraform data_disk_size_gib)"
+  ansible.builtin.assert:
+    that: windows_data_disk_info | length > 0
+    fail_msg: "{{ inventory_hostname }}: no disk {{ windows_data_disk_number }} — add data_disk_size_gib in infra-terraform-proxmox"
+    quiet: true
+
+- name: "Data disk | Online and GPT (a new, RAW disk only)"
+  community.windows.win_initialize_disk:
+    disk_number: "{{ windows_data_disk_number }}"
+    style: gpt
+    online: true
+  when: windows_data_disk_info.partition_style == 'RAW'
+
+# The letter may be held by the cloud-init configuration drive (Proxmox ide2, CDFS, label config-2), mounted
+# at the first free letter at the guest's first boot. cloudbase-init finds that drive by its label, not its
+# letter, so it moves to windows_data_disk_cdrom_letter. Windows' own mountvol, no script.
+- name: "Data disk | What holds the data letter now"
+  ansible.windows.win_command:
+    argv: [fsutil.exe, fsinfo, volumeinfo, "{{ windows_data_disk_letter }}:"]
+  register: windows_data_disk_letter_now
+  changed_when: false
+  check_mode: false   # read-only
+  failed_when: false
+
+- name: "Data disk | The volumes and their mount points"
+  ansible.windows.win_command:
+    argv: [mountvol.exe]
+  register: windows_data_disk_mountvol
+  changed_when: false
+  check_mode: false   # read-only
+  when: "'CDFS' in windows_data_disk_letter_now.stdout | default('')"
+
+- name: "Data disk | The configuration drive's volume (the line above its letter in mountvol's list)"
+  ansible.builtin.set_fact:
+    windows_data_disk_cdrom_volume: >-
+      {%- set lines = windows_data_disk_mountvol.stdout_lines | map('trim') | list -%}
+      {%- set mount = windows_data_disk_letter ~ ':\\' -%}
+      {{ lines[lines.index(mount) - 1] if (mount in lines and lines.index(mount) > 0) else '' }}
+  when: "'CDFS' in windows_data_disk_letter_now.stdout | default('')"
+
+- name: "Data disk | The configuration drive leaves the data letter"
+  ansible.windows.win_command:
+    argv: [mountvol.exe, "{{ windows_data_disk_letter }}:\\", /D]
+  when:
+    - "'CDFS' in windows_data_disk_letter_now.stdout | default('')"
+    - windows_data_disk_cdrom_volume | default('') | length > 0
+
+- name: "Data disk | The configuration drive takes its own letter"
+  ansible.windows.win_command:
+    argv: [mountvol.exe, "{{ windows_data_disk_cdrom_letter }}:\\", "{{ windows_data_disk_cdrom_volume }}"]
+  when:
+    - "'CDFS' in windows_data_disk_letter_now.stdout | default('')"
+    - windows_data_disk_cdrom_volume | default('') | length > 0
+
+- name: "Data disk | One partition, the whole disk, the data letter"
+  community.windows.win_partition:
+    disk_number: "{{ windows_data_disk_number }}"
+    drive_letter: "{{ windows_data_disk_letter }}"
+    partition_size: -1
+    state: present
+
+- name: "Data disk | NTFS, labelled, compression off (EVS p.27)"
+  community.windows.win_format:
+    drive_letter: "{{ windows_data_disk_letter }}"
+    file_system: ntfs
+    new_label: "{{ windows_data_disk_label }}"
+    compress: false
+
+- name: "Data disk | The folders this host's groups declare"
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: directory
+  loop: "{{ windows_data_disk_folders }}"
+
+- name: "Data disk | Report"
+  ansible.builtin.debug:
+    msg: >-
+      DATA_DISK {{ inventory_hostname }}: disk {{ windows_data_disk_number }} ({{ (windows_data_disk_info.size | int) // 1073741824 }} GiB)
+      = {{ windows_data_disk_letter }}: NTFS "{{ windows_data_disk_label }}"; folders {{ windows_data_disk_folders | join(', ') or 'none' }}
