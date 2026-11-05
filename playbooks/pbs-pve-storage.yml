@@ -500,15 +500,27 @@
         - pbs_pve_storage_id not in (r_jobs.stdout | from_json | selectattr('storage', 'defined') | map(attribute='storage') | list)
 
     # The job that already writes to the declared storage (created earlier, or moved from the previous
-    # storage by the task above) keeps whatever note template it had: converge it to the role's text.
-    - name: "PVE-wire | The PBS job's note template and comment as declared"
+    # storage by the task above) keeps whatever note template, comment and time it had: converge them to
+    # the role's (the time is the node's own: pbs_node_backup_schedule, so the nodes upload one after the other).
+    - name: "PVE-wire | The PBS job's time, note template and comment as declared"
       ansible.builtin.command:
         # PVE refuses a note template without the storage it applies to ("storage: missing property
         # required by 'notes-template'"), so the storage rides along unchanged.
-        argv: [pvesh, set, "/cluster/backup/{{ item.id }}", --storage, "{{ pbs_pve_storage_id }}", --notes-template, "{{ pbs_backup_notes }}", --comment, "{{ pbs_backup_comment }}"]
+        argv:
+          - pvesh
+          - set
+          - "/cluster/backup/{{ item.id }}"
+          - --storage
+          - "{{ pbs_pve_storage_id }}"
+          - --schedule
+          - "{{ pbs_backup_schedule }}"
+          - --notes-template
+          - "{{ pbs_backup_notes }}"
+          - --comment
+          - "{{ pbs_backup_comment }}"
       loop: "{{ r_jobs.stdout | from_json | selectattr('storage', 'defined') | selectattr('storage', 'eq', pbs_pve_storage_id) | list }}"
       loop_control:
-        label: "{{ item.id }}"
+        label: "{{ item.id }} {{ item.schedule | default('') }} → {{ pbs_backup_schedule }}"
       vars:
         # compared as plain strings, the way roles/pve_host compares its NAS job
         _want_note: "{{ pbs_backup_notes | string }}"
@@ -517,7 +529,7 @@
         _have_comment: "{{ item.comment | default('') | string }}"
       when:
         - r_job is skipped
-        - _want_note != _have_note or _want_comment != _have_comment
+        - _want_note != _have_note or _want_comment != _have_comment or (pbs_backup_schedule | string) != (item.schedule | default('') | string)
       changed_when: true
 
     # The on-site datastore's storage entry retires with it (owner 2026-10-24): the entry goes,
