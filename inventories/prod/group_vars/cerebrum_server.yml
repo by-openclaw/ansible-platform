@@ -65,6 +65,15 @@ cerebrum_server_config:
   "TALLY_ROUTER/BACKUP_SIZE": 30
   "TALLY_ROUTER/BACKUP_DIRECTORY": 'C:\Backup\Cerebrum'
   "TALLY_ROUTER/ALLOW_ROUTE_IMPORTS": 0
+  # Logging > the logging server (manual p.132; owner 2026-11-05: syslog is the full record): the platform's
+  # Promtail listener on the monitoring host (host_vars/lxc-monitoring-01.yml promtail_syslog_listeners
+  # `cerebrum`), by name, TCP, audit trail + event log; no TLS (EVS question 8). Read at Cerebrum's start.
+  "LOGGING/USE_LOGGING_SERVER": 1
+  "LOGGING/SERVER_1_ADDRESS": "{{ groups['monitoring'] | first }}.{{ platform_domain }}"
+  "LOGGING/SERVER_1_PORT": 1515
+  "LOGGING/TRANSPORT_TYPE": 1
+  "LOGGING/MESSAGES_TO_LOG": 2
+  "LOGGING/USE_SSL": 0
   # Tally & Router > IPConfig
   "IP_RTR/INCLUDE_DEVICE_IN_LABEL": 1
   "IP_RTR/DEFAULT_BBM": 0
@@ -107,5 +116,6 @@ net_checks:
     - {host: "cerebrum-db.{{ env }}.{{ platform_domain }}", port: 1433}           # SQL by name
     - {host: "{{ platform_service_fqdns.nextcloud }}", port: 443}                 # files through Traefik
     - {host: "{{ platform_service_fqdns.authentik }}", port: 443}                 # sign-in
+    - {host: "{{ groups['monitoring'] | first }}.{{ platform_domain }}", port: 1515}   # syslog to Loki (Promtail)
   ping:
     - {host: vm-winsql-01}
