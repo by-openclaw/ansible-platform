@@ -1,0 +1,42 @@
+---
+# ==============================================================================
+# Role: dbgate — what is specific to DbGate. The platform concerns (the containers, the Traefik
+# routes, the SSO registration it asserts) are declared to roles/service_scaffold.
+# ==============================================================================
+- name: "DbGate | The OIDC clients of its Authentik applications (roles/authentik mints them)"
+  ansible.builtin.include_tasks: oidc_one.yml
+  loop: "{{ dbgate_sso_slugs }}"
+  loop_control:
+    loop_var: dbgate_oidc_slug
+  tags: [dbgate, secrets]
+
+# DbGate without OAUTH_* settings serves every visitor without a sign-in: a view never starts
+# before its Authentik application exists (run playbooks/authentik.yml first).
+- name: "DbGate | Every view's Authentik application exists"
+  ansible.builtin.assert:
+    that: (dbgate_oidc[item] | default({})).client_secret | default('') | length > 0
+    fail_msg: >-
+      DbGate's Authentik application {{ item }} has no client in Vault ({{ dbgate_oidc_vault_paths[item] }}):
+      run playbooks/authentik.yml first — a view never starts without its sign-in.
+    quiet: true
+  loop: "{{ dbgate_sso_slugs }}"
+  tags: [dbgate, secrets]
+
+- name: "DbGate | Platform concerns (roles/service_scaffold)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    apply:
+      tags: [dbgate, container, route]
+  vars:
+    service_scaffold_def:
+      name: dbgate
+      routes: "{{ dbgate_routes }}"
+      exposure: internal
+      db: none
+      mailbox: false            # DbGate sends no mail
+      sso_slug: "{{ dbgate_views | selectattr('name', 'equalto', 'admin') | map(attribute='sso_slug') | first }}"
+      containers: "{{ dbgate_containers }}"
+      teardown:
+        keep_volumes: "{{ dbgate_views | map(attribute='name') | map('regex_replace', '^(.*)$', 'dbgate-\\1-data') | list }}"
+        note: "DbGate's per-view settings and saved queries (connections are declared by the role, not stored there)"
+  tags: [dbgate, container, route]

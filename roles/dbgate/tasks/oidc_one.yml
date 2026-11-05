@@ -1,0 +1,13 @@
+---
+# One Authentik application's OIDC client (read-if-present: roles/authentik mints it).
+- name: "DbGate | The OIDC client, if it exists yet: {{ dbgate_oidc_slug }}"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ dbgate_oidc_vault_paths[dbgate_oidc_slug] }}"
+    vault_secret_optional: true
+
+- name: "DbGate | Keep it ({{ dbgate_oidc_slug }})"
+  ansible.builtin.set_fact:
+    dbgate_oidc: "{{ dbgate_oidc | default({}) | combine({dbgate_oidc_slug: vault_secret_result | default({})}) }}"
+  no_log: true

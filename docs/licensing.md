@@ -80,6 +80,7 @@ Firewall package versions and licences below are read from the appliance itself
 | step-ca | `roles/stepca` pin | `Apache-2.0` | Approved | `roles/stepca` |
 | PostgreSQL | `roles/postgres` pin | `PostgreSQL` | Approved | `roles/postgres` |
 | pgAdmin 4 | 9.17 | `PostgreSQL` | Approved | `roles/pgadmin` |
+| DbGate Community | 7.3.4 | `GPL-3.0` | Approved (the free edition only; no paid plan) | `roles/dbgate` |
 | Redis | 8.10.0 | `AGPL-3.0` (its tri-licence's OSI option; the others are `RSAL-v2` / `SSPL-1.0`) | **Flagged** (§4 blanket) | `roles/redis` |
 | Docker Engine | distro pin | `Apache-2.0` | Approved | the roles that run containers |
 

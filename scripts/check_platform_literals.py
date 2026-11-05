@@ -44,7 +44,7 @@ PATTERNS = {
         r"[\"\']("
         r"diagrams-users|gitlab-users|gitlab-admins|harbor-users|harbor-admins|jitsi-users|"
         r"jumpserver-users|mailcow-users|grafana-admins|netbird-users|netbird-admins|"
-        r"netbox-admins|nextcloud-users|nextcloud-admins|pbs-admins|pgadmin-admins|"
+        r"netbox-admins|nextcloud-users|nextcloud-admins|pbs-admins|pgadmin-admins|dbgate-admins|cerebrum-operators|"
         r"proxmox-admins|seaweedfs-admins|traefik-admins|vault-admins|vaultwarden-admins|"
         r"verdaccio-users|platform-admins|infra-admins|ldap-search"
         r")[\"\']"

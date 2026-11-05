@@ -58,7 +58,7 @@ radius:
 | Wave | Group | Hosts | Rationale |
 |---|---|---|---|
 | 0 | `patch_canary` | pgadmin | Nothing depends on it — safe to break first |
-| 2 | `patch_wave2` | vaultwarden, nextcloud, netbox, crowdsec | Leaf services, no internal dependents |
+| 2 | `patch_wave2` | vaultwarden, nextcloud, netbox, crowdsec, dbgate | Leaf services, no internal dependents |
 | 3 | `patch_wave3` | redis, netbird, traefik, adguard | Dependents exist but recover on restart |
 | 4 | `patch_wave4` | postgresql, authentik, vault, mailcow | Everything above depends on these |
 

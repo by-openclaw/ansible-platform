@@ -1,0 +1,37 @@
+---
+# ==============================================================================
+# DbGate views (roles/dbgate) — owner 2026-11-05. DbGate Community, the free edition only (GPL-3.0):
+# one DbGate instance per view on lxc-dbgate-01, each with its own name, Traefik route, Authentik
+# application and connections. ONE list, read by roles/dbgate (containers, routes), sso.yml (the
+# Authentik applications) and the split-DNS overrides (group_vars/opnsense.yml).
+#
+#   label      the name's left-most label (<label>.<platform_domain>)
+#   port       the host port Traefik reaches (docker_firewall.yml dbgate)
+#   sso_slug   the Authentik application (sso.yml authentik_oidc_apps)
+#   group      the Authentik group admitted (DbGate OAUTH_ALLOWED_GROUPS too)
+#   allow_from extra source addresses admitted by the route, beyond the internal ranges and the
+#              admin desks: the machines this view is meant to be opened from
+#   cerebrum   the Cerebrum host whose instance the view shows (its database + the Federation
+#              database); absent on the administrators' view
+# ==============================================================================
+platform_dbgate_views:
+  - name: admin
+    label: dbgate
+    port: 3000
+    sso_slug: dbgate
+    group: "{{ platform_service_groups.dbgate.admin }}"
+    allow_from: []
+  - name: cerebrum-01
+    label: sql-cerebrum-01
+    port: 3001
+    sso_slug: dbgate-cerebrum
+    group: "{{ platform_service_groups.dbgate.access }}"
+    allow_from: ["{{ hostvars['vm-winapp-01'].ansible_host }}/32"]   # opened from Cerebrum instance 01's server
+    cerebrum: vm-winapp-01
+  - name: cerebrum-02
+    label: sql-cerebrum-02
+    port: 3002
+    sso_slug: dbgate-cerebrum
+    group: "{{ platform_service_groups.dbgate.access }}"
+    allow_from: ["{{ hostvars['vm-winapp-02'].ansible_host }}/32"]   # opened from Cerebrum instance 02's server
+    cerebrum: vm-winapp-02

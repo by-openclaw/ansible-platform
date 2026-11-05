@@ -38,6 +38,7 @@ is applied one service at a time and verified in the service's log before the ne
 | `nextcloud-exporter` | `lxc-nextcloud-01` | tmpfs `/tmp` | `nextcloud_up 1` |
 | `authentik-ldap` | `lxc-authentik-01` | tmpfs `/tmp` | outpost healthy, an LDAPS bind answers |
 | `ciso-assistant-frontend` | `lxc-grc-01` | tmpfs `/tmp` | the login page answers 200 |
+| `dbgate-admin`, `dbgate-cerebrum-01`, `dbgate-cerebrum-02` | `lxc-dbgate-01` | the per-view data volume (`/root/.dbgate`), tmpfs `/tmp` | each name 200 through Traefik, `/auth/get-providers` = OAuth only, `/auth/redirect` → Authentik, no restart |
 | `netbird-management`, `netbird-signal`, `netbird-relay` | `lxc-netbird-01` | their volumes, tmpfs `/tmp` | peers connected, management API 200 |
 
 | `postgres` (Patroni), `postgres-exporter`, `etcd` | `lxc-pgsql-01`, `-02`, `-03` | the data volume / a host directory; tmpfs for sockets and `/tmp` | cluster state, replication, 0 restarts |
