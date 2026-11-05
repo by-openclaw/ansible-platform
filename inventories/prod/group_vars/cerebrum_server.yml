@@ -89,3 +89,23 @@ cerebrum_server_config:
   "RC/ROUTEMASTER_REQUIRE_EXACT_TAG_MATCH": 0
   # Hosting: RCP on (plain for now; TLS with the instance certificate later)
   "RCP/ENABLE_RCP": 1
+
+# Connectivity checks (playbooks/net-check.yml, roles/net_check): what a Cerebrum server must resolve through
+# its own resolver (the hosts file first) and reach. Read-only.
+net_checks:
+  resolve:
+    - {name: cerebrum-db, expect: "{{ hostvars['vm-winsql-01'].ansible_host }}"}
+    - {name: "cerebrum-db.{{ env }}.{{ platform_domain }}", expect: "{{ hostvars['vm-winsql-01'].ansible_host }}"}
+    - {name: vm-winsql-01, expect: "{{ hostvars['vm-winsql-01'].ansible_host }}"}
+    - {name: cerebrum-01, expect: "{{ hostvars['vm-winapp-01'].ansible_host }}"}
+    - {name: cerebrum-02, expect: "{{ hostvars['vm-winapp-02'].ansible_host }}"}
+    - {name: nmos-registry-01, expect: "{{ hostvars['vm-winapp-01'].ansible_host }}"}
+    - {name: nmos-registry-02, expect: "{{ hostvars['vm-winapp-02'].ansible_host }}"}
+    - {name: "{{ platform_service_fqdns.nextcloud }}"}
+    - {name: "{{ platform_service_fqdns.authentik }}"}
+  tcp:
+    - {host: "cerebrum-db.{{ env }}.{{ platform_domain }}", port: 1433}           # SQL by name
+    - {host: "{{ platform_service_fqdns.nextcloud }}", port: 443}                 # files through Traefik
+    - {host: "{{ platform_service_fqdns.authentik }}", port: 443}                 # sign-in
+  ping:
+    - {host: vm-winsql-01}

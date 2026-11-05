@@ -47,6 +47,7 @@ The playbooks of this repo, grouped by scope. Each runs against `inventories/pro
 |---|---|
 | `secrets-to-vault.yml` | Mirror controller fabric secret files -> Vault KV v2 at the ADR convention secret/{env}/{service}/{key} (security/0001 §KV v2 path convention). The fabric-name -> service/key mappi |
 | `secrets-validate.yml` | Validate that the secrets in Vault are the REAL, working credentials — by authenticating against each live service with the value pulled from Vault. Data-driven: each check declare |
+| `net-check.yml` | Read-only connectivity checks (roles/net_check), declared per host group as `net_checks` in the inventory: names resolved through the host's own resolver (hosts file first) against their expected address, TCP ports, pings (informational unless required). A recap per host, a summary table, a non-zero exit when a required check fails. `-e target=<group or host>`. |
 | `vault-approle.yml` | One-time bootstrap: a minimal AppRole for the Ansible controller — the first R-29 closure step (no more root token for runtime reads). Scope: READ-ONLY on |
 | `vault-approles.yml` | Provision a per-service Vault identity (policy + AppRole) for every service (SEC-04 least-privilege policy scoped to its own prefix, SEC-05 AppRole auth). |
 | `wazuh.yml` | Security monitoring: Wazuh manager + indexer + dashboard on `lxc-wazuh-01` (vendor single-node, pinned, Vault secrets, edge TLS, Authentik OpenID), then the agent on every guest (FIM, log collection, inventory), enrolled with a Vault-held password. Decommission with `-e wazuh_state=absent`. |
