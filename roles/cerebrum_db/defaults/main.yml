@@ -75,17 +75,29 @@ cerebrum_db_login_prefix: "cerebrum_"
 cerebrum_db_databases: "{{ cerebrum_db_instances | map('regex_replace', '^', cerebrum_db_database_prefix) | list }}"
 # The owner's decision (2026-11-03): each instance's login has the rights of sa (sysadmin), as the
 # vendor's default sa login has; sa itself is then disabled. `db_roles` apply inside every database
-# of cerebrum_db_databases once it exists (sysadmin needs none). The backup task runs as SYSTEM.
+# of cerebrum_db_databases (or the login's own `databases`) once it exists (sysadmin needs none).
+# The backup task runs as SYSTEM.
 cerebrum_db_login_server_roles: [sysadmin]
 cerebrum_db_logins_extra:
   - { name: cerebrum_federated, server_roles: [sysadmin], db_roles: [] }                         # the Federation service, when it is used
   - { name: jumpserver_editor,  server_roles: [],         db_roles: [db_datareader, db_datawriter] }   # browsing and editing through the bastion
+# Logins other platform services declare (inventory), e.g. a DbGate view:
+#   {name, db_roles, databases, from}  — no server role; `db_roles` inside `databases` only (a database
+#   that does not exist yet is granted at the first run after it does: the Federation database); the
+#   instance's firewall admits the `from` addresses.
+cerebrum_db_logins_platform: []
 cerebrum_db_logins: >-
   {%- set out = [] -%}
   {%- for i in cerebrum_db_instances -%}
   {%- set _ = out.append({'name': cerebrum_db_login_prefix ~ i, 'server_roles': cerebrum_db_login_server_roles, 'db_roles': []}) -%}
   {%- endfor -%}
+  {%- for l in cerebrum_db_logins_platform -%}
+  {%- set _ = out.append({'name': l.name, 'server_roles': [], 'db_roles': l.db_roles, 'databases': l.databases}) -%}
+  {%- endfor -%}
   {{ out + cerebrum_db_logins_extra }}
+# Every database a login is granted in: Cerebrum's own, plus those the platform logins name.
+cerebrum_db_grant_databases: >-
+  {{ (cerebrum_db_databases + (cerebrum_db_logins_platform | map(attribute='databases') | flatten)) | unique | list }}
 cerebrum_db_password_length: 28                 # letters and digits only: Cerebrum refuses { and } in a password
 
 # --- hardening (CIS Microsoft SQL Server 2019 Benchmark, section 2 and 3) --------------------------
@@ -109,8 +121,10 @@ cerebrum_db_backup_time: "02:00"
 cerebrum_db_state_dir: 'C:\ProgramData\platform\cerebrum-db'
 cerebrum_db_backup_task: "PLATFORM-cerebrum-db-backup-{{ cerebrum_db_instance }}"
 
-# --- firewall: the instance answers the Cerebrum servers only ------------------------------------
-cerebrum_db_allowed_from: "{{ groups['cerebrum_server'] | default([]) | map('extract', hostvars, 'ansible_host') | list }}"
+# --- firewall: the instance answers the Cerebrum servers and the platform logins' sources only ----
+cerebrum_db_allowed_from: >-
+  {{ (groups['cerebrum_server'] | default([]) | map('extract', hostvars, 'ansible_host') | list
+      + (cerebrum_db_logins_platform | map(attribute='from') | flatten)) | unique | list }}
 cerebrum_db_firewall_rule: "CEREBRUM-DB-In-SQL-{{ cerebrum_db_instance }}"
 cerebrum_db_firewall_profiles: [domain, private, public]
 

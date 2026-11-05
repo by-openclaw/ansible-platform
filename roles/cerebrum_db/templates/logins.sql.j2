@@ -52,14 +52,15 @@ BEGIN
     PRINT 'CHANGED sa disabled';
 END
 {% endif %}
--- inside each Cerebrum database, once Cerebrum has created it (dynamic SQL: a database that does not
--- exist yet must not stop the batch from compiling)
-{% for db in cerebrum_db_databases %}
+-- inside each database, once it exists (Cerebrum creates its own, the Federation service its own;
+-- dynamic SQL: a database that does not exist yet must not stop the batch from compiling). A login's
+-- roles apply in its own `databases`, or in every Cerebrum database when it names none.
+{% for db in cerebrum_db_grant_databases %}
 IF DB_ID(N'{{ db }}') IS NULL
     PRINT 'ABSENT database {{ db }}';
 ELSE
     EXEC (N'USE [{{ db }}];
-{% for l in cerebrum_db_logins if l.db_roles | length > 0 %}
+{% for l in cerebrum_db_logins if l.db_roles | length > 0 and db in l.databases | default(cerebrum_db_databases) %}
     IF DATABASE_PRINCIPAL_ID(N''{{ l.name }}'') IS NULL
     BEGIN
         CREATE USER [{{ l.name }}] FOR LOGIN [{{ l.name }}];

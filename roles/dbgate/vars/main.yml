@@ -1,9 +1,31 @@
 ---
 # ==============================================================================
 # DbGate's containers and routes, built from the views (implementation, not settings: those are
-# defaults/main.yml and the inventory's platform_dbgate_views). Lazily templated: dbgate_oidc is
-# set by tasks/oidc_one.yml before the scaffold reads dbgate_containers.
+# defaults/main.yml and the inventory's platform_dbgate_views). Lazily templated: dbgate_oidc and
+# dbgate_sql are set by tasks/oidc_one.yml and tasks/sql_one.yml before the scaffold reads
+# dbgate_containers.
 # ==============================================================================
+# A view's SQL Server connection (DbGate's predefined-connection settings, both editions), keyed
+# by the connection id; empty for a view without `sql`.
+dbgate_sql_env: >-
+  {%- set out = {} -%}
+  {%- for v in dbgate_views if v.sql is defined -%}
+  {%- set h = v.sql.host -%}
+  {%- set zone = platform_domain if hostvars[h].env == 'prod' else hostvars[h].env ~ '.' ~ platform_domain -%}
+  {%- set id = dbgate_mssql_connection_id -%}
+  {%- set _ = out.update({v.name: {
+        'CONNECTIONS': id,
+        'LABEL_' ~ id: hostvars[h].cerebrum_db_instance ~ ' on ' ~ dbgate_mssql_dns_label ~ '.' ~ zone,
+        'SERVER_' ~ id: dbgate_mssql_dns_label ~ '.' ~ zone,
+        'PORT_' ~ id: dbgate_mssql_port | string,
+        'ENGINE_' ~ id: dbgate_mssql_engine,
+        'AUTH_TYPE_' ~ id: dbgate_mssql_auth_type,
+        'USER_' ~ id: v.sql.login,
+        'PASSWORD_' ~ id: dbgate_sql[v.sql.login].password,
+        'ALLOWED_DATABASES_' ~ id: v.sql.databases | join('|'),
+        'USE_SSL_' ~ id: 'true'}}) -%}
+  {%- endfor -%}
+  {{ out }}
 dbgate_containers: >-
   {%- set out = [] -%}
   {%- for v in dbgate_views -%}
@@ -28,7 +50,7 @@ dbgate_containers: >-
           'OAUTH_LOGIN_FIELD': dbgate_oauth_login_field,
           'OAUTH_GROUP_FIELD': dbgate_oauth_group_field,
           'OAUTH_ALLOWED_GROUPS': v.group,
-        }}) -%}
+        } | combine(dbgate_sql_env[v.name] | default({}))}) -%}
   {%- endfor -%}
   {{ out }}
 

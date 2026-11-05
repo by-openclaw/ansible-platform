@@ -13,7 +13,12 @@
 #              admin desks: the machines this view is meant to be opened from
 #   cerebrum   the Cerebrum host whose instance the view shows (its database + the Federation
 #              database); absent on the administrators' view
+#   sql        the view's SQL Server connection: the cerebrum_db host, the login roles/cerebrum_db
+#              creates for it (password in Vault), its rights inside `databases` and nowhere else.
+#              The connection lists those databases only (DbGate ALLOWED_DATABASES).
 # ==============================================================================
+platform_dbgate_cerebrum_db_host: "{{ groups['cerebrum_db'] | first }}"
+platform_dbgate_federation_database: Federation   # roles/cerebrum_federation cerebrum_federation_database
 platform_dbgate_views:
   - name: admin
     label: dbgate
@@ -21,6 +26,13 @@ platform_dbgate_views:
     sso_slug: dbgate
     group: "{{ platform_service_groups.dbgate.admin }}"
     allow_from: []
+    sql:
+      host: "{{ platform_dbgate_cerebrum_db_host }}"
+      login: dbgate_admin
+      db_roles: [db_owner]            # every Cerebrum database; the server itself stays Windows authentication
+      databases: >-
+        {{ groups['cerebrum_server'] | map('extract', hostvars, 'cerebrum_instance') | map('regex_replace', '^', 'Cerebrum_') | list
+           + [platform_dbgate_federation_database] }}
   - name: cerebrum-01
     label: sql-cerebrum-01
     port: 3001
@@ -28,6 +40,11 @@ platform_dbgate_views:
     group: "{{ platform_service_groups.dbgate.access }}"
     allow_from: ["{{ hostvars['vm-winapp-01'].ansible_host }}/32"]   # opened from Cerebrum instance 01's server
     cerebrum: vm-winapp-01
+    sql:
+      host: "{{ platform_dbgate_cerebrum_db_host }}"
+      login: dbgate_cerebrum_01
+      db_roles: [db_datareader, db_datawriter]   # browse and edit, as the bastion's jumpserver_editor
+      databases: ["Cerebrum_{{ hostvars['vm-winapp-01'].cerebrum_instance }}", "{{ platform_dbgate_federation_database }}"]
   - name: cerebrum-02
     label: sql-cerebrum-02
     port: 3002
@@ -35,3 +52,8 @@ platform_dbgate_views:
     group: "{{ platform_service_groups.dbgate.access }}"
     allow_from: ["{{ hostvars['vm-winapp-02'].ansible_host }}/32"]   # opened from Cerebrum instance 02's server
     cerebrum: vm-winapp-02
+    sql:
+      host: "{{ platform_dbgate_cerebrum_db_host }}"
+      login: dbgate_cerebrum_02
+      db_roles: [db_datareader, db_datawriter]
+      databases: ["Cerebrum_{{ hostvars['vm-winapp-02'].cerebrum_instance }}", "{{ platform_dbgate_federation_database }}"]

@@ -22,6 +22,26 @@
   loop: "{{ dbgate_sso_slugs }}"
   tags: [dbgate, secrets]
 
+- name: "DbGate | The views' SQL logins (roles/cerebrum_db creates them)"
+  ansible.builtin.include_tasks: sql_one.yml
+  loop: "{{ dbgate_views | selectattr('sql', 'defined') | list }}"
+  loop_control:
+    loop_var: dbgate_sql_view
+    label: "{{ dbgate_sql_view.name }}"
+  tags: [dbgate, secrets]
+
+- name: "DbGate | Every view's SQL login exists"
+  ansible.builtin.assert:
+    that: (dbgate_sql[item.sql.login] | default({})).password | default('') | length > 0
+    fail_msg: >-
+      DbGate view {{ item.name }}: the SQL login {{ item.sql.login }} has no password in Vault —
+      run playbooks/cerebrum.yml --tags sql --limit {{ item.sql.host }} first (roles/cerebrum_db creates it).
+    quiet: true
+  loop: "{{ dbgate_views | selectattr('sql', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  tags: [dbgate, secrets]
+
 - name: "DbGate | Platform concerns (roles/service_scaffold)"
   ansible.builtin.include_role:
     name: service_scaffold

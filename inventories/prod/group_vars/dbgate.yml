@@ -1,0 +1,22 @@
+---
+# ==============================================================================
+# dbgate — the DbGate host (roles/dbgate; the views are group_vars/all/dbgate.yml).
+# ==============================================================================
+
+# Connectivity checks (playbooks/net-check.yml, roles/net_check): the SQL Server instance of each view's
+# connection, by the name the connection uses (roles/dbgate dbgate_mssql_dns_label, dbgate_mssql_port).
+net_checks:
+  resolve: >-
+    {%- set out = [] -%}
+    {%- for h in platform_dbgate_views | selectattr('sql', 'defined') | map(attribute='sql') | map(attribute='host') | unique -%}
+    {%- set zone = platform_domain if hostvars[h].env == 'prod' else hostvars[h].env ~ '.' ~ platform_domain -%}
+    {%- set _ = out.append({'name': 'cerebrum-db.' ~ zone, 'expect': hostvars[h].ansible_host}) -%}
+    {%- endfor -%}
+    {{ out }}
+  tcp: >-
+    {%- set out = [] -%}
+    {%- for h in platform_dbgate_views | selectattr('sql', 'defined') | map(attribute='sql') | map(attribute='host') | unique -%}
+    {%- set zone = platform_domain if hostvars[h].env == 'prod' else hostvars[h].env ~ '.' ~ platform_domain -%}
+    {%- set _ = out.append({'host': 'cerebrum-db.' ~ zone, 'port': 1433}) -%}
+    {%- endfor -%}
+    {{ out }}

@@ -121,8 +121,8 @@
     enabled: true
     state: present
 
-# --- the host firewall: the Cerebrum servers only ------------------------------------------------------
-- name: "Cerebrum DB | The instance answers the Cerebrum servers only"
+# --- the host firewall: the Cerebrum servers and the platform logins' sources only ---------------------
+- name: "Cerebrum DB | The instance answers the Cerebrum servers and the platform logins' sources only"
   community.windows.win_firewall_rule:
     name: "{{ cerebrum_db_firewall_rule }}"
     direction: in
@@ -143,6 +143,6 @@
       on tcp {{ cerebrum_db_port }}; logins {{ cerebrum_db_logins | map(attribute='name') | join(', ') }} + SYSTEM (backups);
       sa {{ 'enabled' if cerebrum_db_sa_enabled | bool else 'disabled' }};
       databases {{ cerebrum_db_databases | join(', ') }}
-      (not yet created by Cerebrum: {{ cerebrum_db_logins_run.stdout | default('') | regex_findall('ABSENT database (\S+)') | join(', ') or 'none' }});
+      (not created yet: {{ cerebrum_db_logins_run.stdout | default('') | regex_findall('ABSENT database (\S+)') | join(', ') or 'none' }});
       backup {{ cerebrum_db_backup_time }} → {{ cerebrum_db_backup_dir }};
       firewall from {{ cerebrum_db_allowed_from | join(', ') or 'nobody (no cerebrum_server host)' }}

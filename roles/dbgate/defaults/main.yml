@@ -5,7 +5,7 @@
 # instance per view (inventory group_vars/all/dbgate.yml platform_dbgate_views): the
 # administrators' view and one view per Cerebrum instance, each with its own name, Traefik route
 # (internal-only + the view's own sources) and Authentik application (native OIDC, the web
-# edition's OAUTH_* settings). Phase 1: no database connection yet (phase 2 adds them).
+# edition's OAUTH_* settings) and its SQL Server connection (the view's `sql`).
 # ==============================================================================
 dbgate_image: "dbgate/dbgate:7.3.4"   # exact pin (Docker Hub, 2026-11-02) — bump deliberately
 
@@ -32,3 +32,15 @@ dbgate_sso_slugs: "{{ dbgate_views | map(attribute='sso_slug') | unique | list }
 dbgate_oidc_vault_paths: >-
   {{ dict(authentik_oidc_apps | selectattr('slug', 'in', dbgate_sso_slugs) | map(attribute='slug')
           | zip(authentik_oidc_apps | selectattr('slug', 'in', dbgate_sso_slugs) | map(attribute='vault_path'))) }}
+
+# --- SQL Server (the view's `sql`: the Cerebrum instance's databases) ------------
+# The login and its password are roles/cerebrum_db's (Vault <env>/mssql/<host>/<instance>/<login>,
+# created there): DbGate reads them, never creates — the SQL step of playbooks/cerebrum.yml first.
+# The connection goes by the instance's split-DNS name, encrypted, and verifies the zone wildcard the
+# instance presents (a public CA: no trust override). Engine: the portable driver (tedious); the
+# plugin's `sql`/`sspi` types need the Windows-only native driver.
+dbgate_mssql_engine: mssql@dbgate-plugin-mssql
+dbgate_mssql_auth_type: tedious
+dbgate_mssql_port: 1433
+dbgate_mssql_dns_label: cerebrum-db   # group_vars/opnsense.yml host override, cerebrum_server_db_dns_label
+dbgate_mssql_connection_id: mssql     # the one connection of a view (CONNECTIONS)
