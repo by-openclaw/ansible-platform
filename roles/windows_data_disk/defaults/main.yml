@@ -1,0 +1,12 @@
+---
+# ==============================================================================
+# roles/windows_data_disk — the Windows guest's data disk as D: (Terraform modules/vm-windows
+# `data_disk_size_gib`, the second SCSI disk): brought online, GPT, one NTFS partition, compression off
+# (EVS manual p.27: database files must not be compressed), then the folders the host's groups declare.
+# A guest without a data disk (no `windows_data_disk_folders`, no second disk) is left alone.
+# ==============================================================================
+windows_data_disk_number: 1            # scsi1 = the second disk Windows sees (scsi0 = the system disk, 0)
+windows_data_disk_letter: D
+windows_data_disk_label: DATA
+windows_data_disk_cdrom_letter: Z      # where the cloud-init configuration drive goes when it held the data letter
+windows_data_disk_folders: []          # per host group, e.g. ['D:\Backup\Cerebrum'] (group_vars)
