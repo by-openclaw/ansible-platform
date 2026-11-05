@@ -139,7 +139,9 @@
 - name: "Cerebrum Federation | Report"
   ansible.builtin.debug:
     msg: >-
-      CEREBRUM_FEDERATION {{ inventory_hostname }}: database {{ cerebrum_federation_db_name }}\{{ cerebrum_federation_db_instance }},{{ cerebrum_federation_db_port }}
+      CEREBRUM_FEDERATION {{ inventory_hostname }}: database
+      {{ cerebrum_federation_db_name }}\{{ cerebrum_federation_db_instance }},{{ cerebrum_federation_db_port }}
       / {{ cerebrum_federation_database }} as {{ cerebrum_federation_db_login }};
-      service {{ 'started' if cerebrum_federation_ready | bool else 'installed, NOT started: the ini has no password yet (enter it once, encrypted form agreed with EVS; the next run captures it)' }};
+      service {{ 'started' if cerebrum_federation_ready | bool
+                 else 'installed, NOT started: no password in the ini yet (entered once in the form EVS confirms; the next run captures it)' }};
       C-Link TCP {{ cerebrum_federation_port }} from {{ cerebrum_federation_clients | join(', ') or 'nobody (rule disabled)' }}
