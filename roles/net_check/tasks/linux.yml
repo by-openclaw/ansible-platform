@@ -19,7 +19,7 @@
   loop_control:
     label: "{{ item.host }}:{{ item.port }}"
   register: net_check_lin_tcp
-  failed_when: false
+  failed_when: false   # judged in the recap: wait_for returns `msg` only when the port did not answer
 
 - name: "Net check | Ping"
   ansible.builtin.command:
@@ -44,7 +44,8 @@
                      ~ ((' (expected ' ~ want ~ ')') if want and not ok else '')}) -%}
       {%- endfor -%}
       {%- for r in net_check_lin_tcp.results | default([]) -%}
-        {%- set ok = not (r.failed | default(false)) -%}
+        {#- failed_when: false makes r.failed always false: the timeout's msg is the verdict -#}
+        {%- set ok = not (r.failed | default(false)) and r.msg is not defined -%}
         {%- set _ = out.append({'ok': ok, 'required': r.item.required | default(true),
              'line': ('PASS ' if ok else 'FAIL ') ~ 'tcp ' ~ r.item.host ~ ':' ~ r.item.port
                      ~ ('' if ok else ' (' ~ (r.msg | default('no answer') | truncate(80)) ~ ')')}) -%}
