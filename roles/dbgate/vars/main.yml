@@ -1,0 +1,44 @@
+---
+# ==============================================================================
+# DbGate's containers and routes, built from the views (implementation, not settings: those are
+# defaults/main.yml and the inventory's platform_dbgate_views). Lazily templated: dbgate_oidc is
+# set by tasks/oidc_one.yml before the scaffold reads dbgate_containers.
+# ==============================================================================
+dbgate_containers: >-
+  {%- set out = [] -%}
+  {%- for v in dbgate_views -%}
+  {%- set slug = v.sso_slug -%}
+  {%- set oidc = dbgate_oidc[slug] -%}
+  {%- set _ = out.append({
+        'name': 'dbgate-' ~ v.name,
+        'image': dbgate_image,
+        'published': [dbgate_listen_ip ~ ':' ~ v.port ~ ':' ~ dbgate_container_port],
+        'volumes': ['dbgate-' ~ v.name ~ '-data:' ~ dbgate_data_dir],
+        'health': 'http://' ~ dbgate_listen_ip ~ ':' ~ v.port ~ '/',
+        'read_only': true,
+        'tmpfs': dbgate_tmpfs,
+        'security_opts': ['no-new-privileges:true'],
+        'env': {
+          'OAUTH_AUTH': dbgate_authentik_base ~ '/application/o/authorize/',
+          'OAUTH_TOKEN': dbgate_authentik_base ~ '/application/o/token/',
+          'OAUTH_LOGOUT': dbgate_authentik_base ~ '/application/o/' ~ slug ~ '/end-session/',
+          'OAUTH_CLIENT_ID': oidc.client_id,
+          'OAUTH_CLIENT_SECRET': oidc.client_secret,
+          'OAUTH_SCOPE': dbgate_oauth_scope,
+          'OAUTH_LOGIN_FIELD': dbgate_oauth_login_field,
+          'OAUTH_GROUP_FIELD': dbgate_oauth_group_field,
+          'OAUTH_ALLOWED_GROUPS': v.group,
+        }}) -%}
+  {%- endfor -%}
+  {{ out }}
+
+dbgate_routes: >-
+  {%- set out = [] -%}
+  {%- for v in dbgate_views -%}
+  {%- set _ = out.append({
+        'name': 'dbgate' if v.name == 'admin' else 'dbgate-' ~ v.name,
+        'fqdn': v.label ~ '.' ~ dbgate_domain,
+        'backend_url': 'http://' ~ dbgate_listen_ip ~ ':' ~ v.port,
+        'extra_cidrs': v.allow_from | default([])}) -%}
+  {%- endfor -%}
+  {{ out }}

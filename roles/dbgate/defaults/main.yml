@@ -1,0 +1,34 @@
+---
+# ==============================================================================
+# Role: dbgate — DbGate Community (web SQL/NoSQL client) on lxc-dbgate-01 (SVC 10.1.3.141).
+# The free edition only (GPL-3.0; owner 2026-11-05: no paid plan in the platform). One DbGate
+# instance per view (inventory group_vars/all/dbgate.yml platform_dbgate_views): the
+# administrators' view and one view per Cerebrum instance, each with its own name, Traefik route
+# (internal-only + the view's own sources) and Authentik application (native OIDC, the web
+# edition's OAUTH_* settings). Phase 1: no database connection yet (phase 2 adds them).
+# ==============================================================================
+dbgate_image: "dbgate/dbgate:7.3.4"   # exact pin (Docker Hub, 2026-11-02) — bump deliberately
+
+dbgate_views: "{{ platform_dbgate_views }}"
+dbgate_domain: "{{ platform_domain }}"
+
+# Each view's container listens on DbGate's own port; the host publishes it on the view's port,
+# bound to the SVC address so only Traefik (DOCKER-USER catalog) reaches it.
+dbgate_listen_ip: "{{ hostvars[groups['dbgate'] | first].ansible_host }}"
+dbgate_container_port: 3000
+dbgate_data_dir: /root/.dbgate     # DbGate's settings and files inside the container (a named volume per view)
+# Read-only root filesystem (security/0003 SEC-22): measured 2026-11-05 with `docker diff`, DbGate writes
+# nothing outside its data volume; /tmp as a small tmpfs for Node.js.
+dbgate_tmpfs: ["/tmp:rw,size=64m"]
+
+# --- Authentik (native OIDC) -----------------------------------------------------
+# The applications are declared in group_vars/all/sso.yml (authentik_oidc_apps, slugs dbgate and
+# dbgate-cerebrum); roles/authentik mints each client into its vault_path.
+dbgate_authentik_base: "https://{{ platform_service_fqdns.authentik }}"
+dbgate_oauth_scope: "openid profile email groups"
+dbgate_oauth_login_field: preferred_username   # the login name DbGate keeps (permissions are keyed on it)
+dbgate_oauth_group_field: groups               # Authentik's groups claim (oidc-app.yaml.j2 scope "groups")
+dbgate_sso_slugs: "{{ dbgate_views | map(attribute='sso_slug') | unique | list }}"
+dbgate_oidc_vault_paths: >-
+  {{ dict(authentik_oidc_apps | selectattr('slug', 'in', dbgate_sso_slugs) | map(attribute='slug')
+          | zip(authentik_oidc_apps | selectattr('slug', 'in', dbgate_sso_slugs) | map(attribute='vault_path'))) }}

@@ -1,0 +1,17 @@
+---
+# ==============================================================================
+# DbGate Community — web SQL/NoSQL client (lxc-dbgate-01, VPN-only, Authentik SSO).
+# One play, composition explicit: OS baseline, container engine, the service. The views
+# (group_vars/all/dbgate.yml) each get a container, a Traefik route and an Authentik
+# application; the platform concerns are declared to roles/service_scaffold inside roles/dbgate.
+# Run playbooks/authentik.yml first: a view never starts without its sign-in.
+#   ansible-playbook playbooks/dbgate.yml
+# ==============================================================================
+- name: "Configure DbGate"
+  hosts: dbgate
+  become: true
+  gather_facts: true
+  roles:
+    - base
+    - docker
+    - dbgate
