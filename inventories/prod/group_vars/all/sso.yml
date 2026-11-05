@@ -45,7 +45,7 @@ authentik_oidc_apps:
   # was opened on (location.origin + pathname): each view's root is its redirect.
   - slug: dbgate
     launch_url: "https://{{ platform_service_fqdns.dbgate }}"
-    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/dbgate.svg"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/png/dbgate.png"     # the set has no svg for DbGate (404)
     name: "DbGate (all databases)"
     group: "{{ platform_service_groups.dbgate.admin }}"
     vault_path: "{{ platform_env }}/dbgate/oidc"
@@ -54,7 +54,7 @@ authentik_oidc_apps:
          | map(attribute='label') | map('regex_replace', '^(.*)$', 'https://\1.' ~ platform_domain ~ '/') | list }}
   - slug: dbgate-cerebrum
     launch_url: "https://{{ (platform_dbgate_views | selectattr('sso_slug', 'equalto', 'dbgate-cerebrum') | first).label }}.{{ platform_domain }}"
-    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/dbgate.svg"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/png/dbgate.png"
     name: "DbGate (Cerebrum)"
     group: "{{ platform_service_groups.dbgate.access }}"
     vault_path: "{{ platform_env }}/dbgate/oidc-cerebrum"
@@ -248,6 +248,8 @@ authentik_oidc_apps:
 
   - slug: grc
     launch_url: "https://{{ platform_service_fqdns.grc }}"
+    # the vendor's own logo at the deployed release (roles/ciso_assistant ciso_assistant_version): no icon set has one
+    icon: "https://cdn.jsdelivr.net/gh/intuitem/ciso-assistant-community@v4.0.9/frontend/src/lib/assets/ciso.svg"
     name: "CISO Assistant"
     group: "{{ platform_service_groups.grc.access }}"      # ACCESS group — the app's JIT provisioning trusts the IdP
     vault_path: "{{ platform_env }}/grc/oidc"               # roles/ciso_assistant binds the same client (tasks/sso.yml)
@@ -269,18 +271,22 @@ authentik_proxy_apps_retired:
 authentik_proxy_apps:
   - slug: jitsi
     name: "Jitsi Meet"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/jitsi-meet.svg"
     group: "{{ platform_service_groups.jitsi.access }}"                          # only members may open the conferencing app (forwardAuth)
     external_host: "https://{{ platform_service_fqdns.jitsi }}"
   - slug: demo-apps
     name: "Demo app (k3s)"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/kubernetes.svg"      # the set has no k3s icon
     group: "{{ platform_service_groups.nextcloud.access }}"                      # every platform user (forwardAuth on the demo route)
     external_host: "https://{{ platform_service_fqdns.k3s_demo }}"
   - slug: traefik-dashboard
     name: "Traefik Dashboard"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/traefik.svg"
     group: "{{ platform_service_groups.traefik.admin }}"                       # only this group passes forwardAuth
     external_host: "https://{{ platform_service_fqdns.traefik }}"
   - slug: seaweedfs
     name: "SeaweedFS Admin"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/seaweedfs.svg"
     group: "{{ platform_service_groups.seaweedfs.admin }}"                     # only this group passes forwardAuth
     external_host: "https://{{ platform_service_fqdns.seaweedfs_admin }}"
   # NOTE: drawio is intentionally NOT SSO-gated — it's consumed as an iframe embed
