@@ -36,8 +36,11 @@ pve_host_guest_affinity:
   202: "6-11"
   203: "12-17"
 
-# backup: the PBS copy only — no NAS storage on the dev tier (the signal lists pbs alone)
-pve_host_nfs_backup_enabled: false
+# backup: the NAS copy on the node's own share (platform_nas.node_backup_shares, owner 2026-11-05), at 00:00 so
+# it ends before this node's PBS job (02:00); then the off-site copy.
+pve_host_nfs_backup_enabled: true
+platform_nfs_backup_storage: backup-nfs          # naming/0001 §PVE storage IDs `{content}-{backend}`
+pve_host_nfs_backup_schedule: "00:00"
 # The off-site (PBS) job uploads before srv-proxmox-poc-01's (03:30): one node at a time (owner 2026-11-05).
 pbs_node_backup_schedule: "02:00"
 # Backup fleecing image store (roles/pve_host): the node's sparse ZFS pool (rpool/data).

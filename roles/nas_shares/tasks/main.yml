@@ -1,0 +1,48 @@
+---
+# The node's backup share and its NFS rule (by_systems.synology_dsm; check mode = the lib's dry run).
+- name: "NAS | The automation account (Vault, read-only)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ platform_nas.vault_path }}"
+  when: nas_shares_entry | length > 0
+
+- name: "NAS | The connection, from the catalog and Vault"
+  ansible.builtin.set_fact:
+    nas_shares_conn:
+      host: "{{ platform_nas.host }}"
+      port: "{{ platform_nas.port }}"
+      username: "{{ vault_secret_result.svc_rune_username }}"
+      password: "{{ vault_secret_result.svc_rune_password }}"
+  no_log: true
+  when: nas_shares_entry | length > 0
+
+- name: "NAS | The node's backup share: {{ nas_shares_entry.share | default('none') }}"
+  by_systems.synology_dsm.synology_dsm_share:
+    host: "{{ nas_shares_conn.host }}"
+    port: "{{ nas_shares_conn.port | int }}"
+    username: "{{ nas_shares_conn.username }}"
+    password: "{{ nas_shares_conn.password }}"
+    name: "{{ nas_shares_entry.share }}"
+    vol_path: "{{ platform_nas.volume }}"
+    description: "{{ nas_shares_entry.description }}"
+  delegate_to: localhost
+  become: false
+  register: nas_shares_share
+  when: nas_shares_entry | length > 0
+
+- name: "NAS | The NFS rule: this node, and no other, may mount it"
+  by_systems.synology_dsm.synology_dsm_nfs:
+    host: "{{ nas_shares_conn.host }}"
+    port: "{{ nas_shares_conn.port | int }}"
+    username: "{{ nas_shares_conn.username }}"
+    password: "{{ nas_shares_conn.password }}"
+    share: "{{ nas_shares_entry.share }}"
+    client: "{{ nas_shares_client }}"
+    privilege: "{{ nas_shares_rule.privilege }}"
+    root_squash: "{{ nas_shares_rule.root_squash }}"
+    async_io: "{{ nas_shares_rule.async_io | bool }}"
+  delegate_to: localhost
+  become: false
+  register: nas_shares_nfs
+  when: nas_shares_entry | length > 0

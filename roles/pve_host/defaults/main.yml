@@ -65,16 +65,23 @@ pve_host_backup_signal_retired_filter: /etc/platform-backup-signal/backup-signal
 # Matched by its storage (one job per target storage); tasks/backup_jobs.yml creates
 # it when missing and `pvesh set`s any drifted setting. The PBS job (second copy)
 # belongs to playbooks/pbs-pve-storage.yml, with the PBS storage it targets.
-# A node carries the NAS (NFS) copy only where that storage exists: prod yes; the dev node
-# keeps the PBS copy only (its backup-signal unit failed listing poc-backup, 2026-10-15).
+# Every node carries the NAS (NFS) copy on its own share (platform_nas.node_backup_shares, made by
+# roles/nas_shares, mounted by tasks/nfs_storage.yml as platform_nfs_backup_storage). Until 2026-11-05
+# the dev node kept the PBS copy only (its backup-signal unit failed listing poc-backup, 2026-10-15).
 pve_host_nfs_backup_enabled: true
+# The node's NAS storage: its share's export; the job prunes (pve_host_nfs_backup_prune), the storage keeps all.
+pve_host_nfs_export: "{{ platform_nas.volume }}/{{ platform_nas.node_backup_shares[inventory_hostname].share | default('') }}"
+pve_host_nfs_storage_content: backup
+pve_host_nfs_storage_prune: "keep-all=1"
+# The NAS job's time on this node (host_vars override): each node's NAS copy ends before its PBS job.
+pve_host_nfs_backup_schedule: "01:00"
 # vzdump runs one job at a time per node (the second waits for the lock, `lockwait` 180 min, then
 # fails). The PBS (S3) job takes 2.5–6 h (03:30 local, pbs_backup_schedule); at 05:00 this job always
 # waited for it and failed on 2026-10-25 ("can't acquire lock '/var/run/vzdump.lock' - got timeout").
 # The fast local copy runs FIRST: ~2.5 h from 01:00, done before the S3 job starts.
 pve_host_nfs_backup_job:
   storage: "{{ platform_nfs_backup_storage }}"
-  schedule: "01:00"
+  schedule: "{{ pve_host_nfs_backup_schedule }}"
   comment: "Daily backup all VMs and LXCs - {{ pve_host_node }}"
   all: 1
   mode: snapshot

@@ -1,0 +1,21 @@
+---
+# ==============================================================================
+# The NAS (Synology DSM 7) — ONE definition. roles/nas_shares gives each Proxmox node its own backup
+# share and an NFS rule for that node only, through the by_systems.synology_dsm collection
+# (lib-synology-dsm ensure(): fetch, diff, no-op when equal); roles/pve_host mounts that share as the
+# node's NFS backup storage (`platform_nfs_backup_storage`) for the nightly NAS copy (infra/0008:
+# the hot copy, 7 daily + 4 weekly). One share per node, never shared: nodes that are not clustered
+# can use the same VMID, and each node's job prunes by VMID.
+# ==============================================================================
+platform_nas:
+  host: 10.6.224.6
+  port: 5001
+  vault_path: "{{ platform_env }}/synology/admin"     # host, port, svc_rune_username / svc_rune_password (the automation account)
+  volume: /volume1
+  # the node's share; `description` as DSM shows it (an existing share is adopted unchanged)
+  node_backup_shares:
+    srv-proxmox-poc-01: {share: srv-proxmox-poc-01-backup, description: "srv-proxmox-poc-01 — VM/LXC backups — PoC"}
+    br-pmox-03: {share: br-pmox-03-backup, description: "br-pmox-03 — VM/LXC backups — dev"}
+  # the node's NFS rule — as the existing node shares: read-write, root mapped to admin (vzdump writes as
+  # root), asynchronous, AUTH_SYS
+  node_nfs_rule: {privilege: rw, root_squash: admin, async_io: true}
