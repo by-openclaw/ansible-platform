@@ -15,7 +15,7 @@
 # the database host: the role restarts it then — announce the run first.
 #
 #   Dry run: ansible-playbook playbooks/cerebrum.yml --check --diff
-#   One step: --tags sql | sql-certificate | odbc | firewall | rcp | certificate | windows | startup | install | sentinel | ini | settings | admin | federation
+#   One step: --tags sql | sql-certificate | odbc | firewall | rcp | certificate | windows | startup | install | sentinel | ini | settings | admin | federation | python
 #   Apply:   ansible-playbook playbooks/cerebrum.yml [--limit vm-x]
 # ==============================================================================
 - name: "Cerebrum | the SQL Server instance"
@@ -86,6 +86,14 @@
         apply:
           tags: [install]
       tags: [install]
+    - name: "Cerebrum | Python for Cerebrum's device scripts (python38.dll), where it is missing"
+      ansible.builtin.include_role:
+        name: cerebrum_server
+        tasks_from: python.yml
+        apply:
+          tags: [python]
+      when: cerebrum_server_python_src | default('') | length > 0
+      tags: [python]
     - name: "Cerebrum | Sentinel persistence (Cerebrum refuses a licence without it)"
       ansible.builtin.include_role:
         name: cerebrum_server
