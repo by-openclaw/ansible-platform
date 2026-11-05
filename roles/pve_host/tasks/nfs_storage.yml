@@ -15,7 +15,7 @@
   changed_when: false
   check_mode: false   # read-only probe: must run under --check too (the next tasks read it)
 
-- name: "NAS storage | Add the NFS storage on the node's share: {{ platform_nfs_backup_storage }}"
+- name: "NAS storage | Add the node's NFS backup storage on its share"
   ansible.builtin.command:
     argv:
       - pvesm
@@ -35,7 +35,7 @@
     _have: "{{ pve_host_storages.stdout | from_json | selectattr('storage', 'equalto', platform_nfs_backup_storage) | list }}"
   changed_when: true
 
-- name: "NAS storage | An existing storage points at the node's share: {{ platform_nfs_backup_storage }}"
+- name: "NAS storage | An existing NFS backup storage points at the node's share"
   ansible.builtin.assert:
     that:
       - _have.type == 'nfs'
@@ -70,7 +70,7 @@
     _have: "{{ _all | first | default({}) }}"
   changed_when: true
 
-- name: "NAS storage | Mounted and active: {{ platform_nfs_backup_storage }}"
+- name: "NAS storage | The NFS backup storage is mounted and active"
   ansible.builtin.command:
     argv: [pvesm, status, --storage, "{{ platform_nfs_backup_storage }}"]
   register: pve_host_nfs_status
