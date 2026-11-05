@@ -16,9 +16,17 @@ One DbGate instance per **view**, declared once in `inventories/prod/group_vars/
 2. Through `roles/service_scaffold`: one container per view (`dbgate-<view>`, pinned image, published on the SVC address and the view's port, a named volume for `/root/.dbgate`), one internal-only Traefik route per name (the platform's internal ranges and admin desks, plus the view's own `allow_from`), the SSO registration assertion.
 3. Sign-in: DbGate's web OAuth settings — Authentik's authorize/token/end-session endpoints, scope `openid profile email groups`, the login from `preferred_username`, `OAUTH_ALLOWED_GROUPS` = the view's group. DbGate returns to the page it was opened on, so each view's root (`https://<name>/`) is its redirect in Authentik.
 
-**Phase 1:** no database connection is declared yet. Phase 2 adds them per view (`CONNECTIONS` with the logins from Vault): the Cerebrum views see their instance's database and the Federation database only, through a login with rights on those two only; the administrators' view sees every database.
+4. SQL Server: each view's one connection (the view's `sql`), DbGate's predefined-connection settings (`CONNECTIONS`, `SERVER_`, `USER_`, `PASSWORD_`, `ALLOWED_DATABASES_`, both editions). The login and its password are `roles/cerebrum_db`'s (Vault `<env>/mssql/<host>/<instance>/<login>`); DbGate reads them and refuses a view without one. The connection uses the instance's split-DNS name (`cerebrum-db.<tier zone>`), encrypted (`USE_SSL_`), verifying the zone wildcard the instance presents (public CA, no trust override), through the portable driver (`tedious`).
 
-Run `playbooks/authentik.yml` first, then `ansible-playbook playbooks/dbgate.yml`.
+| View | Login | Rights (inside these databases only) | Databases listed |
+|---|---|---|---|
+| admin | `dbgate_admin` | `db_owner` | every Cerebrum database + `Federation` |
+| cerebrum-01 | `dbgate_cerebrum_01` | `db_datareader`, `db_datawriter` | `Cerebrum_01`, `Federation` |
+| cerebrum-02 | `dbgate_cerebrum_02` | `db_datareader`, `db_datawriter` | `Cerebrum_02`, `Federation` |
+
+No login has a server role: the server itself stays Windows authentication. The `Federation` database is granted at the first `roles/cerebrum_db` run after the Federation service has created it.
+
+Order: `playbooks/authentik.yml` (the applications), `playbooks/cerebrum.yml --tags sql` (the logins, the instance's firewall admits the DbGate host), then `ansible-playbook playbooks/dbgate.yml`.
 
 ## Controls
 

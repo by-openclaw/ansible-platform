@@ -1,0 +1,15 @@
+---
+# One view's SQL login (read-if-present: roles/cerebrum_db creates it with its password).
+- name: "DbGate | The SQL login, if it exists yet: {{ dbgate_sql_view.sql.login }}"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: >-
+      {{ hostvars[dbgate_sql_view.sql.host].env }}/mssql/{{ dbgate_sql_view.sql.host }}/{{
+      hostvars[dbgate_sql_view.sql.host].cerebrum_db_instance }}/{{ dbgate_sql_view.sql.login }}
+    vault_secret_optional: true
+
+- name: "DbGate | Keep it ({{ dbgate_sql_view.sql.login }})"
+  ansible.builtin.set_fact:
+    dbgate_sql: "{{ dbgate_sql | default({}) | combine({dbgate_sql_view.sql.login: vault_secret_result | default({})}) }}"
+  no_log: true

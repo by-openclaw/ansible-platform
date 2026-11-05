@@ -20,6 +20,16 @@ cerebrum_db_sqlcmd_msi_sha256: "25c7208cd5ba98beae4f1a464625a78d3607498e990fdde4
 cerebrum_db_sa_vault_copy_from: ""
 cerebrum_db_sa_enabled: false
 
+# The DbGate views' logins (group_vars/all/dbgate.yml `sql`): rights in their own databases only, the
+# DbGate host admitted by the instance's firewall.
+cerebrum_db_logins_platform: >-
+  {%- set out = [] -%}
+  {%- for v in platform_dbgate_views if v.sql is defined and v.sql.host == inventory_hostname -%}
+  {%- set _ = out.append({'name': v.sql.login, 'db_roles': v.sql.db_roles, 'databases': v.sql.databases,
+                          'from': groups['dbgate'] | map('extract', hostvars, 'ansible_host') | list}) -%}
+  {%- endfor -%}
+  {{ out }}
+
 # Connectivity checks (playbooks/net-check.yml, roles/net_check), on the SQL host: each Cerebrum instance's
 # database ONLINE, its login not locked, live sessions from its server (Windows authentication, read-only).
 # The names follow roles/cerebrum_db (cerebrum_db_database_prefix Cerebrum_, cerebrum_db_login_prefix cerebrum_).
