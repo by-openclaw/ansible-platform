@@ -11,6 +11,9 @@
 #       - {host: cerebrum-db.dev.example, port: 1433}
 #     ping:                ICMP echo; informational unless `required: true` (many hosts drop ICMP)
 #       - {host: vm-winsql-01, required: false}
+#     sql:                 on a SQL Server host, Windows authentication (no password): the database is ONLINE,
+#                          the application's login is not locked, and it has live sessions from its client
+#       - {instance: BY_CEREBRUM, database: Cerebrum_01, login: cerebrum_01, from: 10.6.239.201}
 #
 # Windows: the name is resolved by ping.exe's own lookup (the Windows resolver, hosts file included —
 # nslookup bypasses the hosts file), the port by win_wait_for. Linux: getent hosts (nsswitch), wait_for, ping.
@@ -19,3 +22,4 @@ net_check_items: "{{ net_checks | default({}) }}"
 net_check_tcp_timeout: 3          # seconds per TCP check
 net_check_ping_wait_ms: 800       # Windows ping -w; Linux uses 1 s
 net_check_fail_on_error: true     # a failed required check fails the host at the end (after the recap)
+net_check_sqlcmd: 'C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\180\Tools\Binn\SQLCMD.EXE'   # roles/cerebrum_db installs it

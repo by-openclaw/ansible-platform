@@ -19,3 +19,15 @@ cerebrum_db_sqlcmd_msi_sha256: "25c7208cd5ba98beae4f1a464625a78d3607498e990fdde4
 # disabled (CIS 2.14).
 cerebrum_db_sa_vault_copy_from: ""
 cerebrum_db_sa_enabled: false
+
+# Connectivity checks (playbooks/net-check.yml, roles/net_check), on the SQL host: each Cerebrum instance's
+# database ONLINE, its login not locked, live sessions from its server (Windows authentication, read-only).
+# The names follow roles/cerebrum_db (cerebrum_db_database_prefix Cerebrum_, cerebrum_db_login_prefix cerebrum_).
+net_checks:
+  sql: >-
+    {%- set out = [] -%}
+    {%- for h in groups['cerebrum_server'] | default([]) -%}
+    {%- set _ = out.append({'instance': cerebrum_db_instance, 'database': 'Cerebrum_' ~ hostvars[h].cerebrum_instance,
+                            'login': 'cerebrum_' ~ hostvars[h].cerebrum_instance, 'from': hostvars[h].ansible_host}) -%}
+    {%- endfor -%}
+    {{ out }}
