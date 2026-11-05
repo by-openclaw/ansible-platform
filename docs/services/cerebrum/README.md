@@ -55,6 +55,8 @@ Dry run of any step: add `--check --diff`. Each step is idempotent: run it again
 | 19 | Client and Designer, each server to the other (§3.4) | Cerebrum Client / Designer | after 18 |
 | 20 | Web client and RCP over TLS (`USE_SSL`, `RCP/USE_SSL`; certificate rows already set) | Cerebrum UI, then a settings row | after 19 (plain first) |
 | 21 | Certificate renewals reach every copy (Let's Encrypt renews at 60 days) | `ansible-playbook playbooks/certs-sync.yml` | done: the controller's weekly job `controller-job-certs-sync` (Monday 11:00 UTC) runs it |
+| 22 | Federation service (manual §13 p.270): its own `CerebrumFederationService.ini` (SQL by FQDN, login `cerebrum_federated`, database `Federation`), the Windows service as EVS's `FederationServiceInstall.bat` creates it, C-Link TCP 40003 from the Cerebrum servers | `ansible-playbook playbooks/cerebrum.yml --tags federation` (hosts: inventory group `cerebrum_federation`) | role ready; hosts and password form with EVS (2026-11-06) |
+| 23 | Each Cerebrum: Configuration → Federation Service tab: enable, the two machines' FQDNs, restart both servers (p.271) | settings rows, mapped at the install | after 22 |
 
 Restarts: step 10 restarts a server when its start changes, step 10a after an upgrade (Cerebrum comes back
 through the auto sign-in);
@@ -391,6 +393,25 @@ Cerebrum user, `wss://` support (to check in the protocol specification).
 | Syslog to Loki, SNMP hardening, email, alarm/audit settings, project folder | later |
 | Windows base on these guests (CIS L1 with EVS's exceptions: UAC Never Notify, Defender exclusions; per-guest SSH host keys — all three share the template's; monitoring flag `platform_guest_stopped` still set) | pending |
 | Installer store: **one place, the controller** (`platform_installer_store` = `~/repos/_incoming/installers/`, outside git, one folder per product and version with `SHA256SUMS` + `SOURCE.txt`): SQL 2025 Express, sqlcmd 17.0.4055.5, ODBC 17.11.1.1, Cerebrum 2.9.3 and 2.9.5 (+ release notes, manuals), Bonjour 2.0.2, WebView2 Evergreen x64 (2026-11-04). Cerebrum installs from it (step 10a), WebView2 too where it is missing (it then updates itself); the object store's route refuses the dev guests (403): the move comes with the new infrastructure, one value to change (owner 2026-11-04) | with the new infrastructure |
+
+### 12.1 Questions for EVS (manual issue 2.9 references)
+
+1. The "Cerebrum Trial Key" dialog stops every start until OK: how does a licensed server start unattended (Trial License Mode off once permanent)? — Licensing, Help → About.
+2. Permanent licences from the locking codes (instance 01 `*1HXHUR8EJAK5SG2`, 02 `*1S5PVJQ2WKCEQA2`). — Licensing, §3.3.
+3. Federation: does `CerebrumFederationService.ini` take the SQL password in clear or encrypted like `Cerebrum.ini`? A named login instead of the default one? — §13 p.270.
+4. Federation hosts: separate machines (the manual's spec) or the Cerebrum servers with another port than 40003 (Cerebrum's own C-Link port)? — p.9, p.270.
+5. Cerebrum's SQL connection is not encrypted (measured `encrypt_option` FALSE): supported encryption settings? — not in the manual.
+6. The secondary SQL lines (`localhost\CEREBRUMSQL` / `Cortex`) kept at Cerebrum's defaults on a non-redundant server: correct? — SQL settings, p.21.
+7. Web client behind our reverse proxy (Traefik + Authentik) instead of VIA Foundation; can VIA Foundation's Keycloak delegate to an external identity provider? — p.8, p.55, p.134.
+8. Syslog: TLS? RFC 5424 or 3164? The list of message types. — Log Settings p.132.
+9. SNMP agent: a custom community or SNMPv3? — p.120, p.380.
+10. Email: TLS / port 587? — p.117–118.
+11. Northbound XML API: its port and secure WebSocket (`wss`)? — p.10, p.73, p.97, p.201.
+12. RCP: the API specification, TLS port, authentication. — p.135.
+13. The Service Manager's and device services' ports, for exact firewall rules. — p.33, p.140.
+14. Crash dumps: small or full, and where? — not in the manual.
+15. A project folder outside the install directory: allowed? — p.129.
+16. EVS's anti-virus guidance document. — §3.5 p.30.
 
 ## 13. Troubleshooting (seen live)
 
