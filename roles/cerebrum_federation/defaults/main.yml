@@ -1,0 +1,59 @@
+---
+# ==============================================================================
+# roles/cerebrum_federation — EVS Cerebrum's Federation service (manual §13, p.270–271): it shares sources
+# and destinations between Cerebrum systems, from its own SQL database. Runs on the hosts of the inventory
+# group `cerebrum_federation` (two machines: primary and secondary); an empty group applies nothing.
+#
+#   1. CerebrumFederationService.ini: "the same format as the Cerebrum server" — one line per declared key,
+#      every other line kept (as roles/cerebrum_server tasks/ini.yml). The password line is never written
+#      in clear: Cerebrum's ini holds it ENCRYPTED and a wrong one locks the SQL login after five tries
+#      (2026-11-03). Captured once it exists, replayed from Vault afterwards.
+#   2. The Windows service, as EVS's FederationServiceInstall.bat creates it (sc create … start= auto,
+#      restart on failure 1/2/5/10 s, reset 1 h, LocalSystem), started only once the ini holds a password.
+#   3. One inbound rule: C-Link TCP from the Cerebrum servers to the service (manual p.270: TCP 40003
+#      by default; the service is the server, the Cerebrum servers the clients), bound to its program.
+# Cerebrum's own "Federation Service" tab (enable, the two FQDNs, restart) is roles/cerebrum_server's.
+# ==============================================================================
+cerebrum_federation_env: "{{ env | default(platform_env) }}"
+cerebrum_federation_install_dir: 'C:\Program Files\EVS Broadcast Equipment\Cerebrum'
+cerebrum_federation_exe: "{{ cerebrum_federation_install_dir }}\\CerebrumFederationService.exe"
+cerebrum_federation_ini: "{{ cerebrum_federation_install_dir }}\\CerebrumFederationService.ini"
+cerebrum_federation_service: CerebrumFederationService
+cerebrum_federation_display_name: "Cerebrum Federation Service"
+cerebrum_federation_failure_actions:
+  - {type: restart, delay_ms: 1000}
+  - {type: restart, delay_ms: 2000}
+  - {type: restart, delay_ms: 5000}
+  - {type: restart, delay_ms: 10000}
+cerebrum_federation_failure_reset_s: 3600
+
+# The database: on the Cerebrum SQL instance (manual: "the same SQL instance as one of the servers, or an
+# independent instance"), reached by its FQDN like the Cerebrum servers (roles/cerebrum_server).
+cerebrum_federation_db_host: "{{ groups['cerebrum_db'] | first }}"
+cerebrum_federation_db_dns_label: cerebrum-db
+cerebrum_federation_db_name: >-
+  {{ cerebrum_federation_db_dns_label ~ '.' ~ (platform_domain if hostvars[cerebrum_federation_db_host].env == 'prod'
+                                               else hostvars[cerebrum_federation_db_host].env ~ '.' ~ platform_domain) }}
+cerebrum_federation_db_instance: "{{ hostvars[cerebrum_federation_db_host].cerebrum_db_instance | default('CEREBRUMSQL') }}"
+cerebrum_federation_db_port: "{{ hostvars[cerebrum_federation_db_host].cerebrum_db_port | default(1433) }}"
+cerebrum_federation_database: Federation
+# The login roles/cerebrum_db creates for the service (cerebrum_db_logins_extra), its document in Vault.
+cerebrum_federation_db_login: cerebrum_federated
+cerebrum_federation_db_login_vault_path: >-
+  {{ cerebrum_federation_env }}/mssql/{{ cerebrum_federation_db_host }}/{{ cerebrum_federation_db_instance }}/{{ cerebrum_federation_db_login }}
+
+cerebrum_federation_ini_settings:
+  "SQL:USE_DEFAULT": 0
+  "SQL:LOGIN_CREDENTIALS": 2          # the named login (0 = Cerebrum's default login, the manual's example)
+  "SQL:LOGIN_USERNAME": "{{ cerebrum_federation_db_login }}"
+  "SQL:PRIMARY_CONNECTION": "{{ cerebrum_federation_db_name }}\\{{ cerebrum_federation_db_instance }},{{ cerebrum_federation_db_port }}"
+  "SQL:DATABASE": "{{ cerebrum_federation_database }}"
+
+# C-Link: the service listens on TCP 40003 by default — on a Cerebrum server that is Cerebrum's own Designer
+# port (roles/cerebrum_server cerebrum_server_clink_ports), so a Federation host that is also a Cerebrum
+# server needs another port (EVS) and the role refuses the clash.
+cerebrum_federation_port: 40003
+cerebrum_federation_cerebrum_ports: "40001-40005"   # Cerebrum's own C-Link range (roles/cerebrum_server cerebrum_server_clink_ports)
+cerebrum_federation_clients: "{{ groups['cerebrum_server'] | default([]) | map('extract', hostvars, 'ansible_host') | list }}"
+cerebrum_federation_firewall_profiles: [domain, private, public]
+cerebrum_federation_firewall_rule: "CEREBRUM-In-Federation-TCP"

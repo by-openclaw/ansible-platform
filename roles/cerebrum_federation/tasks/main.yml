@@ -1,0 +1,145 @@
+---
+# roles/cerebrum_federation — see defaults/main.yml. Order: the port is free → the ini (declared keys, the
+# password replayed encrypted) → the service (started once the ini holds a password) → its inbound rule.
+- name: "Cerebrum Federation | The service's port is not Cerebrum's own on this host"
+  ansible.builtin.assert:
+    that: >-
+      inventory_hostname not in (groups['cerebrum_server'] | default([]))
+      or (cerebrum_federation_port | int) < (cerebrum_federation_cerebrum_ports.split('-') | first | int)
+      or (cerebrum_federation_port | int) > (cerebrum_federation_cerebrum_ports.split('-') | last | int)
+    fail_msg: >-
+      {{ inventory_hostname }} is a Cerebrum server: the Federation service's port {{ cerebrum_federation_port }} is
+      Cerebrum's own C-Link port here. A separate machine (manual p.270), or another port agreed with EVS.
+    quiet: true
+
+- name: "Cerebrum Federation | The program is installed (the Cerebrum installer's component)"
+  ansible.windows.win_stat:
+    path: "{{ cerebrum_federation_exe }}"
+  register: cerebrum_federation_exe_stat
+
+- name: "Cerebrum Federation | The program exists"
+  ansible.builtin.assert:
+    that: cerebrum_federation_exe_stat.stat.exists
+    fail_msg: "{{ cerebrum_federation_exe }} missing: install Cerebrum with its federation component (roles/cerebrum_server install.yml)"
+    quiet: true
+
+# --- the ini, line by line -------------------------------------------------------------------------------
+- name: "Cerebrum Federation | Its database login (Vault, roles/cerebrum_db)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ cerebrum_federation_db_login_vault_path }}"
+
+- name: "Cerebrum Federation | Keep the captured encrypted form (not shown)"
+  ansible.builtin.set_fact:
+    cerebrum_federation_login_encrypted: "{{ vault_secret_result.ini_password_encrypted_federation | default('') }}"
+    cerebrum_federation_login_password: "{{ vault_secret_result.password }}"   # pragma: allowlist secret
+  no_log: true
+
+- name: "Cerebrum Federation | The ini as it is (when present)"
+  ansible.windows.win_stat:
+    path: "{{ cerebrum_federation_ini }}"
+  register: cerebrum_federation_ini_stat
+
+- name: "Cerebrum Federation | Its content (not shown)"
+  ansible.builtin.slurp:
+    src: "{{ cerebrum_federation_ini }}"
+  register: cerebrum_federation_ini_raw
+  when: cerebrum_federation_ini_stat.stat.exists
+  no_log: true
+
+- name: "Cerebrum Federation | The password line, if any (not shown)"
+  ansible.builtin.set_fact:
+    cerebrum_federation_ini_password_now: >-
+      {{ (cerebrum_federation_ini_raw.content | b64decode(encoding='utf-16') | regex_findall('(?m)^SQL:LOGIN_PASSWORD=(.*?)\r?$') | first | default(''))
+         if cerebrum_federation_ini_stat.stat.exists else '' }}
+  no_log: true
+
+- name: "Cerebrum Federation | The ini's section header (file created when missing)"
+  community.windows.win_lineinfile:
+    path: "{{ cerebrum_federation_ini }}"
+    regex: '^\[__GENERAL__\]$'
+    line: "[__GENERAL__]"
+    insertbefore: BOF
+    create: true
+    encoding: utf-16
+    newline: windows
+  register: cerebrum_federation_ini_header
+
+- name: "Cerebrum Federation | One line per declared key"
+  community.windows.win_lineinfile:
+    path: "{{ cerebrum_federation_ini }}"
+    regex: "^{{ item.key | regex_escape }}="
+    line: "{{ item.key }}={{ item.value }}"
+    insertafter: EOF
+    encoding: utf-16
+    newline: windows
+  loop: "{{ cerebrum_federation_ini_settings | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}={{ item.value }}"
+  register: cerebrum_federation_ini_lines
+  when: not (ansible_check_mode and cerebrum_federation_ini_header is changed)
+
+# Never the clear password: replayed only in the encrypted form captured from the file, as Cerebrum.ini.
+- name: "Cerebrum Federation | The password line, only where missing (the captured encrypted form)"
+  community.windows.win_lineinfile:
+    path: "{{ cerebrum_federation_ini }}"
+    regex: '^SQL:LOGIN_PASSWORD='
+    line: "SQL:LOGIN_PASSWORD={{ cerebrum_federation_login_encrypted }}"   # pragma: allowlist secret
+    insertafter: '^SQL:LOGIN_USERNAME='
+    encoding: utf-16
+    newline: windows
+  no_log: true
+  when:
+    - cerebrum_federation_ini_password_now | length == 0
+    - cerebrum_federation_login_encrypted | length > 0
+    - not (ansible_check_mode and cerebrum_federation_ini_header is changed)
+
+- name: "Cerebrum Federation | The encrypted form found in the file, kept with the login (Vault, for rebuilds)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ cerebrum_federation_db_login_vault_path }}"
+    vault_secret_force_fields:
+      ini_password_encrypted_federation: "{{ cerebrum_federation_ini_password_now }}"   # pragma: allowlist secret
+  when:
+    - cerebrum_federation_ini_password_now | length > 0
+    - cerebrum_federation_ini_password_now != cerebrum_federation_login_password
+    - cerebrum_federation_ini_password_now != cerebrum_federation_login_encrypted
+
+- name: "Cerebrum Federation | Does the ini hold a password now? (not shown)"
+  ansible.builtin.set_fact:
+    cerebrum_federation_ready: "{{ (cerebrum_federation_ini_password_now | length > 0) or (cerebrum_federation_login_encrypted | length > 0) }}"
+
+# --- the service, as EVS's FederationServiceInstall.bat creates it ----------------------------------------
+- name: "Cerebrum Federation | The Windows service (automatic, restarts on failure, LocalSystem)"
+  ansible.windows.win_service:
+    name: "{{ cerebrum_federation_service }}"
+    path: '"{{ cerebrum_federation_exe }}" {{ cerebrum_federation_service }} {{ cerebrum_federation_service }}'
+    display_name: "{{ cerebrum_federation_display_name }}"
+    start_mode: auto
+    failure_actions: "{{ cerebrum_federation_failure_actions }}"
+    failure_reset_period_sec: "{{ cerebrum_federation_failure_reset_s }}"
+    state: "{{ 'started' if cerebrum_federation_ready | bool else 'stopped' }}"
+
+# --- its inbound rule --------------------------------------------------------------------------------------
+- name: "Cerebrum Federation | C-Link from the Cerebrum servers, bound to the service's program"
+  community.windows.win_firewall_rule:
+    name: "{{ cerebrum_federation_firewall_rule }}"
+    direction: in
+    action: allow
+    protocol: tcp
+    localport: "{{ cerebrum_federation_port | string }}"
+    remoteip: "{{ (cerebrum_federation_clients | join(',')) if (cerebrum_federation_clients | length > 0) else omit }}"
+    program: "{{ cerebrum_federation_exe }}"
+    profiles: "{{ cerebrum_federation_firewall_profiles }}"
+    enabled: "{{ cerebrum_federation_clients | length > 0 }}"
+    state: present
+
+- name: "Cerebrum Federation | Report"
+  ansible.builtin.debug:
+    msg: >-
+      CEREBRUM_FEDERATION {{ inventory_hostname }}: database {{ cerebrum_federation_db_name }}\{{ cerebrum_federation_db_instance }},{{ cerebrum_federation_db_port }}
+      / {{ cerebrum_federation_database }} as {{ cerebrum_federation_db_login }};
+      service {{ 'started' if cerebrum_federation_ready | bool else 'installed, NOT started: the ini has no password yet (enter it once, encrypted form agreed with EVS; the next run captures it)' }};
+      C-Link TCP {{ cerebrum_federation_port }} from {{ cerebrum_federation_clients | join(', ') or 'nobody (rule disabled)' }}

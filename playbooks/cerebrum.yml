@@ -15,7 +15,7 @@
 # the database host: the role restarts it then — announce the run first.
 #
 #   Dry run: ansible-playbook playbooks/cerebrum.yml --check --diff
-#   One step: --tags sql | sql-certificate | odbc | firewall | rcp | certificate | windows | startup | install | sentinel | ini | settings | admin
+#   One step: --tags sql | sql-certificate | odbc | firewall | rcp | certificate | windows | startup | install | sentinel | ini | settings | admin | federation
 #   Apply:   ansible-playbook playbooks/cerebrum.yml [--limit vm-x]
 # ==============================================================================
 - name: "Cerebrum | the SQL Server instance"
@@ -121,3 +121,10 @@
         apply:
           tags: [admin]
       tags: [admin]
+
+- name: "Cerebrum | the Federation service (its ini, Windows service, C-Link rule) — the cerebrum_federation hosts"
+  hosts: cerebrum_federation
+  gather_facts: false
+  roles:
+    - role: cerebrum_federation
+      tags: [federation]
