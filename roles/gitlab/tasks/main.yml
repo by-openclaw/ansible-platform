@@ -165,6 +165,33 @@
   register: gitlab_container_before
   when: gitlab_engine_ready | bool
 
+# A version change waits for the running version's batched background migrations: GitLab's upgrade
+# documentation ("Background migrations") requires every one finished or finalized first, and a
+# required stop (19.5) queues one that must finish before the version after it.
+- name: "GitLab | Background migrations of the running version (before a version change)"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ gitlab_container }}", gitlab-rake, "gitlab:background_migrations:list"]
+  register: gitlab_bbm
+  changed_when: false
+  check_mode: false   # read-only probe: the gate must hold under --check too
+  when:
+    - gitlab_engine_ready | bool
+    - gitlab_container_before.exists | default(false)
+    - (gitlab_container_before.container.Config.Image | default('')) != gitlab_image
+
+- name: "GitLab | Every background migration is finished before the version changes"
+  ansible.builtin.assert:
+    that: _open | length == 0
+    fail_msg: >-
+      {{ _open | length }} background migration(s) not finished: {{ _open }} — let them finish
+      (Admin > Monitoring > Background migrations), then run again.
+    quiet: true
+  vars:
+    _open: >-
+      {{ gitlab_bbm.stdout_lines | select('match', '^\S+_[0-9]+ +\|')
+         | reject('search', '\| *(finished|finalized) *\|') | map('regex_replace', ' +', ' ') | list }}
+  when: gitlab_bbm is not skipped
+
 - name: "GitLab | The scripts directory callers stage for gitlab-rails runner"
   ansible.builtin.file:
     path: "{{ gitlab_scripts_dir }}"
