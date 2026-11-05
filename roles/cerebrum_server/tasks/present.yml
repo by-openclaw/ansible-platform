@@ -106,27 +106,12 @@
     state: present
   no_log: true
 
-# --- Cerebrum.ini: the database connection from the database host's login --------------------------------
-- name: "Cerebrum server | The application's database login (Vault, written by roles/cerebrum_db)"
-  ansible.builtin.include_role:
-    name: vault_secret
-  vars:
-    vault_secret_path: "{{ cerebrum_server_db_login_vault_path }}"
-
-- name: "Cerebrum server | Keep it for the ini"
-  ansible.builtin.set_fact:
-    cerebrum_server_db_login_user: "{{ vault_secret_result.user }}"
-    cerebrum_server_db_login_password: "{{ vault_secret_result.password }}"   # pragma: allowlist secret
-  no_log: true
-
-- name: "Cerebrum server | Cerebrum.ini (the vendor's UTF-16 file; the login inside)"
-  ansible.windows.win_template:
-    src: Cerebrum.ini.j2
-    dest: "{{ cerebrum_server_ini }}"
-    output_encoding: utf-16
-    newline_sequence: "\r\n"
-  no_log: true
-  register: cerebrum_server_ini_written
+# --- Cerebrum.ini: ONE method, line by line (tasks/ini.yml, the step `--tags ini` runs) ------------------
+# Only the declared keys are written; every other line (Cerebrum's own, those it adds over time, the
+# encrypted SQL password it wrote, the licence) stays. The whole-file template this replaced wrote the
+# clear password (five failed decrypts lock the login) and dropped the licence (2026-11-05).
+- name: "Cerebrum server | Cerebrum.ini, only the declared keys (tasks/ini.yml)"
+  ansible.builtin.include_tasks: ini.yml
 
 - name: "Cerebrum server | The ini inherits nothing"
   ansible.windows.win_acl_inheritance:
@@ -223,9 +208,9 @@
   ansible.builtin.debug:
     msg: >-
       CEREBRUM_SERVER {{ inventory_hostname }}: {{ cerebrum_server_version }} ({{ cerebrum_server_components | join(', ') }}),
-      database {{ cerebrum_server_db_address }}\{{ cerebrum_server_db_instance }},{{ cerebrum_server_db_port }} / {{ cerebrum_server_db_database }}
+      database {{ cerebrum_server_db_name }}\{{ cerebrum_server_db_instance }},{{ cerebrum_server_db_port }} / {{ cerebrum_server_db_database }}
       as {{ cerebrum_server_db_login_user }}; run account {{ cerebrum_server_run_user }} ({{ cerebrum_server_run_user_groups | join(', ') }});
-      ini {{ 'written' if cerebrum_server_ini_written is changed else 'unchanged' }};
+      ini {{ 'written' if (cerebrum_server_ini_lines is changed) else 'unchanged' }};
       firewall {{ cerebrum_server_firewall_rules | selectattr('remoteip', 'defined') | list | length }} rules
       ({{ cerebrum_server_firewall_rules | rejectattr('remoteip') | map(attribute='name') | join(', ') or 'all sourced' }} disabled: no source declared);
       device families {{ 'pruned to ' ~ (cerebrum_server_device_families | length) if cerebrum_server_device_families | length > 0 else 'untouched' }};

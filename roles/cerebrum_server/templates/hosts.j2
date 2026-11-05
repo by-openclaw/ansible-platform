@@ -1,10 +1,12 @@
 # {{ ansible_managed }}
-# roles/cerebrum_server (EVS Cerebrum manual §3.5): every Cerebrum server and the database host, even with
-# DNS. The file is written whole: a line added by hand is replaced at the next run.
+# roles/cerebrum_server (EVS Cerebrum manual §3.5, §4): every Cerebrum server and the database host, even
+# with DNS, each with its short name AND FQDN, and its service names. The file is written whole: a line
+# added by hand is replaced at the next run.
 #
 # localhost name resolution is handled within DNS itself.
 #	127.0.0.1       localhost
 #	::1             localhost
 {% for host in cerebrum_server_hosts_entries %}
-{{ hostvars[host].ansible_host }} {{ host }}
+{% set zone = platform_domain if hostvars[host].env == 'prod' else hostvars[host].env ~ '.' ~ platform_domain %}
+{{ hostvars[host].ansible_host }} {{ ([host] + cerebrum_server_hosts_aliases.get(host, [])) | map('regex_replace', '^(.*)$', '\\1.' ~ zone ~ ' \\1') | join(' ') }}
 {% endfor %}
