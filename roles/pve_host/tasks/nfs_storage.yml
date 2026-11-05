@@ -1,0 +1,82 @@
+---
+# The node's NAS backup storage (Proxmox VE Admin Guide, "NFS Backend"): the node's own share on the
+# NAS (roles/nas_shares makes it and its NFS rule first), mounted as `platform_nfs_backup_storage`.
+# Retention belongs to the job (pve_host_nfs_backup_prune), so the storage keeps everything it gets.
+# server and export are fixed at creation: a storage that points elsewhere fails the play instead of
+# being silently repointed.
+- name: "NAS storage | The node's share and NFS rule (roles/nas_shares)"
+  ansible.builtin.include_role:
+    name: nas_shares
+
+- name: "NAS storage | Storages today"
+  ansible.builtin.command:
+    argv: [pvesh, get, /storage, --output-format, json]
+  register: pve_host_storages
+  changed_when: false
+  check_mode: false   # read-only probe: must run under --check too (the next tasks read it)
+
+- name: "NAS storage | Add the node's NFS backup storage on its share"
+  ansible.builtin.command:
+    argv:
+      - pvesm
+      - add
+      - nfs
+      - "{{ platform_nfs_backup_storage }}"
+      - --server
+      - "{{ platform_nas.host }}"
+      - --export
+      - "{{ pve_host_nfs_export }}"
+      - --content
+      - "{{ pve_host_nfs_storage_content }}"
+      - --prune-backups
+      - "{{ pve_host_nfs_storage_prune }}"
+  when: _have | length == 0
+  vars:
+    _have: "{{ pve_host_storages.stdout | from_json | selectattr('storage', 'equalto', platform_nfs_backup_storage) | list }}"
+  changed_when: true
+
+- name: "NAS storage | An existing NFS backup storage points at the node's share"
+  ansible.builtin.assert:
+    that:
+      - _have.type == 'nfs'
+      - _have.server == platform_nas.host
+      - _have.export == pve_host_nfs_export
+    fail_msg: >-
+      {{ platform_nfs_backup_storage }} is {{ _have.type }} {{ _have.server | default('') }}:{{ _have.export | default('') }},
+      the catalog says nfs {{ platform_nas.host }}:{{ pve_host_nfs_export }} — server and export are fixed at creation,
+      move the jobs and recreate the storage deliberately.
+    quiet: true
+  when: _all | length > 0
+  vars:
+    _all: "{{ pve_host_storages.stdout | from_json | selectattr('storage', 'equalto', platform_nfs_backup_storage) | list }}"
+    _have: "{{ _all | first | default({}) }}"
+
+- name: "NAS storage | Content and retention as declared"
+  ansible.builtin.command:
+    argv:
+      - pvesm
+      - set
+      - "{{ platform_nfs_backup_storage }}"
+      - --content
+      - "{{ pve_host_nfs_storage_content }}"
+      - --prune-backups
+      - "{{ pve_host_nfs_storage_prune }}"
+  when:
+    - _all | length > 0
+    - (_have.content | default('')) != pve_host_nfs_storage_content
+      or (_have['prune-backups'] | default('')) != pve_host_nfs_storage_prune
+  vars:
+    _all: "{{ pve_host_storages.stdout | from_json | selectattr('storage', 'equalto', platform_nfs_backup_storage) | list }}"
+    _have: "{{ _all | first | default({}) }}"
+  changed_when: true
+
+- name: "NAS storage | The NFS backup storage is mounted and active"
+  ansible.builtin.command:
+    argv: [pvesm, status, --storage, "{{ platform_nfs_backup_storage }}"]
+  register: pve_host_nfs_status
+  changed_when: false
+  check_mode: false   # read-only probe
+  until: pve_host_nfs_status.rc == 0 and (pve_host_nfs_status.stdout_lines | select('search', '\\sactive\\s') | list | length > 0)
+  retries: 6
+  delay: 5
+  when: not ansible_check_mode or (pve_host_storages.stdout | from_json | selectattr('storage', 'equalto', platform_nfs_backup_storage) | list | length > 0)

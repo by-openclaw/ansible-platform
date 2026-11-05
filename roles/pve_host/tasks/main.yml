@@ -69,6 +69,11 @@
   ansible.builtin.import_tasks: vzdump_defaults.yml
   tags: [pve_host, backup]
 
+- name: The node's NAS backup storage (its own share, roles/nas_shares)
+  ansible.builtin.import_tasks: nfs_storage.yml
+  when: pve_host_nfs_backup_enabled | bool
+  tags: [pve_host, backup, nas]
+
 - name: The NAS backup job (declared, converged)
   ansible.builtin.import_tasks: backup_jobs.yml
   when: pve_host_nfs_backup_enabled | bool

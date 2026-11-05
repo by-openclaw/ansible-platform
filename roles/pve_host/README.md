@@ -8,7 +8,11 @@ whose client `roles/authentik` mints into Vault, declared ACLs, and the UI route
 through Traefik. Exporters and agents come from their own plays (node group added to their targets);
 hardening runs with `hardening_ufw_enabled: false` on nodes. Audit rows NODE-01…04.
 
-Backups: the NAS job is declared and converged (`pve_host_nfs_backup_job`); node-wide, `/etc/vzdump.conf`
+Backups: every node writes its NAS copy to its own share (`platform_nas.node_backup_shares`): `tasks/nfs_storage.yml`
+runs `roles/nas_shares` (the share and the NFS rule for this node only, through `by_systems.synology_dsm`), then
+adds or checks the NFS storage `platform_nfs_backup_storage` (server and export fixed at creation: a mismatch fails
+the play). The NAS job is declared and converged (`pve_host_nfs_backup_job`, time `pve_host_nfs_backup_schedule`,
+before the node's PBS job); node-wide, `/etc/vzdump.conf`
 carries backup fleecing (PVE Admin Guide, "VM Backup Fleecing") so guest writes never wait on the backup
 target — the fleecing storage is a per-node host var (`pve_host_vzdump_fleecing_storage`: a local,
 thin-provisioned storage with discard; the play fails when it is missing or inactive). ISO 27001:2022

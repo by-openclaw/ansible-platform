@@ -1,0 +1,8 @@
+---
+# roles/nas_shares — a Proxmox node's backup share on the NAS and the NFS rule that admits that node
+# only. Runs on the node (its address is the rule's client); every NAS call is delegated to the
+# controller, through by_systems.synology_dsm (lib-synology-dsm ensure()). The catalog is
+# platform_nas (group_vars/all/nas.yml).
+nas_shares_entry: "{{ platform_nas.node_backup_shares[inventory_hostname] | default({}) }}"
+nas_shares_client: "{{ ansible_host }}"                 # the address the node mounts from (same /20 as the NAS)
+nas_shares_rule: "{{ platform_nas.node_nfs_rule }}"
