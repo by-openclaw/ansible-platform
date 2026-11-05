@@ -31,7 +31,11 @@ pbs_s3_provider_quirks: "{{ platform_external_s3[pbs_s3_provider].pbs_quirks | d
 # chunk reads count against the same cap (429 during the 2026-11-01 verify while backups uploaded).
 pbs_s3_limit_active_requests: "{{ platform_external_s3[pbs_s3_provider].pbs_limit_active_requests | default(0) }}"
 pbs_s3_limit_passive_requests: "{{ platform_external_s3[pbs_s3_provider].pbs_limit_passive_requests | default(0) }}"
-pbs_s3_bucket: "pbs-datastore"                                             # on the provider; created by the role
+# Bytes per second each Proxmox node may send (PBS traffic control `rate-in`, one rule per node address,
+# tasks/traffic.yml); the request cap bounds requests, not bytes. 0 = no rule. The burst equals one second.
+pbs_node_rate_in_bytes: "{{ platform_external_s3[pbs_s3_provider].pbs_node_rate_in_bytes | default(0) }}"
+pbs_traffic_nodes: "{{ groups['proxmox_nodes'] | default([]) }}"          # each node's ansible_host = the source PBS sees
+pbs_s3_bucket: "pbs-datastore"                                           # on the provider; created by the role
 pbs_s3_vault_path: "{{ platform_external_s3[pbs_s3_provider].vault_path }}"   # access_key + secret_key
 
 # --- Migration from the on-site datastore (one-off; both vars go to '' once it is retired) ------
@@ -137,7 +141,10 @@ pbs_pve_backup_token: "pve"               # API token name -> pve-backup@pbs!pve
 # remember to refresh. It did not — after the 2026-09-01 rename Vault still held
 # pve-backup@pbs!pve, an auth-id PBS no longer has (#570).
 pbs_token_vault_path: "{{ platform_env }}/pbs/pve-backup-token"
-pbs_backup_schedule: "03:30"              # 2nd job; NFS vzdump is 05:00 — offset to not overlap
+# The node's PBS job time. playbooks/pbs-pve-storage.yml loads this file as vars_files (above host_vars), so a
+# node sets its own time through `pbs_node_backup_schedule` in its host_vars: the nodes upload to the off-site
+# store one after the other (owner 2026-11-05), each after its NAS copy (roles/pve_host, 01:00).
+pbs_backup_schedule: "{{ pbs_node_backup_schedule | default('03:30') }}"
 # The PBS VM must NOT be in its OWN S3 job — backing the backup server up into the
 # datastore it serves deadlocks ("http upgrade request timed out") and is pointless
 # (PBS's DR copy is the NFS/vzdump job). Excluded by VMID (auto-detected by name).

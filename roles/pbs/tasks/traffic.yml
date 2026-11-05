@@ -1,0 +1,48 @@
+---
+# Each Proxmox node's upload rate into PBS (Proxmox Backup Server Admin Guide, "Traffic Control": a rule
+# limits the clients of the networks it names; `rate-in` is what they send). With the off-site store as
+# the datastore, what a node sends is what PBS uploads to the provider, so the per-node rates add up to
+# the provider's line (pbs_node_rate_in_bytes). One rule per node address, `node-<node>`; 0 = no rule.
+- name: "Traffic | Rules today"
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, traffic-control, list, --output-format, json]
+  register: pbs_tc_list
+  changed_when: false
+  check_mode: false   # read-only probe: must run under --check too (the next tasks read it)
+  when: pbs_node_rate_in_bytes | int > 0
+
+- name: "Traffic | A node's upload rate follows the declaration"
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - traffic-control
+      - "{{ 'update' if _live | length > 0 else 'create' }}"
+      - "node-{{ item }}"
+      - --network
+      - "{{ hostvars[item].ansible_host }}/32"
+      - --rate-in
+      - "{{ pbs_node_rate_in_bytes }}B"
+      - --burst-in
+      - "{{ pbs_node_rate_in_bytes }}B"
+      - --comment
+      - "{{ item }}: uploads to the off-site store paced (roles/pbs)"
+  loop: "{{ pbs_traffic_nodes }}"
+  vars:
+    _live: "{{ pbs_tc_list.stdout | from_json | selectattr('name', 'equalto', 'node-' ~ item) | first | default({}) }}"
+    # PBS answers sizes as written or with a unit ("4000000 B", "4 MB"): compared in bytes
+    _units: {"": 1, "B": 1, "KB": 1000, "MB": 1000000, "GB": 1000000000, "KiB": 1024, "MiB": 1048576, "GiB": 1073741824}
+    _rate_s: "{{ _live['rate-in'] | default('0') | string | regex_replace('\\s', '') }}"
+    _rate_live: "{{ ((_rate_s | regex_search('^[0-9.]+') or '0') | float * (_units[_rate_s | regex_replace('^[0-9.]+', '')] | default(1))) | int }}"
+    _burst_s: "{{ _live['burst-in'] | default('0') | string | regex_replace('\\s', '') }}"
+    _burst_live: "{{ ((_burst_s | regex_search('^[0-9.]+') or '0') | float * (_units[_burst_s | regex_replace('^[0-9.]+', '')] | default(1))) | int }}"
+    _net_live: "{{ _live.network | default([]) | list }}"
+  loop_control:
+    label: "node-{{ item }} {{ hostvars[item].ansible_host }}/32 → {{ pbs_node_rate_in_bytes }} B/s"
+  when:
+    - pbs_node_rate_in_bytes | int > 0
+    - >-
+      _live | length == 0
+      or _rate_live | int != pbs_node_rate_in_bytes | int
+      or _burst_live | int != pbs_node_rate_in_bytes | int
+      or _net_live != [hostvars[item].ansible_host ~ '/32']
+  changed_when: true
