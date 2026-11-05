@@ -57,7 +57,15 @@ cerebrum_server_sentinel_timeout_s: 180
 # --- Cerebrum.ini: the bootstrap (docs/services/cerebrum/README.md §12.1) --------------------------
 # Standalone: the database is on this host; multi-VM: the first cerebrum_db host.
 cerebrum_server_db_host: "{{ inventory_hostname if cerebrum_server_sql_bundled | bool else (groups['cerebrum_db'] | first) }}"
-cerebrum_server_db_address: "{{ 'localhost' if cerebrum_server_sql_bundled | bool else hostvars[cerebrum_server_db_host].ansible_host }}"
+cerebrum_server_db_address: "{{ 'localhost' if cerebrum_server_sql_bundled | bool else hostvars[cerebrum_server_db_host].ansible_host }}"   # the firewall's rules (addresses)
+# The SQL location Cerebrum is given: the FQDN, as the manual writes it (§3.3 p.21) — the instance's
+# certificate (the tier's zone wildcard) validates a name, never an address. The label is the split-DNS
+# service name (group_vars/opnsense.yml, "cerebrum-db") and the hosts file's (templates/hosts.j2).
+cerebrum_server_db_dns_label: cerebrum-db
+cerebrum_server_db_name: >-
+  {{ 'localhost' if cerebrum_server_sql_bundled | bool
+     else cerebrum_server_db_dns_label ~ '.' ~ (platform_domain if hostvars[cerebrum_server_db_host].env == 'prod'
+                                                else hostvars[cerebrum_server_db_host].env ~ '.' ~ platform_domain) }}
 cerebrum_server_db_instance: "{{ hostvars[cerebrum_server_db_host].cerebrum_db_instance | default('CEREBRUMSQL') }}"
 cerebrum_server_db_port: "{{ hostvars[cerebrum_server_db_host].cerebrum_db_port | default(1433) }}"
 # One database and one login per Cerebrum instance (`cerebrum_instance` in the inventory), both made by
@@ -87,7 +95,7 @@ cerebrum_server_ini_settings:
   "SQL:USE_DEFAULT": 0
   "SQL:LOGIN_CREDENTIALS": 2
   "SQL:LOGIN_USERNAME": "{{ cerebrum_server_db_login }}"
-  "SQL:PRIMARY_CONNECTION": "{{ cerebrum_server_db_address }}\\{{ cerebrum_server_db_instance }},{{ cerebrum_server_db_port }}"
+  "SQL:PRIMARY_CONNECTION": "{{ cerebrum_server_db_name }}\\{{ cerebrum_server_db_instance }},{{ cerebrum_server_db_port }}"
   "SQL:REDUNDANT": "{{ 1 if cerebrum_server_redundant | bool else 0 }}"
   "SQL:SECONDARY_CONNECTION": "{{ cerebrum_server_secondary_connection if cerebrum_server_redundant | bool else cerebrum_server_ini_unused_secondary_connection }}"
   "SQL:DATABASE": "{{ cerebrum_server_db_database }}"
@@ -195,6 +203,19 @@ cerebrum_server_defender_paths:
   - 'C:\Backup\Cerebrum'
 # The hosts file (tasks/windows.yml): every Cerebrum server and the database host.
 cerebrum_server_hosts_entries: "{{ (groups['cerebrum_server'] | default([])) + (groups['cerebrum_db'] | default([])) }}"
+# Each host's line carries its short name, its FQDN and its service names with theirs (manual §4 p.45: short
+# name AND FQDN): cerebrum-<instance> and the NMOS registry for a Cerebrum server, cerebrum-db for the
+# database host — the same labels as the split-DNS records (group_vars/opnsense.yml).
+cerebrum_server_hosts_aliases: >-
+  {%- set out = {} -%}
+  {%- for h in groups['cerebrum_server'] | default([]) -%}
+  {%- set _ = out.update({h: ['cerebrum-' ~ hostvars[h].cerebrum_instance]
+                             + ([hostvars[h].cerebrum_nmos_registry] if hostvars[h].cerebrum_nmos_registry is defined else [])}) -%}
+  {%- endfor -%}
+  {%- for h in groups['cerebrum_db'] | default([]) -%}
+  {%- set _ = out.update({h: out.get(h, []) + [cerebrum_server_db_dns_label]}) -%}
+  {%- endfor -%}
+  {{ out }}
 # Cerebrum's own SNMP agent (UDP 1161) answers with the vendor's communities (public / private) until the
 # SNMP settings are hardened (owner: "SNMP later", 2026-11-03): its rule stays present and disabled.
 cerebrum_server_snmp_agent_from: []
