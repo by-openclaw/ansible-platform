@@ -32,6 +32,32 @@
   changed_when: false
   failed_when: false
 
+# SQL Server, on the database host: Windows authentication (the session's own token, no password anywhere),
+# one read-only query per declared login — database state, lockout, live sessions from the client address.
+- name: "Net check | SQL: database online, login usable, sessions from its client"
+  ansible.windows.win_command:
+    argv:
+      - "{{ net_check_sqlcmd }}"
+      - -S
+      - "localhost\\{{ item.instance }}"
+      - -E
+      - -C
+      - -h
+      - "-1"
+      - -W
+      - -Q
+      - >-
+        SET NOCOUNT ON; SELECT CONCAT(CAST(DATABASEPROPERTYEX(N'{{ item.database }}', 'Status') AS nvarchar(20)), '|',
+        CAST(ISNULL(LOGINPROPERTY(N'{{ item.login }}', 'IsLocked'), -1) AS int), '|',
+        (SELECT COUNT(*) FROM sys.dm_exec_sessions s JOIN sys.dm_exec_connections c ON c.session_id = s.session_id
+         WHERE s.login_name = N'{{ item.login }}' AND c.client_net_address = N'{{ item.from }}'))
+  loop: "{{ net_check_items.sql | default([]) }}"
+  loop_control:
+    label: "{{ item.login }}@{{ item.database }} from {{ item.from }}"
+  register: net_check_win_sql
+  changed_when: false
+  failed_when: false
+
 - name: "Net check | Results"
   ansible.builtin.set_fact:
     net_check_results: >-
@@ -55,5 +81,15 @@
         {%- set req = r.item.required | default(false) -%}
         {%- set _ = out.append({'ok': ok, 'required': req,
              'line': ('PASS ' if ok else ('FAIL ' if req else 'INFO ')) ~ 'ping ' ~ r.item.host ~ (' replies' if ok else ' no reply')}) -%}
+      {%- endfor -%}
+      {%- for r in net_check_win_sql.results | default([]) -%}
+        {%- set f = ((r.stdout | default('') | trim) ~ '||').split('|') -%}
+        {%- set ran = r.rc | default(1) == 0 -%}
+        {%- set ok = ran and f[0] == 'ONLINE' and f[1] == '0' and (f[2] | int(0)) > 0 -%}
+        {%- set lock = 'not locked' if f[1] == '0' else ('LOCKED' if f[1] == '1' else 'no such login') -%}
+        {%- set detail = ((f[0] or 'no answer') ~ ', ' ~ lock ~ ', ' ~ (f[2] | int(0)) ~ ' sessions') if ran
+                         else ((r.stderr | default('', true) or r.stdout | default('', true) or 'sqlcmd failed') | trim | truncate(80)) -%}
+        {%- set _ = out.append({'ok': ok, 'required': r.item.required | default(true),
+             'line': ('PASS ' if ok else 'FAIL ') ~ 'sql ' ~ r.item.login ~ '@' ~ r.item.database ~ ' from ' ~ r.item.from ~ ': ' ~ detail}) -%}
       {%- endfor -%}
       {{ out }}
