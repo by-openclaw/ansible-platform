@@ -1,0 +1,45 @@
+---
+# Python for Cerebrum's "Python protocol" device scripts (Cerebrum\Python Scripts: a Device class calling
+# Cerebrum through CerebrumModule): Cerebrum embeds python38.dll and logs "Required Python DLL
+# python38.dll not present" without it (2026-11-05). CPython 3.8.10, the last 3.8 Windows installer,
+# END-OF-LIFE since October 2024 — installed because the vendor's build asks for exactly that DLL (EVS
+# question 17: a supported version). From the installer store, its sha256 checked on the guest, silent,
+# for all users, on the system PATH; only where the DLL is missing. Cerebrum loads it at its next start.
+- name: "Cerebrum server | Python: is its DLL there?"
+  ansible.windows.win_stat:
+    path: "{{ cerebrum_server_python_dir }}\\{{ cerebrum_server_python_dll | win_basename }}"
+  register: cerebrum_server_python_dll_stat
+
+- name: "Cerebrum server | Python where it is missing"
+  when: not cerebrum_server_python_dll_stat.stat.exists
+  block:
+    - name: "Cerebrum server | Download folder"
+      ansible.windows.win_file:
+        path: "{{ cerebrum_server_download_dir }}"
+        state: directory
+
+    - name: "Cerebrum server | The Python installer, from the installer store"
+      ansible.windows.win_copy:
+        src: "{{ cerebrum_server_python_src }}"
+        dest: "{{ cerebrum_server_python_installer_path }}"
+
+    - name: "Cerebrum server | The Python installer's checksum"
+      ansible.windows.win_stat:
+        path: "{{ cerebrum_server_python_installer_path }}"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: cerebrum_server_python_installer_stat
+
+    - name: "Cerebrum server | The Python installer is the pinned one"
+      ansible.builtin.assert:
+        that: cerebrum_server_python_installer_stat.stat.checksum | default('') | lower == cerebrum_server_python_sha256 | lower
+        fail_msg: "{{ cerebrum_server_python_installer_path }}: not the pinned sha256"
+        quiet: true
+      when: not ansible_check_mode
+
+    - name: "Cerebrum server | CPython, silent, all users, on the PATH, nothing optional"
+      ansible.windows.win_package:
+        path: "{{ cerebrum_server_python_installer_path }}"
+        arguments: "{{ cerebrum_server_python_arguments }}"
+        creates_path: "{{ cerebrum_server_python_dir }}\\{{ cerebrum_server_python_dll | win_basename }}"
+        state: present
