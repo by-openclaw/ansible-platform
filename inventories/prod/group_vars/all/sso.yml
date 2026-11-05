@@ -41,6 +41,26 @@ authentik_oidc_apps:
     vault_path: "{{ platform_env }}/pgadmin/oidc"
     redirect_uris:
       - "https://{{ platform_service_fqdns.pgadmin }}/oauth2/authorize"
+  # DbGate (roles/dbgate): the administrators' view, then the Cerebrum views. DbGate returns to the page it
+  # was opened on (location.origin + pathname): each view's root is its redirect.
+  - slug: dbgate
+    launch_url: "https://{{ platform_service_fqdns.dbgate }}"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/dbgate.svg"
+    name: "DbGate (all databases)"
+    group: "{{ platform_service_groups.dbgate.admin }}"
+    vault_path: "{{ platform_env }}/dbgate/oidc"
+    redirect_uris: >-
+      {{ platform_dbgate_views | selectattr('sso_slug', 'equalto', 'dbgate')
+         | map(attribute='label') | map('regex_replace', '^(.*)$', 'https://\1.' ~ platform_domain ~ '/') | list }}
+  - slug: dbgate-cerebrum
+    launch_url: "https://{{ (platform_dbgate_views | selectattr('sso_slug', 'equalto', 'dbgate-cerebrum') | first).label }}.{{ platform_domain }}"
+    icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/dbgate.svg"
+    name: "DbGate (Cerebrum)"
+    group: "{{ platform_service_groups.dbgate.access }}"
+    vault_path: "{{ platform_env }}/dbgate/oidc-cerebrum"
+    redirect_uris: >-
+      {{ platform_dbgate_views | selectattr('sso_slug', 'equalto', 'dbgate-cerebrum')
+         | map(attribute='label') | map('regex_replace', '^(.*)$', 'https://\1.' ~ platform_domain ~ '/') | list }}
   - slug: netbox
     launch_url: "https://{{ platform_service_fqdns.netbox }}"
     icon: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/netbox.svg"
