@@ -4,5 +4,11 @@
 # RFC5424/TCP to promtail here; only the FW's SVC addresses may connect.
 promtail_syslog_listeners:
   - { name: opnsense, port: 1514, allow_from: ["10.1.3.1", "fd01:3::1"], audit: true }   # infra/0006 INF-32
+  # EVS Cerebrum's logging server (manual p.132; owner 2026-11-05, row 1): audit trail + event log over TCP from
+  # the two Cerebrum servers (cerebrum_server LOGGING rows). Their addresses come from the inventory.
+  - name: cerebrum
+    port: 1515
+    allow_from: "{{ groups['cerebrum_server'] | map('extract', hostvars, 'ansible_host') | list }}"
+    audit: true
 # Log retention 90 days (GDPR Art.30 / ISO27001 A.8.16 — issue #12 minimum).
 loki_retention: "2160h"
