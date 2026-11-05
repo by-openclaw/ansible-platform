@@ -1,0 +1,59 @@
+---
+# Windows: ping.exe resolves through the Windows resolver (hosts file, then DNS) and prints the address it
+# used ("Pinging <name> [<address>]"), even when the target drops ICMP; win_wait_for opens the TCP port.
+- name: "Net check | Resolve (Windows resolver, hosts file first)"
+  ansible.windows.win_command:
+    argv: [ping.exe, -n, "1", -w, "{{ net_check_ping_wait_ms | string }}", "{{ item.name }}"]
+  loop: "{{ net_check_items.resolve | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: net_check_win_resolve
+  changed_when: false
+  failed_when: false
+
+- name: "Net check | TCP"
+  ansible.windows.win_wait_for:
+    host: "{{ item.host }}"
+    port: "{{ item.port }}"
+    timeout: "{{ net_check_tcp_timeout }}"
+  loop: "{{ net_check_items.tcp | default([]) }}"
+  loop_control:
+    label: "{{ item.host }}:{{ item.port }}"
+  register: net_check_win_tcp
+  failed_when: false
+
+- name: "Net check | Ping"
+  ansible.windows.win_command:
+    argv: [ping.exe, -n, "1", -w, "{{ net_check_ping_wait_ms | string }}", "{{ item.host }}"]
+  loop: "{{ net_check_items.ping | default([]) }}"
+  loop_control:
+    label: "{{ item.host }}"
+  register: net_check_win_ping
+  changed_when: false
+  failed_when: false
+
+- name: "Net check | Results"
+  ansible.builtin.set_fact:
+    net_check_results: >-
+      {%- set out = [] -%}
+      {%- for r in net_check_win_resolve.results | default([]) -%}
+        {%- set got = (r.stdout | default('') | regex_search('\[([0-9a-fA-F:.%]+)\]', '\\1') | default([''], true) | first) -%}
+        {%- set want = r.item.expect | default('') | string -%}
+        {%- set ok = (got | length > 0) and (want | length == 0 or got == want) -%}
+        {%- set _ = out.append({'ok': ok, 'required': r.item.required | default(true),
+             'line': ('PASS ' if ok else 'FAIL ') ~ 'resolve ' ~ r.item.name ~ ' -> ' ~ (got or 'no answer')
+                     ~ ((' (expected ' ~ want ~ ')') if want and not ok else '')}) -%}
+      {%- endfor -%}
+      {%- for r in net_check_win_tcp.results | default([]) -%}
+        {%- set ok = not (r.failed | default(false)) and ('timeout' not in (r.msg | default('') | lower)) -%}
+        {%- set _ = out.append({'ok': ok, 'required': r.item.required | default(true),
+             'line': ('PASS ' if ok else 'FAIL ') ~ 'tcp ' ~ r.item.host ~ ':' ~ r.item.port
+                     ~ ('' if ok else ' (' ~ (r.msg | default('no answer') | truncate(80)) ~ ')')}) -%}
+      {%- endfor -%}
+      {%- for r in net_check_win_ping.results | default([]) -%}
+        {%- set ok = 'TTL=' in (r.stdout | default('')) -%}
+        {%- set req = r.item.required | default(false) -%}
+        {%- set _ = out.append({'ok': ok, 'required': req,
+             'line': ('PASS ' if ok else ('FAIL ' if req else 'INFO ')) ~ 'ping ' ~ r.item.host ~ (' replies' if ok else ' no reply')}) -%}
+      {%- endfor -%}
+      {{ out }}

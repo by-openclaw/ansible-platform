@@ -1,0 +1,58 @@
+---
+# Linux: getent hosts resolves through nsswitch (/etc/hosts, then DNS); wait_for opens the TCP port.
+- name: "Net check | Resolve (nsswitch, /etc/hosts first)"
+  ansible.builtin.command:
+    argv: [getent, hosts, "{{ item.name }}"]
+  loop: "{{ net_check_items.resolve | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: net_check_lin_resolve
+  changed_when: false
+  failed_when: false
+
+- name: "Net check | TCP"
+  ansible.builtin.wait_for:
+    host: "{{ item.host }}"
+    port: "{{ item.port }}"
+    timeout: "{{ net_check_tcp_timeout }}"
+  loop: "{{ net_check_items.tcp | default([]) }}"
+  loop_control:
+    label: "{{ item.host }}:{{ item.port }}"
+  register: net_check_lin_tcp
+  failed_when: false
+
+- name: "Net check | Ping"
+  ansible.builtin.command:
+    argv: [ping, -c, "1", -W, "1", "{{ item.host }}"]
+  loop: "{{ net_check_items.ping | default([]) }}"
+  loop_control:
+    label: "{{ item.host }}"
+  register: net_check_lin_ping
+  changed_when: false
+  failed_when: false
+
+- name: "Net check | Results"
+  ansible.builtin.set_fact:
+    net_check_results: >-
+      {%- set out = [] -%}
+      {%- for r in net_check_lin_resolve.results | default([]) -%}
+        {%- set got = (r.stdout | default('')).split() | first | default('') -%}
+        {%- set want = r.item.expect | default('') | string -%}
+        {%- set ok = (r.rc | default(1) == 0) and (want | length == 0 or got == want) -%}
+        {%- set _ = out.append({'ok': ok, 'required': r.item.required | default(true),
+             'line': ('PASS ' if ok else 'FAIL ') ~ 'resolve ' ~ r.item.name ~ ' -> ' ~ (got or 'no answer')
+                     ~ ((' (expected ' ~ want ~ ')') if want and not ok else '')}) -%}
+      {%- endfor -%}
+      {%- for r in net_check_lin_tcp.results | default([]) -%}
+        {%- set ok = not (r.failed | default(false)) -%}
+        {%- set _ = out.append({'ok': ok, 'required': r.item.required | default(true),
+             'line': ('PASS ' if ok else 'FAIL ') ~ 'tcp ' ~ r.item.host ~ ':' ~ r.item.port
+                     ~ ('' if ok else ' (' ~ (r.msg | default('no answer') | truncate(80)) ~ ')')}) -%}
+      {%- endfor -%}
+      {%- for r in net_check_lin_ping.results | default([]) -%}
+        {%- set ok = r.rc | default(1) == 0 -%}
+        {%- set req = r.item.required | default(false) -%}
+        {%- set _ = out.append({'ok': ok, 'required': req,
+             'line': ('PASS ' if ok else ('FAIL ' if req else 'INFO ')) ~ 'ping ' ~ r.item.host ~ (' replies' if ok else ' no reply')}) -%}
+      {%- endfor -%}
+      {{ out }}

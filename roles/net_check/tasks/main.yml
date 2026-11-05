@@ -1,0 +1,24 @@
+---
+# roles/net_check — see defaults/main.yml. Each check is read-only (changed_when: false); the results are
+# collected into one recap per host, then a required check that failed fails the host.
+- name: "Net check | Windows checks"
+  ansible.builtin.include_tasks: windows.yml
+  when: ansible_shell_type | default('') == 'powershell'
+
+- name: "Net check | Linux checks"
+  ansible.builtin.include_tasks: linux.yml
+  when: ansible_shell_type | default('') != 'powershell'
+
+- name: "Net check | Recap"
+  ansible.builtin.debug:
+    msg: "{{ net_check_results | map(attribute='line') | list + ['NET_CHECK ' ~ inventory_hostname ~ ': '
+            ~ (net_check_results | selectattr('ok') | list | length) ~ ' passed, '
+            ~ (net_check_results | rejectattr('ok') | selectattr('required') | list | length) ~ ' failed, '
+            ~ (net_check_results | rejectattr('ok') | rejectattr('required') | list | length) ~ ' informational'] }}"
+
+- name: "Net check | Every required check passed"
+  ansible.builtin.assert:
+    that: net_check_results | rejectattr('ok') | selectattr('required') | list | length == 0
+    fail_msg: "{{ net_check_results | rejectattr('ok') | selectattr('required') | map(attribute='line') | list }}"
+    quiet: true
+  when: net_check_fail_on_error | bool

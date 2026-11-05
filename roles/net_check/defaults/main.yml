@@ -1,0 +1,21 @@
+---
+# ==============================================================================
+# roles/net_check — read-only connectivity checks, declared per host group in the inventory, with a
+# per-host recap (owner 2026-11-05: "a tool like ansible to test hosts file, DNS resolver, ping, firewall
+# port reaching … and get a report"). Nothing is changed on any host.
+#
+#   net_checks:            (group_vars / host_vars; empty = nothing to check)
+#     resolve:             names resolved THROUGH THE HOST'S OWN RESOLVER (hosts file first, then DNS)
+#       - {name: cerebrum-db, expect: 10.6.239.203}      # expect optional: any answer passes without it
+#     tcp:                 a TCP connection from the host
+#       - {host: cerebrum-db.dev.example, port: 1433}
+#     ping:                ICMP echo; informational unless `required: true` (many hosts drop ICMP)
+#       - {host: vm-winsql-01, required: false}
+#
+# Windows: the name is resolved by ping.exe's own lookup (the Windows resolver, hosts file included —
+# nslookup bypasses the hosts file), the port by win_wait_for. Linux: getent hosts (nsswitch), wait_for, ping.
+# ==============================================================================
+net_check_items: "{{ net_checks | default({}) }}"
+net_check_tcp_timeout: 3          # seconds per TCP check
+net_check_ping_wait_ms: 800       # Windows ping -w; Linux uses 1 s
+net_check_fail_on_error: true     # a failed required check fails the host at the end (after the recap)

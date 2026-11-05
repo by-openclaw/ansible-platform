@@ -1,0 +1,63 @@
+---
+# ==============================================================================
+# Connectivity checks, read-only (roles/net_check): every host that declares `net_checks` in the inventory
+# resolves names through its own resolver, opens TCP ports, pings — then one recap per host and a summary.
+# A required check that fails makes the run fail (exit code ≠ 0) after the recap.
+#
+#   All declared hosts:  ansible-playbook playbooks/net-check.yml
+#   One group or host:   ansible-playbook playbooks/net-check.yml -e target=cerebrum_server
+# ==============================================================================
+- name: "Net check | The hosts that declare checks"
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: "Net check | Select them"
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: net_check_targets
+      loop: >-
+        {{ query('inventory_hostnames', target | default('all'))
+           | select('in', hostvars) | list
+           | map('extract', hostvars) | selectattr('net_checks', 'defined') | map(attribute='inventory_hostname') | list }}
+      changed_when: false
+
+- name: "Net check | Run them"
+  hosts: net_check_targets
+  gather_facts: false
+  roles:
+    - role: net_check
+      vars:
+        net_check_fail_on_error: false   # the summary below decides, after every host reported
+
+- name: "Net check | Summary"
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: "Net check | Failed required checks"
+      ansible.builtin.set_fact:
+        net_check_failed: >-
+          {%- set out = [] -%}
+          {%- for h in groups['net_check_targets'] | default([]) -%}
+            {%- for r in hostvars[h].net_check_results | default([]) if not r.ok and r.required -%}
+              {%- set _ = out.append(h ~ ': ' ~ r.line) -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+    - name: "Net check | Table"
+      ansible.builtin.debug:
+        msg: >-
+          {%- set rows = [] -%}
+          {%- for h in groups['net_check_targets'] | default([]) -%}
+            {%- set r = hostvars[h].net_check_results | default([]) -%}
+            {%- set _ = rows.append(h ~ ': ' ~ (r | selectattr('ok') | list | length) ~ ' passed, '
+                                    ~ (r | rejectattr('ok') | selectattr('required') | list | length) ~ ' failed, '
+                                    ~ (r | rejectattr('ok') | rejectattr('required') | list | length) ~ ' informational') -%}
+          {%- endfor -%}
+          {{ rows + (['FAILED: '] + net_check_failed if net_check_failed | length > 0 else ['ALL REQUIRED CHECKS PASSED']) }}
+    - name: "Net check | Every required check passed"
+      ansible.builtin.assert:
+        that: net_check_failed | length == 0
+        fail_msg: "{{ net_check_failed | length }} required check(s) failed (listed above)"
+        quiet: true
