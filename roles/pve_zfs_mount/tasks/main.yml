@@ -11,7 +11,7 @@
 
 - name: "PVE ZFS | Resolve each item's VMID from its guest name"
   ansible.builtin.set_fact:
-    pve_zfs_mount_resolved: >-
+    pve_zfs_mount_on_node: >-
       {%- set ids = {} -%}
       {%- for line in pve_zfs_mount_pct.stdout_lines[1:] -%}
         {%- set f = line.split() -%}{%- set _ = ids.update({f[-1]: f[0]}) -%}
@@ -22,11 +22,25 @@
       {%- endfor -%}
       {{ out }}
 
-- name: "PVE ZFS | Every guest runs on this node"
+# A play runs on every Proxmox node; each node serves the items whose guest it carries, and a
+# guest that no node carries (a misspelt name) still fails the play.
+- name: "PVE ZFS | The items whose guest runs on this node"
+  ansible.builtin.set_fact:
+    pve_zfs_mount_resolved: "{{ pve_zfs_mount_on_node | rejectattr('vmid', 'equalto', '') | list }}"
+
+- name: "PVE ZFS | Every guest runs on one of the nodes"
   ansible.builtin.assert:
-    that: pve_zfs_mount_resolved | selectattr('vmid', 'equalto', '') | list | length == 0
-    fail_msg: "no container on this node for: {{ pve_zfs_mount_resolved | selectattr('vmid', 'equalto', '') | map(attribute='guest') | list }}"
+    that: _missing | length == 0
+    fail_msg: "no node of this play carries: {{ _missing }}"
     quiet: true
+  vars:
+    _found: "{{ ansible_play_hosts | map('extract', hostvars, 'pve_zfs_mount_resolved') | flatten | map(attribute='guest') | list }}"
+    _missing: "{{ pve_zfs_mount_items | map(attribute='guest') | reject('in', _found) | unique | list }}"
+  run_once: true
+
+- name: "PVE ZFS | Nothing to mount on this node"
+  ansible.builtin.meta: end_host
+  when: pve_zfs_mount_resolved | length == 0
 
 - name: "PVE ZFS | Check which datasets already exist"
   ansible.builtin.command:
