@@ -6,6 +6,12 @@
   changed_when: false
   check_mode: false   # read-only probe
 
+- name: "Storage | Pool state, as the report and the checks read it"
+  ansible.builtin.set_fact:
+    pve_storage_pool_state: "{{ pve_storage_pool.stdout | trim }}"
+
+# The HPE Smart Array steps run where the node carries the controller's tooling
+# (pve_host_smartarray_cli); a node without it reads its pool's disks directly (below).
 - name: "Storage | Logical volumes and physical drives (controller)"
   ansible.builtin.command:
     argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", "{{ item }}", all, show, status]
@@ -13,10 +19,11 @@
   register: pve_storage_state
   changed_when: false
   check_mode: false   # read-only probe
+  when: pve_host_smartarray_cli | bool
 
-- name: "Storage | Facts of the report"
+- name: "Storage | Facts of the report (controller)"
+  when: pve_host_smartarray_cli | bool
   ansible.builtin.set_fact:
-    pve_storage_pool_state: "{{ pve_storage_pool.stdout | trim }}"
     pve_storage_ld_failed: >-
       {{ (pve_storage_state.results | selectattr('item', 'eq', 'ld') | first).stdout_lines | select('search', 'logicaldrive')
          | reject('search', ' OK *$') | map('split') | map(attribute=1) | map('replace', ':', '') | list }}
@@ -34,10 +41,12 @@
   changed_when: false
   failed_when: false   # smartctl's exit status is a bit mask of findings, not a failed read
   check_mode: false   # read-only probe
+  when: pve_host_smartarray_cli | bool
 
 # Per bay: the health word, the grown defect list, and the uncorrected errors summed over the
 # read, write and verify rows of the error counter log (their last column).
-- name: "Storage | Per-drive wear"
+- name: "Storage | Per-drive wear (controller)"
+  when: pve_host_smartarray_cli | bool
   ansible.builtin.set_fact:
     pve_storage_wear: >-
       {%- set out = [] -%}
@@ -50,22 +59,69 @@
       {%- endfor -%}
       {{ out }}
 
+# No controller (pve_host_smartarray_cli false): the pool's member disks, from `zpool status -P`
+# (by-id paths), each read directly by smartctl — health, reallocated, pending and offline-uncorrectable
+# sectors, and the SSD wear indicator (normalised value of Wear_Leveling_Count / "Percentage Used").
+- name: "Storage | The pool's member disks (no controller)"
+  ansible.builtin.command:
+    argv: [zpool, status, -P, "{{ pve_host_zfs_pool }}"]
+  register: pve_host_storage_members
+  changed_when: false
+  check_mode: false   # read-only probe
+  when: not (pve_host_smartarray_cli | bool)
+
+- name: "Storage | SMART record of each member disk (no controller)"
+  ansible.builtin.command:
+    argv: [smartctl, -H, -A, "{{ item }}"]
+  loop: >-
+    {{ pve_host_storage_members.stdout | regex_findall('/dev/\S+')
+       | map('regex_replace', '-part[0-9]+$', '') | map('regex_replace', '^(/dev/nvme[0-9]+n[0-9]+)p[0-9]+$', '\1')
+       | map('regex_replace', '^(/dev/sd[a-z]+)[0-9]+$', '\1') | unique | list }}
+  register: pve_host_storage_smart_direct
+  changed_when: false
+  failed_when: false   # smartctl's exit status is a bit mask of findings, not a failed read
+  check_mode: false   # read-only probe
+  when: not (pve_host_smartarray_cli | bool)
+
+- name: "Storage | Per-disk wear (no controller)"
+  when: not (pve_host_smartarray_cli | bool)
+  ansible.builtin.set_fact:
+    pve_host_storage_wear_direct: >-
+      {%- set out = [] -%}
+      {%- for r in pve_host_storage_smart_direct.results -%}
+        {%- set o = r.stdout | default('') -%}
+        {%- set health = o | regex_search('(?:overall-health self-assessment test result|SMART Health Status): *(\\S+)', '\\1') -%}
+        {%- set realloc = o | regex_search('Reallocated_Sector_Ct +\\S+ +\\S+ +\\S+ +\\S+ +\\S+ +\\S+ +\\S+ +(\\d+)', '\\1') -%}
+        {%- set pending = o | regex_search('Current_Pending_Sector +\\S+ +\\S+ +\\S+ +\\S+ +\\S+ +\\S+ +\\S+ +(\\d+)', '\\1') -%}
+        {%- set uncorr = o | regex_search('Offline_Uncorrectable +\\S+ +\\S+ +\\S+ +\\S+ +\\S+ +\\S+ +\\S+ +(\\d+)', '\\1') -%}
+        {%- set wear = o | regex_search('Wear_Leveling_Count +\\S+ +(\\d+)', '\\1') or o | regex_search('Percentage Used: *(\\d+%)', '\\1') -%}
+        {%- set _ = out.append((r.item | basename) ~ ' health=' ~ ((health | first) if health else '?')
+                               ~ ' reallocated=' ~ ((realloc | first) if realloc else '-')
+                               ~ ' pending=' ~ ((pending | first) if pending else '-')
+                               ~ ' uncorrectable=' ~ ((uncorr | first) if uncorr else '-')
+                               ~ ' wear=' ~ ((wear | first) if wear else '-')) -%}
+      {%- endfor -%}
+      {{ out }}
+
 - name: "Storage | Report"
   ansible.builtin.debug:
     msg:
       - "pool {{ pve_host_zfs_pool }}: {{ pve_storage_pool_state }}"
-      - "logical volumes not OK: {{ pve_storage_ld_failed | default([], true) }}"
-      - "physical drives not OK: {{ pve_storage_pd_not_ok | default([], true) }}"
-      - "drive wear (bay, health, grown defects, uncorrected errors):"
-      - "{{ pve_storage_wear }}"
+      - "logical volumes not OK: {{ (pve_storage_ld_failed | default([], true)) if (pve_host_smartarray_cli | bool) else 'no controller' }}"
+      - "physical drives not OK: {{ (pve_storage_pd_not_ok | default([], true)) if (pve_host_smartarray_cli | bool) else 'no controller' }}"
+      - >-
+        {{ 'drive wear (bay, health, grown defects, uncorrected errors):' if (pve_host_smartarray_cli | bool)
+           else 'disk wear (disk, health, reallocated, pending, uncorrectable, wear):' }}
+      - "{{ pve_storage_wear if (pve_host_smartarray_cli | bool) else pve_host_storage_wear_direct }}"
 
 # Repair: only a volume whose physical drive the controller reports OK (a failed drive needs a
 # replacement, not a re-enable).
 - name: "Storage | Re-enable failed logical volumes (their physical drives are OK)"
   ansible.builtin.command:
     argv: [ssacli, ctrl, "slot={{ pve_host_smartarray_slot }}", ld, "{{ item }}", modify, reenable, forced]
-  loop: "{{ pve_storage_ld_failed }}"
+  loop: "{{ pve_storage_ld_failed | default([]) }}"
   when:
+    - pve_host_smartarray_cli | bool
     - pve_storage_reenable | bool
     - pve_storage_pd_not_ok | length == 0
   changed_when: true
