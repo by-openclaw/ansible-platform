@@ -31,6 +31,17 @@
   register: nas_shares_share
   when: nas_shares_entry | length > 0
 
+# --check before the share exists: DSM cannot list the rules of a folder it does not have yet (2370),
+# so the dry run reports the rule the real run will create.
+- name: "NAS | The NFS rule a dry run cannot read yet (its share is still to be created)"
+  ansible.builtin.debug:
+    msg: "would_create: {{ nas_shares_entry.share }} NFS rule for {{ nas_shares_client }} ({{ nas_shares_rule.privilege }}, squash {{ nas_shares_rule.root_squash }})"
+  changed_when: true
+  when:
+    - nas_shares_entry | length > 0
+    - ansible_check_mode
+    - (nas_shares_share.action | default('')) == 'would_create'
+
 - name: "NAS | The NFS rule: this node, and no other, may mount it"
   by_systems.synology_dsm.synology_dsm_nfs:
     host: "{{ nas_shares_conn.host }}"
@@ -45,4 +56,6 @@
   delegate_to: localhost
   become: false
   register: nas_shares_nfs
-  when: nas_shares_entry | length > 0
+  when:
+    - nas_shares_entry | length > 0
+    - not (ansible_check_mode and (nas_shares_share.action | default('')) == 'would_create')
