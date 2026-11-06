@@ -1,8 +1,9 @@
 ---
 # ==============================================================================
-# Role: etcd — dispatcher. The play must run on ALL members at once (no serial): a member is
-# only healthy when a quorum is up, so the containers start everywhere before the cluster
-# checks run.
+# Role: etcd — dispatcher. Two plays run it (playbooks/postgresql.yml): one on ALL members at
+# once (no serial) — a member is only healthy when a quorum is up, so a new cluster's containers
+# start everywhere before the cluster checks run — then one with serial 1 and etcd_rolling, the
+# only one that replaces a member already running (see defaults).
 # ==============================================================================
 - name: "etcd | Remove the member and its data (etcd_state=absent)"
   ansible.builtin.import_tasks: absent.yml

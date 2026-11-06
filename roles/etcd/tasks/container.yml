@@ -1,6 +1,13 @@
 ---
 # The container through the scaffold's containers step (the one owner of "run a pinned
 # container"). Flags as environment (ETCD_*): none of them is a secret.
+# A running member is replaced only in the rolling play (etcd_rolling): see defaults.
+- name: "container | Does the member run already?"
+  community.docker.docker_container_info:
+    name: "{{ etcd_container_name }}"
+  register: etcd_container_now
+  check_mode: false   # read-only: decides whether this play may touch the member
+
 - name: "container | etcd member (roles/service_scaffold containers)"
   ansible.builtin.include_role:
     name: service_scaffold
@@ -41,3 +48,4 @@
             ETCD_PEER_KEY_FILE: "{{ etcd_tls_key }}"
             ETCD_AUTO_COMPACTION_MODE: "periodic"
             ETCD_AUTO_COMPACTION_RETENTION: "{{ etcd_auto_compaction_retention }}"
+  when: etcd_rolling | bool or not (etcd_container_now.exists | default(false))

@@ -12,7 +12,14 @@
 #     members by the firewall catalog instead.
 # ==============================================================================
 etcd_state: present                            # absent = remove the member AND its data
-etcd_image: "quay.io/coreos/etcd:v3.6.15"      # exact pin, never a stream tag
+etcd_image: "quay.io/coreos/etcd:v3.6.16"      # exact pin, never a stream tag
+
+# A member that already runs is changed (image, flags) only by the rolling play
+# (playbooks/postgresql.yml, serial 1): one member at a time, the cluster healthy again before
+# the next — recreating every member together would drop the quorum, and Patroni would lose its
+# leader key. A member that does not run yet is created by the all-at-once play (a new cluster
+# forms its quorum by starting together). true = this run may replace a running member.
+etcd_rolling: false
 etcd_container_name: "etcd"
 
 # The members, as inventory hosts. Quorum = floor(n/2)+1: three members survive the loss of one.
