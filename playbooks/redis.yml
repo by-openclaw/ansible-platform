@@ -3,12 +3,22 @@
 # one on the endpoint guest) that promote the replica when the primary is gone.
 #   ansible-playbook playbooks/redis.yml
 # Members one at a time, the current primary's host first on a first build (the replica needs
-# it to copy from).
+# it to copy from). A running primary whose image changes hands over first (roles/redis_sentinel
+# handover.yml: SENTINEL FAILOVER), so it is recreated as a replica. Sentinels one at a time too:
+# the quorum (2 of 3) stays up while each one restarts.
 - name: "Redis | members, one at a time"
   hosts: redis_cluster
   become: true
   gather_facts: true
   serial: 1
+  pre_tasks:
+    - name: "Redis | A primary replaced next hands over first (roles/redis_sentinel handover)"
+      ansible.builtin.include_role:
+        name: redis_sentinel
+        tasks_from: handover.yml
+      vars:
+        redis_sentinel_member_image: "{{ redis_image }}"
+      when: redis_state | default('present') == 'present'
   roles:
     - base
     - docker
@@ -18,6 +28,7 @@
   hosts: redis_cluster:pg_endpoint
   become: true
   gather_facts: true
+  serial: 1
   roles:
     - base
     - docker
