@@ -1,0 +1,100 @@
+---
+# A primary whose container is replaced next hands over first — the Redis upgrade procedure for a
+# Sentinel-managed pair: the replicas, then a failover, then the former primary. Without it the
+# primary simply disappears while it is recreated: writes fail until the Sentinels' down-after
+# timeout and an unplanned failover. Here the Sentinels promote the replica on request
+# (SENTINEL FAILOVER), and roles/redis then recreates this member as a replica.
+# Runs on a member host before roles/redis (playbooks/redis.yml, members play, pre_tasks);
+# `redis_sentinel_member_image` is the image roles/redis is about to run. Nothing happens on a
+# first build (no member or no Sentinel yet), when the image does not change, or on a replica.
+
+- name: "Sentinel | Handover | The member's and the Sentinel's containers"
+  community.docker.docker_container_info:
+    name: "{{ item }}"
+  loop:
+    - "{{ redis_sentinel_redis_container_name }}"
+    - "{{ redis_sentinel_container_name }}"
+  register: redis_sentinel_handover_ctrs
+  check_mode: false   # read-only: decides whether a handover is due
+
+- name: "Sentinel | Handover | Is one due? (the member runs another image, a Sentinel runs here)"
+  ansible.builtin.set_fact:
+    redis_sentinel_handover_candidate: >-
+      {{ (redis_sentinel_handover_ctrs.results[0].exists | default(false))
+         and (redis_sentinel_handover_ctrs.results[1].exists | default(false))
+         and redis_sentinel_handover_ctrs.results[0].container.Config.Image != redis_sentinel_member_image }}
+
+- name: "Sentinel | Handover | The Sentinels' password (read from Vault)"
+  ansible.builtin.include_role:
+    name: vault_secret
+  vars:
+    vault_secret_path: "{{ redis_sentinel_vault_path }}"
+    vault_secret_action: read   # pragma: allowlist secret
+  when: redis_sentinel_handover_candidate | bool
+
+- name: "Sentinel | Handover | Bind it"
+  ansible.builtin.set_fact:
+    redis_sentinel_password: "{{ vault_secret_result.password }}"
+  no_log: true
+  when: redis_sentinel_handover_candidate | bool
+
+- name: "Sentinel | Handover | The primary the Sentinels name now"
+  ansible.builtin.command:
+    argv: "{{ redis_sentinel_cli }}"
+    stdin: "{{ redis_sentinel_auth }}\nSENTINEL GET-MASTER-ADDR-BY-NAME {{ redis_sentinel_master_name }}"
+  register: redis_sentinel_primary_before
+  changed_when: false
+  check_mode: false   # read-only probe
+  failed_when: redis_sentinel_primary_before.rc != 0 or (redis_sentinel_primary_before.stdout_lines | length) < 3
+  no_log: true
+  when: redis_sentinel_handover_candidate | bool
+
+# Line 0 answers AUTH; line 1 is the primary's address as the Sentinels announce it.
+- name: "Sentinel | Handover | This member is the primary"
+  ansible.builtin.set_fact:
+    redis_sentinel_handover_due: >-
+      {{ (redis_sentinel_handover_candidate | bool)
+         and (redis_sentinel_primary_before.stdout_lines[1] | default('')) in redis_sentinel_handover_names }}
+  vars:
+    redis_sentinel_handover_names:
+      - "{{ inventory_hostname }}.{{ platform_domain }}"
+      - "{{ hostvars[inventory_hostname].ansible_host }}"
+      - "{{ hostvars[inventory_hostname].platform_host_v6 | default('') }}"
+
+- name: "Sentinel | Handover | Plan"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      {{ ('primary, image changes → SENTINEL FAILOVER before the replacement'
+          ~ ('' if not ansible_check_mode else ' (dry run: not requested)'))
+         if redis_sentinel_handover_due | bool
+         else 'no handover (not the primary, no image change, or a first build)' }}
+
+- name: "Sentinel | Handover | SENTINEL FAILOVER"
+  ansible.builtin.command:
+    argv: "{{ redis_sentinel_cli }}"
+    stdin: "{{ redis_sentinel_auth }}\nSENTINEL FAILOVER {{ redis_sentinel_master_name }}"
+  register: redis_sentinel_failover
+  changed_when: true
+  failed_when: "'OK' not in (redis_sentinel_failover.stdout_lines[1:] | default([]))"   # line 0 answers AUTH
+  no_log: true
+  when:
+    - redis_sentinel_handover_due | bool
+    - not ansible_check_mode
+
+- name: "Sentinel | Handover | The Sentinels name the other member"
+  ansible.builtin.command:
+    argv: "{{ redis_sentinel_cli }}"
+    stdin: "{{ redis_sentinel_auth }}\nSENTINEL GET-MASTER-ADDR-BY-NAME {{ redis_sentinel_master_name }}"
+  register: redis_sentinel_primary_after
+  changed_when: false
+  retries: "{{ (redis_sentinel_failover_timeout_ms / 2000) | int }}"   # the failover's own timeout, every 2 s
+  delay: 2
+  until: >-
+    redis_sentinel_primary_after.rc == 0
+    and (redis_sentinel_primary_after.stdout_lines[1] | default('')) | length > 0
+    and (redis_sentinel_primary_after.stdout_lines[1] | default('')) != (redis_sentinel_primary_before.stdout_lines[1] | default(''))
+  no_log: true
+  when:
+    - redis_sentinel_handover_due | bool
+    - not ansible_check_mode
