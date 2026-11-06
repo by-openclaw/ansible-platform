@@ -14,6 +14,12 @@ nextcloud_image: "nextcloud:35.0.2-apache"   # reached through playbooks/nextclo
 
 nextcloud_fqdn: "{{ platform_service_fqdns.nextcloud }}"
 
+# The image's entrypoint runs `occ upgrade` before it starts Apache whenever the image's
+# version is newer than the installed one; status.php answers only then. 34.0.5 → 35.0.2 took
+# ~6 min here (2026-11-06: the old 5-minute budget gave up 32 s before Apache came up).
+# 180 × 5 s = 15 min.
+nextcloud_start_wait_retries: 180
+
 # Web HTTP backend (Traefik terminates TLS) — published on the SVC IP.
 nextcloud_listen_ip: "{{ hostvars[groups['nextcloud'] | first].ansible_host }}"
 nextcloud_host_port: 80
