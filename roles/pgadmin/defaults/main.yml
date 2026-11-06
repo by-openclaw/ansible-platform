@@ -4,7 +4,7 @@
 # Internal-only DB admin UI, fronted by Traefik (wildcard TLS + ipAllowList).
 # Connects to Postgres over TLS (sslmode=verify-full, public LE CA).
 # ==============================================================================
-pgadmin_image: "dpage/pgadmin4:9.18"   # exact pin — bump deliberately (2026-09-17)
+pgadmin_image: "dpage/pgadmin4:9.19"   # exact pin — bump deliberately (2026-10-29; passexec by name, see below)
 
 pgadmin_fqdn: "{{ platform_service_fqdns.pgadmin }}"
 
@@ -64,7 +64,12 @@ pgadmin_pg_passfile_container: "/var/lib/pgadmin/.pgpass-pg"   # in the persiste
 pgadmin_pg_passfile_mode: "0600"
 pgadmin_container_uid: 5050   # the image's `pgadmin` user, who runs the passexec command …
 pgadmin_container_gid: 0      # … and its group (root), as the image creates its files
-pgadmin_pg_passexec_cmd: "/bin/cat {{ pgadmin_pg_passfile_container }}"
+# pgAdmin 9.19 runs no free-text Password Exec Command in server mode: the administrator names
+# the permitted commands (SERVER_PASSEXEC_COMMANDS, vars/main.yml) and a server holds the NAME.
+# The first 9.19 start converted the old free-text value to this name because the arguments,
+# joined by single spaces, equal it exactly ("/bin/cat <passfile>"); any other value is cleared.
+pgadmin_pg_passexec_name: "dba-passfile"
+pgadmin_pg_passexec_argv: ["/bin/cat", "{{ pgadmin_pg_passfile_container }}"]   # run without a shell
 # libpq (used by pgAdmin to reach Postgres) looks for the verify-full CA at
 # ~/.postgresql/root.crt by default. The container HOME is /home/pgadmin; point
 # that path at the system bundle (ISRG Root X1 → trusts the LE server cert).
@@ -97,7 +102,7 @@ pgadmin_per_user_server_psql_vars:
   - -v
   - "p_connection_params={{ {'sslmode': pgadmin_pg_sslmode} | to_json }}"
   - -v
-  - "p_passexec={{ pgadmin_pg_passexec_cmd }}"
+  - "p_passexec={{ pgadmin_pg_passexec_name }}"
   - -v
   - "p_comment={{ pgadmin_pg_server_comment }}"
   - -v

@@ -22,9 +22,11 @@ pgadmin_env_base:
   # PasswordExecCommand (see below), not stored/encrypted in a pgAdmin profile.
   # Avoids the master-password prompt AND the master-key-decrypt fragility.
   PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"  # pragma: allowlist secret
-  # Allow servers to source their password from a command (PasswordExecCommand).
-  # Off by default in pgAdmin; required for the passexec connect flow.
-  PGADMIN_CONFIG_ENABLE_SERVER_PASS_EXEC_CMD: "True"
+  # The permitted Password Exec Commands, by name (pgAdmin 9.19 — ENABLE_SERVER_PASS_EXEC_CMD is
+  # deprecated and ignored). pgAdmin reads PGADMIN_CONFIG_* as Python: a dict name -> argv list,
+  # run without a shell (defaults/main.yml pgadmin_pg_passexec_*).
+  PGADMIN_CONFIG_SERVER_PASSEXEC_COMMANDS: >-
+    {'{{ pgadmin_pg_passexec_name }}': [{{ pgadmin_pg_passexec_argv | map('to_json') | join(', ') }}]}
   # Disable pgAdmin's OWN MFA — Authentik provides MFA for the SSO login, so
   # pgAdmin's internal MFA would force a redundant second authenticator.
   PGADMIN_CONFIG_MFA_ENABLED: "False"
