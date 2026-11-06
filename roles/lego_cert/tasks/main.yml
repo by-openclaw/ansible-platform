@@ -9,14 +9,16 @@
     fail_msg: "lego_cert needs lego_cert_id, lego_cert_email, lego_cert_domains and lego_cert_cf_token"
     quiet: true
 
-# The SAME flags for run and renew: account, TOS, DNS provider, propagation, domains.
+# The SAME command for the first issuance and every renewal (v5: `lego run` does both): account,
+# TOS, DNS provider, propagation, Common Name, domains.
 - name: "lego_cert | Command line (shared by the first run and every renewal)"
   ansible.builtin.set_fact:
     lego_cert_argv: >-
-      {{ ['/usr/local/bin/lego', '--email', lego_cert_email, '--accept-tos', '--dns', 'cloudflare',
-          '--dns.propagation-wait', lego_cert_propagation_wait]
+      {{ ['/usr/local/bin/lego', 'run', '--email', lego_cert_email, '--accept-tos', '--dns', 'cloudflare',
+          '--dns.propagation.wait', lego_cert_propagation_wait]
          + (['--key-type', lego_cert_key_type] if lego_cert_key_type | length > 0 else [])
          + (['--pfx', '--pfx.format', 'SHA256'] if lego_cert_pfx | bool else [])
+         + (['--enable-cn'] if lego_cert_enable_cn | bool else [])
          + (lego_cert_domains | map('regex_replace', '^', '--domains=') | list) }}
     lego_cert_hook: >-
       {{ ('systemctl start lego-deploy-' ~ lego_cert_id ~ '.service')
@@ -43,8 +45,11 @@
         url: "{{ lego_cert_url }}"
         dest: "/tmp/lego_v{{ lego_cert_version }}_linux_amd64.tar.gz"
         mode: "0644"
+      register: lego_cert_download
 
+    # Under --check the download above is only reported: there is no archive to extract yet.
     - name: "lego_cert | Extract the binary"
+      when: not (ansible_check_mode and lego_cert_download is changed)
       ansible.builtin.unarchive:
         src: "/tmp/lego_v{{ lego_cert_version }}_linux_amd64.tar.gz"
         dest: /usr/local/bin
@@ -75,10 +80,50 @@
     mode: "0600"
   no_log: true
 
+# --- a v4 store: `lego migrate` once (v5 CLI guide: "a requirement", before any other command) --
+# v4 kept an account's key in accounts/<server>/<account>/keys/; v5 next to account.json, with
+# changed JSON. The tool asks for a backup first and a confirmation (answered on stdin).
+- name: "Lego_cert | A v4 store? (accounts/<server>/<account>/keys)"
+  ansible.builtin.find:
+    paths: "{{ lego_cert_path }}/accounts"
+    patterns: keys
+    file_type: directory
+    recurse: true
+  register: lego_cert_v4_store
+
+- name: "Lego_cert | Migrate the v4 store"
+  when: lego_cert_v4_store.matched > 0
+  block:
+    - name: "Lego_cert | Back up the store first (root only)"
+      community.general.archive:
+        path: "{{ lego_cert_path }}"
+        dest: "{{ lego_cert_dir }}/cert-v4-{{ now(utc=true).strftime('%Y%m%dT%H%M%SZ') }}.tar.gz"
+        format: gz
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: "Lego_cert | lego migrate"
+      ansible.builtin.command:
+        argv: [/usr/local/bin/lego, migrate, --path, "{{ lego_cert_path }}"]
+        stdin: "y"
+        chdir: "{{ lego_cert_dir }}"
+      register: lego_cert_migrated
+      changed_when: true
+
+    - name: "Lego_cert | No v4 account key directory left"
+      ansible.builtin.find:
+        paths: "{{ lego_cert_path }}/accounts"
+        patterns: keys
+        file_type: directory
+        recurse: true
+      register: lego_cert_v4_left
+      failed_when: lego_cert_v4_left.matched > 0 and not ansible_check_mode
+
 # --- first issuance ----------------------------------------------------------------
 - name: "lego_cert | Issue the certificate (first run only)"
   ansible.builtin.command:
-    argv: "{{ lego_cert_argv + ['run'] }}"
+    argv: "{{ lego_cert_argv }}"
     creates: "{{ lego_cert_crt }}"
     chdir: "{{ lego_cert_dir }}"
   environment:

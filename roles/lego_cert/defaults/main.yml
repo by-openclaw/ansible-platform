@@ -7,7 +7,7 @@
 # shell script. Renewal is a systemd timer; run and renew use the SAME flags (a
 # renew with fewer flags than the run let mailcow's wildcard expire, 2026-09-17).
 #
-# lego runs --renew-hook WITHOUT a shell (argv split on spaces): a hook is one
+# lego runs --deploy-hook WITHOUT a shell (argv split on spaces): a hook is one
 # command. A consumer that must do several things (mailcow: copy cert + key,
 # restart three containers) gives lego_cert_deploy_steps instead; they become a
 # oneshot unit the hook starts.
@@ -17,7 +17,13 @@ lego_cert_email: ""                       # REQUIRED — ACME account
 lego_cert_domains: []                     # REQUIRED — the first one names the files
 lego_cert_cf_token: ""                    # REQUIRED — Cloudflare DNS-01 token (caller reads Vault)
 
-lego_cert_version: "4.35.2"               # ONE pin for every lego on the platform
+lego_cert_version: "5.6.0"                # ONE pin for every lego on the platform
+# v5 (migration guide "CLI Guide"): the flags follow the command, `lego run` obtains AND renews
+# (`renew` is gone; --days -> --renew-days, --renew-hook -> --deploy-hook), `lego migrate` once
+# converts a v4 store (tasks/main.yml), keys are written PKCS#8, and the Common Name is off by
+# default — kept on here, as v4 issued it (SQL Server and Windows read the CN of the
+# certificates the PFX carries).
+lego_cert_enable_cn: true
 lego_cert_url: "https://github.com/go-acme/lego/releases/download/v{{ lego_cert_version }}/lego_v{{ lego_cert_version }}_linux_amd64.tar.gz"
 lego_cert_dir: "/etc/lego"
 lego_cert_path: "{{ lego_cert_dir }}/cert"
