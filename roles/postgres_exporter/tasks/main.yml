@@ -2,6 +2,8 @@
 - name: "PG exporter | Monitoring credential (get-or-create in Vault)"
   ansible.builtin.include_role:
     name: vault_secret
+    apply:
+      tags: [postgres_exporter]   # the included tasks inherit the tag (an include_role's tags select only the include itself)
   vars:
     vault_secret_path: "{{ postgres_exporter_vault_path }}"
     vault_secret_init:
@@ -67,6 +69,8 @@
 - name: "PG exporter | Admit the scrapers (roles/host_firewall owns every ufw rule)"
   ansible.builtin.include_role:
     name: host_firewall
+    apply:
+      tags: [postgres_exporter, firewall]
   vars:
     host_firewall_rules:
       - port: "{{ postgres_exporter_port | string }}"
