@@ -108,6 +108,35 @@
     label: "{{ item.network_id }} ({{ item.network }})"
   when: (netbird_vt_routes.json | selectattr('network_id', 'equalto', item.network_id) | list | length) == 0
 
+# An existing web route follows the declared network (create-only would keep the first one forever).
+- name: "vpn-tiers | An existing web /32 route follows the declared network"
+  ansible.builtin.uri:
+    url: "{{ netbird_vt_api }}/api/routes/{{ _have.id }}"
+    method: PUT
+    headers: { Authorization: "{{ netbird_auth_header }}" }
+    body_format: json
+    body:
+      network_id: "{{ item.network_id }}"
+      network: "{{ item.network }}"
+      peer: "{{ _have.peer }}"
+      masquerade: "{{ _have.masquerade }}"
+      metric: "{{ _have.metric | int }}"
+      enabled: "{{ _have.enabled }}"
+      keep_route: "{{ _have.keep_route | default(false) }}"
+      description: "{{ _have.description | default('') }}"
+      groups: "{{ _have.groups }}"
+    status_code: [200]
+  register: netbird_vt_web_moved
+  no_log: true
+  loop: "{{ netbird_vpn_web_routes }}"
+  loop_control:
+    label: "{{ item.network_id }} ({{ item.network }})"
+  vars:
+    _have: "{{ netbird_vt_routes.json | selectattr('network_id', 'equalto', item.network_id) | first | default({}) }}"
+  when:
+    - _have | length > 0
+    - _have.network != item.network
+
 # --- admin-group members -> NetBird role admin + vpn-full (IDN-15 group→role) -----
 # Members of the service's admin group (people.yml) administer NetBird and their
 # peers get the full route. The account owner and service users are never touched.

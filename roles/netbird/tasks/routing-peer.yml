@@ -339,10 +339,38 @@
   no_log: true
   when: (netbird_rp_ns.json | selectattr('name', 'equalto', netbird_dns_nameserver_name) | list | length) == 0
 
+# An existing group follows the declared address (create-only would keep the first one forever).
+- name: "routing-peer | The AdGuard DNS nameserver group follows the declared address"
+  ansible.builtin.uri:
+    url: "{{ netbird_rp_api }}/api/dns/nameservers/{{ _have.id }}"
+    method: PUT
+    headers: { Authorization: "{{ netbird_auth_header }}" }
+    body_format: json
+    body:
+      name: "{{ netbird_dns_nameserver_name }}"
+      description: "{{ _have.description | default('Internal AdGuard (DNS chain head)') }}"
+      nameservers:
+        - ip: "{{ netbird_dns_nameserver_ip }}"
+          ns_type: "udp"
+          port: "{{ netbird_dns_nameserver_port | int }}"
+      enabled: true
+      groups: "{{ _have.groups }}"
+      primary: "{{ _have.primary }}"
+      domains: "{{ _have.domains | default([]) }}"
+      search_domains_enabled: "{{ _have.search_domains_enabled | default(false) }}"
+    status_code: [200]
+  register: netbird_rp_ns_moved
+  no_log: true
+  vars:
+    _have: "{{ netbird_rp_ns.json | selectattr('name', 'equalto', netbird_dns_nameserver_name) | first | default({}) }}"
+  when:
+    - _have | length > 0
+    - (_have.nameservers | map(attribute='ip') | list) != [netbird_dns_nameserver_ip]
+
 - name: "routing-peer | Routing-peer summary"
   ansible.builtin.debug:
     msg:
       - "router peer: {{ netbird_rp_peer_id }} (group {{ netbird_routers_group }})"
       - "route {{ netbird_route_network }}: {{ 'created' if netbird_rp_route_new is changed else 'present' }}"
-      - "DNS {{ netbird_dns_nameserver_ip }}: {{ 'created' if netbird_rp_ns_new is changed else 'present' }}"
+      - "DNS {{ netbird_dns_nameserver_ip }}: {{ 'created' if netbird_rp_ns_new is changed else ('moved' if netbird_rp_ns_moved is changed else 'present') }}"
       - "client enroll: {{ 'ran' if netbird_rp_up is changed else 'already Connected' }}"
