@@ -4,7 +4,8 @@
 # intersected with the bridges the node has.
 - name: "PVE host | WAN bridges present on this node"
   ansible.builtin.set_fact:
-    pve_host_wan_bridges_present: "{{ pve_host_wan_bridges | intersect(ansible_facts.interfaces | default([])) }}"
+    # sorted: `intersect` keeps no order, and the sysctl file below is written from this list
+    pve_host_wan_bridges_present: "{{ pve_host_wan_bridges | intersect(ansible_facts.interfaces | default([])) | sort }}"
 
 - name: "PVE host | No router advertisements / autoconf on the WAN bridges (persistent sysctl)"
   ansible.builtin.copy:
