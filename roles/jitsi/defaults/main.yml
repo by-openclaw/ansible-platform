@@ -3,8 +3,13 @@
 # Docker-in-LXC on lxc-jitsi-01. TLS terminated by Traefik (meet.<domain>); the
 # stack serves plain HTTP on the loopback. JVB media = UDP 10000, DNAT'd from WAN
 # so external participants connect. Internal component secrets live in Vault.
-# renovate: datasource=docker depName=jitsi/web versioning=regex:^stable-(?<major>\d+)$
-jitsi_image_tag: "stable-11031"        # pinned; the newest stable tag Docker Hub carries (upstream stopped publishing stable tags there after it — 2026-10-02 check); every component shares the tag
+# Images on GHCR since stable-11146 (docker-jitsi-meet #2271: Docker Hub publishing stopped).
+jitsi_image_repo: "ghcr.io/jitsi"
+# renovate: datasource=docker depName=ghcr.io/jitsi/web versioning=regex:^stable-(?<major>\d+)(-(?<patch>\d+))?$
+jitsi_image_tag: "stable-11248-3"      # 2026-11-02; every component shares the tag
+# Rootless images since stable-11146 (#2258): every process runs as uid/gid 1000, /config is
+# read-only input, writable data lives in storage/ and tmp/ — all owned by this uid.
+jitsi_uid: 1000
 jitsi_restart_policy: "{{ platform_container_restart_policy | default('always') }}"   # the platform's policy (inventory, with its reason)
 jitsi_build_dir: "/opt/jitsi"
 jitsi_config_dir: "/opt/jitsi/config"
