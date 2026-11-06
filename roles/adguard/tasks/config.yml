@@ -4,13 +4,16 @@
 # container starts; a change restarts the container once (container.yml).
 # ==============================================================================
 
+# AdGuard Home restricts its own directory and files at start (v0.107.53, CVE-2024-36586:
+# directory 0700, configuration 0600): the role writes the same modes, so a run never
+# loosens what the vendor tightens (and reports no change against it).
 - name: "config | Ensure AdGuardHome home dir exists"
   ansible.builtin.file:
     path: "{{ adguard_home_dir }}"
     state: directory
     owner: root
     group: root
-    mode: "0755"
+    mode: "0700"
 
 # AdGuardHome rewrites its own yaml at runtime (schema fields, ordering), so a
 # straight template diff would restart the DNS server on EVERY run. Render to a
@@ -37,6 +40,6 @@
     remote_src: true
     owner: root
     group: root
-    mode: "0640"
+    mode: "0600"   # what AdGuard Home sets on it
   when: adguard_managed_render.changed or not adguard_live_stat.stat.exists
   register: adguard_config_live
