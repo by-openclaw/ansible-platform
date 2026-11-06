@@ -4,7 +4,10 @@
 # Nextcloud front door (#396 phase 2). Docker-in-LXC on lxc-collab-01. Stores no
 # user data: it edits Nextcloud files in place. JWT between Nextcloud and Docs.
 # ==============================================================================
-onlyoffice_image: "onlyoffice/documentserver:9.4.0.1"   # pinned (9.4: no connection limit, single process)
+onlyoffice_image: "onlyoffice/documentserver:10.0.0.1"   # pinned (Community; 9.4+: no bundled PostgreSQL/Redis/RabbitMQ)
+# The Document Server's container as Compose names it (project = the directory's name): the image
+# change runs the vendor's documentserver-prepare4shutdown.sh in it first (tasks/main.yml).
+onlyoffice_container_name: "{{ onlyoffice_dir | basename }}-onlyoffice-1"
 onlyoffice_env: "{{ platform_env }}"
 onlyoffice_fqdn: "{{ platform_service_fqdns.collab }}"          # public (browsers load the editor from it)
 onlyoffice_dir: "/opt/onlyoffice"
