@@ -13,8 +13,9 @@
 #     ansible-playbook -i inventories/prod/hosts.yml playbooks/gitlab-upgrade.yml \
 #       -e upgrade_path_apply=true
 #
-# Take a backup first (playbooks/gitlab-backup.yml or the nightly PBS job):
-# a failed migration is restored, not retried.
+# Backed up first: before the first rung the role snapshots the guest to PBS (roles/upgrade_path
+# backup.yml); GitLab's own archive is the nightly gitlab-backup-to-s3 job (roles/gitlab). A failed
+# migration is restored, not retried.
 # ==============================================================================
 
 - name: "GitLab CE — sequential upgrade"

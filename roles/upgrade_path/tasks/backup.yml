@@ -1,0 +1,78 @@
+---
+# ==============================================================================
+# upgrade_path | backup — a snapshot of the service's guest to PBS, before the first rung.
+# Found by name on the Proxmox nodes; written only when a rung will be applied (a dry run names
+# the guest, its node and the datastore). A snapshot that cannot be written stops the climb.
+# ==============================================================================
+
+- name: "Upgrade_path | Backup | The guests each Proxmox node runs"
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+  register: upgrade_path_backup_resources
+  loop: "{{ upgrade_path_backup_nodes }}"
+  delegate_to: "{{ item }}"
+  changed_when: false
+  check_mode: false   # read-only: the dry run must name the guest it would back up
+
+# A guest is listed under the PVE name of the node that runs it (inventory name = PVE node name);
+# a clustered node lists its peers' guests too, hence one entry per VMID.
+- name: "Upgrade_path | Backup | Find the guest on its node: {{ upgrade_path_backup_guest }}"
+  ansible.builtin.set_fact:
+    upgrade_path_backup_found: >-
+      {{ upgrade_path_backup_resources.results | map(attribute='stdout') | map('from_json') | flatten
+         | selectattr('name', 'defined') | selectattr('name', 'eq', upgrade_path_backup_guest)
+         | selectattr('node', 'in', upgrade_path_backup_nodes) | unique(attribute='vmid') | list }}
+
+- name: "Upgrade_path | Backup | Exactly one guest named {{ upgrade_path_backup_guest }}"
+  ansible.builtin.assert:
+    that: upgrade_path_backup_found | length == 1
+    fail_msg: >-
+      {{ upgrade_path_backup_found | length }} guest(s) named {{ upgrade_path_backup_guest }} on
+      {{ upgrade_path_backup_nodes | join(', ') }}: the snapshot before the upgrade needs exactly one
+      (upgrade_path_backup_guest: "" for a service outside Proxmox)
+    quiet: true
+
+- name: "Upgrade_path | Backup | The guest, its node and the datastore"
+  ansible.builtin.set_fact:
+    upgrade_path_backup_node: "{{ (upgrade_path_backup_found | first).node }}"
+    upgrade_path_backup_vmid: "{{ (upgrade_path_backup_found | first).vmid | string }}"
+    upgrade_path_backup_type: "{{ (upgrade_path_backup_found | first).type }}"
+
+- name: "Upgrade_path | Backup | Plan"
+  ansible.builtin.debug:
+    msg: >-
+      {{ upgrade_path_backup_guest }} = {{ upgrade_path_backup_type }} {{ upgrade_path_backup_vmid }} on
+      {{ upgrade_path_backup_node }} → {{ upgrade_path_backup_storage }}
+      ({{ 'written now, before the first rung' if (upgrade_path_apply | bool and not ansible_check_mode)
+          else 'dry run: not written' }})
+
+- name: "Upgrade_path | Backup | Snapshot to the PBS datastore: {{ upgrade_path_backup_guest }}"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['systemd-run', '--wait', '--collect', '--quiet', '--pipe',
+          '--property=UMask=' ~ upgrade_path_backup_umask,
+          '/usr/bin/vzdump', upgrade_path_backup_vmid,
+          '--storage', upgrade_path_backup_storage,
+          '--mode', 'snapshot',
+          '--notes-template', 'upgrade_path ' ~ upgrade_path_service ~ ' ' ~ upgrade_path_current_start
+            ~ ' -> ' ~ (upgrade_path_remaining | map(attribute='version') | list | last)]
+         + (['--fleecing', 'enabled=1,storage=' ~ upgrade_path_backup_fleecing_storage]
+            if upgrade_path_backup_type == 'qemu' and upgrade_path_backup_fleecing_storage | length > 0
+            else []) }}
+  register: upgrade_path_backup_run
+  changed_when: true
+  delegate_to: "{{ upgrade_path_backup_node }}"
+  when: upgrade_path_apply | bool
+
+- name: "Upgrade_path | Backup | The snapshot was written"
+  ansible.builtin.assert:
+    that: upgrade_path_backup_archive | length > 0
+    fail_msg: "vzdump exited 0 but named no archive for {{ upgrade_path_backup_guest }}: the climb does not start"
+    success_msg: "{{ upgrade_path_backup_guest }}: {{ upgrade_path_backup_storage }}:{{ upgrade_path_backup_archive }}"
+  vars:
+    upgrade_path_backup_archive: >-
+      {{ ((upgrade_path_backup_run.stdout | default('')) ~ '\n' ~ (upgrade_path_backup_run.stderr | default('')))
+         | regex_findall("archive '([^']+)'") | last | default('') }}
+  when:
+    - upgrade_path_apply | bool
+    - not ansible_check_mode
