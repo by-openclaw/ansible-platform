@@ -78,4 +78,9 @@ upgrade_path_verify:
 The three ladders in use: `playbooks/nextcloud-upgrade.yml`, `playbooks/gitlab-upgrade.yml`,
 `playbooks/harbor-upgrade.yml`.
 
-Always take a backup before a major hop — a failed migration is restored, not retried.
+Backed up first: when a rung will be applied, `tasks/backup.yml` snapshots the service's guest to the
+node's PBS datastore before the first one — found by name on the Proxmox nodes, no VMID in the code; a
+snapshot that is not written stops the climb. A dry run names the guest, its node and the datastore.
+`upgrade_path_backup_guest: ""` turns it off for a service outside Proxmox. The database of a service
+on the PostgreSQL cluster is restored to a point in time from pgBackRest. A failed migration is
+restored, not retried.

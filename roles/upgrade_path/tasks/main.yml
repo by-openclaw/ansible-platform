@@ -44,6 +44,13 @@
     label: "{{ check.name }}"
   when: not (upgrade_path_apply | bool)
 
+# Back up first (each vendor's upgrade guide): the guest's snapshot before the first rung.
+- name: "Upgrade_path | Back up the guest before the first rung"
+  ansible.builtin.include_tasks: backup.yml
+  when:
+    - upgrade_path_backup_guest | length > 0
+    - upgrade_path_remaining | length > 0
+
 - name: "Upgrade_path | Climb one rung at a time"
   ansible.builtin.include_tasks: step.yml
   loop: "{{ upgrade_path_remaining }}"

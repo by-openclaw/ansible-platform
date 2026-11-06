@@ -68,6 +68,25 @@ upgrade_path_settle_seconds: 20
 # Refuse to run unless explicitly enabled, exactly like the updates role.
 upgrade_path_apply: false
 
+# Back up first: a snapshot of the service's guest to the PBS datastore before the first rung is
+# applied (Nextcloud, GitLab and Harbor upgrade guides: back up before upgrading — a failed
+# migration is restored, not retried). The guest's database lives on the PostgreSQL cluster, whose
+# pgBackRest WAL archive restores it to any point (roles/postgresql); this snapshot covers the
+# rest: data directory, configuration, the images and volumes on the guest. Taken only when a rung
+# will be applied; a dry run names the guest, its node and the datastore without writing anything.
+# The guest is found by NAME on the Proxmox nodes (PVE /cluster/resources) — no VMID in the code.
+# "" = no snapshot (a service outside Proxmox).
+upgrade_path_backup_guest: "{{ inventory_hostname }}"
+upgrade_path_backup_nodes: "{{ groups['proxmox_nodes'] | default([]) }}"
+# The node's guest-backup storage: the PBS datastore the nightly job writes (group_vars/proxmox_nodes).
+upgrade_path_backup_storage: "{{ hostvars[upgrade_path_backup_node].pve_host_config_backup_storage }}"
+# A VM's snapshot writes through a fleecing image on the node's local pool, so a slow backup target
+# cannot stall the guest's I/O (PVE Admin Guide "VM Backup Fleecing"); a container has none.
+upgrade_path_backup_fleecing_storage: "{{ hostvars[upgrade_path_backup_node].pve_host_vzdump_fleecing_storage | default('') }}"
+# vzdump runs as a transient unit with its own umask: the hardened root session's 027 breaks its
+# temporary files (roles/opnsense_provision decommission, playbooks/restore-drill.yml).
+upgrade_path_backup_umask: "0022"
+
 # Derived — the version read by tasks/current.yml, and the verdict of the check tasks/check.yml
 # has just run (`check` is the entry).
 upgrade_path_current_text: >-
