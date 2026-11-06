@@ -1,0 +1,119 @@
+---
+# ==============================================================================
+# jumpserver | upgrade — the vendor's procedure (official installer v5.1.1, scripts/7_upgrade.sh):
+# back up the database (scripts/5_db_backup.sh: pg_dump --no-owner), stop the
+# components, run the migrations with the TARGET core (compose/init-db.yml: the core container
+# started with `sleep`, then `./jms upgrade_db` in it), then the normal start (tasks/main.yml).
+# Runs only when jms_core exists and runs another image than the pin. The migrations are
+# one-way: the dump and the guest's PBS snapshot are the way back.
+# ==============================================================================
+
+- name: "JumpServer | Upgrade | Plan"
+  ansible.builtin.debug:
+    msg: >-
+      jms_core {{ jumpserver_core_now.container.Config.Image }} → {{ jumpserver_image_core }}:
+      PBS snapshot, pg_dump, stop, upgrade_db with the target core, start
+      {{ '(dry run: nothing done)' if ansible_check_mode else '' }}
+
+# The platform's backup first (roles/upgrade_path tasks/backup.yml — the same step as every ladder).
+- name: "JumpServer | Upgrade | Snapshot the guest to PBS"
+  ansible.builtin.include_role:
+    name: upgrade_path
+    tasks_from: backup.yml
+  vars:
+    upgrade_path_service: jumpserver
+    upgrade_path_apply: true   # the vzdump step itself is skipped under --check
+    upgrade_path_current_start: "{{ jumpserver_core_now.container.Config.Image | regex_replace('^.*:', '') }}"   # the image's tag
+    upgrade_path_remaining: [{version: "{{ jumpserver_version }}"}]
+
+- name: "JumpServer | Upgrade | The running version and this run's dump file"
+  ansible.builtin.set_fact:
+    jumpserver_upgrade_from: "{{ jumpserver_core_now.container.Config.Image | regex_replace('^.*:', '') }}"
+    jumpserver_upgrade_dump: >-
+      {{ jumpserver_db_backup_dir }}/{{ jumpserver_db_name }}-{{ jumpserver_core_now.container.Config.Image | regex_replace('^.*:', '') }}-{{
+      now(utc=true).strftime('%Y-%m-%dT%H%M%SZ') }}.sql
+
+- name: "JumpServer | Upgrade | Backup directory"
+  ansible.builtin.file:
+    path: "{{ jumpserver_db_backup_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# The vendor's dump (pg_dump --no-owner), run in the database container itself: its plain SQL
+# comes back as text and is written root-only next to the earlier ones (the vendor's custom
+# format is binary and cannot travel through the module's output).
+- name: "JumpServer | Upgrade | Database dump (pg_dump --no-owner, in jms_postgres)"
+  community.docker.docker_container_exec:
+    container: jms_postgres
+    argv:
+      - pg_dump
+      - "--username={{ jumpserver_db_user }}"
+      - "--dbname={{ jumpserver_db_name }}"
+      - --no-owner
+  register: jumpserver_db_dump
+  changed_when: false
+  no_log: true
+  when: not ansible_check_mode
+
+- name: "JumpServer | Upgrade | The dump, root only"
+  ansible.builtin.copy:
+    content: "{{ jumpserver_db_dump.stdout }}\n"
+    dest: "{{ jumpserver_upgrade_dump }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: not ansible_check_mode
+
+- name: "JumpServer | Upgrade | The dump is complete (pg_dump's closing line)"
+  ansible.builtin.assert:
+    that: "'PostgreSQL database dump complete' in (jumpserver_db_dump.stdout | default(''))[-200:]"
+    fail_msg: "pg_dump did not finish: no upgrade without the dump"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: "JumpServer | Upgrade | Stop the components (the database and Redis keep running)"
+  community.docker.docker_container:
+    name: "{{ item }}"
+    state: stopped
+  loop: "{{ ['jms_web', 'jms_koko', 'jms_celery', 'jms_core'] + jumpserver_retired_containers }}"
+  failed_when: false   # a component that does not exist is already stopped
+
+# compose/init-db.yml: the target core, `sleep`, the core's configuration and volumes, on the network.
+- name: "JumpServer | Upgrade | The target core, idle, for the migrations (roles/service_scaffold containers)"
+  ansible.builtin.include_role:
+    name: service_scaffold
+    tasks_from: containers
+  vars:
+    service_scaffold_def:
+      name: jumpserver
+      network: "{{ jumpserver_docker_network }}"
+      containers:
+        - name: jms_core
+          image: "{{ jumpserver_image_core }}"
+          hostname: jms_core
+          restart_policy: "no"
+          command: sleep
+          env: >-
+            {{ jumpserver_env_safe | combine(jumpserver_env_db) | combine(jumpserver_env_oidc)
+               | combine({'TIME_ZONE': jumpserver_tz}) | combine(jumpserver_settings_env) }}
+          volumes:
+            - "{{ jumpserver_base_dir }}/certs:/opt/jumpserver/data/certs"
+            - "{{ jumpserver_data_dir }}/data:/opt/jumpserver/data"
+          aliases: [core]
+
+- name: "JumpServer | Upgrade | ./jms upgrade_db"
+  community.docker.docker_container_exec:
+    container: jms_core
+    argv: [./jms, upgrade_db]
+    chdir: /opt/jumpserver
+  register: jumpserver_upgrade_db
+  changed_when: true
+  when: not ansible_check_mode
+
+- name: "JumpServer | Upgrade | Migrations done"
+  ansible.builtin.debug:
+    msg: "{{ (jumpserver_upgrade_db.stdout_lines | default([]))[-5:] }}"
+  when: not ansible_check_mode

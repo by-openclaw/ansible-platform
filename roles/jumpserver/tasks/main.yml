@@ -2,10 +2,10 @@
 # ==============================================================================
 # jumpserver | Self-contained JumpServer CE bastion — per-container (no compose
 # plugin; matches roles/diagrams). Bundled Postgres 16 + Redis 7, NON-privileged.
-# Topology assembled from the official installer compose (tag v4.10.19): nginx
-# `web` resolves upstreams by the hostnames core:8080 / koko:5000 / lion:8081, so
-# those network ALIASES are load-bearing. eBPF SLB + privileged + FUSE-SFTP
-# dropped (unusable in an unprivileged LXC); docker.sock NOT mounted (pure
+# Topology assembled from the official installer compose (tag v5.1.1): nginx
+# `web` resolves upstreams by the hostnames core:8080 / koko:5000, so those network
+# ALIASES are load-bearing (v5: no lion — RDP/VNC runs in koko, with its own guacd).
+# eBPF SLB + privileged + FUSE-SFTP dropped (unusable in an unprivileged LXC); docker.sock NOT mounted (pure
 # SSH/RDP bastion). All secrets Vault-native; injected as env with no_log.
 # ==============================================================================
 
@@ -46,7 +46,7 @@
 # --- Env blocks (mirror the official CONFIG_FILE vs CONFIG_SAFE_FILE split) ---
 - name: "JumpServer | Build env blocks"
   ansible.builtin.set_fact:
-    # SAFE set (no DB creds) — shared by every component incl. koko/lion.
+    # SAFE set (no DB creds) — shared by every component incl. koko.
     jumpserver_env_safe:
       SECRET_KEY: "{{ jumpserver_secret.secret_key }}"
       BOOTSTRAP_TOKEN: "{{ jumpserver_secret.bootstrap_token }}"
@@ -108,7 +108,6 @@
     - { path: "{{ jumpserver_base_dir }}/certs", mode: "0755" }   # SHARED inter-component certs
     - { path: "{{ jumpserver_data_dir }}/data", mode: "0755" }    # core/celery/web /opt/jumpserver/data
     - { path: "{{ jumpserver_base_dir }}/koko/data", mode: "0755" }
-    - { path: "{{ jumpserver_base_dir }}/lion/data", mode: "0755" }
     - { path: "{{ jumpserver_base_dir }}/nginx/logs", mode: "0755" }
 
 - name: "JumpServer | Named volumes for bundled Postgres + Redis (uid-999 safe)"
@@ -198,6 +197,19 @@
   retries: 20
   delay: 5
 
+# --- Another core version: the vendor's upgrade first (tasks/upgrade.yml) ----
+- name: "JumpServer | The running core"
+  community.docker.docker_container_info:
+    name: jms_core
+  register: jumpserver_core_now
+  check_mode: false   # read-only: decides whether this run upgrades
+
+- name: "JumpServer | Upgrade (backup, stop, migrations with the target core)"
+  ansible.builtin.include_tasks: upgrade.yml
+  when:
+    - jumpserver_core_now.exists
+    - jumpserver_core_now.container.Config.Image != jumpserver_image_core
+
 # --- Core (web/api; runs migrations on first boot) ---------------------------
 - name: "JumpServer | core (start web) (roles/service_scaffold containers)"
   ansible.builtin.include_role:
@@ -236,8 +248,10 @@
   retries: 60
   delay: 10
 
-# --- Celery (background tasks), koko (SSH/SFTP), lion (RDP/VNC), web (nginx front) --
-- name: "JumpServer | celery, koko, lion and web (roles/service_scaffold containers)"
+# --- Celery (background tasks), koko (SSH/SFTP + RDP/VNC), web (nginx front) --
+# koko's web forward proxy (v5, port 5001) stays on its default, loopback only: the installer
+# publishes it for web-type assets, which this bastion does not have.
+- name: "JumpServer | celery, koko and web (roles/service_scaffold containers)"
   ansible.builtin.include_role:
     name: service_scaffold
     tasks_from: containers
@@ -269,16 +283,6 @@
             - "{{ jumpserver_base_dir }}/certs:/opt/koko/data/certs"
             - "{{ jumpserver_base_dir }}/koko/data:/opt/koko/data"
           aliases: [koko]
-        - name: jms_lion
-          image: "{{ jumpserver_image_lion }}"
-          hostname: jms_lion
-          restart_policy: "{{ jumpserver_restart_policy }}"
-          ulimits: ["core:0:0"]
-          env: "{{ jumpserver_env_safe }}"
-          volumes:
-            - "{{ jumpserver_base_dir }}/certs:/opt/lion/data/certs"
-            - "{{ jumpserver_base_dir }}/lion/data:/opt/lion/data"
-          aliases: [lion]
         - name: jms_web
           image: "{{ jumpserver_image_web }}"
           hostname: jms_web
@@ -294,19 +298,17 @@
             CLIENT_MAX_BODY_SIZE: "4096m"
             CORE_ENABLED: "1"
             KOKO_ENABLED: "1"
-            LION_ENABLED: "1"
             CHEN_ENABLED: "0"     # chen (web DB client) not deployed
-            KAEL_ENABLED: "0"
+            KAEL_ENABLED: "0"     # the AI assistant: v5's default is 1, not deployed here
             RAZOR_ENABLED: "0"
-            FACELIVE_ENABLED: "0"
-            KOTL_ENABLED: "0"
+            JDMC_ENABLED: "0"     # v5 installer: derived from the edition (USE_XPACK 0)
           published:
             - "{{ jumpserver_web_host_port }}:80"
           volumes:
             - "{{ jumpserver_data_dir }}/data:/opt/jumpserver/data"
             - "{{ jumpserver_base_dir }}/nginx/logs:/var/log/nginx"
           healthcheck:
-            test: ["CMD-SHELL", "check http://localhost/web/health/"]
+            test: ["CMD-SHELL", "check http://localhost:51980/web/health/"]   # v5: the inner server's port
             interval: 10s
             timeout: 5s
             retries: 3
@@ -338,8 +340,8 @@
 # terminal key — restart_policy retries it a few times, then it registers and
 # persists .access_key to the koko bind mount (subsequent boots are clean). This
 # is normal JumpServer first-boot behaviour (the official installer sees it too).
-# We don't leave that as a silent race: gate the deploy on koko + lion actually
-# serving through nginx (the real browser path), so "done" means verified-up.
+# We don't leave that as a silent race: gate the deploy on koko actually serving
+# through nginx (the real browser path), so "done" means verified-up.
 - name: "JumpServer | Readiness — koko (SSH gateway) serves via nginx"
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ jumpserver_web_host_port }}/koko/health/"
@@ -351,16 +353,11 @@
   retries: 30
   delay: 5
 
-- name: "JumpServer | Readiness — lion (RDP/VNC gateway) serves via nginx"
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ jumpserver_web_host_port }}/lion/health/"
-    status_code: [200]
-    return_content: false
-  register: jumpserver_lion_ready
-  check_mode: false  # read-only GET: must run under --check too (a later task reads its result)
-  until: jumpserver_lion_ready.status == 200
-  retries: 30
-  delay: 5
+- name: "JumpServer | Containers of earlier versions removed (v5: jms_lion)"
+  community.docker.docker_container:
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ jumpserver_retired_containers }}"
 
 # The automation's API session: part of every provisioning run. On a first installation (or
 # whenever the automation account is missing) it creates the account by itself, with the

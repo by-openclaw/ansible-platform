@@ -15,13 +15,17 @@
 # --- Pinned images (never :latest) — installer GA tag v4.10.20 --------------
 jumpserver_restart_policy: "{{ platform_container_restart_policy | default('always') }}"   # the platform's policy (inventory, with its reason)
 # renovate: datasource=docker depName=jumpserver/core-ce
-jumpserver_version: "v4.10.20-ce"   # last v4 patch (2026-10-23); v5 folds lion into koko — its own change
+jumpserver_version: "v5.1.1-ce"   # 2026-10-20; v5 folds lion (RDP/VNC, guacd) into koko; tasks/upgrade.yml migrates
 jumpserver_image_core: "jumpserver/core:{{ jumpserver_version }}"
 jumpserver_image_koko: "jumpserver/koko:{{ jumpserver_version }}"
-jumpserver_image_lion: "jumpserver/lion:{{ jumpserver_version }}"
 jumpserver_image_web: "jumpserver/web:{{ jumpserver_version }}"
 jumpserver_image_postgres: "postgres:16.15-trixie"   # exact: what ran under postgres:16 (same Debian = same collations)
 jumpserver_image_redis: "redis:7.4.11-alpine"       # exact: what ran under redis:7-alpine
+# Containers of earlier versions, removed after an upgrade (installer remove_obsolete_containers):
+# v5 has no lion — its RDP/VNC gateway (guacd) runs inside koko.
+jumpserver_retired_containers: [jms_lion]
+# The vendor's pre-upgrade database dumps (tasks/upgrade.yml), root only.
+jumpserver_db_backup_dir: "{{ jumpserver_base_dir }}/db_backup"
 
 # --- Layout on the LXC ------------------------------------------------------
 # Root-owned components (core/koko/lion/nginx) use host BIND MOUNTS (container
