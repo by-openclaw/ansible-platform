@@ -40,6 +40,26 @@
     mode: "0644"
   register: onlyoffice_compose_file
 
+# Vendor update procedure (helpcenter.onlyoffice.com, "Updating ONLYOFFICE Docs Community for
+# Docker"): before the old container stops, documentserver-prepare4shutdown.sh makes the
+# Document Server stop taking edits and save every document still open. Only on an image change.
+- name: "ONLYOFFICE | The running Document Server (its image)"
+  community.docker.docker_container_info:
+    name: "{{ onlyoffice_container_name }}"
+  register: onlyoffice_running
+
+- name: "ONLYOFFICE | Save open documents before the image changes (documentserver-prepare4shutdown.sh)"
+  community.docker.docker_container_exec:
+    container: "{{ onlyoffice_container_name }}"
+    argv: [/usr/bin/documentserver-prepare4shutdown.sh]
+  register: onlyoffice_prepare4shutdown
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - onlyoffice_running.exists
+    - onlyoffice_running.container.State.Running | default(false)
+    - onlyoffice_running.container.Config.Image != onlyoffice_image
+
 - name: "ONLYOFFICE | Start / reconcile the stack (roles/compose_stack)"
   ansible.builtin.include_role:
     name: compose_stack
