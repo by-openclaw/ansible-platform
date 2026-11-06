@@ -193,6 +193,10 @@
       delay: 3
       until: redis_sentinel_declared.rc == 0 and 'OK' in (redis_sentinel_declared.stdout_lines[1:] | default([]))   # line 0 answers AUTH
       changed_when: false
+      # These commands WRITE (ACL SETUSER, SENTINEL SET, FLUSHCONFIG): --check does not send them.
+      # Without this the command module does not run under --check, `rc` never exists, and the
+      # `until` above spent its ten retries and failed the dry run on every Sentinel.
+      when: not ansible_check_mode
       no_log: true
       tags: [redis_sentinel, config]
 
