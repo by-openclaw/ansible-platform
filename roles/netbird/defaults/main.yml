@@ -180,14 +180,16 @@ netbird_route_metric: 9999
 netbird_route_masquerade: true
 netbird_route_access_group: "All"
 netbird_dns_nameserver_name: "internal-adguard"
-netbird_dns_nameserver_ip: "{{ hostvars[groups['adguard'] | first].ansible_host }}"          # AdGuard (DNS chain head)
+# The resolver VIP (keepalived across the AdGuard instances), not one instance: with a single instance every
+# VPN peer lost DNS whenever it paused — its nightly backup freeze, a restart, an update (2026-11-06).
+netbird_dns_nameserver_ip: "{{ platform_resolver_vip4 }}"          # AdGuard (DNS chain head), HA address
 netbird_dns_nameserver_port: 53
 
 netbird_vpn_tiers_enabled: true
 netbird_vpn_full_group: "vpn-full"
 netbird_vpn_web_routes:
   - { network_id: "web-traefik", network: "{{ hostvars[groups['traefik'] | first].ansible_host }}/32" }   # Traefik -> web apps
-  - { network_id: "web-dns", network: "{{ hostvars[groups['adguard'] | first].ansible_host }}/32" }       # AdGuard -> DNS
+  - { network_id: "web-dns", network: "{{ platform_resolver_vip4 }}/32" }       # AdGuard -> DNS (the resolver VIP, as the nameserver)
 # Full internal reach: every active member of NetBird's admin group in people.yml.
 netbird_vpn_full_users: >-
   {{ platform_people
