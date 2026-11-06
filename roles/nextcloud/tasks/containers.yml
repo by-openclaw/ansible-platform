@@ -39,8 +39,9 @@
             NEXTCLOUD_TIMEOUT: "10s"
 
 # First start runs the automated install (creates the schema in the empty
-# Postgres DB over libpq TLS + S3 primary wiring) before status.php reports
-# installed — retry generously.
+# Postgres DB over libpq TLS + S3 primary wiring), and a new image runs `occ upgrade`
+# (app updates, code integrity check), before Apache answers — the budget is
+# nextcloud_start_wait_retries × 5 s.
 - name: "containers | Wait for Nextcloud install to finish"
   ansible.builtin.uri:
     url: "http://{{ nextcloud_listen_ip }}:{{ nextcloud_host_port }}/status.php"
@@ -50,7 +51,7 @@
     return_content: true
   register: nextcloud_ready
   check_mode: false  # read-only probe: must run under --check too (a later task reads its result)
-  retries: 60
+  retries: "{{ nextcloud_start_wait_retries }}"
   delay: 5
   until:
     - nextcloud_ready.status == 200
