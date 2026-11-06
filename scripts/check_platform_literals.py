@@ -51,6 +51,19 @@ PATTERNS = {
     ),
 }
 
+# A container image reference's TAG is a version, not an address: "documentserver:10.0.0.1" is
+# ONLYOFFICE 10, not a host on the 10/8 network. Image references (a repository path with at
+# least one "/", then ":" and a tag starting with a digit) are removed before the patterns run;
+# a URL such as http://10.1.2.3:8080 has no repository path, so it is still checked.
+IMAGE_REF = re.compile(r"[a-z0-9][a-z0-9._-]*(?:/[a-z0-9._-]+)+:[0-9][A-Za-z0-9._-]*")
+
+
+def scan(code: str) -> set[str]:
+    """The pattern names one line of code (comments already removed) matches."""
+    code = IMAGE_REF.sub("", code)
+    return {kind for kind, rx in PATTERNS.items() if rx.search(code)}
+
+
 # Documented exceptions, per file and kind. vault_kv_map names two Vault PATHS that
 # happen to contain the firewall's name (see the comment there), not host references.
 EXEMPT = {
@@ -73,11 +86,10 @@ def main() -> int:
                 continue
             for n, line in enumerate(p.read_text(errors="ignore").splitlines(), 1):
                 code = line.split("#", 1)[0] if not line.lstrip().startswith("#") else ""
-                for kind, rx in PATTERNS.items():
+                for kind in sorted(scan(code)):
                     if kind in EXEMPT.get(p.as_posix(), ()):
                         continue
-                    if rx.search(code):
-                        bad.append(f"{p}:{n}: {kind}: {line.strip()[:100]}")
+                    bad.append(f"{p}:{n}: {kind}: {line.strip()[:100]}")
     if bad:
         print("platform identity literals found (use platform_domain / platform_org, no fallback):")
         print("\n".join(bad))
