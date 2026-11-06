@@ -9,13 +9,20 @@
 # changed → notifies the consumer's reload/restart handler):
 #   - Postgres: SIGHUP reload (transparent, no dropped connections)
 #   - Redis:    container restart (no live TLS reload; sub-second blip)
+#   - Vault:    SIGHUP reload (no restart, so no re-seal), one member at a time
+#   - etcd:     nothing to restart — it reloads the files on every new connection
+#   - Sentinel: container restart, one host at a time (three Sentinels, quorum two)
+# Every role that installs the wildcard has a play here (tests/test_certs_sync_covers_consumers.py):
+# until 2026-11-06 Vault, the Sentinels and etcd had none and kept the August certificate, and the
+# PostgreSQL and Redis plays reached one member each (groups `postgresql` / `redis`): the Redis
+# replica kept it too. Each play targets the hosts of the playbook that deploys its role.
 #
 # Schedule weekly on the controller (well inside lego's 30-day pre-expiry window):
 #   17 4 * * 1  cd <repo> && ansible-playbook -i inventories/prod/hosts.yml \
 #                 playbooks/certs-sync.yml --vault-password-file .vault_pass
 # ==============================================================================
-- name: Sync wildcard cert to PostgreSQL
-  hosts: postgresql
+- name: Sync wildcard cert to PostgreSQL (every Patroni member)
+  hosts: patroni
   become: true
   gather_facts: false
   tasks:
@@ -24,14 +31,47 @@
         name: postgresql
         tasks_from: tls.yml
 
-- name: Sync wildcard cert to Redis
-  hosts: redis
+- name: Sync wildcard cert to Redis (the primary and the replica, one at a time)
+  hosts: redis_cluster
+  serial: 1
   become: true
   gather_facts: false
   tasks:
     - name: "Refresh wildcard cert (redis)"
       ansible.builtin.include_role:
         name: redis
+        tasks_from: tls.yml
+
+- name: Sync wildcard cert to Vault (the members' own listener, :8200)
+  hosts: "{{ groups['vault_cluster'] | default(groups['vault']) }}"
+  serial: 1
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Refresh wildcard cert (vault — SIGHUP, no re-seal)"
+      ansible.builtin.include_role:
+        name: vault
+        tasks_from: tls.yml
+
+- name: Sync wildcard cert to etcd (the PostgreSQL cluster's consensus store)
+  hosts: patroni
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Refresh wildcard cert (etcd — reloaded on the next connection)"
+      ansible.builtin.include_role:
+        name: etcd
+        tasks_from: tls.yml
+
+- name: Sync wildcard cert to the Redis Sentinels (the members and the endpoint guest)
+  hosts: redis_cluster:pg_endpoint
+  serial: 1
+  become: true
+  gather_facts: false
+  tasks:
+    - name: "Refresh wildcard cert (redis-sentinel — restart, one at a time)"
+      ansible.builtin.include_role:
+        name: redis_sentinel
         tasks_from: tls.yml
 
 - name: Sync wildcard cert to the hypervisor console (pveproxy)

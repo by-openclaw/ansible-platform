@@ -1,15 +1,6 @@
 ---
-- name: "prepare | Distribute the wildcard cert (owned by the member's uid)"
-  ansible.builtin.include_role:
-    name: tls_cert
-  vars:
-    tls_cert_dir: "{{ etcd_cert_host_dir }}"
-    tls_cert_crt: "{{ etcd_tls_cert }}"
-    tls_cert_key: "{{ etcd_tls_key }}"
-    tls_cert_owner: "{{ etcd_uid }}"
-    tls_cert_group: "{{ etcd_uid }}"
-    tls_cert_key_mode: "0600"
-    tls_cert_crt_mode: "0644"
+- name: "Prepare | The wildcard cert (tls.yml — playbooks/certs-sync.yml runs it alone after a renewal)"
+  ansible.builtin.import_tasks: tls.yml
 
 - name: "prepare | Data directory (owned by the member's uid, nobody else reads it)"
   ansible.builtin.file:
