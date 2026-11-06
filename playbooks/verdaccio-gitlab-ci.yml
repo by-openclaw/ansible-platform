@@ -4,7 +4,12 @@
 # GitLab INSTANCE-level CI/CD variables so every pipeline (via the shared
 # npm.gitlab-ci.yml template) resolves and authenticates against Verdaccio:
 #   NPM_CONFIG_REGISTRY  https://npm.<domain>/
-#   NPM_AUTH             base64(user:password) of the svc account (masked)
+#   NPM_TOKEN            the svc account's registry token (masked): `_authToken` in .npmrc
+# Verdaccio 7 accepts Basic credentials only on its login route (migration guide 6 -> 7, "Package
+# API requests require Bearer tokens"): the play gets a token there with the svc account (as
+# `npm login --auth-type=legacy` does), keeps it in Vault next to the account (field `token`),
+# re-checks it with /-/whoami on every run and mints a new one only when it is missing or refused.
+# NPM_AUTH (base64 user:password, the Basic header) is retired and deleted from GitLab.
 # Creds come from Vault prod/verdaccio/registry; the token never touches disk
 # (through GitLab's REST API, roles/gitlab_api: the value travels in the module call).
 #   ansible-playbook -i inventories/prod playbooks/verdaccio-gitlab-ci.yml
@@ -37,6 +42,61 @@
         - /opt/gitlab-ci-vars.rb
         - "{{ gitlab_scripts_dir }}/verdaccio-ci-vars.rb"
 
+    - name: "The stored registry token still authenticates as the svc account? (/-/whoami)"
+      ansible.builtin.uri:
+        url: "{{ verdaccio_ci_registry }}-/whoami"
+        headers:
+          Authorization: "Bearer {{ verdaccio_ci_account.token }}"
+        status_code: [200, 401, 403]
+      register: verdaccio_ci_whoami
+      check_mode: false   # read-only GET: decides whether a token is minted
+      no_log: true
+      when: verdaccio_ci_account.token | default('') | length > 0
+
+    - name: "A registry token for the svc account (login route, Basic + body)"
+      ansible.builtin.uri:
+        url: "{{ verdaccio_ci_registry }}-/user/org.couchdb.user:{{ verdaccio_ci_account.username }}"
+        method: PUT
+        url_username: "{{ verdaccio_ci_account.username }}"
+        url_password: "{{ verdaccio_ci_account.password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "{{ verdaccio_ci_account.username }}"
+          password: "{{ verdaccio_ci_account.password }}"
+          type: user
+        status_code: [201]
+      register: verdaccio_ci_login
+      changed_when: true
+      no_log: true
+      when: >-
+        verdaccio_ci_whoami.skipped | default(false)
+        or verdaccio_ci_whoami.status | default(0) != 200
+        or (verdaccio_ci_whoami.json.username | default('')) != verdaccio_ci_account.username
+
+    - name: "Keep the new token in Vault, next to the account"
+      ansible.builtin.include_role:
+        name: vault_secret
+      vars:
+        vault_secret_path: "{{ platform_env }}/verdaccio/registry"
+        vault_secret_force_fields:
+          token: "{{ verdaccio_ci_login.json.token }}"
+      when: verdaccio_ci_login is changed
+
+    - name: "The token the CI variable carries"
+      ansible.builtin.set_fact:
+        verdaccio_ci_token: "{{ verdaccio_ci_login.json.token if verdaccio_ci_login is changed else verdaccio_ci_account.token | default('') }}"
+      no_log: true
+
+    # A token GitLab cannot mask would be stored in clear: stop instead.
+    - name: "The token is maskable"
+      ansible.builtin.assert:
+        that: verdaccio_ci_token is match(gitlab_api_maskable | default('^[a-zA-Z0-9+/=@:.~-]{8,}$'))
+        fail_msg: "the registry token does not match GitLab's maskable alphabet: not written to a CI variable"
+        quiet: true
+      no_log: true
+      when: not ansible_check_mode or verdaccio_ci_token | length > 0
+
     - name: "Reconcile the npm CI variables (GitLab API, roles/gitlab_api)"
       ansible.builtin.include_role:
         name: gitlab_api
@@ -44,8 +104,9 @@
       vars:
         gitlab_api_instance_variables:
           - { key: "NPM_CONFIG_REGISTRY", value: "{{ verdaccio_ci_registry }}", masked: false, protected: false, raw: true }
-          - key: "NPM_AUTH"   # pragma: allowlist secret
-            value: "{{ (verdaccio_ci_account.username ~ ':' ~ verdaccio_ci_account.password) | b64encode }}"
+          - key: "NPM_TOKEN"   # pragma: allowlist secret
+            value: "{{ verdaccio_ci_token }}"
             masked: true
             protected: false
             raw: true
+        gitlab_api_instance_variables_absent: ["NPM_AUTH"]   # the Basic header, refused by Verdaccio 7

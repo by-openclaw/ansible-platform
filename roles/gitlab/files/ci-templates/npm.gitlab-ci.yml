@@ -2,8 +2,9 @@
 # GitLab CI npm template — every pipeline uses the platform registry (Verdaccio,
 # npm.<domain>): scoped packages are served from it, everything else is proxied
 # and cached from npmjs. Credentials are INSTANCE-level CI variables set by
-# Ansible (playbooks/verdaccio-gitlab-ci.yml): NPM_CONFIG_REGISTRY + NPM_AUTH
-# (masked, Basic auth of the svc account). No per-project secrets.
+# Ansible (playbooks/verdaccio-gitlab-ci.yml): NPM_CONFIG_REGISTRY + NPM_TOKEN
+# (masked, the svc account's registry token — Verdaccio 7 refuses Basic auth on package
+# requests). No per-project secrets.
 #
 # Consume from a project's .gitlab-ci.yml:
 #   include:
@@ -19,15 +20,17 @@
   before_script:
     - test -n "$NPM_CONFIG_REGISTRY" || { echo "NPM_CONFIG_REGISTRY missing (instance CI variable)"; exit 1; }
     - REG_HOST="$(echo "$NPM_CONFIG_REGISTRY" | sed -E 's#^https?://##; s#/.*$##')"
-    - printf 'registry=%s\n//%s/:_auth=%s\nalways-auth=true\n' "$NPM_CONFIG_REGISTRY" "$REG_HOST" "$NPM_AUTH" > "$HOME/.npmrc"
+    - test -n "$NPM_TOKEN" || { echo "NPM_TOKEN missing (instance CI variable)"; exit 1; }
+    - printf 'registry=%s\n//%s/:_authToken=%s\n' "$NPM_CONFIG_REGISTRY" "$REG_HOST" "$NPM_TOKEN" > "$HOME/.npmrc"
     - npm config get registry
 
-# Smoke job — proves the runner reaches the registry with the svc credentials.
+# Smoke job — proves the runner reaches the registry and the token authenticates.
 npm-registry-check:
   extends: .npm-registry
   stage: test
   script:
     - npm ping
+    - npm whoami
     - npm view is-number version
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
