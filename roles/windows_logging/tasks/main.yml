@@ -16,7 +16,11 @@
   ansible.windows.win_package:
     path: "{{ windows_logging_download_dir }}\\wazuh-agent-{{ windows_logging_wazuh_version }}.msi"
     arguments: "WAZUH_MANAGER={{ windows_logging_wazuh_manager }} WAZUH_AGENT_GROUP={{ windows_logging_wazuh_group }} WAZUH_REGISTRATION_SERVER={{ windows_logging_wazuh_manager }}"
-    creates_service: WazuhSvc
+    # Installed = the agent's file version equals the pin: a new pin runs the newer MSI, which
+    # upgrades in place (ossec.conf and client.keys kept). Not creates_service: win_package checks
+    # it after creates_path and it overrides the version check, so a pin change never upgraded.
+    creates_path: "{{ windows_logging_wazuh_dir }}\\wazuh-agent.exe"
+    creates_version: "{{ windows_logging_wazuh_version | regex_replace('-.*$', '') }}.0"   # file version, four parts
     state: present
 
 - name: "Win logging | Enrolled already? (client.keys carries the agent's key)"
@@ -30,6 +34,8 @@
     - name: "Win logging | Enrolment password (Vault)"
       ansible.builtin.include_role:
         name: vault_secret
+        apply:
+          tags: [logging]   # an include_role's tags select only the include: --tags logging must reach Vault
       vars:
         vault_secret_path: "{{ windows_logging_wazuh_vault_enrol }}"
 
@@ -42,6 +48,8 @@
     - name: "Win logging | The manager API's user (Vault)"
       ansible.builtin.include_role:
         name: vault_secret
+        apply:
+          tags: [logging]   # an include_role's tags select only the include: --tags logging must reach Vault
       vars:
         vault_secret_path: "{{ windows_logging_wazuh_api_vault }}"
 
@@ -114,7 +122,8 @@
   ansible.windows.win_package:
     path: "{{ windows_logging_download_dir }}\\windows_exporter-{{ windows_logging_exporter_version }}.msi"
     arguments: "ENABLED_COLLECTORS={{ windows_logging_exporter_collectors }} LISTEN_PORT={{ windows_logging_exporter_port }}"
-    creates_service: windows_exporter
+    creates_path: "{{ windows_logging_exporter_dir }}\\windows_exporter.exe"   # the version check, as for the agent above
+    creates_version: "{{ windows_logging_exporter_version }}.0"
     state: present
 
 # The MSI freezes its arguments into the service at install: the service's command line is
@@ -144,12 +153,16 @@
     dest: "{{ windows_logging_download_dir }}\\alloy-{{ windows_logging_alloy_version }}.zip"
     proxy_url: "{{ windows_logging_proxy_url }}"
     force: false
+  register: windows_logging_alloy_zip
 
+# Under --check a new release's archive is not downloaded, so there is nothing to unpack yet:
+# the step (and the install that needs it) is reported by the download, not failed here.
 - name: "Win logging | Alloy installer unpacked"
   community.windows.win_unzip:
     src: "{{ windows_logging_download_dir }}\\alloy-{{ windows_logging_alloy_version }}.zip"
     dest: "{{ windows_logging_download_dir }}\\alloy-{{ windows_logging_alloy_version }}"
     creates: "{{ windows_logging_download_dir }}\\alloy-{{ windows_logging_alloy_version }}\\alloy-installer-windows-amd64.exe"
+  when: not (ansible_check_mode and windows_logging_alloy_zip is changed)
 
 - name: "Win logging | Alloy config dirs"
   ansible.windows.win_file:
@@ -162,12 +175,22 @@
     dest: "{{ windows_logging_alloy_config_dir }}\\config.alloy"
   register: windows_logging_alloy_conf
 
+# Alloy's executable carries no file version: the installed release is its uninstall entry's
+# DisplayVersion ("v1.21.3"). A different one runs the newer installer over it.
+- name: "Win logging | Alloy installed release (its uninstall entry)"
+  ansible.windows.win_reg_stat:
+    path: "{{ windows_logging_alloy_uninstall_key }}"
+    name: DisplayVersion
+  register: windows_logging_alloy_installed
+
 - name: "Win logging | Alloy installed (silent, our config, no phone-home)"
   ansible.windows.win_package:
     path: "{{ windows_logging_download_dir }}\\alloy-{{ windows_logging_alloy_version }}\\alloy-installer-windows-amd64.exe"
     arguments: "/S /CONFIG={{ windows_logging_alloy_config_dir }}\\config.alloy /DISABLEREPORTING=yes /DISABLEPROFILING=yes"
-    creates_service: Alloy
     state: present
+  when:
+    - (windows_logging_alloy_installed.value | default('')) != 'v' ~ windows_logging_alloy_version
+    - not (ansible_check_mode and windows_logging_alloy_zip is changed)   # no installer yet under --check
 
 - name: "Win logging | Alloy running with the system (restarted on a config change)"
   ansible.windows.win_service:
