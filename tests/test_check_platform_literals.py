@@ -34,9 +34,7 @@ def _hits(text: str) -> set[str]:
         code = line.split("#", 1)[0] if not line.lstrip().startswith("#") else ""
         if not code.strip():
             continue
-        for label, pattern in guard.PATTERNS.items():
-            if pattern.search(code):
-                found.add(label)
+        found |= guard.scan(code)
     return found
 
 
@@ -50,6 +48,23 @@ class TestTheDomainIsNeverTyped:
     def test_a_fallback_to_the_literal_is_caught(self):
         # the sneakiest form: looks parameterised, behaves hardcoded
         assert "identity fallback" in _hits("d: \"{{ platform_domain | default('by-research.be') }}\"")
+
+
+class TestAnImageTagIsAVersionNotAnAddress:
+    def test_a_version_tag_that_looks_like_an_address_is_allowed(self):
+        assert _hits('onlyoffice_image: "onlyoffice/documentserver:10.0.0.1"') == set()
+
+    def test_a_registry_path_with_such_a_tag_is_allowed(self):
+        assert _hits('image: "registry.example/team/app:172.16.0.1"') == set()
+
+    def test_an_address_in_a_url_is_still_caught(self):
+        assert "IPv4 literal" in _hits('url: "http://10.1.2.3:8080/health"')
+
+    def test_a_bare_address_is_still_caught(self):
+        assert "IPv4 literal" in _hits("dns: 10.1.3.100")
+
+    def test_an_address_next_to_an_image_on_the_same_line_is_still_caught(self):
+        assert "IPv4 literal" in _hits('cmd: "docker run quay.io/x/y:1.2 --dns 10.1.3.100"')
 
 
 class TestHostAddressesComeFromTheInventory:
