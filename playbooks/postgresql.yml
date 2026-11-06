@@ -2,8 +2,11 @@
 # The PostgreSQL cluster (services/0004): three members under Patroni, etcd colocated on them.
 #   ansible-playbook playbooks/postgresql.yml
 #   ansible-playbook playbooks/postgresql.yml --tags postgres_exporter   # the exporter only
-# Play 1 runs on all members at once: the consensus store needs a quorum before it is healthy.
-# Play 2 runs the members one at a time, the first member first — on the very first run it adopts
+# Play 1 runs on all members at once: the consensus store needs a quorum before it is healthy, so a
+# new cluster's members start together. A member that already runs is left to the next play, which
+# replaces running members one at a time (an image or flag change) and waits for the cluster to
+# be healthy before the next one.
+# Play 3 runs the members one at a time, the first member first — on the very first run it adopts
 # the standalone data directory and leads, then the others copy it and stream.
 - name: "PostgreSQL cluster | base, Docker, consensus store (all members at once)"
   hosts: patroni
@@ -13,6 +16,22 @@
     - base
     - docker
     - etcd
+
+- name: "PostgreSQL cluster | consensus store, running members one at a time"
+  hosts: patroni
+  become: true
+  gather_facts: true
+  serial: 1
+  tasks:
+    - name: "etcd | Replace this member if it changed, then every member must be healthy"
+      ansible.builtin.include_role:
+        name: etcd
+        apply:
+          tags: [etcd]
+      vars:
+        etcd_rolling: true
+      when: etcd_state | default('present') == 'present'
+      tags: [etcd]
 
 - name: "PostgreSQL cluster | members, one at a time"
   hosts: patroni
