@@ -28,6 +28,38 @@
     - "{{ jitsi_config_dir }}"
   become: true
 
+# stable-11146 (docker-jitsi-meet #2258, "Backwards-incompatible changes"): the containers run as
+# uid/gid 1000 and cannot read or write host directories owned by another user; the new writable
+# directories must exist, writable by that uid, before the start (Docker would create them
+# root-owned). The vendor offers chmod 777 or chown -R 1000:1000 — ownership, not a world-writable
+# mode. Existing prosody accounts and certificates are copied to storage/prosody on first start.
+- name: "Jitsi | The writable volumes of the rootless images (owned by uid {{ jitsi_uid }})"
+  ansible.builtin.file:
+    path: "{{ jitsi_config_dir }}/{{ item }}"
+    state: directory
+    owner: "{{ jitsi_uid }}"
+    group: "{{ jitsi_uid }}"
+    mode: "0750"
+  loop:
+    - storage/web
+    - storage/prosody
+    - storage/transcripts
+    - tmp/web-load-test
+    - web/custom-ca
+    - prosody/custom-ca
+    - jicofo/custom-ca
+    - jvb/custom-ca
+  become: true
+
+- name: "Jitsi | The configuration readable by the containers' user (uid {{ jitsi_uid }})"
+  ansible.builtin.file:
+    path: "{{ jitsi_config_dir }}"
+    state: directory
+    recurse: true
+    owner: "{{ jitsi_uid }}"
+    group: "{{ jitsi_uid }}"
+  become: true
+
 - name: "Jitsi | Render .env (secrets, PUBLIC_URL, JVB)"
   ansible.builtin.template:
     src: env.j2
