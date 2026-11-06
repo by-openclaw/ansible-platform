@@ -16,7 +16,7 @@ harbor_host_port: 8080                 # Harbor portal/registry HTTP (Traefik do
 
 # Harbor release (PINNED — never :latest, per platform standard)
 # renovate: datasource=github-releases depName=goharbor/harbor
-harbor_version: "v2.15.2"              # ladder target; move through playbooks/harbor-upgrade.yml
+harbor_version: "v2.15.4"              # ladder target; move through playbooks/harbor-upgrade.yml
 harbor_installer_url: "https://github.com/goharbor/harbor/releases/download/{{ harbor_version }}/harbor-online-installer-{{ harbor_version }}.tgz"
 harbor_install_dir: "/opt/harbor"
 harbor_data_dir: "/data/harbor"        # Harbor's local /data (logs, trivy cache) — blobs are on S3
@@ -64,6 +64,13 @@ harbor_trivy_enabled: true
 # --- Metrics (INF-33): Harbor's exporter behind its nginx on this port (published by the compose
 # file on every address; the DOCKER-USER catalog admits the monitoring host only; catalog metrics_port).
 harbor_metrics_enabled: true
+
+# Webhook and Slack delivery to private, loopback, link-local and cloud-metadata addresses
+# (Harbor 2.15.4, network.allow_private_network_access). The vendor: "Set it to false to reject
+# them (CWE-918) when no webhook receiver runs on an internal network" — no project here has a
+# webhook, so the SSRF guard (GHSA-2phj-cp9f-qq6w) is on. A webhook to an internal receiver
+# would need this true, in the PR that adds the receiver.
+harbor_allow_private_network_access: false
 harbor_metrics_port: 9090
 # --- System settings owned by the role (every setting in Ansible; API, idempotent) -----------------
 harbor_project_creation_restriction: "adminonly"     # projects come from the role (CI, proxy caches), not from users
