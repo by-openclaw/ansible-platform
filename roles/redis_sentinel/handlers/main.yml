@@ -1,0 +1,9 @@
+---
+# A Sentinel reads its certificate at start only: a new one (roles/tls_cert) restarts it.
+# Three Sentinels, quorum two: certs-sync.yml restarts them one host at a time.
+- name: Restart redis-sentinel
+  community.docker.docker_container:
+    name: "{{ redis_sentinel_container_name }}"
+    state: started
+    restart: true
+  listen: "tls_cert changed"

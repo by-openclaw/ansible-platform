@@ -1,0 +1,17 @@
+---
+# ==============================================================================
+# redis_sentinel | TLS — the shared wildcard cert for the container (redis uid owns the key).
+# A new cert restarts the Sentinel (handlers/main.yml): it reads the files at start only.
+# Reached by tasks/main.yml and, after a renewal, by playbooks/certs-sync.yml.
+# ==============================================================================
+- name: "sentinel | Distribute the wildcard cert (owned by the redis uid)"
+  ansible.builtin.include_role:
+    name: tls_cert
+  vars:
+    tls_cert_dir: "{{ redis_sentinel_cert_host_dir }}"
+    tls_cert_crt: "{{ redis_sentinel_tls_cert }}"
+    tls_cert_key: "{{ redis_sentinel_tls_key }}"
+    tls_cert_owner: "{{ redis_sentinel_uid }}"
+    tls_cert_group: "{{ redis_sentinel_uid }}"
+    tls_cert_key_mode: "0600"
+    tls_cert_crt_mode: "0644"

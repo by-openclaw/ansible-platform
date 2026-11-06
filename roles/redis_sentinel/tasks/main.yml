@@ -9,17 +9,8 @@
 - name: "Sentinel | Converge"
   when: redis_sentinel_state == 'present'
   block:
-    - name: "sentinel | Distribute the wildcard cert (owned by the redis uid)"
-      ansible.builtin.include_role:
-        name: tls_cert
-      vars:
-        tls_cert_dir: "{{ redis_sentinel_cert_host_dir }}"
-        tls_cert_crt: "{{ redis_sentinel_tls_cert }}"
-        tls_cert_key: "{{ redis_sentinel_tls_key }}"
-        tls_cert_owner: "{{ redis_sentinel_uid }}"
-        tls_cert_group: "{{ redis_sentinel_uid }}"
-        tls_cert_key_mode: "0600"
-        tls_cert_crt_mode: "0644"
+    - name: "Sentinel | The wildcard cert (tls.yml — playbooks/certs-sync.yml runs it alone after a renewal)"
+      ansible.builtin.import_tasks: tls.yml
       tags: [redis_sentinel, tls]
 
     - name: "sentinel | The members' admin password (read from Vault; owner: roles/redis)"

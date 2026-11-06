@@ -1,0 +1,19 @@
+---
+# ==============================================================================
+# etcd | TLS — the shared wildcard cert for the member (the member's uid owns the key).
+# No restart: etcd reloads its certificate on every new connection since v3.2 ("useful when
+# replacing expiry certs without stopping etcd servers … by overwriting old certs with new
+# ones" — etcd docs, op-guide/security, "Notes for TLS authentication").
+# Reached by tasks/prepare.yml and, after a renewal, by playbooks/certs-sync.yml.
+# ==============================================================================
+- name: "tls | Distribute the wildcard cert (owned by the member's uid)"
+  ansible.builtin.include_role:
+    name: tls_cert
+  vars:
+    tls_cert_dir: "{{ etcd_cert_host_dir }}"
+    tls_cert_crt: "{{ etcd_tls_cert }}"
+    tls_cert_key: "{{ etcd_tls_key }}"
+    tls_cert_owner: "{{ etcd_uid }}"
+    tls_cert_group: "{{ etcd_uid }}"
+    tls_cert_key_mode: "0600"
+    tls_cert_crt_mode: "0644"
